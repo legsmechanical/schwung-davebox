@@ -239,7 +239,7 @@ function updateSceneMapLEDs() {
     for (let i = 0; i < 16; i++) {
         let color;
         if (sceneAllPlaying(i)) {
-            color = pulseUseBright ? White : LED_STEP_ACTIVE;
+            color = pulseUseBright ? White : LED_OFF;
         } else {
             const group = Math.floor(i / 4);
             color = (group === sceneGroup) ? LED_STEP_CURSOR
@@ -281,52 +281,56 @@ function updateSessionLEDs() {
 
 function updateTrackLEDs() {
     if (!ledInitComplete) return;
-    /* Bottom two pad rows: tracks 0-7 occupy notes 68-75 (row 0) and 76-83 (row 1).
-     * Row 0 (68-75): tracks shown with track color when active, dim when inactive.
-     * Row 1 (76-83): unused — keep dark. */
-    for (let t = 0; t < 8; t++) {
-        setLED(TRACK_PAD_BASE + t,
-               t < NUM_TRACKS ? (t === activeTrack ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t])
-                               : LED_OFF);
-        setLED(TRACK_PAD_BASE + 8 + t, LED_OFF);
+
+    /* Pad rows: only in Note View. Session View row 3 (notes 68-75) is owned by
+     * updateSessionLEDs — writing here too would double-write and cause flicker. */
+    if (!sessionView) {
+        for (let t = 0; t < 8; t++) {
+            setLED(TRACK_PAD_BASE + t,
+                   t < NUM_TRACKS ? (t === activeTrack ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t])
+                                  : LED_OFF);
+            setLED(TRACK_PAD_BASE + 8 + t, LED_OFF);
+        }
     }
+
     /* Track buttons CC40-43: one per visible scene row (CC40=row3, CC43=row0).
-     * Session View: if ALL tracks are playing from a visible row → White.
-     * Both views: clip-column state for active track otherwise. */
+     * Session View: White for playing row, off otherwise.
+     * Note View: clip-column state for active track. */
     for (let idx = 0; idx < 4; idx++) {
         const row      = 3 - idx;
         const sceneIdx = sceneGroup * 4 + row;
         let color;
-
         if (sessionView) {
-            let allPlaying = playing;
-            if (allPlaying) {
-                for (let t = 0; t < NUM_TRACKS; t++) {
-                    if (trackActiveClip[t] !== sceneIdx) { allPlaying = false; break; }
-                }
-            }
-            if (allPlaying) {
-                setButtonLED(40 + idx, White);
-                continue;
-            }
-        }
-
-        const t          = activeTrack;
-        const hasContent = clipHasContent(t, sceneIdx);
-        const isActive   = trackActiveClip[t] === sceneIdx;
-        const isPlaying  = isActive && playing && hasContent;
-        const isQueued   = hasContent && trackQueuedClip[t] === sceneIdx;
-        if (isPlaying || isQueued) {
-            color = pulseUseBright ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
-        } else if (isActive && hasContent) {
-            color = TRACK_COLORS[t];
-        } else if (hasContent) {
-            color = TRACK_DIM_COLORS[t];
+            color = sceneAllPlaying(sceneIdx) ? White : LED_OFF;
         } else {
-            color = DarkGrey;
+            const t          = activeTrack;
+            const hasContent = clipHasContent(t, sceneIdx);
+            const isActive   = trackActiveClip[t] === sceneIdx;
+            const isPlaying  = isActive && playing && hasContent;
+            const isQueued   = hasContent && trackQueuedClip[t] === sceneIdx;
+            if (isPlaying || isQueued) {
+                color = pulseUseBright ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
+            } else if (isActive && hasContent) {
+                color = TRACK_COLORS[t];
+            } else if (hasContent) {
+                color = TRACK_DIM_COLORS[t];
+            } else {
+                color = DarkGrey;
+            }
         }
         setButtonLED(40 + idx, color);
     }
+}
+
+function forceRedraw() {
+    if (!ledInitComplete) return;
+    if (sessionView) {
+        updateSessionLEDs();
+        updateSceneMapLEDs();
+    } else {
+        updateStepLEDs();
+    }
+    updateTrackLEDs();
 }
 
 function drawUI() {
@@ -456,12 +460,15 @@ globalThis.onMidiMessageInternal = function (data) {
         if (d1 === MoveNoteSession && d2 === 127) {
             sessionView = !sessionView;
             if (sessionView) {
+                /* Clear step buttons and bottom pad row before session redraw */
                 for (let i = 0; i < 16; i++) setLED(16 + i, LED_OFF);
-                for (let t = 0; t < NUM_TRACKS; t++) setLED(TRACK_PAD_BASE + t, LED_OFF);
+                for (let t = 0; t < 8; t++) setLED(TRACK_PAD_BASE + t, LED_OFF);
             } else {
+                /* Clear all session pad rows before note view redraw */
                 for (let row = 0; row < 4; row++)
                     for (let t = 0; t < 8; t++) setLED(92 - row * 8 + t, LED_OFF);
             }
+            forceRedraw();
         }
 
         /* Shift+Back = hide: clear all LEDs first so the native Move UI inherits
@@ -502,8 +509,8 @@ globalThis.onMidiMessageInternal = function (data) {
         }
 
         /* Up/Down: scene group nav in Session View */
-        if (d1 === MoveDown && d2 === 127 && sessionView && sceneGroup < 3) sceneGroup++;
-        if (d1 === MoveUp   && d2 === 127 && sessionView && sceneGroup > 0) sceneGroup--;
+        if (d1 === MoveDown && d2 === 127 && sessionView && sceneGroup < 3) { sceneGroup++; forceRedraw(); }
+        if (d1 === MoveUp   && d2 === 127 && sessionView && sceneGroup > 0) { sceneGroup--; forceRedraw(); }
 
         /* Track buttons CC40-43 */
         if (d1 >= 40 && d1 <= 43 && d2 === 127) {
