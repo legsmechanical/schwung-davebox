@@ -83,6 +83,7 @@ let shiftHeld       = false;
 /* clipSteps[track][clip][step] — JS-authoritative mirror of DSP step data */
 let clipSteps        = Array.from({length: NUM_TRACKS}, () =>
                            Array.from({length: NUM_CLIPS}, () => new Array(NUM_STEPS).fill(0)));
+let clipLength       = Array.from({length: NUM_TRACKS}, () => new Array(NUM_CLIPS).fill(16));
 let trackCurrentStep = new Array(NUM_TRACKS).fill(-1);
 let trackCurrentPage = new Array(NUM_TRACKS).fill(0);  /* 0..15: which 16-step page is visible */
 let trackActiveClip  = new Array(NUM_TRACKS).fill(0);
@@ -290,14 +291,11 @@ function drawUI() {
         print(4, 46, line4, 1);
     } else {
         const ac = trackActiveClip[activeTrack];
-        const page   = trackCurrentPage[activeTrack];
+        const page       = trackCurrentPage[activeTrack];
+        const totalPages = Math.max(1, Math.ceil(clipLength[activeTrack][ac] / 16));
         /* \xb7 = middle dot · */
         print(4, 10, 'TR' + (activeTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac] +
-                     ' PG' + (page + 1) + '/16', 1);
-        const cs     = trackCurrentStep[activeTrack];
-        const filled = (playing && cs >= 0) ? Math.floor((cs % 16) * 8 / 16) : 0;
-        const prog   = '#'.repeat(filled) + '_'.repeat(8 - filled);
-        print(4, 22, 'steps ' + (page * 16 + 1) + '-' + (page * 16 + 16) + ' [' + prog + ']', 1);
+                     '  PG ' + (page + 1) + '/' + totalPages, 1);
         print(4, 34, '1 2 3 4 5 6 7 8', 1);
         let line4 = '';
         for (let t = 0; t < NUM_TRACKS; t++) {
@@ -341,13 +339,16 @@ globalThis.init = function () {
             const qc = host_module_get_param('t' + t + '_queued_clip');
             trackQueuedClip[t] = (qc !== null && qc !== undefined) ? (parseInt(qc, 10) | 0) : -1;
 
-            /* Bulk step recovery — 128 calls (one per clip) instead of 32,768 */
+            /* Bulk step + length recovery */
             for (let c = 0; c < NUM_CLIPS; c++) {
                 const bulk = host_module_get_param('t' + t + '_c' + c + '_steps');
                 if (bulk && bulk.length >= NUM_STEPS) {
                     for (let s = 0; s < NUM_STEPS; s++)
                         clipSteps[t][c][s] = bulk[s] === '1' ? 1 : 0;
                 }
+                const len = host_module_get_param('t' + t + '_c' + c + '_length');
+                if (len !== null && len !== undefined)
+                    clipLength[t][c] = parseInt(len, 10) || 16;
             }
         }
     }
