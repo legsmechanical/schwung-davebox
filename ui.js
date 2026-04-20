@@ -17,7 +17,8 @@ import {
     DeepRed,
     DarkBlue,
     Mustard,
-    DeepGreen
+    DeepGreen,
+    DarkGrey
 } from '/data/UserData/schwung/shared/constants.mjs';
 
 import {
@@ -35,7 +36,7 @@ const LED_STEP_CURSOR = 127;
 const LEDS_PER_FRAME  = 8;
 const NUM_TRACKS      = 4;
 const NUM_CLIPS       = 16;
-const BLINK_PERIOD    = 8;
+const PULSE_PERIOD    = 24;   /* ticks per dim→bright→dim cycle */
 
 /* Track colors: bright and dim pairs (Move uses fixed palette indices, not brightness) */
 const TRACK_COLORS     = [Red,    Blue,     VividYellow, Green];
@@ -64,8 +65,8 @@ let playing          = false;
 let activeTrack      = 0;
 let sessionView      = false;
 let sceneGroup       = 0;     /* 0-3: which group of 4 scenes is visible */
-let blinkState       = false;
-let blinkCounter     = 0;
+let pulseStep        = 0;     /* 0..PULSE_PERIOD-1, drives clip LED pulse */
+let pulseUseBright   = false; /* current dim/bright decision for this tick */
 
 function clipHasContent(t, c) {
     const s = clipSteps[t][c];
@@ -138,15 +139,19 @@ function updateSessionLEDs() {
         const sceneIdx = sceneGroup * 4 + row;
         for (let t = 0; t < NUM_TRACKS; t++) {
             const note      = 92 - row * 8 + t;  /* row 0=top(92-99), row 3=bottom(68-75) */
-            const isPlaying = playing && trackActiveClip[t] === sceneIdx;
-            const isQueued  = trackQueuedClip[t] === sceneIdx;
+            const hasContent = clipHasContent(t, sceneIdx);
+            /* Only treat a clip as "playing" if it actually has steps — empty
+             * active clips blink while transport runs, going dark when stopped,
+             * which is confusing. Gate on content so empty clips stay unlit. */
+            const isPlaying = hasContent && playing && trackActiveClip[t] === sceneIdx;
+            const isQueued  = hasContent && trackQueuedClip[t] === sceneIdx;
             let color;
             if (isQueued || isPlaying) {
-                color = blinkState ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
-            } else if (clipHasContent(t, sceneIdx)) {
+                color = pulseUseBright ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
+            } else if (hasContent) {
                 color = TRACK_DIM_COLORS[t];
             } else {
-                color = LED_OFF;
+                color = DarkGrey;
             }
             setLED(note, color);
         }
@@ -159,8 +164,28 @@ function updateSessionLEDs() {
 
 function updateTrackLEDs() {
     if (ledInitPending) return;
+    /* Bottom pad row: highlight active track */
     for (let t = 0; t < NUM_TRACKS; t++) {
         setLED(TRACK_PAD_BASE + t, t === activeTrack ? TRACK_COLORS[t] : LED_OFF);
+    }
+    /* Track buttons CC40-43: mirror active track's column in Session View.
+     * CC40=bottom button → row 3, CC43=top button → row 0 (same inversion). */
+    for (let idx = 0; idx < 4; idx++) {
+        const row      = 3 - idx;
+        const sceneIdx = sceneGroup * 4 + row;
+        const t        = activeTrack;
+        const hasContent = clipHasContent(t, sceneIdx);
+        const isPlaying  = hasContent && playing && trackActiveClip[t] === sceneIdx;
+        const isQueued   = hasContent && trackQueuedClip[t] === sceneIdx;
+        let color;
+        if (isQueued || isPlaying) {
+            color = pulseUseBright ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
+        } else if (hasContent) {
+            color = TRACK_DIM_COLORS[t];
+        } else {
+            color = DarkGrey;
+        }
+        setButtonLED(40 + idx, color);
     }
 }
 
@@ -183,7 +208,7 @@ function drawUI() {
         print(4, 10, 'TR' + (activeTrack + 1) + ' \xb7 ' + (sceneGroup + 1) + '-' + SCENE_LETTERS[ac], 1);
         const cs     = trackCurrentStep[activeTrack];
         const filled = (playing && cs >= 0) ? Math.floor(cs * 8 / 16) : 0;
-        const prog   = '#'.repeat(filled) + '.'.repeat(8 - filled);
+        const prog   = '#'.repeat(filled) + '_'.repeat(8 - filled);
         print(4, 22, 'bar 1/1 [' + prog + ']', 1);
         print(4, 34, '1 2 3 4', 1);
         let line4 = '';
@@ -201,18 +226,52 @@ function fmtHex(b) {
 
 globalThis.init = function () {
     installConsoleOverride('SEQ8');
-    console.log("SEQ8 P4 init");
+
+    /* Recover DSP state — JS module vars reset on every re-entry because
+     * shadow_load_ui_module() re-evaluates this file. On tool reconnect
+     * (Shift+Back hide → re-select from Tools menu) the DSP instance is still
+     * alive; on cold boot (first launch or after another tool replaced us)
+     * create_instance restores from seq8-state.json. Either way, read params. */
+    const p = (typeof host_module_get_param === 'function')
+        ? host_module_get_param('playing') : null;
+    const dspSurvived = (p !== null && p !== undefined);
+
+    console.log('SEQ8 init: ' + (p === '1' ? 'RESUMED playing' : 'FRESH/stopped'));
+
+    if (typeof host_module_get_param === 'function') {
+        playing = dspSurvived;
+
+        /* Recover per-track state */
+        for (let t = 0; t < NUM_TRACKS; t++) {
+            const ac = host_module_get_param('t' + t + '_active_clip');
+            if (ac !== null && ac !== undefined) trackActiveClip[t] = parseInt(ac, 10) | 0;
+            const cs = host_module_get_param('t' + t + '_current_step');
+            trackCurrentStep[t] = (cs !== null && cs !== undefined) ? (parseInt(cs, 10) | 0) : -1;
+            const qc = host_module_get_param('t' + t + '_queued_clip');
+            trackQueuedClip[t] = (qc !== null && qc !== undefined) ? (parseInt(qc, 10) | 0) : -1;
+
+            /* Recover all step data — 16 clips × 16 steps per track */
+            for (let c = 0; c < NUM_CLIPS; c++) {
+                for (let s = 0; s < 16; s++) {
+                    const v = host_module_get_param('t' + t + '_c' + c + '_step_' + s);
+                    clipSteps[t][c][s] = (v === '1') ? 1 : 0;
+                }
+            }
+        }
+    }
+
     ledInitQueue   = buildLedInitQueue();
     ledInitIndex   = 0;
     ledInitPending = true;
 };
 
 globalThis.tick = function () {
-    blinkCounter++;
-    if (blinkCounter >= BLINK_PERIOD) {
-        blinkCounter = 0;
-        blinkState   = !blinkState;
-    }
+    /* Triangle-wave pulse: 4 equal phases per cycle.
+     * Phase 0 (dim), phase 1 (bright), phase 2 (bright), phase 3 (dim).
+     * 50% duty cycle with transitions at predictable quarter-period boundaries. */
+    pulseStep = (pulseStep + 1) % PULSE_PERIOD;
+    const phase = Math.floor(pulseStep * 4 / PULSE_PERIOD);
+    pulseUseBright = (phase === 1 || phase === 2);
 
     if (ledInitPending) {
         drainLedInit();
@@ -227,6 +286,10 @@ globalThis.tick = function () {
     }
     drawUI();
 };
+
+/* Power button: sends a D-Bus signal to the Schwung shim — NOT a MIDI CC.
+ * There is nothing to intercept here. Hide SEQ8 first (Shift+Back), then
+ * power down from the Move UI. */
 
 globalThis.onMidiMessageInternal = function (data) {
     const status = data[0] | 0;
@@ -250,9 +313,17 @@ globalThis.onMidiMessageInternal = function (data) {
             }
         }
 
-        /* Shift+Back = return to menu */
+        /* Shift+Back = hide: DSP stays alive, MIDI keeps playing.
+         * host_hide_module() → hideToolOvertake() (tool path):
+         *   - does NOT send overtake_dsp:unload
+         *   - keeps overtakeModuleLoaded=true and toolHiddenModulePath set
+         *   - returns to Tools menu
+         * Re-entry via Tools menu → startInteractiveTool() detects dspAlreadyLoaded,
+         * reconnects without overtake_dsp:load, reloads JS only, calls init(). */
         if (d1 === MoveBack && d2 === 127 && shiftHeld) {
-            host_return_to_menu();
+            if (typeof host_hide_module === 'function') {
+                host_hide_module();
+            }
         }
 
         /* Play: toggle transport; Shift+Play = panic */
@@ -274,12 +345,18 @@ globalThis.onMidiMessageInternal = function (data) {
         if (d1 >= 40 && d1 <= 43 && d2 === 127) {
             const idx = d1 - 40;
             if (sessionView) {
-                /* Launch scene row across all tracks */
+                /* Launch scene row across all tracks.
+                 * CC40=MoveRow4 (physical bottom), CC43=MoveRow1 (physical top).
+                 * Session View row 0 is at the top (notes 92-99), so invert. */
                 if (typeof host_module_set_param === 'function')
-                    host_module_set_param('launch_scene', String(sceneGroup * 4 + idx));
+                    host_module_set_param('launch_scene', String(sceneGroup * 4 + (3 - idx)));
             } else {
-                /* Navigate to scene group */
-                sceneGroup = idx;
+                /* Launch clip on active track.
+                 * CC40=bottom button → row 3 (bottom of current group), same inversion as
+                 * Session View so the physical button positions match the visual layout. */
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + activeTrack + '_launch_clip',
+                                          String(sceneGroup * 4 + (3 - idx)));
             }
         }
     }
@@ -305,11 +382,13 @@ globalThis.onMidiMessageInternal = function (data) {
     /* Pad presses: note-on */
     if ((status & 0xF0) === 0x90 && d2 > 0) {
         if (sessionView) {
-            /* Left 4 pads of each row launch clips; row 0=top(92), row 3=bottom(68) */
+            /* Left 4 pads of each row launch clips; row 0=top(92), row 3=bottom(68).
+             * Also sync activeTrack so Note View reflects the last-touched track. */
             for (let row = 0; row < 4; row++) {
                 const rowBase = 92 - row * 8;
                 if (d1 >= rowBase && d1 < rowBase + NUM_TRACKS) {
                     const t = d1 - rowBase;
+                    activeTrack = t;
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + t + '_launch_clip',
                                               String(sceneGroup * 4 + row));

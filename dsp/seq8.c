@@ -27,6 +27,7 @@
 /* ------------------------------------------------------------------ */
 
 #define SEQ8_LOG_PATH      "/data/UserData/schwung/seq8.log"
+#define SEQ8_STATE_PATH    "/data/UserData/schwung/seq8-state.json"
 
 #define NUM_TRACKS          4
 #define NUM_CLIPS           16
@@ -186,7 +187,79 @@ static int pfx_rand(play_fx_t *fx, int lo, int hi) {
 static void seq8_ilog(seq8_instance_t *inst, const char *msg) {
     if (!inst || !inst->log_fp) return;
     fprintf(inst->log_fp, "%s\n", msg);
-    fflush(inst->log_fp);
+    /* fflush intentionally omitted — synchronous disk I/O from on_midi/set_param
+     * blocked the render path, causing multi-minute delay on power button press. */
+}
+
+/* --- State persistence (Option C: cold-boot recovery) ------------------- */
+
+static int json_get_int(const char *buf, const char *key, int def) {
+    char search[64];
+    snprintf(search, sizeof(search), "\"%s\":", key);
+    const char *p = strstr(buf, search);
+    if (!p) return def;
+    p += strlen(search);
+    while (*p == ' ') p++;
+    return my_atoi(p);
+}
+
+static void json_get_steps(const char *buf, const char *key,
+                            uint8_t *steps, int n) {
+    char search[64];
+    snprintf(search, sizeof(search), "\"%s\":\"", key);
+    const char *p = strstr(buf, search);
+    if (!p) return;
+    p += strlen(search);
+    int i;
+    for (i = 0; i < n && *p && *p != '"'; i++, p++)
+        steps[i] = (*p == '1') ? 1 : 0;
+}
+
+static void seq8_save_state(seq8_instance_t *inst) {
+    FILE *fp = fopen(SEQ8_STATE_PATH, "w");
+    if (!fp) return;
+    int t, c, s;
+    fprintf(fp, "{\"playing\":%d", inst->playing);
+    for (t = 0; t < NUM_TRACKS; t++)
+        fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
+    for (t = 0; t < NUM_TRACKS; t++) {
+        for (c = 0; c < NUM_CLIPS; c++) {
+            fprintf(fp, ",\"t%dc%d\":\"", t, c);
+            for (s = 0; s < SEQ_STEPS; s++)
+                fputc(inst->tracks[t].clips[c].steps[s] ? '1' : '0', fp);
+            fputc('"', fp);
+        }
+    }
+    fprintf(fp, "}");
+    fclose(fp);
+}
+
+static void seq8_load_state(seq8_instance_t *inst) {
+    FILE *fp = fopen(SEQ8_STATE_PATH, "r");
+    if (!fp) return;
+    char buf[4096];
+    size_t n = fread(buf, 1, sizeof(buf) - 1, fp);
+    fclose(fp);
+    if (!n) return;
+    buf[n] = '\0';
+
+    int t, c, i;
+    for (t = 0; t < NUM_TRACKS; t++) {
+        char key[16];
+        snprintf(key, sizeof(key), "t%d_ac", t);
+        inst->tracks[t].active_clip = (uint8_t)clamp_i(
+            json_get_int(buf, key, 0), 0, NUM_CLIPS - 1);
+
+        for (c = 0; c < NUM_CLIPS; c++) {
+            snprintf(key, sizeof(key), "t%dc%d", t, c);
+            json_get_steps(buf, key, inst->tracks[t].clips[c].steps, SEQ_STEPS);
+            int any = 0;
+            for (i = 0; i < SEQ_STEPS; i++)
+                if (inst->tracks[t].clips[c].steps[i]) { any = 1; break; }
+            inst->tracks[t].clips[c].active = (uint8_t)any;
+        }
+    }
+    seq8_ilog(inst, "SEQ8 state restored from file");
 }
 
 /* ------------------------------------------------------------------ */
@@ -535,6 +608,8 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
                            * (uint32_t)BPM_DEFAULT
                            * (uint32_t)PPQN;
 
+    seq8_load_state(inst);  /* Option C: restore clips/active_clip from file if present */
+
     char szlog[80];
     snprintf(szlog, sizeof(szlog),
              "SEQ8 Phase 4 init: sizeof(seq8_instance_t)=%zu",
@@ -546,6 +621,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
 static void destroy_instance(void *instance) {
     seq8_instance_t *inst = (seq8_instance_t *)instance;
     if (!inst) return;
+    seq8_save_state(inst);  /* Option C: persist state before teardown */
     int t;
     for (t = 0; t < NUM_TRACKS; t++) {
         inst->tracks[t].pfx.event_count = 0;
@@ -688,6 +764,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             send_panic();
             seq8_ilog(inst, "SEQ8 transport: panic");
         }
+        seq8_save_state(inst);
         return;
     }
 
@@ -697,13 +774,18 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
 
-    /* --- Scene launch (global): queue clip M on all tracks --- */
+    /* --- Scene launch (global): switch all tracks to clip M immediately --- */
     if (!strcmp(key, "launch_scene")) {
         int cidx = clamp_i(my_atoi(val), 0, NUM_CLIPS - 1);
         int t;
-        for (t = 0; t < NUM_TRACKS; t++)
-            inst->tracks[t].queued_clip = (int8_t)cidx;
+        for (t = 0; t < NUM_TRACKS; t++) {
+            uint8_t newlen = inst->tracks[t].clips[cidx].length;
+            inst->tracks[t].current_step = (uint8_t)(inst->tracks[t].current_step % newlen);
+            inst->tracks[t].active_clip  = (uint8_t)cidx;
+            inst->tracks[t].queued_clip  = -1;
+        }
         seq8_ilog(inst, "SEQ8 launch_scene");
+        seq8_save_state(inst);
         return;
     }
 
@@ -713,9 +795,14 @@ static void set_param(void *instance, const char *key, const char *val) {
         const char *sub = key + 3;
         seq8_track_t *tr = &inst->tracks[tidx];
 
-        /* tN_launch_clip: queue a clip for this track */
+        /* tN_launch_clip: switch to clip immediately, inheriting playback position */
         if (!strcmp(sub, "launch_clip")) {
-            tr->queued_clip = (int8_t)clamp_i(my_atoi(val), 0, NUM_CLIPS - 1);
+            int new_cidx    = clamp_i(my_atoi(val), 0, NUM_CLIPS - 1);
+            uint8_t newlen  = tr->clips[new_cidx].length;
+            tr->current_step = (uint8_t)(tr->current_step % newlen);
+            tr->active_clip  = (uint8_t)new_cidx;
+            tr->queued_clip  = -1;
+            seq8_save_state(inst);
             return;
         }
 
@@ -735,6 +822,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                     for (i = 0; i < SEQ_STEPS; i++) if (cl->steps[i]) { any = 1; break; }
                     cl->active = (uint8_t)any;
                 }
+                seq8_save_state(inst);
                 return;
             }
             if (!strncmp(p, "_length", 7)) {
@@ -910,16 +998,6 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 seq8_track_t *tr = &inst->tracks[t];
                 clip_t *cl = &tr->clips[tr->active_clip];
                 tr->current_step = (uint8_t)((tr->current_step + 1) % cl->length);
-                /* Bar boundary: apply queued clip at step 0 wrap.
-                 * NOTE: tracks with different clip lengths will switch at
-                 * different bar boundaries — all clips default to 16 steps
-                 * so this is invisible in practice. Revisit for variable
-                 * length support. Legato: new_pos = old_pos % new_length;
-                 * old_pos is 0 here so result is always 0. */
-                if (tr->current_step == 0 && tr->queued_clip >= 0) {
-                    tr->active_clip = (uint8_t)tr->queued_clip;
-                    tr->queued_clip = -1;
-                }
             }
         }
     }

@@ -28,7 +28,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-INSTALL_DIR="/data/UserData/schwung/modules/overtake/${MODULE_ID}"
+INSTALL_DIR="/data/UserData/schwung/modules/tools/${MODULE_ID}"
 
 if [ ! -f "dist/${MODULE_ID}/dsp.so" ]; then
     echo "Error: Build not found. Run ./scripts/build.sh first."

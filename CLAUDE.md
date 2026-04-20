@@ -1,21 +1,35 @@
 # SEQ8
 
-SEQ8 is a Schwung overtake module (`component_type: overtake`) for Ableton Move — a standalone 8-track MIDI sequencer inspired by the Yamaha RS7000. No audio output. Written in C (DSP engine) + JavaScript (UI).
+SEQ8 is a Schwung **tool module** (`component_type: tool`) for Ableton Move — a standalone 8-track MIDI sequencer inspired by the Yamaha RS7000. No audio output. Written in C (DSP engine) + JavaScript (UI).
+
+**Important:** SEQ8 is `component_type: "tool"` (not `"overtake"`). This enables the interactive tool reconnect path for background running. It appears in the **Tools menu**, not the Overtake module menu.
 
 ## Current build phase
 
-**Phase 4 — clip model and Session View (in progress, fixes pending).**
+**Phase 5 — 8 tracks, 256 steps, arpeggiator, Track View (in progress).**
+Phase 4 complete — clip model, Session View, background running via tool suspend.
 Phase 3 complete — 4-track expansion with Note View LEDs and track selection.
 Phase 2 complete — NoteTwist port + play effects chain (Note FX, Harmonize, MIDI Delay).
 Phase 1 complete — single-track 16-step sequencer, transport, step LEDs, BPM 140.
 Phase 0 complete — scaffold, MIDI buffer stress test, and button logging.
 
-## Known issues (Phase 4)
+## Phase 5 todos
 
-- **Session View blink color**: clips blink between dim track color and full track color — fix deployed (TRACK_DIM_COLORS), needs hardware verification next session.
-- **Session View row order / LED geometry**: multiple issues found and patched (row reversal, blank-pad formula) — needs full hardware verification next session.
-- **Transport stop audio glitch**: was caused by `send_panic` calling `midi_send_external` for 512 SPI writes synchronously. Fixed — `send_panic` now uses `midi_send_internal` only.
-- **Power button deadlock**: was caused by `pfx_send` calling `midi_send_external` from the render path, blocking the audio thread on SPI. When the power button was pressed, `suspend_overtake` in the shim tried to halt the DSP but deadlocked against the blocked render thread. Fix: `midi_send_external` removed from `pfx_send` entirely.
+- **Session View navigation — Up/Down buttons**: CC 54 (Up) and CC 55 (Down) scroll the scene row view one row at a time. Currently the view is fixed at `sceneGroup * 4`.
+- **Session View navigation — step buttons as scene map**: In Session View, the 16 step buttons (notes 16–31) show the current scene position across all 16 rows (one LED per row) and navigate to that row on press.
+- **Shift + step button launches scene**: In Session View, Shift + step button press launches that scene row (equivalent to pressing all 4 pads in a row).
+- **8-track expansion**: Expand from 4 tracks to 8 tracks in both DSP and UI.
+- **256-step clips**: Expand from 16 steps to 256 steps per clip.
+- **Arpeggiator**: Port sequencer arpeggiator from NoteTwist reference.
+- **Track View**: New view mode showing all 8 tracks simultaneously.
+
+## Background running (Phase 4 — confirmed working on hardware)
+
+- **Hide (Shift+Back)**: `host_hide_module()` → `hideToolOvertake()`. DSP stays alive, MIDI keeps playing. Returns to Tools menu. `overtakeModuleLoaded` stays true, `toolHiddenFile="_hidden_"`, `toolHiddenModulePath` set.
+- **Re-entry**: select SEQ8 from Tools menu → `startInteractiveTool()` detects `dspAlreadyLoaded=true` → reconnect branch: **no `overtake_dsp:load`**, only JS reloaded. Brief loading screen on re-entry is expected and correct — JS-only reload, DSP and MIDI are uninterrupted.
+- **Hard exit** (DSP destroyed): only if another tool loads while SEQ8 is hidden (replaces `overtakeModuleLoaded`). Cold boot falls through to Option C state file recovery.
+- **Cold boot recovery (Option C)**: `create_instance` reads `/data/UserData/schwung/seq8-state.json` to restore clips, active_clip. File written on every step change, transport change, launch_clip/scene, and destroy_instance.
+- **Power button behavior**: hide SEQ8 first (Shift+Back), then power down from the Move UI. The power button sends a D-Bus signal (not MIDI); JS cannot intercept it.
 
 ## Phase 0 findings
 
@@ -53,6 +67,11 @@ Phase 0 complete — scaffold, MIDI buffer stress test, and button logging.
 - **Power button is not MIDI**: Move's power button sends a D-Bus signal to the Schwung shim — not a MIDI CC. The shim detects it, shows "Press wheel to shut down" on screen, and waits for the encoder push (MoveMainButton = note 3) to confirm. There is no power button CC to filter in `onMidiMessageInternal`.
 - **suspend_overtake**: The shim's `suspend_overtake` is called during shutdown to halt the DSP cleanly. If the audio render thread is blocked (e.g., on SPI I/O), `suspend_overtake` deadlocks. This was the mechanism behind the persistent power button failure in Phase 4 testing.
 - **`midi_send_external` in `send_panic`**: 128 notes × 4 channels = 512 SPI writes fired synchronously on Stop/Panic. Caused ~1 second audio glitch. Removed — panic now uses `midi_send_internal` only.
+- **Interactive tool reconnect path**: `component_type: "tool"` with `tool_config: { interactive: true, skip_file_browser: true }` enables `startInteractiveTool()` → `dspAlreadyLoaded` check → reconnect branch (no `overtake_dsp:load`, JS-only reload). Both waveform-editor and song-mode confirm tools can have `api_version: 2` + `dsp.so`.
+- **`hideToolOvertake()` vs `suspendOvertakeMode()`**: both keep DSP alive. Tool path (`hideToolOvertake`) additionally sets `toolHiddenFile`/`toolHiddenModulePath` so `startInteractiveTool` can detect the hidden session on re-entry. Standard overtake suspend has no equivalent re-entry detection.
+- **No direct hardware gesture for tool re-entry**: `JUMP_TO_OVERTAKE` (Shift+Vol+Back) always calls `enterOvertakeMenu()` when not in module view — goes to the Overtake module menu, not Tools menu. SEQ8 as a tool re-enters via Tools menu → select SEQ8 → instant reconnect.
+- **JS state reset on re-entry**: `shadow_load_ui_module()` re-evaluates the entire `ui.js` file on every re-entry, resetting all module-level variables. `init()` calls `host_module_get_param` to recover all DSP state (1024 step reads + transport/track state).
+- **`shadow_set_suspend_overtake` accessible from module code**: confirmed — all overtake/tool modules share the same QuickJS globalThis as shadow_ui.js. Native C globals registered in the runtime are accessible from module code.
 
 ## MIDI routing reference (overtake api_version 2 + DSP)
 

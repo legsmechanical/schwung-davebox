@@ -6,7 +6,11 @@
     "api_version": 2,
     "ui": "ui.js",
     "dsp": "dsp.so",
-    "component_type": "overtake",
+    "component_type": "tool",
+    "tool_config": {
+        "interactive": true,
+        "skip_file_browser": true
+    },
     "capabilities": {
         "midi_in": true,
         "midi_out": true,
