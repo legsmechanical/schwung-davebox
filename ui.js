@@ -255,18 +255,23 @@ function updateTrackLEDs() {
                                : LED_OFF);
         setLED(TRACK_PAD_BASE + 8 + t, LED_OFF);
     }
-    /* Track buttons CC40-43: mirror active track's column in Session View.
-     * CC40=bottom button → row 3, CC43=top button → row 0 (same inversion). */
+    /* Track buttons CC40-43: show clips of active track in current scene group.
+     * CC40=bottom button → row 3, CC43=top button → row 0 (same inversion).
+     * Active+playing → pulsing bright. Active+stopped → solid bright.
+     * Queued → pulsing bright. Has content → dim. Empty → DarkGrey. */
     for (let idx = 0; idx < 4; idx++) {
         const row      = 3 - idx;
         const sceneIdx = sceneGroup * 4 + row;
         const t        = activeTrack;
         const hasContent = clipHasContent(t, sceneIdx);
-        const isPlaying  = hasContent && playing && trackActiveClip[t] === sceneIdx;
+        const isActive   = trackActiveClip[t] === sceneIdx;
+        const isPlaying  = isActive && playing && hasContent;
         const isQueued   = hasContent && trackQueuedClip[t] === sceneIdx;
         let color;
-        if (isQueued || isPlaying) {
+        if (isPlaying || isQueued) {
             color = pulseUseBright ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
+        } else if (isActive && hasContent) {
+            color = TRACK_COLORS[t];
         } else if (hasContent) {
             color = TRACK_DIM_COLORS[t];
         } else {
@@ -282,7 +287,7 @@ function drawUI() {
         const base = sceneGroup * 4;
         print(4, 10, 'SESSION  GRP ' + (sceneGroup + 1), 1);
         print(4, 22, SCENE_LETTERS[base] + '-' + SCENE_LETTERS[base + 3] + '  ROWS 1-4', 1);
-        print(4, 34, 'T1 T2 T3 T4 T5 T6 T7 T8', 1);
+        print(4, 34, '1 2 3 4 5 6 7 8', 1);
         let line4 = '';
         for (let t = 0; t < NUM_TRACKS; t++) {
             line4 += SCENE_LETTERS[trackActiveClip[t]];
