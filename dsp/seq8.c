@@ -9,6 +9,7 @@
  *   tN_cM_length     — clip length (1..16)
  *   tN_launch_clip   — queue clip M on track N
  *   launch_scene     — queue clip M on all tracks
+ *   tN_route         — "schwung" (Schwung chains) or "move" (native Move tracks)
  *   tN_<pfx_key>     — play effects (same as Phase 3)
  *
  * GLIBC SAFE: no C23 calls, no complex static initializers,
@@ -19,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <dlfcn.h>
 
 #include "host/plugin_api_v1.h"
 
@@ -31,6 +33,10 @@
 
 #define NUM_TRACKS          4
 #define NUM_CLIPS           16
+
+/* MIDI routing: where track output is delivered */
+#define ROUTE_SCHWUNG  0   /* host->midi_send_internal  → Schwung synth chains */
+#define ROUTE_MOVE     1   /* g_midi_inject_to_move()   → native Move tracks   */
 
 /* Sequencer engine */
 #define BPM_DEFAULT         140
@@ -57,6 +63,13 @@
 static const int CLOCK_VALUES[NUM_CLOCK_VALUES] = {
     0, 30, 60, 80, 120, 160, 240, 320, 480, 960, 1920
 };
+
+/* ------------------------------------------------------------------ */
+/* Runtime function lookup for ROUTE_MOVE                              */
+/* ------------------------------------------------------------------ */
+
+typedef int (*move_midi_inject_fn)(const uint8_t *msg, int len);
+static move_midi_inject_fn g_midi_inject_to_move = NULL;
 
 /* ------------------------------------------------------------------ */
 /* Play effects structs (direct port from NoteTwist)                   */
@@ -113,6 +126,8 @@ typedef struct {
     pfx_event_t  events[MAX_PFX_EVENTS];
     int          event_count;
     pfx_active_t active_notes[128];
+    /* Routing */
+    uint8_t      route;     /* ROUTE_SCHWUNG or ROUTE_MOVE */
 } play_fx_t;
 
 /* ------------------------------------------------------------------ */
@@ -266,16 +281,21 @@ static void seq8_load_state(seq8_instance_t *inst) {
 /* MIDI output helpers                                                  */
 /* ------------------------------------------------------------------ */
 
-/* Send 3-byte MIDI message via midi_send_internal (Schwung chain).
- * NOTE: midi_send_external MUST NOT be called from this path. pfx_send is
+/* Send 3-byte MIDI message through the track's configured route.
+ * ROUTE_SCHWUNG → host->midi_send_internal  (Schwung synth chains)
+ * ROUTE_MOVE    → g_midi_inject_to_move()   (native Move tracks)
+ *
+ * CRITICAL: never call midi_send_external from this path. pfx_send is
  * invoked from render_block (audio thread). midi_send_external routes via
- * SPI hardware — blocking I/O in the render path causes audio cracking.
- * External MIDI monitoring requires a deferred queue flushed outside the
- * render callback. See Phase 5. */
-static void pfx_send(uint8_t status, uint8_t d1, uint8_t d2) {
-    if (!g_host || !g_host->midi_send_internal) return;
+ * SPI hardware — blocking I/O in the render path causes audio cracking. */
+static void pfx_send(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
     const uint8_t msg[4] = { (uint8_t)(status >> 4), status, d1, d2 };
-    g_host->midi_send_internal(msg, 4);
+    if (fx->route == ROUTE_MOVE && g_midi_inject_to_move) {
+        g_midi_inject_to_move(msg, 4);
+    } else {
+        if (!g_host || !g_host->midi_send_internal) return;
+        g_host->midi_send_internal(msg, 4);
+    }
 }
 
 /* Brute-force note-off for all 128 notes on all active channels.
@@ -340,7 +360,7 @@ static void pfx_q_insert(play_fx_t *fx, uint64_t fire_at,
 static void pfx_q_fire(play_fx_t *fx, uint64_t now) {
     int f = 0;
     while (f < fx->event_count && fx->events[f].fire_at <= now) {
-        pfx_send(fx->events[f].msg[0], fx->events[f].msg[1], fx->events[f].msg[2]);
+        pfx_send(fx, fx->events[f].msg[0], fx->events[f].msg[1], fx->events[f].msg[2]);
         f++;
     }
     if (f > 0) {
@@ -479,7 +499,7 @@ static void pfx_reset(play_fx_t *fx) {
 }
 
 /* Process a note-on through the chain. Sends immediate output via
- * midi_send_internal; queues unison stagger copies and delay repeats. */
+ * pfx_send; queues unison stagger copies and delay repeats. */
 static void pfx_note_on(seq8_instance_t *inst, seq8_track_t *tr,
                         uint8_t orig_note, uint8_t vel) {
     play_fx_t   *fx  = &tr->pfx;
@@ -497,7 +517,7 @@ static void pfx_note_on(seq8_instance_t *inst, seq8_track_t *tr,
         uint8_t off_s = (uint8_t)(0x80 | an->channel);
         int i;
         for (i = 0; i < an->gen_count; i++)
-            pfx_send(off_s, an->gen_notes[i], 0);
+            pfx_send(fx, off_s, an->gen_notes[i], 0);
     }
 
     /* Store active-note record. */
@@ -516,7 +536,7 @@ static void pfx_note_on(seq8_instance_t *inst, seq8_track_t *tr,
     /* Immediate note-ons. */
     int i;
     for (i = 0; i < gc; i++)
-        pfx_send(on_s, gen[i], (uint8_t)v);
+        pfx_send(fx, on_s, gen[i], (uint8_t)v);
 
     /* Unison stagger copies (queued). */
     int c;
@@ -554,7 +574,7 @@ static void pfx_note_off(seq8_instance_t *inst, seq8_track_t *tr,
     int i;
     for (i = 0; i < an->gen_count; i++) {
         if (off_time <= now)
-            pfx_send(off_s, an->gen_notes[i], 0);
+            pfx_send(fx, off_s, an->gen_notes[i], 0);
         else
             pfx_q_insert(fx, off_time, off_s, an->gen_notes[i], 0);
     }
@@ -571,6 +591,7 @@ static void pfx_init_defaults(play_fx_t *fx) {
     pfx_reset(fx);                     /* explicit zero of all stages */
     fx->cached_bpm = (double)BPM_DEFAULT;
     fx->rng        = 12345;
+    fx->route      = ROUTE_SCHWUNG;    /* default: Schwung chains */
 }
 
 static void clip_init(clip_t *cl) {
@@ -601,6 +622,8 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
         for (c = 0; c < NUM_CLIPS; c++)
             clip_init(&inst->tracks[t].clips[c]);
         pfx_init_defaults(&inst->tracks[t].pfx);
+        /* Tracks 0-3 default to ROUTE_SCHWUNG; tracks 4-7 (Phase 5) will
+         * default to ROUTE_MOVE. pfx_init_defaults already sets ROUTE_SCHWUNG. */
     }
 
     inst->tick_threshold = (uint32_t)(inst->sample_rate * 60.0f);
@@ -806,6 +829,15 @@ static void set_param(void *instance, const char *key, const char *val) {
             return;
         }
 
+        /* tN_route: set MIDI routing for this track */
+        if (!strcmp(sub, "route")) {
+            if (!strcmp(val, "schwung"))
+                tr->pfx.route = ROUTE_SCHWUNG;
+            else if (!strcmp(val, "move"))
+                tr->pfx.route = ROUTE_MOVE;
+            return;
+        }
+
         /* tN_cM_step_S or tN_cM_length: clip data */
         if (sub[0] == 'c' && sub[1] >= '0' && sub[1] <= '9') {
             int cidx = 0;
@@ -844,6 +876,10 @@ static void set_param(void *instance, const char *key, const char *val) {
 
 static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
     play_fx_t *fx = &tr->pfx;
+
+    if (!strcmp(key, "route"))
+        return snprintf(out, out_len, "%s",
+                        fx->route == ROUTE_MOVE ? "move" : "schwung");
 
     if (!strcmp(key, "noteFX_octave"))    return snprintf(out, out_len, "%d", fx->octave_shift);
     if (!strcmp(key, "noteFX_offset"))    return snprintf(out, out_len, "%d", fx->note_offset);
@@ -1020,5 +1056,10 @@ static plugin_api_v2_t g_api = {
 
 plugin_api_v2_t *move_plugin_init_v2(const host_api_v1_t *host) {
     g_host = host;
+    /* Look up move_midi_inject_to_move in the host process (shim exports it
+     * as a global symbol). Used by ROUTE_MOVE tracks to send to native Move
+     * chains. NULL if not available — pfx_send falls back to midi_send_internal. */
+    g_midi_inject_to_move = (move_midi_inject_fn)
+        dlsym(RTLD_DEFAULT, "move_midi_inject_to_move");
     return &g_api;
 }

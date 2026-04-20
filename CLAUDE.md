@@ -75,10 +75,21 @@ Phase 0 complete — scaffold, MIDI buffer stress test, and button logging.
 
 ## MIDI routing reference (overtake api_version 2 + DSP)
 
-- **`host->midi_send_internal`**: Routes to the active chain's Schwung sound generator. **Confirmed correct** for sequencer note output in overtake api_version 2 + DSP mode. Implemented as `overtake_midi_send_internal` in the shim.
+### C DSP routing
+
+SEQ8 uses two routing destinations, selected per-track via `tN_route` param (`"schwung"` or `"move"`):
+
+- **`ROUTE_SCHWUNG` (default, tracks 0–3)**: `host->midi_send_internal` → Schwung synth chains. These are the chains attached to the active scene in Ableton Move. Confirmed correct for sequencer output.
+- **`ROUTE_MOVE` (planned for tracks 4–7)**: `move_midi_inject_to_move()` → native Move tracks (the Move's own internal tracks, separate internal bus from Schwung chains, no channel collision). Looked up at init time via `dlsym(RTLD_DEFAULT, "move_midi_inject_to_move")` — `NULL` if not available, `pfx_send` falls back to `midi_send_internal`.
+
+These are **separate internal buses** — Schwung chains and native Move tracks do not share MIDI channels. No collision risk when routing tracks to different buses.
+
 - **`host->midi_send_external`**: Sends to **USB-A** via SPI hardware (`spi_fd`, `hw_mmap` in shim log). Does **not** appear on USB-C — USB-C is Move's host/charging port (connects to Ableton Live), not a MIDI output. External MIDI hardware connects via USB-A only.
-  - **CRITICAL — never call from the render path, under any circumstances.** SPI I/O is blocking. Calling `midi_send_external` inside `render_block`, or in any function invoked from `render_block` (including `pfx_send`), causes audio cracking and can deadlock `suspend_overtake` on shutdown. Confirmed in Phase 4 testing. Any external MIDI monitoring must use a deferred queue flushed from outside the render callback. See Phase 5.
-- **`shadow_send_midi_to_dsp([status, d1, d2])`**: JS global that routes 3-byte MIDI to the Schwung DSP chain's sound generator. Used by pure-JS overtake modules (e.g. `control`, api_version 1, no DSP). In api_version 2 + DSP, use `host->midi_send_internal` from C instead — it is the equivalent and confirmed working.
+  - **CRITICAL — never call from the render path, under any circumstances.** SPI I/O is blocking. Calling `midi_send_external` inside `render_block`, or in any function invoked from `render_block` (including `pfx_send`), causes audio cracking and can deadlock `suspend_overtake` on shutdown. Confirmed in Phase 4 testing. Any external MIDI monitoring must use a deferred queue flushed from outside the render callback.
+
+### JS routing
+
+- **`shadow_send_midi_to_dsp([status, d1, d2])`**: JS global for Schwung DSP chain's sound generator. Used by pure-JS overtake modules (api_version 1, no DSP). In api_version 2 + DSP, use `host->midi_send_internal` from C instead.
 - **`move_midi_internal_send([cable|CIN, status, d1, d2])`**: JS global for Move hardware MIDI (LEDs, button lights) — NOT for instrument notes.
 - **`move_midi_external_send([cable|CIN, status, d1, d2])`**: JS global for USB-A external MIDI.
 

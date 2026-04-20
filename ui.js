@@ -50,10 +50,10 @@ const SCENE_LETTERS = 'ABCDEFGHIJKLMNOP';
  *   Top row (nearest display):    notes 92-99 */
 const TRACK_PAD_BASE = 68;
 
-let ledInitQueue   = [];
-let ledInitIndex   = 0;
-let ledInitPending = false;
-let shiftHeld      = false;
+let ledInitQueue    = [];
+let ledInitIndex    = 0;
+let ledInitComplete = false;  /* false until init queue fully flushed; tick() blocks normal render */
+let shiftHeld       = false;
 
 /* clipSteps[track][clip][step] — JS-authoritative mirror of DSP step data */
 let clipSteps        = Array.from({length: NUM_TRACKS}, () =>
@@ -72,6 +72,20 @@ function clipHasContent(t, c) {
     const s = clipSteps[t][c];
     for (let i = 0; i < 16; i++) if (s[i]) return true;
     return false;
+}
+
+/* Synchronously zero every LED that SEQ8 owns — call before host_hide_module()
+ * so the native Move UI inherits a clean LED state. */
+function clearAllLEDs() {
+    let n, c;
+    for (n = 68; n <= 99; n++) setLED(n, LED_OFF);       /* 32 pads */
+    for (n = 16; n <= 31; n++) setLED(n, LED_OFF);       /* 16 step buttons */
+    for (c = 16; c <= 31; c++) setButtonLED(c, LED_OFF); /* step button LEDs */
+    for (c = 40; c <= 43; c++) setButtonLED(c, LED_OFF); /* track buttons */
+    for (const cc of [49, 50, 51, 52, 54, 55, 56, 58, 60, 62, 63])
+        setButtonLED(cc, LED_OFF);
+    for (c = 71; c <= 78; c++) setButtonLED(c, LED_OFF);
+    for (const cc of [85, 86, 88, 118, 119]) setButtonLED(cc, LED_OFF);
 }
 
 function buildLedInitQueue() {
@@ -96,7 +110,7 @@ function drainLedInit() {
         else setLED(led.id, LED_OFF);
     }
     ledInitIndex = end;
-    if (ledInitIndex >= ledInitQueue.length) ledInitPending = false;
+    if (ledInitIndex >= ledInitQueue.length) ledInitComplete = true;
 }
 
 function pollDSP() {
@@ -116,7 +130,7 @@ function pollDSP() {
 }
 
 function updateStepLEDs() {
-    if (ledInitPending) return;
+    if (!ledInitComplete) return;
     const ac    = trackActiveClip[activeTrack];
     const steps = clipSteps[activeTrack][ac];
     const cs    = trackCurrentStep[activeTrack];
@@ -134,7 +148,7 @@ function updateStepLEDs() {
 }
 
 function updateSessionLEDs() {
-    if (ledInitPending) return;
+    if (!ledInitComplete) return;
     for (let row = 0; row < 4; row++) {
         const sceneIdx = sceneGroup * 4 + row;
         for (let t = 0; t < NUM_TRACKS; t++) {
@@ -163,7 +177,7 @@ function updateSessionLEDs() {
 }
 
 function updateTrackLEDs() {
-    if (ledInitPending) return;
+    if (!ledInitComplete) return;
     /* Bottom pad row: highlight active track */
     for (let t = 0; t < NUM_TRACKS; t++) {
         setLED(TRACK_PAD_BASE + t, t === activeTrack ? TRACK_COLORS[t] : LED_OFF);
@@ -260,9 +274,10 @@ globalThis.init = function () {
         }
     }
 
-    ledInitQueue   = buildLedInitQueue();
-    ledInitIndex   = 0;
-    ledInitPending = true;
+    /* Block normal tick() rendering until the init queue is fully flushed. */
+    ledInitComplete = false;
+    ledInitQueue    = buildLedInitQueue();
+    ledInitIndex    = 0;
 };
 
 globalThis.tick = function () {
@@ -273,7 +288,7 @@ globalThis.tick = function () {
     const phase = Math.floor(pulseStep * 4 / PULSE_PERIOD);
     pulseUseBright = (phase === 1 || phase === 2);
 
-    if (ledInitPending) {
+    if (!ledInitComplete) {
         drainLedInit();
     } else {
         pollDSP();
@@ -313,7 +328,8 @@ globalThis.onMidiMessageInternal = function (data) {
             }
         }
 
-        /* Shift+Back = hide: DSP stays alive, MIDI keeps playing.
+        /* Shift+Back = hide: clear all LEDs first so the native Move UI inherits
+         * a clean state, then hide. DSP stays alive, MIDI keeps playing.
          * host_hide_module() → hideToolOvertake() (tool path):
          *   - does NOT send overtake_dsp:unload
          *   - keeps overtakeModuleLoaded=true and toolHiddenModulePath set
@@ -321,6 +337,7 @@ globalThis.onMidiMessageInternal = function (data) {
          * Re-entry via Tools menu → startInteractiveTool() detects dspAlreadyLoaded,
          * reconnects without overtake_dsp:load, reloads JS only, calls init(). */
         if (d1 === MoveBack && d2 === 127 && shiftHeld) {
+            clearAllLEDs();
             if (typeof host_hide_module === 'function') {
                 host_hide_module();
             }
