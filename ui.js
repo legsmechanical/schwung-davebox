@@ -229,11 +229,14 @@ function updateSessionLEDs() {
                 continue;
             }
             const hasContent = clipHasContent(t, sceneIdx);
-            const isPlaying  = hasContent && playing && trackActiveClip[t] === sceneIdx;
+            const isActive   = trackActiveClip[t] === sceneIdx;
+            const isPlaying  = isActive && playing && hasContent;
             const isQueued   = hasContent && trackQueuedClip[t] === sceneIdx;
             let color;
-            if (isQueued || isPlaying) {
+            if (isPlaying || isQueued) {
                 color = pulseUseBright ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
+            } else if (isActive && hasContent) {
+                color = TRACK_COLORS[t];
             } else if (hasContent) {
                 color = TRACK_DIM_COLORS[t];
             } else {
