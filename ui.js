@@ -38,6 +38,16 @@ const NUM_TRACKS      = 4;
 const NUM_CLIPS       = 16;
 const PULSE_PERIOD    = 24;   /* ticks per dim→bright→dim cycle */
 
+/* shim ui_flags bits that must be masked while SEQ8 owns the display.
+ * JUMP_TO_TOOLS (0x80) and JUMP_TO_OVERTAKE (0x04) both bypass our normal
+ * exit path (no clearAllLEDs, no host_hide_module), leaving hardware LEDs
+ * in a dirty state that corrupts the native Move UI. We wrap
+ * shadow_get_ui_flags() to intercept these flags, fire clearAllLEDs()
+ * immediately, and swallow them so shadow_ui.js never opens either menu. */
+const FLAG_JUMP_TO_OVERTAKE = 0x04;
+const FLAG_JUMP_TO_TOOLS    = 0x80;
+const SEQ8_NAV_FLAGS        = FLAG_JUMP_TO_OVERTAKE | FLAG_JUMP_TO_TOOLS;
+
 /* Track colors: bright and dim pairs (Move uses fixed palette indices, not brightness) */
 const TRACK_COLORS     = [Red,    Blue,     VividYellow, Green];
 const TRACK_DIM_COLORS = [DeepRed, DarkBlue, Mustard,    DeepGreen];
@@ -86,6 +96,47 @@ function clearAllLEDs() {
         setButtonLED(cc, LED_OFF);
     for (c = 71; c <= 78; c++) setButtonLED(c, LED_OFF);
     for (const cc of [85, 86, 88, 118, 119]) setButtonLED(cc, LED_OFF);
+}
+
+/* Install a wrapper around shadow_get_ui_flags that masks navigation flags
+ * which would silently tear us down without clearAllLEDs().
+ *
+ * The wrapper stores its own original reference as a property so re-installs
+ * (reconnect path where module vars are re-evaluated) detect the existing
+ * wrapper and re-enable it instead of double-wrapping.
+ *
+ * On Shift+Back, removeFlagsWrap() restores the original before we hide so
+ * native UI always gets the real function back. */
+function installFlagsWrap() {
+    if (typeof shadow_get_ui_flags !== 'function') return;
+    /* Reconnect: prior wrapper already on globalThis — just re-enable it. */
+    if (globalThis.shadow_get_ui_flags._seq8) {
+        globalThis.shadow_get_ui_flags._active = true;
+        return;
+    }
+    const orig = globalThis.shadow_get_ui_flags;
+    const wrap = function () {
+        const f = orig();
+        const hit = f & SEQ8_NAV_FLAGS;
+        if (hit && wrap._active) {
+            clearAllLEDs();
+            if (typeof shadow_clear_ui_flags === 'function') shadow_clear_ui_flags(hit);
+            return f & ~SEQ8_NAV_FLAGS;
+        }
+        return f;
+    };
+    wrap._seq8   = true;
+    wrap._orig   = orig;
+    wrap._active = true;
+    globalThis.shadow_get_ui_flags = wrap;
+}
+
+function removeFlagsWrap() {
+    const cur = globalThis.shadow_get_ui_flags;
+    if (typeof cur === 'function' && cur._seq8) {
+        cur._active = false;
+        globalThis.shadow_get_ui_flags = cur._orig;
+    }
 }
 
 function buildLedInitQueue() {
@@ -278,6 +329,9 @@ globalThis.init = function () {
     ledInitComplete = false;
     ledInitQueue    = buildLedInitQueue();
     ledInitIndex    = 0;
+
+    /* Intercept navigation flags that bypass our normal exit path. */
+    installFlagsWrap();
 };
 
 globalThis.tick = function () {
@@ -337,6 +391,7 @@ globalThis.onMidiMessageInternal = function (data) {
          * Re-entry via Tools menu → startInteractiveTool() detects dspAlreadyLoaded,
          * reconnects without overtake_dsp:load, reloads JS only, calls init(). */
         if (d1 === MoveBack && d2 === 127 && shiftHeld) {
+            removeFlagsWrap();
             clearAllLEDs();
             if (typeof host_hide_module === 'function') {
                 host_hide_module();
