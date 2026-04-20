@@ -29,7 +29,7 @@ import {
     BurntOrange,
     White,
     Lime,
-    Olive
+    VeryDarkGreen
 } from '/data/UserData/schwung/shared/constants.mjs';
 
 import {
@@ -67,7 +67,7 @@ const NUM_STEPS       = 256;  /* steps per clip (DSP array size) */
 const TRACK_COLORS     = [Red,    Blue,     VividYellow, Green,
                            HotMagenta, Cyan,      Bright,   Lime];
 const TRACK_DIM_COLORS = [DeepRed, DarkBlue, Mustard,    DeepGreen,
-                           DeepMagenta, PurpleBlue, BurntOrange, Olive];
+                           DeepMagenta, PurpleBlue, BurntOrange, VeryDarkGreen];
 const SCENE_LETTERS = 'ABCDEFGHIJKLMNOP';
 
 /* Move pad rows (confirmed on hardware, bottom-to-top):
