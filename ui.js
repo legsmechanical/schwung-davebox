@@ -438,11 +438,13 @@ globalThis.onMidiMessageInternal = function (data) {
         }
 
         /* Left/Right: page nav in Note View; no-op in Session View */
-        if (d1 === MoveLeft && d2 === 127 && !sessionView) {
-            if (trackCurrentPage[activeTrack] > 0) trackCurrentPage[activeTrack]--;
-        }
-        if (d1 === MoveRight && d2 === 127 && !sessionView) {
-            if (trackCurrentPage[activeTrack] < 15) trackCurrentPage[activeTrack]++;
+        if ((d1 === MoveLeft || d1 === MoveRight) && d2 === 127 && !sessionView) {
+            const ac         = trackActiveClip[activeTrack];
+            const totalPages = Math.max(1, Math.ceil(clipLength[activeTrack][ac] / 16));
+            if (d1 === MoveLeft)
+                trackCurrentPage[activeTrack] = Math.max(0, trackCurrentPage[activeTrack] - 1);
+            else
+                trackCurrentPage[activeTrack] = Math.min(totalPages - 1, trackCurrentPage[activeTrack] + 1);
         }
 
         /* Up/Down: scene group nav in Session View */
