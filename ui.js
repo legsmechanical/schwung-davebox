@@ -281,27 +281,38 @@ function updateTrackLEDs() {
                                : LED_OFF);
         setLED(TRACK_PAD_BASE + 8 + t, LED_OFF);
     }
-    /* Track buttons CC40-43: show clips of active track in current scene group.
-     * CC40=bottom button → row 3, CC43=top button → row 0 (same inversion).
-     * Active+playing → pulsing bright. Active+stopped → solid bright.
-     * Queued → pulsing bright. Has content → dim. Empty → DarkGrey. */
+    /* Track buttons CC40-43: one per visible scene row (CC40=row3, CC43=row0).
+     * If ALL tracks are playing from a visible row → bright white for that button.
+     * Otherwise → normal clip state for the active track's column. */
     for (let idx = 0; idx < 4; idx++) {
         const row      = 3 - idx;
         const sceneIdx = sceneGroup * 4 + row;
-        const t        = activeTrack;
-        const hasContent = clipHasContent(t, sceneIdx);
-        const isActive   = trackActiveClip[t] === sceneIdx;
-        const isPlaying  = isActive && playing && hasContent;
-        const isQueued   = hasContent && trackQueuedClip[t] === sceneIdx;
+
+        let allPlaying = playing;
+        if (allPlaying) {
+            for (let t = 0; t < NUM_TRACKS; t++) {
+                if (trackActiveClip[t] !== sceneIdx) { allPlaying = false; break; }
+            }
+        }
+
         let color;
-        if (isPlaying || isQueued) {
-            color = pulseUseBright ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
-        } else if (isActive && hasContent) {
-            color = TRACK_COLORS[t];
-        } else if (hasContent) {
-            color = TRACK_DIM_COLORS[t];
+        if (allPlaying) {
+            color = White;
         } else {
-            color = DarkGrey;
+            const t          = activeTrack;
+            const hasContent = clipHasContent(t, sceneIdx);
+            const isActive   = trackActiveClip[t] === sceneIdx;
+            const isPlaying  = isActive && playing && hasContent;
+            const isQueued   = hasContent && trackQueuedClip[t] === sceneIdx;
+            if (isPlaying || isQueued) {
+                color = pulseUseBright ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
+            } else if (isActive && hasContent) {
+                color = TRACK_COLORS[t];
+            } else if (hasContent) {
+                color = TRACK_DIM_COLORS[t];
+            } else {
+                color = DarkGrey;
+            }
         }
         setButtonLED(40 + idx, color);
     }
