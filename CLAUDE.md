@@ -23,6 +23,10 @@ Phase 0 complete — scaffold, MIDI buffer stress test, and button logging.
 - **Arpeggiator**: Port sequencer arpeggiator from NoteTwist reference.
 - **Track View**: New view mode showing all 8 tracks simultaneously.
 
+## Known limitations
+
+- **Do not load SEQ8 from within SEQ8** — selecting SEQ8 from the Tools menu while already inside SEQ8 causes LED corruption. The Tools menu button sets `SHADOW_UI_FLAG_JUMP_TO_TOOLS` (0x80) via the shim's ui_flags bitmask; shadow_ui.js polls this with `shadow_get_ui_flags()` and calls `enterToolsMenu()` directly. `onMidiMessageInternal` is never called — there is no MIDI event to intercept. Workaround: hide first (Shift+Back), then re-enter from the Tools menu.
+
 ## Background running (Phase 4 — confirmed working on hardware)
 
 - **Hide (Shift+Back)**: `host_hide_module()` → `hideToolOvertake()`. DSP stays alive, MIDI keeps playing. Returns to Tools menu. `overtakeModuleLoaded` stays true, `toolHiddenFile="_hidden_"`, `toolHiddenModulePath` set.
