@@ -45,7 +45,7 @@ const LED_STEP_CURSOR = 127;
 const LEDS_PER_FRAME  = 8;
 const NUM_TRACKS      = 8;
 const NUM_CLIPS       = 16;
-const PULSE_PERIOD    = 24;   /* ticks per dim→bright→dim cycle */
+const PULSE_PERIOD    = 12;   /* ticks per dim→bright→dim cycle (halved for 8-track LED load) */
 
 /* shim ui_flags bits that must be masked while SEQ8 owns the display.
  * JUMP_TO_TOOLS (0x80) and JUMP_TO_OVERTAKE (0x04) both bypass our normal
