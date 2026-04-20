@@ -1,15 +1,15 @@
 /*
  * SEQ8 — RS7000-inspired 8-track MIDI sequencer for Ableton Move.
- * Phase 4: clip data model + Session View. Each track has 16 clips (scenes
- *          A-P). Clips launch on bar boundary (legato). Scene launch queues
- *          a clip on all 4 tracks simultaneously.
+ * Phase 5: 8 tracks, 256 steps per clip. Tracks 0-3 route to Schwung chains,
+ *          tracks 4-7 route to native Move tracks via ROUTE_MOVE.
  *
  * Param namespace:
- *   tN_cM_step_S     — track N, clip M, step S on/off
- *   tN_cM_length     — clip length (1..16)
+ *   tN_cM_step_S     — track N, clip M, step S on/off (S: 0..255)
+ *   tN_cM_steps      — bulk get: 256-char '0'/'1' string for all steps
+ *   tN_cM_length     — clip length (1..256)
  *   tN_launch_clip   — queue clip M on track N
  *   launch_scene     — queue clip M on all tracks
- *   tN_route         — "schwung" (Schwung chains) or "move" (native Move tracks)
+ *   tN_route         — "schwung" or "move"
  *   tN_<pfx_key>     — play effects (same as Phase 3)
  *
  * GLIBC SAFE: no C23 calls, no complex static initializers,
@@ -31,7 +31,7 @@
 #define SEQ8_LOG_PATH      "/data/UserData/schwung/seq8.log"
 #define SEQ8_STATE_PATH    "/data/UserData/schwung/seq8-state.json"
 
-#define NUM_TRACKS          4
+#define NUM_TRACKS          8
 #define NUM_CLIPS           16
 
 /* MIDI routing: where track output is delivered */
@@ -43,7 +43,8 @@
 #define PPQN                96
 #define TICKS_PER_STEP      24
 #define GATE_TICKS          12
-#define SEQ_STEPS           16
+#define SEQ_STEPS           256   /* max steps per clip (array size) */
+#define SEQ_STEPS_DEFAULT   16    /* default clip length on init     */
 #define SEQ_NOTE            60
 #define SEQ_VEL             100
 
@@ -135,11 +136,11 @@ typedef struct {
 /* ------------------------------------------------------------------ */
 
 typedef struct {
-    uint8_t steps[SEQ_STEPS];     /* 0=off, 1=on */
-    uint8_t step_note[SEQ_STEPS]; /* default SEQ_NOTE */
-    uint8_t step_vel[SEQ_STEPS];  /* default SEQ_VEL */
-    uint8_t length;               /* 1..16, default 16 */
-    uint8_t active;               /* 1 if any step is on */
+    uint8_t  steps[SEQ_STEPS];     /* 0=off, 1=on */
+    uint8_t  step_note[SEQ_STEPS]; /* default SEQ_NOTE */
+    uint8_t  step_vel[SEQ_STEPS];  /* default SEQ_VEL */
+    uint16_t length;               /* 1..256, default 16 */
+    uint8_t  active;               /* 1 if any step is on */
 } clip_t;
 
 typedef struct {
@@ -147,7 +148,7 @@ typedef struct {
     clip_t    clips[NUM_CLIPS];
     uint8_t   active_clip;          /* clip currently playing */
     int8_t    queued_clip;          /* next clip (-1 = none) */
-    uint8_t   current_step;
+    uint16_t  current_step;
     uint8_t   note_active;
     uint8_t   pending_note;         /* orig note key used for active note-on */
     play_fx_t pfx;
@@ -243,6 +244,8 @@ static void seq8_save_state(seq8_instance_t *inst) {
             for (s = 0; s < SEQ_STEPS; s++)
                 fputc(inst->tracks[t].clips[c].steps[s] ? '1' : '0', fp);
             fputc('"', fp);
+            fprintf(fp, ",\"t%dc%d_len\":%d", t, c,
+                    (int)inst->tracks[t].clips[c].length);
         }
     }
     fprintf(fp, "}");
@@ -252,15 +255,20 @@ static void seq8_save_state(seq8_instance_t *inst) {
 static void seq8_load_state(seq8_instance_t *inst) {
     FILE *fp = fopen(SEQ8_STATE_PATH, "r");
     if (!fp) return;
-    char buf[4096];
-    size_t n = fread(buf, 1, sizeof(buf) - 1, fp);
+    fseek(fp, 0, SEEK_END);
+    long fsz = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    if (fsz <= 0) { fclose(fp); return; }
+    char *buf = (char *)malloc((size_t)fsz + 1);
+    if (!buf) { fclose(fp); return; }
+    size_t n = fread(buf, 1, (size_t)fsz, fp);
     fclose(fp);
-    if (!n) return;
+    if (!n) { free(buf); return; }
     buf[n] = '\0';
 
     int t, c, i;
+    char key[24];
     for (t = 0; t < NUM_TRACKS; t++) {
-        char key[16];
         snprintf(key, sizeof(key), "t%d_ac", t);
         inst->tracks[t].active_clip = (uint8_t)clamp_i(
             json_get_int(buf, key, 0), 0, NUM_CLIPS - 1);
@@ -268,12 +276,18 @@ static void seq8_load_state(seq8_instance_t *inst) {
         for (c = 0; c < NUM_CLIPS; c++) {
             snprintf(key, sizeof(key), "t%dc%d", t, c);
             json_get_steps(buf, key, inst->tracks[t].clips[c].steps, SEQ_STEPS);
+
+            snprintf(key, sizeof(key), "t%dc%d_len", t, c);
+            inst->tracks[t].clips[c].length = (uint16_t)clamp_i(
+                json_get_int(buf, key, SEQ_STEPS_DEFAULT), 1, SEQ_STEPS);
+
             int any = 0;
             for (i = 0; i < SEQ_STEPS; i++)
                 if (inst->tracks[t].clips[c].steps[i]) { any = 1; break; }
             inst->tracks[t].clips[c].active = (uint8_t)any;
         }
     }
+    free(buf);
     seq8_ilog(inst, "SEQ8 state restored from file");
 }
 
@@ -299,18 +313,12 @@ static void pfx_send(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
 }
 
 /* Brute-force note-off for all 128 notes on all active channels.
- * Used instead of CC 123 because some instruments (e.g. Braids) do not
- * respond to all-notes-off. Also flushes any queued delay echo note-offs
- * that were cleared from the event queue before firing. */
-static void send_panic(void) {
-    if (!g_host || !g_host->midi_send_internal) return;
+ * Routes through pfx_send so ROUTE_MOVE tracks panic on the correct bus. */
+static void send_panic(seq8_instance_t *inst) {
     int t, n;
     for (t = 0; t < NUM_TRACKS; t++) {
-        uint8_t ch = (uint8_t)t;
-        for (n = 0; n < 128; n++) {
-            const uint8_t msg[4] = { 0x08, (uint8_t)(0x80 | ch), (uint8_t)n, 0 };
-            g_host->midi_send_internal(msg, 4);
-        }
+        for (n = 0; n < 128; n++)
+            pfx_send(&inst->tracks[t].pfx, (uint8_t)(0x80 | t), (uint8_t)n, 0);
     }
 }
 
@@ -596,7 +604,7 @@ static void pfx_init_defaults(play_fx_t *fx) {
 
 static void clip_init(clip_t *cl) {
     int s;
-    cl->length = SEQ_STEPS;
+    cl->length = SEQ_STEPS_DEFAULT;
     cl->active = 0;
     for (s = 0; s < SEQ_STEPS; s++) {
         cl->steps[s]     = 0;
@@ -622,8 +630,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
         for (c = 0; c < NUM_CLIPS; c++)
             clip_init(&inst->tracks[t].clips[c]);
         pfx_init_defaults(&inst->tracks[t].pfx);
-        /* Tracks 0-3 default to ROUTE_SCHWUNG; tracks 4-7 (Phase 5) will
-         * default to ROUTE_MOVE. pfx_init_defaults already sets ROUTE_SCHWUNG. */
+        if (t >= 4) inst->tracks[t].pfx.route = ROUTE_MOVE;
     }
 
     inst->tick_threshold = (uint32_t)(inst->sample_rate * 60.0f);
@@ -635,7 +642,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
 
     char szlog[80];
     snprintf(szlog, sizeof(szlog),
-             "SEQ8 Phase 4 init: sizeof(seq8_instance_t)=%zu",
+             "SEQ8 Phase 5 init: sizeof(seq8_instance_t)=%zu",
              sizeof(seq8_instance_t));
     seq8_ilog(inst, szlog);
     return inst;
@@ -651,7 +658,7 @@ static void destroy_instance(void *instance) {
         memset(inst->tracks[t].pfx.active_notes, 0,
                sizeof(inst->tracks[t].pfx.active_notes));
     }
-    send_panic();
+    send_panic(inst);
     seq8_ilog(inst, "SEQ8 instance destroyed");
     if (inst->log_fp) fclose(inst->log_fp);
     free(inst);
@@ -771,7 +778,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                            sizeof(inst->tracks[t].pfx.active_notes));
                 }
                 inst->playing = 0;
-                send_panic();
+                send_panic(inst);
                 seq8_ilog(inst, "SEQ8 transport: stop");
             }
         } else if (!strcmp(val, "panic")) {
@@ -784,7 +791,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                        sizeof(inst->tracks[t].pfx.active_notes));
             }
             inst->playing = 0;
-            send_panic();
+            send_panic(inst);
             seq8_ilog(inst, "SEQ8 transport: panic");
         }
         seq8_save_state(inst);
@@ -802,8 +809,8 @@ static void set_param(void *instance, const char *key, const char *val) {
         int cidx = clamp_i(my_atoi(val), 0, NUM_CLIPS - 1);
         int t;
         for (t = 0; t < NUM_TRACKS; t++) {
-            uint8_t newlen = inst->tracks[t].clips[cidx].length;
-            inst->tracks[t].current_step = (uint8_t)(inst->tracks[t].current_step % newlen);
+            uint16_t newlen = inst->tracks[t].clips[cidx].length;
+            inst->tracks[t].current_step = (uint16_t)(inst->tracks[t].current_step % newlen);
             inst->tracks[t].active_clip  = (uint8_t)cidx;
             inst->tracks[t].queued_clip  = -1;
         }
@@ -813,16 +820,16 @@ static void set_param(void *instance, const char *key, const char *val) {
     }
 
     /* --- Track-prefixed params: tN_<subkey> --- */
-    if (key[0] == 't' && key[1] >= '0' && key[1] <= '3' && key[2] == '_') {
+    if (key[0] == 't' && key[1] >= '0' && key[1] <= '7' && key[2] == '_') {
         int tidx = key[1] - '0';
         const char *sub = key + 3;
         seq8_track_t *tr = &inst->tracks[tidx];
 
         /* tN_launch_clip: switch to clip immediately, inheriting playback position */
         if (!strcmp(sub, "launch_clip")) {
-            int new_cidx    = clamp_i(my_atoi(val), 0, NUM_CLIPS - 1);
-            uint8_t newlen  = tr->clips[new_cidx].length;
-            tr->current_step = (uint8_t)(tr->current_step % newlen);
+            int new_cidx      = clamp_i(my_atoi(val), 0, NUM_CLIPS - 1);
+            uint16_t newlen   = tr->clips[new_cidx].length;
+            tr->current_step  = (uint16_t)(tr->current_step % newlen);
             tr->active_clip  = (uint8_t)new_cidx;
             tr->queued_clip  = -1;
             seq8_save_state(inst);
@@ -858,7 +865,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 return;
             }
             if (!strncmp(p, "_length", 7)) {
-                cl->length = (uint8_t)clamp_i(my_atoi(val), 1, SEQ_STEPS);
+                cl->length = (uint16_t)clamp_i(my_atoi(val), 1, SEQ_STEPS);
                 return;
             }
             return;
@@ -930,7 +937,7 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
     if (!inst) return -1;
 
     /* Track-prefixed params: tN_<subkey> */
-    if (key[0] == 't' && key[1] >= '0' && key[1] <= '3' && key[2] == '_') {
+    if (key[0] == 't' && key[1] >= '0' && key[1] <= '7' && key[2] == '_') {
         int tidx = key[1] - '0';
         const char *sub = key + 3;
         seq8_track_t *tr = &inst->tracks[tidx];
@@ -954,6 +961,14 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                 int sidx = my_atoi(p + 6);
                 if (sidx < 0 || sidx >= SEQ_STEPS) return -1;
                 return snprintf(out, out_len, "%d", (int)cl->steps[sidx]);
+            }
+            if (!strncmp(p, "_steps", 6) && p[6] == '\0') {
+                if (out_len < SEQ_STEPS + 1) return -1;
+                int s;
+                for (s = 0; s < SEQ_STEPS; s++)
+                    out[s] = cl->steps[s] ? '1' : '0';
+                out[SEQ_STEPS] = '\0';
+                return SEQ_STEPS;
             }
             if (!strncmp(p, "_length", 7))
                 return snprintf(out, out_len, "%d", (int)cl->length);
