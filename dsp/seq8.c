@@ -1,0 +1,946 @@
+/*
+ * SEQ8 — RS7000-inspired 8-track MIDI sequencer for Ableton Move.
+ * Phase 4: clip data model + Session View. Each track has 16 clips (scenes
+ *          A-P). Clips launch on bar boundary (legato). Scene launch queues
+ *          a clip on all 4 tracks simultaneously.
+ *
+ * Param namespace:
+ *   tN_cM_step_S     — track N, clip M, step S on/off
+ *   tN_cM_length     — clip length (1..16)
+ *   tN_launch_clip   — queue clip M on track N
+ *   launch_scene     — queue clip M on all tracks
+ *   tN_<pfx_key>     — play effects (same as Phase 3)
+ *
+ * GLIBC SAFE: no C23 calls, no complex static initializers,
+ * inline my_atoi() in place of atoi().
+ */
+
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+
+#include "host/plugin_api_v1.h"
+
+/* ------------------------------------------------------------------ */
+/* Build constants                                                      */
+/* ------------------------------------------------------------------ */
+
+#define SEQ8_LOG_PATH      "/data/UserData/schwung/seq8.log"
+
+#define NUM_TRACKS          4
+#define NUM_CLIPS           16
+
+/* Sequencer engine */
+#define BPM_DEFAULT         140
+#define PPQN                96
+#define TICKS_PER_STEP      24
+#define GATE_TICKS          12
+#define SEQ_STEPS           16
+#define SEQ_NOTE            60
+#define SEQ_VEL             100
+
+/* Play effects (ported from NoteTwist) */
+#define MAX_PFX_EVENTS      256
+#define MAX_GEN_NOTES       6
+#define MAX_REPEATS         16
+#define UNISON_STAGGER      220          /* ~5 ms at 44100 Hz */
+#define NUM_CLOCK_VALUES    11
+#define MAX_DELAY_SAMPLES   (30ULL * 44100)
+#define BPM_CACHE_INTERVAL  512
+
+/* 1 SEQ8 tick = 480/96 = 5 clocks at 480 PPQN (NoteTwist's resolution) */
+#define TICKS_TO_480PPQN    5
+
+/* CLOCK_VALUES: delay intervals in 480 PPQN clocks (from NoteTwist) */
+static const int CLOCK_VALUES[NUM_CLOCK_VALUES] = {
+    0, 30, 60, 80, 120, 160, 240, 320, 480, 960, 1920
+};
+
+/* ------------------------------------------------------------------ */
+/* Play effects structs (direct port from NoteTwist)                   */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    uint64_t fire_at;
+    uint8_t  msg[3];
+    uint8_t  len;
+} pfx_event_t;
+
+typedef struct {
+    uint8_t  active;
+    uint8_t  channel;
+    uint64_t on_time;
+    uint8_t  orig_velocity;
+    uint8_t  gen_notes[MAX_GEN_NOTES];
+    int      gen_count;
+    int      stored_unison;
+    double   spc;
+    int      stored_repeat_count;
+    struct {
+        uint64_t cumul_delay;
+        int8_t   pitch_offset;
+        uint8_t  velocity;
+        double   gate_factor;
+    } reps[MAX_REPEATS];
+} pfx_active_t;
+
+typedef struct {
+    /* Note FX (stages 1+3 from NoteTwist: octave + note page) */
+    int octave_shift;       /* -4..+4 */
+    int note_offset;        /* -24..+24 */
+    int gate_time;          /* 0..200 percent */
+    int velocity_offset;    /* -127..+127 */
+    /* Harmonize (stage 2 from NoteTwist) */
+    int unison;             /* 0=off, 1=x2, 2=x3 */
+    int octaver;            /* -4..+4, 0=off */
+    int harmonize_1;        /* -24..+24, 0=off */
+    int harmonize_2;        /* -24..+24, 0=off */
+    /* MIDI Delay (stage 5 from NoteTwist) */
+    int delay_time_idx;     /* 0..10, index into CLOCK_VALUES */
+    int delay_level;        /* 0..127 */
+    int repeat_times;       /* 0..64 */
+    int fb_velocity;        /* -127..+127 */
+    int fb_note;            /* -24..+24 */
+    int fb_note_random;     /* 0 or 1 */
+    int fb_gate_time;       /* -100..+100 */
+    int fb_clock;           /* -100..+100 */
+    /* Runtime */
+    uint64_t    sample_counter;
+    double      cached_bpm;
+    uint32_t    rng;
+    pfx_event_t  events[MAX_PFX_EVENTS];
+    int          event_count;
+    pfx_active_t active_notes[128];
+} play_fx_t;
+
+/* ------------------------------------------------------------------ */
+/* Clip and track structs                                               */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    uint8_t steps[SEQ_STEPS];     /* 0=off, 1=on */
+    uint8_t step_note[SEQ_STEPS]; /* default SEQ_NOTE */
+    uint8_t step_vel[SEQ_STEPS];  /* default SEQ_VEL */
+    uint8_t length;               /* 1..16, default 16 */
+    uint8_t active;               /* 1 if any step is on */
+} clip_t;
+
+typedef struct {
+    uint8_t   channel;              /* MIDI channel 0-3 */
+    clip_t    clips[NUM_CLIPS];
+    uint8_t   active_clip;          /* clip currently playing */
+    int8_t    queued_clip;          /* next clip (-1 = none) */
+    uint8_t   current_step;
+    uint8_t   note_active;
+    uint8_t   pending_note;         /* orig note key used for active note-on */
+    play_fx_t pfx;
+} seq8_track_t;
+
+typedef struct {
+    float        sample_rate;
+    uint32_t     block_count;
+    FILE        *log_fp;
+
+    seq8_track_t tracks[NUM_TRACKS];
+    uint8_t      active_track;
+
+    /* Shared transport — all tracks run on the same timing grid */
+    uint8_t  playing;
+    uint32_t tick_accum;
+    uint32_t tick_threshold;        /* sample_rate * 60 */
+    uint32_t tick_delta;            /* MOVE_FRAMES_PER_BLOCK * BPM * PPQN */
+    uint32_t tick_in_step;
+
+    /* Print mode: bake chain output into step data */
+    uint8_t  printing;
+} seq8_instance_t;
+
+static const host_api_v1_t *g_host = NULL;
+
+/* ------------------------------------------------------------------ */
+/* Utility                                                              */
+/* ------------------------------------------------------------------ */
+
+static int my_atoi(const char *s) {
+    int sign = 1, v = 0;
+    if (!s) return 0;
+    while (*s == ' ' || *s == '\t') s++;
+    if      (*s == '-') { sign = -1; s++; }
+    else if (*s == '+') { s++; }
+    while (*s >= '0' && *s <= '9') { v = v * 10 + (*s++ - '0'); }
+    return v * sign;
+}
+
+static int clamp_i(int v, int lo, int hi) {
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+
+static int pfx_rand(play_fx_t *fx, int lo, int hi) {
+    uint32_t x = fx->rng;
+    x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+    fx->rng = x;
+    return lo + (int)(x % (uint32_t)(hi - lo + 1));
+}
+
+static void seq8_ilog(seq8_instance_t *inst, const char *msg) {
+    if (!inst || !inst->log_fp) return;
+    fprintf(inst->log_fp, "%s\n", msg);
+    fflush(inst->log_fp);
+}
+
+/* ------------------------------------------------------------------ */
+/* MIDI output helpers                                                  */
+/* ------------------------------------------------------------------ */
+
+/* Send 3-byte MIDI message via midi_send_internal (Schwung chain).
+ * NOTE: midi_send_external MUST NOT be called from this path. pfx_send is
+ * invoked from render_block (audio thread). midi_send_external routes via
+ * SPI hardware — blocking I/O in the render path causes audio cracking.
+ * External MIDI monitoring requires a deferred queue flushed outside the
+ * render callback. See Phase 5. */
+static void pfx_send(uint8_t status, uint8_t d1, uint8_t d2) {
+    if (!g_host || !g_host->midi_send_internal) return;
+    const uint8_t msg[4] = { (uint8_t)(status >> 4), status, d1, d2 };
+    g_host->midi_send_internal(msg, 4);
+}
+
+/* Brute-force note-off for all 128 notes on all active channels.
+ * Used instead of CC 123 because some instruments (e.g. Braids) do not
+ * respond to all-notes-off. Also flushes any queued delay echo note-offs
+ * that were cleared from the event queue before firing. */
+static void send_panic(void) {
+    if (!g_host || !g_host->midi_send_internal) return;
+    int t, n;
+    for (t = 0; t < NUM_TRACKS; t++) {
+        uint8_t ch = (uint8_t)t;
+        for (n = 0; n < 128; n++) {
+            const uint8_t msg[4] = { 0x08, (uint8_t)(0x80 | ch), (uint8_t)n, 0 };
+            g_host->midi_send_internal(msg, 4);
+        }
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* BPM and timing                                                       */
+/* ------------------------------------------------------------------ */
+
+/* Samples per clock at 480 PPQN — used for MIDI delay time values. */
+static double pfx_spc(seq8_instance_t *inst, seq8_track_t *tr) {
+    double bpm = tr->pfx.cached_bpm > 0 ? tr->pfx.cached_bpm : (double)BPM_DEFAULT;
+    return ((double)inst->sample_rate * 60.0) / (bpm * 480.0);
+}
+
+/* Gate duration in samples for the current step, scaled by gate_time%. */
+static uint64_t pfx_gate_smp(seq8_instance_t *inst, seq8_track_t *tr) {
+    double sp  = pfx_spc(inst, tr);
+    double raw = (double)(GATE_TICKS * TICKS_TO_480PPQN) * sp;
+    double g   = raw * (double)tr->pfx.gate_time / 100.0;
+    if (g < 1.0 && tr->pfx.gate_time > 0) g = 1.0;
+    return (uint64_t)(g + 0.5);
+}
+
+/* ------------------------------------------------------------------ */
+/* Event queue (direct port from NoteTwist)                            */
+/* ------------------------------------------------------------------ */
+
+static void pfx_q_insert(play_fx_t *fx, uint64_t fire_at,
+                         uint8_t s, uint8_t d1, uint8_t d2) {
+    if (fx->event_count >= MAX_PFX_EVENTS) return;
+    int lo = 0, hi = fx->event_count;
+    while (lo < hi) {
+        int mid = (lo + hi) >> 1;
+        if (fx->events[mid].fire_at <= fire_at) lo = mid + 1;
+        else hi = mid;
+    }
+    if (lo < fx->event_count)
+        memmove(&fx->events[lo + 1], &fx->events[lo],
+                (size_t)(fx->event_count - lo) * sizeof(pfx_event_t));
+    fx->events[lo].fire_at  = fire_at;
+    fx->events[lo].msg[0]   = s;
+    fx->events[lo].msg[1]   = d1;
+    fx->events[lo].msg[2]   = d2;
+    fx->events[lo].len      = 3;
+    fx->event_count++;
+}
+
+static void pfx_q_fire(play_fx_t *fx, uint64_t now) {
+    int f = 0;
+    while (f < fx->event_count && fx->events[f].fire_at <= now) {
+        pfx_send(fx->events[f].msg[0], fx->events[f].msg[1], fx->events[f].msg[2]);
+        f++;
+    }
+    if (f > 0) {
+        fx->event_count -= f;
+        if (fx->event_count > 0)
+            memmove(&fx->events[0], &fx->events[f],
+                    (size_t)fx->event_count * sizeof(pfx_event_t));
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Generated-note list (direct port from NoteTwist)                    */
+/* ------------------------------------------------------------------ */
+
+static int pfx_build_gen_notes(play_fx_t *fx, int orig_note, uint8_t *out) {
+    int cnt = 0;
+    int n = orig_note + fx->octave_shift * 12 + fx->note_offset;
+    n = clamp_i(n, 0, 127);
+    out[cnt++] = (uint8_t)n;
+
+    if (fx->octaver != 0) {
+        int o = n + fx->octaver * 12;
+        if (o >= 0 && o <= 127 && cnt < MAX_GEN_NOTES) out[cnt++] = (uint8_t)o;
+    }
+    if (fx->harmonize_1 != 0) {
+        int h = n + fx->harmonize_1;
+        if (h >= 0 && h <= 127 && cnt < MAX_GEN_NOTES) out[cnt++] = (uint8_t)h;
+    }
+    if (fx->harmonize_2 != 0) {
+        int h = n + fx->harmonize_2;
+        if (h >= 0 && h <= 127 && cnt < MAX_GEN_NOTES) out[cnt++] = (uint8_t)h;
+    }
+    return cnt;
+}
+
+/* ------------------------------------------------------------------ */
+/* Delay repeat scheduling (direct port from NoteTwist)                */
+/* ------------------------------------------------------------------ */
+
+static void pfx_sched_delay_ons(play_fx_t *fx, pfx_active_t *an,
+                                uint64_t base_time, double sp) {
+    if (fx->repeat_times == 0 || fx->delay_level == 0) return;
+    int dclk = CLOCK_VALUES[fx->delay_time_idx];
+    if (dclk == 0) return;
+
+    an->spc = sp;
+    int reps = clamp_i(fx->repeat_times, 0, MAX_REPEATS);
+    an->stored_repeat_count = reps;
+
+    double cumul     = 0.0;
+    double cur_delay = (double)dclk * sp;
+    int    cumul_pitch = 0;
+    int    rep_vel   = (int)an->orig_velocity * fx->delay_level / 127;
+
+    int i;
+    for (i = 0; i < reps; i++) {
+        cumul += cur_delay;
+        if ((uint64_t)(cumul + 0.5) > MAX_DELAY_SAMPLES) {
+            an->stored_repeat_count = i;
+            break;
+        }
+
+        if (fx->fb_note_random)
+            cumul_pitch += pfx_rand(fx, -12, 12);
+        else
+            cumul_pitch += fx->fb_note;
+        an->reps[i].pitch_offset = (int8_t)clamp_i(cumul_pitch, -127, 127);
+
+        if (i > 0) rep_vel += fx->fb_velocity;
+        rep_vel = clamp_i(rep_vel, 1, 127);
+        an->reps[i].velocity = (uint8_t)rep_vel;
+
+        double gf = 1.0;
+        int k;
+        for (k = 0; k <= i; k++)
+            gf *= (1.0 + fx->fb_gate_time / 100.0);
+        an->reps[i].gate_factor = gf;
+
+        an->reps[i].cumul_delay = (uint64_t)(cumul + 0.5);
+
+        uint64_t ft   = base_time + an->reps[i].cumul_delay;
+        uint8_t  on_s = (uint8_t)(0x90 | an->channel);
+        int j;
+        for (j = 0; j < an->gen_count; j++) {
+            int note = (int)an->gen_notes[j] + an->reps[i].pitch_offset;
+            note = clamp_i(note, 0, 127);
+            pfx_q_insert(fx, ft, on_s, (uint8_t)note, an->reps[i].velocity);
+        }
+
+        cur_delay *= (1.0 + fx->fb_clock / 100.0);
+        if (cur_delay < 1.0) cur_delay = 1.0;
+    }
+}
+
+/* Schedule note-offs for all delay repeats. Called when original note-off
+ * arrives. base_time is the note-on time plus unison extension. */
+static void pfx_sched_delay_offs(play_fx_t *fx, pfx_active_t *an,
+                                 uint64_t base_time, uint64_t gate_smp) {
+    uint8_t off_s = (uint8_t)(0x80 | an->channel);
+    int i;
+    for (i = 0; i < an->stored_repeat_count; i++) {
+        double rg = (double)gate_smp * an->reps[i].gate_factor;
+        if (rg < 1.0) rg = 1.0;
+        uint64_t off = base_time + an->reps[i].cumul_delay + (uint64_t)(rg + 0.5);
+        int j;
+        for (j = 0; j < an->gen_count; j++) {
+            int note = (int)an->gen_notes[j] + an->reps[i].pitch_offset;
+            note = clamp_i(note, 0, 127);
+            pfx_q_insert(fx, off, off_s, (uint8_t)note, 0);
+        }
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Core play effects processing                                         */
+/* ------------------------------------------------------------------ */
+
+/* Set all play effects parameters to neutral / passthrough. */
+static void pfx_reset(play_fx_t *fx) {
+    fx->octave_shift    = 0;
+    fx->note_offset     = 0;
+    fx->gate_time       = 100;
+    fx->velocity_offset = 0;
+    fx->unison          = 0;
+    fx->octaver         = 0;
+    fx->harmonize_1     = 0;
+    fx->harmonize_2     = 0;
+    fx->delay_time_idx  = 0;
+    fx->delay_level     = 0;
+    fx->repeat_times    = 0;
+    fx->fb_velocity     = 0;
+    fx->fb_note         = 0;
+    fx->fb_note_random  = 0;
+    fx->fb_gate_time    = 0;
+    fx->fb_clock        = 0;
+}
+
+/* Process a note-on through the chain. Sends immediate output via
+ * midi_send_internal; queues unison stagger copies and delay repeats. */
+static void pfx_note_on(seq8_instance_t *inst, seq8_track_t *tr,
+                        uint8_t orig_note, uint8_t vel) {
+    play_fx_t   *fx  = &tr->pfx;
+    uint8_t      ch  = tr->channel;
+    uint64_t     now = fx->sample_counter;
+    pfx_active_t *an = &fx->active_notes[orig_note];
+
+    int v = clamp_i((int)vel + fx->velocity_offset, 1, 127);
+
+    uint8_t gen[MAX_GEN_NOTES];
+    int gc = pfx_build_gen_notes(fx, (int)orig_note, gen);
+
+    /* Retrigger guard: if this note is already active, clean up first. */
+    if (an->active) {
+        uint8_t off_s = (uint8_t)(0x80 | an->channel);
+        int i;
+        for (i = 0; i < an->gen_count; i++)
+            pfx_send(off_s, an->gen_notes[i], 0);
+    }
+
+    /* Store active-note record. */
+    memset(an, 0, sizeof(pfx_active_t));
+    an->active        = 1;
+    an->channel       = ch;
+    an->on_time       = now;
+    an->orig_velocity = (uint8_t)v;
+    an->gen_count     = gc;
+    memcpy(an->gen_notes, gen, (size_t)gc);
+    an->stored_unison = fx->unison;
+
+    double sp    = pfx_spc(inst, tr);
+    uint8_t on_s = (uint8_t)(0x90 | ch);
+
+    /* Immediate note-ons. */
+    int i;
+    for (i = 0; i < gc; i++)
+        pfx_send(on_s, gen[i], (uint8_t)v);
+
+    /* Unison stagger copies (queued). */
+    int c;
+    for (c = 0; c < fx->unison; c++) {
+        uint64_t stagger = now + (uint64_t)(UNISON_STAGGER * (c + 1));
+        for (i = 0; i < gc; i++)
+            pfx_q_insert(fx, stagger, on_s, gen[i], (uint8_t)v);
+    }
+
+    /* Delay repeats (note-ons only; note-offs scheduled at note-off time). */
+    pfx_sched_delay_ons(fx, an, now, sp);
+
+    /* Print mode: capture primary output note and velocity into active clip. */
+    if (inst->printing) {
+        clip_t *cl = &tr->clips[tr->active_clip];
+        cl->step_note[tr->current_step] = gen[0];
+        cl->step_vel[tr->current_step]  = (uint8_t)v;
+    }
+}
+
+/* Process a note-off. Sends/queues note-offs for harmony copies and all
+ * delay repeat echoes. Echoes never re-enter the chain. */
+static void pfx_note_off(seq8_instance_t *inst, seq8_track_t *tr,
+                         uint8_t orig_note) {
+    play_fx_t   *fx  = &tr->pfx;
+    pfx_active_t *an = &fx->active_notes[orig_note];
+    if (!an->active) return;
+
+    uint64_t now      = fx->sample_counter;
+    uint64_t gate_smp = pfx_gate_smp(inst, tr);
+    uint64_t uni_ext  = (uint64_t)(UNISON_STAGGER * an->stored_unison);
+    uint64_t off_time = an->on_time + gate_smp + uni_ext;
+    uint8_t  off_s    = (uint8_t)(0x80 | an->channel);
+
+    int i;
+    for (i = 0; i < an->gen_count; i++) {
+        if (off_time <= now)
+            pfx_send(off_s, an->gen_notes[i], 0);
+        else
+            pfx_q_insert(fx, off_time, off_s, an->gen_notes[i], 0);
+    }
+
+    pfx_sched_delay_offs(fx, an, an->on_time + uni_ext, gate_smp);
+    an->active = 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Plugin lifecycle                                                     */
+/* ------------------------------------------------------------------ */
+
+static void pfx_init_defaults(play_fx_t *fx) {
+    pfx_reset(fx);                     /* explicit zero of all stages */
+    fx->cached_bpm = (double)BPM_DEFAULT;
+    fx->rng        = 12345;
+}
+
+static void clip_init(clip_t *cl) {
+    int s;
+    cl->length = SEQ_STEPS;
+    cl->active = 0;
+    for (s = 0; s < SEQ_STEPS; s++) {
+        cl->steps[s]     = 0;
+        cl->step_note[s] = SEQ_NOTE;
+        cl->step_vel[s]  = SEQ_VEL;
+    }
+}
+
+static void *create_instance(const char *module_dir, const char *json_defaults) {
+    (void)module_dir; (void)json_defaults;
+
+    seq8_instance_t *inst = (seq8_instance_t *)calloc(1, sizeof(seq8_instance_t));
+    if (!inst) return NULL;
+
+    inst->sample_rate    = (g_host && g_host->sample_rate > 0)
+                           ? (float)g_host->sample_rate : 44100.0f;
+    inst->log_fp         = fopen(SEQ8_LOG_PATH, "a");
+
+    int t, c;
+    for (t = 0; t < NUM_TRACKS; t++) {
+        inst->tracks[t].channel     = (uint8_t)t;
+        inst->tracks[t].queued_clip = -1;
+        for (c = 0; c < NUM_CLIPS; c++)
+            clip_init(&inst->tracks[t].clips[c]);
+        pfx_init_defaults(&inst->tracks[t].pfx);
+    }
+
+    inst->tick_threshold = (uint32_t)(inst->sample_rate * 60.0f);
+    inst->tick_delta     = (uint32_t)MOVE_FRAMES_PER_BLOCK
+                           * (uint32_t)BPM_DEFAULT
+                           * (uint32_t)PPQN;
+
+    char szlog[80];
+    snprintf(szlog, sizeof(szlog),
+             "SEQ8 Phase 4 init: sizeof(seq8_instance_t)=%zu",
+             sizeof(seq8_instance_t));
+    seq8_ilog(inst, szlog);
+    return inst;
+}
+
+static void destroy_instance(void *instance) {
+    seq8_instance_t *inst = (seq8_instance_t *)instance;
+    if (!inst) return;
+    int t;
+    for (t = 0; t < NUM_TRACKS; t++) {
+        inst->tracks[t].pfx.event_count = 0;
+        memset(inst->tracks[t].pfx.active_notes, 0,
+               sizeof(inst->tracks[t].pfx.active_notes));
+    }
+    send_panic();
+    seq8_ilog(inst, "SEQ8 instance destroyed");
+    if (inst->log_fp) fclose(inst->log_fp);
+    free(inst);
+}
+
+/* ------------------------------------------------------------------ */
+/* on_midi (external MIDI input — log only)                            */
+/* ------------------------------------------------------------------ */
+
+static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
+    seq8_instance_t *inst = (seq8_instance_t *)instance;
+    if (!msg || len < 1) return;
+    char buf[64];
+    uint8_t d1 = len > 1 ? msg[1] : 0;
+    uint8_t d2 = len > 2 ? msg[2] : 0;
+    snprintf(buf, sizeof(buf),
+             "SEQ8 MIDI src=%d status=0x%02X d1=%u d2=%u",
+             source, msg[0], d1, d2);
+    seq8_ilog(inst, buf);
+}
+
+/* ------------------------------------------------------------------ */
+/* set_param helpers                                                    */
+/* ------------------------------------------------------------------ */
+
+/* Apply a play-effects key/value to a specific track's pfx. */
+static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
+                    const char *key, const char *val) {
+    play_fx_t *fx = &tr->pfx;
+
+    if (!strcmp(key, "noteFX_octave"))
+        { fx->octave_shift    = clamp_i(my_atoi(val), -4, 4);    return; }
+    if (!strcmp(key, "noteFX_offset"))
+        { fx->note_offset     = clamp_i(my_atoi(val), -24, 24);  return; }
+    if (!strcmp(key, "noteFX_gate"))
+        { fx->gate_time       = clamp_i(my_atoi(val), 0, 200);   return; }
+    if (!strcmp(key, "noteFX_velocity"))
+        { fx->velocity_offset = clamp_i(my_atoi(val), -127, 127); return; }
+
+    if (!strcmp(key, "harm_unison")) {
+        if      (!strcmp(val, "OFF") || !strcmp(val, "0")) fx->unison = 0;
+        else if (!strcmp(val, "x2")  || !strcmp(val, "1")) fx->unison = 1;
+        else if (!strcmp(val, "x3")  || !strcmp(val, "2")) fx->unison = 2;
+        else fx->unison = clamp_i(my_atoi(val), 0, 2);
+        return;
+    }
+    if (!strcmp(key, "harm_octaver"))
+        { fx->octaver     = clamp_i(my_atoi(val), -4, 4);   return; }
+    if (!strcmp(key, "harm_interval1"))
+        { fx->harmonize_1 = clamp_i(my_atoi(val), -24, 24); return; }
+    if (!strcmp(key, "harm_interval2"))
+        { fx->harmonize_2 = clamp_i(my_atoi(val), -24, 24); return; }
+
+    if (!strcmp(key, "delay_time"))
+        { fx->delay_time_idx = clamp_i(my_atoi(val), 0, NUM_CLOCK_VALUES - 1); return; }
+    if (!strcmp(key, "delay_level"))
+        { fx->delay_level    = clamp_i(my_atoi(val), 0, 127);    return; }
+    if (!strcmp(key, "delay_repeats"))
+        { fx->repeat_times   = clamp_i(my_atoi(val), 0, 64);     return; }
+    if (!strcmp(key, "delay_vel_fb"))
+        { fx->fb_velocity    = clamp_i(my_atoi(val), -127, 127); return; }
+    if (!strcmp(key, "delay_pitch_fb"))
+        { fx->fb_note        = clamp_i(my_atoi(val), -24, 24);   return; }
+    if (!strcmp(key, "delay_pitch_random")) {
+        fx->fb_note_random = (!strcmp(val, "on") || !strcmp(val, "1")) ? 1 : 0;
+        return;
+    }
+    if (!strcmp(key, "delay_gate_fb"))
+        { fx->fb_gate_time   = clamp_i(my_atoi(val), -100, 100); return; }
+    if (!strcmp(key, "delay_clock_fb"))
+        { fx->fb_clock       = clamp_i(my_atoi(val), -100, 100); return; }
+
+    if (!strcmp(key, "print")) {
+        if (!strcmp(val, "1") && !inst->printing) {
+            inst->printing = 1;
+            seq8_ilog(inst, "SEQ8 print: started");
+        } else if (!strcmp(val, "0") && inst->printing) {
+            inst->printing = 0;
+            pfx_reset(fx);
+            seq8_ilog(inst, "SEQ8 print: done, chain reset to neutral");
+        }
+        return;
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* set_param                                                            */
+/* ------------------------------------------------------------------ */
+
+static void set_param(void *instance, const char *key, const char *val) {
+    seq8_instance_t *inst = (seq8_instance_t *)instance;
+    if (!inst || !key || !val) return;
+
+    /* --- Transport (global) --- */
+    if (!strcmp(key, "transport")) {
+        if (!strcmp(val, "play")) {
+            if (!inst->playing) {
+                int t;
+                for (t = 0; t < NUM_TRACKS; t++) {
+                    inst->tracks[t].current_step = 0;
+                    inst->tracks[t].note_active   = 0;
+                    inst->tracks[t].pfx.sample_counter = 0;
+                }
+                inst->playing      = 1;
+                inst->tick_accum   = 0;
+                inst->tick_in_step = 0;
+                seq8_ilog(inst, "SEQ8 transport: play");
+            }
+        } else if (!strcmp(val, "stop")) {
+            if (inst->playing) {
+                int t;
+                for (t = 0; t < NUM_TRACKS; t++) {
+                    inst->tracks[t].note_active         = 0;
+                    inst->tracks[t].queued_clip         = -1;
+                    inst->tracks[t].pfx.event_count     = 0;
+                    memset(inst->tracks[t].pfx.active_notes, 0,
+                           sizeof(inst->tracks[t].pfx.active_notes));
+                }
+                inst->playing = 0;
+                send_panic();
+                seq8_ilog(inst, "SEQ8 transport: stop");
+            }
+        } else if (!strcmp(val, "panic")) {
+            int t;
+            for (t = 0; t < NUM_TRACKS; t++) {
+                inst->tracks[t].note_active         = 0;
+                inst->tracks[t].queued_clip         = -1;
+                inst->tracks[t].pfx.event_count     = 0;
+                memset(inst->tracks[t].pfx.active_notes, 0,
+                       sizeof(inst->tracks[t].pfx.active_notes));
+            }
+            inst->playing = 0;
+            send_panic();
+            seq8_ilog(inst, "SEQ8 transport: panic");
+        }
+        return;
+    }
+
+    /* --- Active track --- */
+    if (!strcmp(key, "active_track")) {
+        inst->active_track = (uint8_t)clamp_i(my_atoi(val), 0, NUM_TRACKS - 1);
+        return;
+    }
+
+    /* --- Scene launch (global): queue clip M on all tracks --- */
+    if (!strcmp(key, "launch_scene")) {
+        int cidx = clamp_i(my_atoi(val), 0, NUM_CLIPS - 1);
+        int t;
+        for (t = 0; t < NUM_TRACKS; t++)
+            inst->tracks[t].queued_clip = (int8_t)cidx;
+        seq8_ilog(inst, "SEQ8 launch_scene");
+        return;
+    }
+
+    /* --- Track-prefixed params: tN_<subkey> --- */
+    if (key[0] == 't' && key[1] >= '0' && key[1] <= '3' && key[2] == '_') {
+        int tidx = key[1] - '0';
+        const char *sub = key + 3;
+        seq8_track_t *tr = &inst->tracks[tidx];
+
+        /* tN_launch_clip: queue a clip for this track */
+        if (!strcmp(sub, "launch_clip")) {
+            tr->queued_clip = (int8_t)clamp_i(my_atoi(val), 0, NUM_CLIPS - 1);
+            return;
+        }
+
+        /* tN_cM_step_S or tN_cM_length: clip data */
+        if (sub[0] == 'c' && sub[1] >= '0' && sub[1] <= '9') {
+            int cidx = 0;
+            const char *p = sub + 1;
+            while (*p >= '0' && *p <= '9') { cidx = cidx * 10 + (*p - '0'); p++; }
+            if (cidx >= NUM_CLIPS) return;
+            clip_t *cl = &tr->clips[cidx];
+
+            if (!strncmp(p, "_step_", 6)) {
+                int sidx = my_atoi(p + 6);
+                if (sidx >= 0 && sidx < SEQ_STEPS) {
+                    cl->steps[sidx] = (val[0] == '1') ? 1 : 0;
+                    int i, any = 0;
+                    for (i = 0; i < SEQ_STEPS; i++) if (cl->steps[i]) { any = 1; break; }
+                    cl->active = (uint8_t)any;
+                }
+                return;
+            }
+            if (!strncmp(p, "_length", 7)) {
+                cl->length = (uint8_t)clamp_i(my_atoi(val), 1, SEQ_STEPS);
+                return;
+            }
+            return;
+        }
+
+        /* All play effects params */
+        pfx_set(inst, tr, sub, val);
+        return;
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* get_param helpers                                                    */
+/* ------------------------------------------------------------------ */
+
+static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
+    play_fx_t *fx = &tr->pfx;
+
+    if (!strcmp(key, "noteFX_octave"))    return snprintf(out, out_len, "%d", fx->octave_shift);
+    if (!strcmp(key, "noteFX_offset"))    return snprintf(out, out_len, "%d", fx->note_offset);
+    if (!strcmp(key, "noteFX_gate"))      return snprintf(out, out_len, "%d", fx->gate_time);
+    if (!strcmp(key, "noteFX_velocity"))  return snprintf(out, out_len, "%d", fx->velocity_offset);
+
+    if (!strcmp(key, "harm_unison")) {
+        static const char *ul[3] = { "OFF", "x2", "x3" };
+        return snprintf(out, out_len, "%s", ul[fx->unison]);
+    }
+    if (!strcmp(key, "harm_octaver"))     return snprintf(out, out_len, "%d", fx->octaver);
+    if (!strcmp(key, "harm_interval1"))   return snprintf(out, out_len, "%d", fx->harmonize_1);
+    if (!strcmp(key, "harm_interval2"))   return snprintf(out, out_len, "%d", fx->harmonize_2);
+
+    if (!strcmp(key, "delay_time"))         return snprintf(out, out_len, "%d", fx->delay_time_idx);
+    if (!strcmp(key, "delay_level"))        return snprintf(out, out_len, "%d", fx->delay_level);
+    if (!strcmp(key, "delay_repeats"))      return snprintf(out, out_len, "%d", fx->repeat_times);
+    if (!strcmp(key, "delay_vel_fb"))       return snprintf(out, out_len, "%d", fx->fb_velocity);
+    if (!strcmp(key, "delay_pitch_fb"))     return snprintf(out, out_len, "%d", fx->fb_note);
+    if (!strcmp(key, "delay_pitch_random")) return snprintf(out, out_len, "%s",
+                                                fx->fb_note_random ? "on" : "off");
+    if (!strcmp(key, "delay_gate_fb"))      return snprintf(out, out_len, "%d", fx->fb_gate_time);
+    if (!strcmp(key, "delay_clock_fb"))     return snprintf(out, out_len, "%d", fx->fb_clock);
+
+    return -1;
+}
+
+/* ------------------------------------------------------------------ */
+/* get_param                                                            */
+/* ------------------------------------------------------------------ */
+
+static int get_param(void *instance, const char *key, char *out, int out_len) {
+    seq8_instance_t *inst = (seq8_instance_t *)instance;
+    if (!key || !out || out_len <= 0) return -1;
+
+    if (!strcmp(key, "playing"))
+        return snprintf(out, out_len, "%d", inst ? (int)inst->playing : 0);
+    if (!strcmp(key, "active_track"))
+        return snprintf(out, out_len, "%d", inst ? (int)inst->active_track : 0);
+    if (!strcmp(key, "version"))
+        return snprintf(out, out_len, "4");
+    if (!strcmp(key, "bpm")) {
+        double b = (inst && inst->tracks[0].pfx.cached_bpm > 0)
+                   ? inst->tracks[0].pfx.cached_bpm : (double)BPM_DEFAULT;
+        return snprintf(out, out_len, "%.0f", b);
+    }
+
+    if (!inst) return -1;
+
+    /* Track-prefixed params: tN_<subkey> */
+    if (key[0] == 't' && key[1] >= '0' && key[1] <= '3' && key[2] == '_') {
+        int tidx = key[1] - '0';
+        const char *sub = key + 3;
+        seq8_track_t *tr = &inst->tracks[tidx];
+
+        if (!strcmp(sub, "current_step"))
+            return snprintf(out, out_len, "%d", (int)tr->current_step);
+        if (!strcmp(sub, "active_clip"))
+            return snprintf(out, out_len, "%d", (int)tr->active_clip);
+        if (!strcmp(sub, "queued_clip"))
+            return snprintf(out, out_len, "%d", (int)tr->queued_clip);
+
+        /* tN_cM_step_S / tN_cM_length / tN_cM_active */
+        if (sub[0] == 'c' && sub[1] >= '0' && sub[1] <= '9') {
+            int cidx = 0;
+            const char *p = sub + 1;
+            while (*p >= '0' && *p <= '9') { cidx = cidx * 10 + (*p - '0'); p++; }
+            if (cidx >= NUM_CLIPS) return -1;
+            clip_t *cl = &tr->clips[cidx];
+
+            if (!strncmp(p, "_step_", 6)) {
+                int sidx = my_atoi(p + 6);
+                if (sidx < 0 || sidx >= SEQ_STEPS) return -1;
+                return snprintf(out, out_len, "%d", (int)cl->steps[sidx]);
+            }
+            if (!strncmp(p, "_length", 7))
+                return snprintf(out, out_len, "%d", (int)cl->length);
+            if (!strncmp(p, "_active", 7))
+                return snprintf(out, out_len, "%d", (int)cl->active);
+            return -1;
+        }
+
+        return pfx_get(tr, sub, out, out_len);
+    }
+
+    return -1;
+}
+
+/* ------------------------------------------------------------------ */
+/* get_error                                                            */
+/* ------------------------------------------------------------------ */
+
+static int get_error(void *instance, char *out, int out_len) {
+    (void)instance; (void)out; (void)out_len;
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* render_block                                                         */
+/* ------------------------------------------------------------------ */
+
+static void render_block(void *instance, int16_t *out_lr, int frames) {
+    seq8_instance_t *inst = (seq8_instance_t *)instance;
+    if (!inst) return;
+
+    if (out_lr && frames > 0)
+        memset(out_lr, 0, (size_t)frames * 2 * sizeof(int16_t));
+
+    inst->block_count++;
+
+    /* Advance sample counters and fire queued events for all tracks. */
+    int t;
+    for (t = 0; t < NUM_TRACKS; t++)
+        inst->tracks[t].pfx.sample_counter += (uint64_t)frames;
+
+    /* Cache host BPM every 512 blocks — one call, written to all tracks. */
+    if ((inst->block_count % BPM_CACHE_INTERVAL) == 0) {
+        double bpm = (g_host && g_host->get_bpm)
+            ? (double)g_host->get_bpm() : (double)BPM_DEFAULT;
+        for (t = 0; t < NUM_TRACKS; t++)
+            inst->tracks[t].pfx.cached_bpm = bpm;
+    }
+
+    for (t = 0; t < NUM_TRACKS; t++)
+        pfx_q_fire(&inst->tracks[t].pfx, inst->tracks[t].pfx.sample_counter);
+
+    if (!inst->playing || inst->tick_threshold == 0) return;
+
+    inst->tick_accum += inst->tick_delta;
+    while (inst->tick_accum >= inst->tick_threshold) {
+        inst->tick_accum -= inst->tick_threshold;
+
+        for (t = 0; t < NUM_TRACKS; t++) {
+            seq8_track_t *tr = &inst->tracks[t];
+            clip_t *cl = &tr->clips[tr->active_clip];
+
+            if (inst->tick_in_step == 0 && cl->steps[tr->current_step]) {
+                tr->pending_note = cl->step_note[tr->current_step];
+                pfx_note_on(inst, tr, tr->pending_note, cl->step_vel[tr->current_step]);
+                tr->note_active = 1;
+            }
+            if (inst->tick_in_step == GATE_TICKS && tr->note_active) {
+                pfx_note_off(inst, tr, tr->pending_note);
+                tr->note_active = 0;
+            }
+        }
+
+        inst->tick_in_step++;
+        if (inst->tick_in_step >= TICKS_PER_STEP) {
+            inst->tick_in_step = 0;
+            for (t = 0; t < NUM_TRACKS; t++) {
+                seq8_track_t *tr = &inst->tracks[t];
+                clip_t *cl = &tr->clips[tr->active_clip];
+                tr->current_step = (uint8_t)((tr->current_step + 1) % cl->length);
+                /* Bar boundary: apply queued clip at step 0 wrap.
+                 * NOTE: tracks with different clip lengths will switch at
+                 * different bar boundaries — all clips default to 16 steps
+                 * so this is invisible in practice. Revisit for variable
+                 * length support. Legato: new_pos = old_pos % new_length;
+                 * old_pos is 0 here so result is always 0. */
+                if (tr->current_step == 0 && tr->queued_clip >= 0) {
+                    tr->active_clip = (uint8_t)tr->queued_clip;
+                    tr->queued_clip = -1;
+                }
+            }
+        }
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* API table                                                            */
+/* ------------------------------------------------------------------ */
+
+static plugin_api_v2_t g_api = {
+    .api_version      = MOVE_PLUGIN_API_VERSION_2,
+    .create_instance  = create_instance,
+    .destroy_instance = destroy_instance,
+    .on_midi          = on_midi,
+    .set_param        = set_param,
+    .get_param        = get_param,
+    .get_error        = get_error,
+    .render_block     = render_block,
+};
+
+plugin_api_v2_t *move_plugin_init_v2(const host_api_v1_t *host) {
+    g_host = host;
+    return &g_api;
+}

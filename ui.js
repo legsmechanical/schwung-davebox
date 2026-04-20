@@ -1,0 +1,333 @@
+import {
+    MoveShift,
+    MoveBack,
+    MovePlay,
+    MoveLeft,
+    MoveRight
+} from '/data/UserData/schwung/shared/constants.mjs';
+
+/* CC 50 = Note/Session toggle (three-bar button left of track buttons). */
+const MoveNoteSession = 50;
+
+import {
+    Red,
+    Blue,
+    VividYellow,
+    Green,
+    DeepRed,
+    DarkBlue,
+    Mustard,
+    DeepGreen
+} from '/data/UserData/schwung/shared/constants.mjs';
+
+import {
+    setLED,
+    setButtonLED
+} from '/data/UserData/schwung/shared/input_filter.mjs';
+
+import {
+    installConsoleOverride
+} from '/data/UserData/schwung/shared/logger.mjs';
+
+const LED_OFF         = 0;
+const LED_STEP_ACTIVE = 36;
+const LED_STEP_CURSOR = 127;
+const LEDS_PER_FRAME  = 8;
+const NUM_TRACKS      = 4;
+const NUM_CLIPS       = 16;
+const BLINK_PERIOD    = 8;
+
+/* Track colors: bright and dim pairs (Move uses fixed palette indices, not brightness) */
+const TRACK_COLORS     = [Red,    Blue,     VividYellow, Green];
+const TRACK_DIM_COLORS = [DeepRed, DarkBlue, Mustard,    DeepGreen];
+const SCENE_LETTERS = 'ABCDEFGHIJKLMNOP';
+
+/* Move pad rows (confirmed on hardware, bottom-to-top):
+ *   Bottom row (nearest player):  notes 68-75
+ *   Row 2:                        notes 76-83
+ *   Row 3:                        notes 84-91
+ *   Top row (nearest display):    notes 92-99 */
+const TRACK_PAD_BASE = 68;
+
+let ledInitQueue   = [];
+let ledInitIndex   = 0;
+let ledInitPending = false;
+let shiftHeld      = false;
+
+/* clipSteps[track][clip][step] — JS-authoritative mirror of DSP step data */
+let clipSteps        = Array.from({length: NUM_TRACKS}, () =>
+                           Array.from({length: NUM_CLIPS}, () => new Array(16).fill(0)));
+let trackCurrentStep = new Array(NUM_TRACKS).fill(-1);
+let trackActiveClip  = new Array(NUM_TRACKS).fill(0);
+let trackQueuedClip  = new Array(NUM_TRACKS).fill(-1);
+let playing          = false;
+let activeTrack      = 0;
+let sessionView      = false;
+let sceneGroup       = 0;     /* 0-3: which group of 4 scenes is visible */
+let blinkState       = false;
+let blinkCounter     = 0;
+
+function clipHasContent(t, c) {
+    const s = clipSteps[t][c];
+    for (let i = 0; i < 16; i++) if (s[i]) return true;
+    return false;
+}
+
+function buildLedInitQueue() {
+    const q = [];
+    for (let n = 68; n <= 99; n++) q.push({ kind: 'note', id: n });
+    for (let n = 16; n <= 31; n++) q.push({ kind: 'note', id: n });
+    for (let c = 16; c <= 31; c++) q.push({ kind: 'cc', id: c });
+    for (let c = 40; c <= 43; c++) q.push({ kind: 'cc', id: c });
+    for (const c of [49, 50, 51, 52, 54, 55, 56, 58, 60, 62, 63]) {
+        q.push({ kind: 'cc', id: c });
+    }
+    for (let c = 71; c <= 78; c++) q.push({ kind: 'cc', id: c });
+    for (const c of [85, 86, 88, 118, 119]) q.push({ kind: 'cc', id: c });
+    return q;
+}
+
+function drainLedInit() {
+    const end = Math.min(ledInitIndex + LEDS_PER_FRAME, ledInitQueue.length);
+    for (let i = ledInitIndex; i < end; i++) {
+        const led = ledInitQueue[i];
+        if (led.kind === 'cc') setButtonLED(led.id, LED_OFF);
+        else setLED(led.id, LED_OFF);
+    }
+    ledInitIndex = end;
+    if (ledInitIndex >= ledInitQueue.length) ledInitPending = false;
+}
+
+function pollDSP() {
+    if (typeof host_module_get_param !== 'function') return;
+    const p = host_module_get_param('playing');
+    playing = (p === '1');
+    for (let t = 0; t < NUM_TRACKS; t++) {
+        const cs = host_module_get_param('t' + t + '_current_step');
+        trackCurrentStep[t] = (cs !== null && cs !== undefined)
+            ? (parseInt(cs, 10) | 0) : -1;
+        const ac = host_module_get_param('t' + t + '_active_clip');
+        if (ac !== null && ac !== undefined) trackActiveClip[t] = parseInt(ac, 10) | 0;
+        const qc = host_module_get_param('t' + t + '_queued_clip');
+        trackQueuedClip[t] = (qc !== null && qc !== undefined)
+            ? (parseInt(qc, 10) | 0) : -1;
+    }
+}
+
+function updateStepLEDs() {
+    if (ledInitPending) return;
+    const ac    = trackActiveClip[activeTrack];
+    const steps = clipSteps[activeTrack][ac];
+    const cs    = trackCurrentStep[activeTrack];
+    for (let i = 0; i < 16; i++) {
+        let color;
+        if (playing && i === cs) {
+            color = LED_STEP_CURSOR;
+        } else if (steps[i]) {
+            color = LED_STEP_ACTIVE;
+        } else {
+            color = LED_OFF;
+        }
+        setLED(16 + i, color);
+    }
+}
+
+function updateSessionLEDs() {
+    if (ledInitPending) return;
+    for (let row = 0; row < 4; row++) {
+        const sceneIdx = sceneGroup * 4 + row;
+        for (let t = 0; t < NUM_TRACKS; t++) {
+            const note      = 92 - row * 8 + t;  /* row 0=top(92-99), row 3=bottom(68-75) */
+            const isPlaying = playing && trackActiveClip[t] === sceneIdx;
+            const isQueued  = trackQueuedClip[t] === sceneIdx;
+            let color;
+            if (isQueued || isPlaying) {
+                color = blinkState ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
+            } else if (clipHasContent(t, sceneIdx)) {
+                color = TRACK_DIM_COLORS[t];
+            } else {
+                color = LED_OFF;
+            }
+            setLED(note, color);
+        }
+        /* Blank unused pads 4-7 in each row */
+        for (let t = NUM_TRACKS; t < 8; t++) {
+            setLED(92 - row * 8 + t, LED_OFF);
+        }
+    }
+}
+
+function updateTrackLEDs() {
+    if (ledInitPending) return;
+    for (let t = 0; t < NUM_TRACKS; t++) {
+        setLED(TRACK_PAD_BASE + t, t === activeTrack ? TRACK_COLORS[t] : LED_OFF);
+    }
+}
+
+function drawUI() {
+    clear_screen();
+    if (sessionView) {
+        const base = sceneGroup * 4;
+        print(4, 10, 'SESSION  GRP ' + (sceneGroup + 1), 1);
+        print(4, 22, SCENE_LETTERS[base] + '-' + SCENE_LETTERS[base + 3] + '  ROWS 1-4', 1);
+        print(4, 34, 'T1  T2  T3  T4', 1);
+        let line4 = '';
+        for (let t = 0; t < NUM_TRACKS; t++) {
+            line4 += SCENE_LETTERS[trackActiveClip[t]];
+            if (t < NUM_TRACKS - 1) line4 += '   ';
+        }
+        print(4, 46, line4, 1);
+    } else {
+        const ac = trackActiveClip[activeTrack];
+        /* \xb7 = middle dot · */
+        print(4, 10, 'TR' + (activeTrack + 1) + ' \xb7 ' + (sceneGroup + 1) + '-' + SCENE_LETTERS[ac], 1);
+        const cs     = trackCurrentStep[activeTrack];
+        const filled = (playing && cs >= 0) ? Math.floor(cs * 8 / 16) : 0;
+        const prog   = '#'.repeat(filled) + '.'.repeat(8 - filled);
+        print(4, 22, 'bar 1/1 [' + prog + ']', 1);
+        print(4, 34, '1 2 3 4', 1);
+        let line4 = '';
+        for (let t = 0; t < NUM_TRACKS; t++) {
+            line4 += SCENE_LETTERS[trackActiveClip[t]];
+            if (t < NUM_TRACKS - 1) line4 += ' ';
+        }
+        print(4, 46, line4, 1);
+    }
+}
+
+function fmtHex(b) {
+    return (b & 0xff).toString(16).padStart(2, '0').toUpperCase();
+}
+
+globalThis.init = function () {
+    installConsoleOverride('SEQ8');
+    console.log("SEQ8 P4 init");
+    ledInitQueue   = buildLedInitQueue();
+    ledInitIndex   = 0;
+    ledInitPending = true;
+};
+
+globalThis.tick = function () {
+    blinkCounter++;
+    if (blinkCounter >= BLINK_PERIOD) {
+        blinkCounter = 0;
+        blinkState   = !blinkState;
+    }
+
+    if (ledInitPending) {
+        drainLedInit();
+    } else {
+        pollDSP();
+        if (sessionView) {
+            updateSessionLEDs();
+        } else {
+            updateStepLEDs();
+            updateTrackLEDs();
+        }
+    }
+    drawUI();
+};
+
+globalThis.onMidiMessageInternal = function (data) {
+    const status = data[0] | 0;
+    const d1     = (data[1] ?? 0) | 0;
+    const d2     = (data[2] ?? 0) | 0;
+
+    if (status === 0xB0) {
+        if (d1 === MoveShift) {
+            shiftHeld = d2 === 127;
+        }
+
+        /* Note/Session view toggle */
+        if (d1 === MoveNoteSession && d2 === 127) {
+            sessionView = !sessionView;
+            if (sessionView) {
+                for (let i = 0; i < 16; i++) setLED(16 + i, LED_OFF);
+                for (let t = 0; t < NUM_TRACKS; t++) setLED(TRACK_PAD_BASE + t, LED_OFF);
+            } else {
+                for (let row = 0; row < 4; row++)
+                    for (let t = 0; t < 8; t++) setLED(92 - row * 8 + t, LED_OFF);
+            }
+        }
+
+        /* Shift+Back = return to menu */
+        if (d1 === MoveBack && d2 === 127 && shiftHeld) {
+            host_return_to_menu();
+        }
+
+        /* Play: toggle transport; Shift+Play = panic */
+        if (d1 === MovePlay && d2 === 127) {
+            if (shiftHeld) {
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('transport', 'panic');
+            } else {
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('transport', playing ? 'stop' : 'play');
+            }
+        }
+
+        /* Left/Right arrows: navigate scene group */
+        if (d1 === MoveLeft && d2 === 127 && sceneGroup > 0) sceneGroup--;
+        if (d1 === MoveRight && d2 === 127 && sceneGroup < 3) sceneGroup++;
+
+        /* Track buttons CC40-43 */
+        if (d1 >= 40 && d1 <= 43 && d2 === 127) {
+            const idx = d1 - 40;
+            if (sessionView) {
+                /* Launch scene row across all tracks */
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('launch_scene', String(sceneGroup * 4 + idx));
+            } else {
+                /* Navigate to scene group */
+                sceneGroup = idx;
+            }
+        }
+    }
+
+    /* Step buttons: notes 16-31, note-on only */
+    if ((status & 0xF0) === 0x90 && d1 >= 16 && d1 <= 31 && d2 > 0) {
+        const idx = d1 - 16;
+        if (sessionView) {
+            /* First 4 step buttons navigate scene groups */
+            if (idx < 4) sceneGroup = idx;
+        } else {
+            /* Toggle step in active clip on active track */
+            const ac = trackActiveClip[activeTrack];
+            clipSteps[activeTrack][ac][idx] ^= 1;
+            if (typeof host_module_set_param === 'function')
+                host_module_set_param(
+                    't' + activeTrack + '_c' + ac + '_step_' + idx,
+                    clipSteps[activeTrack][ac][idx] ? '1' : '0'
+                );
+        }
+    }
+
+    /* Pad presses: note-on */
+    if ((status & 0xF0) === 0x90 && d2 > 0) {
+        if (sessionView) {
+            /* Left 4 pads of each row launch clips; row 0=top(92), row 3=bottom(68) */
+            for (let row = 0; row < 4; row++) {
+                const rowBase = 92 - row * 8;
+                if (d1 >= rowBase && d1 < rowBase + NUM_TRACKS) {
+                    const t = d1 - rowBase;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_launch_clip',
+                                              String(sceneGroup * 4 + row));
+                    break;
+                }
+            }
+        } else {
+            /* Note View: Shift + bottom row selects active track */
+            if (shiftHeld && d1 >= TRACK_PAD_BASE && d1 < TRACK_PAD_BASE + NUM_TRACKS) {
+                activeTrack = d1 - TRACK_PAD_BASE;
+            }
+        }
+    }
+};
+
+globalThis.onMidiMessageExternal = function (data) {
+    const status = data[0] | 0;
+    const d1     = (data[1] ?? 0) | 0;
+    const d2     = (data[2] ?? 0) | 0;
+    console.log("MIDI EXT: status=0x" + fmtHex(status) + " data1=" + fmtHex(d1) + " data2=" + fmtHex(d2));
+};

@@ -1,0 +1,15 @@
+{
+    "id": "seq8",
+    "name": "SEQ8",
+    "version": "0.1.0",
+    "abbrev": "SEQ8",
+    "api_version": 2,
+    "ui": "ui.js",
+    "dsp": "dsp.so",
+    "component_type": "overtake",
+    "capabilities": {
+        "midi_in": true,
+        "midi_out": true,
+        "claims_master_knob": true
+    }
+}
