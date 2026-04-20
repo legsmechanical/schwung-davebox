@@ -308,7 +308,7 @@ function drawUI() {
         let line4 = '';
         for (let t = 0; t < NUM_TRACKS; t++) {
             line4 += SCENE_LETTERS[trackActiveClip[t]];
-            if (t < NUM_TRACKS - 1) line4 += (t < 3 ? ' ' : '  ');
+            if (t < NUM_TRACKS - 1) line4 += ' ';
         }
         print(4, 46, line4, 1);
     }
