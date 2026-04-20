@@ -456,8 +456,8 @@ globalThis.onMidiMessageInternal = function (data) {
         }
 
         /* Up/Down: scene group nav in Session View */
-        if (d1 === MoveDown && d2 === 127 && sessionView && sceneGroup > 0) sceneGroup--;
-        if (d1 === MoveUp   && d2 === 127 && sessionView && sceneGroup < 3) sceneGroup++;
+        if (d1 === MoveDown && d2 === 127 && sessionView && sceneGroup < 3) sceneGroup++;
+        if (d1 === MoveUp   && d2 === 127 && sessionView && sceneGroup > 0) sceneGroup--;
 
         /* Track buttons CC40-43 */
         if (d1 >= 40 && d1 <= 43 && d2 === 127) {
