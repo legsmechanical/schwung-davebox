@@ -218,6 +218,29 @@ function updateStepLEDs() {
     }
 }
 
+function groupHasContent(group) {
+    for (let row = 0; row < 4; row++) {
+        const sceneIdx = group * 4 + row;
+        for (let t = 0; t < NUM_TRACKS; t++)
+            if (clipHasContent(t, sceneIdx)) return true;
+    }
+    return false;
+}
+
+function updateSceneMapLEDs() {
+    if (!ledInitComplete) return;
+    for (let i = 0; i < 16; i++) {
+        const group = Math.floor(i / 4);
+        let color;
+        if (group === sceneGroup) {
+            color = LED_STEP_CURSOR;
+        } else {
+            color = groupHasContent(group) ? LED_STEP_ACTIVE : LED_OFF;
+        }
+        setLED(16 + i, color);
+    }
+}
+
 function updateSessionLEDs() {
     if (!ledInitComplete) return;
     for (let row = 0; row < 4; row++) {
@@ -384,6 +407,7 @@ globalThis.tick = function () {
         pollDSP();
         if (sessionView) {
             updateSessionLEDs();
+            updateSceneMapLEDs();
         } else {
             updateStepLEDs();
             updateTrackLEDs();
