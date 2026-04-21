@@ -34,7 +34,8 @@ import {
 
 import {
     setLED,
-    setButtonLED
+    setButtonLED,
+    isNoiseMessage
 } from '/data/UserData/schwung/shared/input_filter.mjs';
 
 import {
@@ -82,6 +83,22 @@ let ledInitIndex    = 0;
 let ledInitComplete = false;  /* false until init queue fully flushed; tick() blocks normal render */
 let shiftHeld       = false;
 
+/* Live pad note input — isomorphic 4ths diatonic layout.
+ * Rows increase by +3 scale degrees (diatonic), columns by +1 scale degree.
+ * All 32 pads are in-scale; root pads light with bright track color. */
+const SCALE_INTERVALS = [
+    [0, 2, 3, 5, 7, 8, 10],   /* 0 = natural minor */
+    [0, 2, 4, 5, 7, 9, 11],   /* 1 = major          */
+];
+let padKey    = 9;                          /* root key 0-11, default 9=A */
+let padScale  = 0;                          /* 0=minor, 1=major */
+let padOctave = new Array(NUM_TRACKS).fill(3);  /* per-track root octave, default 3 */
+let padNoteMap = new Array(32).fill(60);    /* MIDI pitch for each pad position 0-31 */
+
+/* Per-pad pitch sent at note-on — ensures matching note-off pitch even if
+ * padNoteMap changes while a pad is held. -1 = pad not active. */
+const padPitch = new Array(32).fill(-1);
+
 /* clipSteps[track][clip][step] — JS-authoritative mirror of DSP step data */
 let clipSteps        = Array.from({length: NUM_TRACKS}, () =>
                            Array.from({length: NUM_CLIPS}, () => new Array(NUM_STEPS).fill(0)));
@@ -96,11 +113,26 @@ let sessionView      = false;
 let sceneGroup       = 0;     /* 0-3: which group of 4 scenes is visible */
 let pulseStep        = 0;     /* 0..PULSE_PERIOD-1, drives clip LED pulse */
 let pulseUseBright   = false; /* current dim/bright decision for this tick */
+let tickCount        = 0;     /* total ticks elapsed, used for poll throttling */
+const POLL_INTERVAL  = 4;     /* poll DSP every N ticks (~15Hz at 60Hz tick rate) */
 
 function clipHasContent(t, c) {
     const s = clipSteps[t][c];
     for (let i = 0; i < NUM_STEPS; i++) if (s[i]) return true;
     return false;
+}
+
+function computePadNoteMap() {
+    const intervals = SCALE_INTERVALS[padScale] || SCALE_INTERVALS[0];
+    const root = padOctave[activeTrack] * 12 + padKey;
+    for (let i = 0; i < 32; i++) {
+        const col = i % 8;
+        const row = Math.floor(i / 8);
+        const deg = col + row * 3;
+        const oct = Math.floor(deg / 7);
+        const semitone = oct * 12 + intervals[deg % 7];
+        padNoteMap[i] = Math.max(0, Math.min(127, root + semitone));
+    }
 }
 
 /* Synchronously zero every LED that SEQ8 owns — call before host_hide_module()
@@ -138,6 +170,7 @@ function installFlagsWrap() {
         const f = orig();
         const hit = f & SEQ8_NAV_FLAGS;
         if (hit && wrap._active) {
+            ledInitComplete = false;
             clearAllLEDs();
             if (typeof shadow_clear_ui_flags === 'function') shadow_clear_ui_flags(hit);
             return f & ~SEQ8_NAV_FLAGS;
@@ -185,17 +218,16 @@ function drainLedInit() {
 
 function pollDSP() {
     if (typeof host_module_get_param !== 'function') return;
-    const p = host_module_get_param('playing');
-    playing = (p === '1');
+    const snap = host_module_get_param('state_snapshot');
+    if (!snap) return;
+    /* Format: "playing cs0..cs7 ac0..ac7 qc0..qc7" (25 space-separated ints) */
+    const v = snap.split(' ');
+    if (v.length < 25) return;
+    playing = (v[0] === '1');
     for (let t = 0; t < NUM_TRACKS; t++) {
-        const cs = host_module_get_param('t' + t + '_current_step');
-        trackCurrentStep[t] = (cs !== null && cs !== undefined)
-            ? (parseInt(cs, 10) | 0) : -1;
-        const ac = host_module_get_param('t' + t + '_active_clip');
-        if (ac !== null && ac !== undefined) trackActiveClip[t] = parseInt(ac, 10) | 0;
-        const qc = host_module_get_param('t' + t + '_queued_clip');
-        trackQueuedClip[t] = (qc !== null && qc !== undefined)
-            ? (parseInt(qc, 10) | 0) : -1;
+        trackCurrentStep[t] = parseInt(v[1 + t], 10) | 0;
+        trackActiveClip[t]  = parseInt(v[9 + t], 10) | 0;
+        trackQueuedClip[t]  = parseInt(v[17 + t], 10) | 0;
     }
 }
 
@@ -212,7 +244,7 @@ function updateStepLEDs() {
         if (playing && absStep === cs) {
             color = LED_STEP_CURSOR;
         } else if (steps[absStep]) {
-            color = LED_STEP_ACTIVE;
+            color = TRACK_COLORS[activeTrack];
         } else {
             color = LED_OFF;
         }
@@ -284,14 +316,12 @@ function updateSessionLEDs() {
 function updateTrackLEDs() {
     if (!ledInitComplete) return;
 
-    /* Pad rows: only in Note View. Session View row 3 (notes 68-75) is owned by
-     * updateSessionLEDs — writing here too would double-write and cause flicker. */
+    /* Pad rows: only in Note View. Session View owns all pad notes via updateSessionLEDs. */
     if (!sessionView) {
-        for (let t = 0; t < 8; t++) {
-            setLED(TRACK_PAD_BASE + t,
-                   t < NUM_TRACKS ? (t === activeTrack ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t])
-                                  : LED_OFF);
-            setLED(TRACK_PAD_BASE + 8 + t, LED_OFF);
+        const rootColor = TRACK_COLORS[activeTrack];
+        for (let i = 0; i < 32; i++) {
+            setLED(TRACK_PAD_BASE + i,
+                   padNoteMap[i] % 12 === padKey ? rootColor : DarkGrey);
         }
     }
 
@@ -323,6 +353,8 @@ function updateTrackLEDs() {
         setButtonLED(40 + idx, color);
     }
 }
+
+
 
 function forceRedraw() {
     if (!ledInitComplete) return;
@@ -409,8 +441,20 @@ globalThis.init = function () {
                 if (len !== null && len !== undefined)
                     clipLength[t][c] = parseInt(len, 10) || 16;
             }
+
+            /* Pad octave per track */
+            const po = host_module_get_param('t' + t + '_pad_octave');
+            if (po !== null && po !== undefined) padOctave[t] = parseInt(po, 10) | 0;
         }
+
+        /* Global pad tonality */
+        const kp = host_module_get_param('key');
+        if (kp !== null && kp !== undefined) padKey   = parseInt(kp, 10) | 0;
+        const sp = host_module_get_param('scale');
+        if (sp !== null && sp !== undefined) padScale = parseInt(sp, 10) | 0;
     }
+
+    computePadNoteMap();
 
     /* Block normal tick() rendering until the init queue is fully flushed. */
     ledInitComplete = false;
@@ -422,6 +466,8 @@ globalThis.init = function () {
 };
 
 globalThis.tick = function () {
+    tickCount++;
+
     /* Triangle-wave pulse: 4 equal phases per cycle.
      * Phase 0 (dim), phase 1 (bright), phase 2 (bright), phase 3 (dim).
      * 50% duty cycle with transitions at predictable quarter-period boundaries. */
@@ -432,7 +478,7 @@ globalThis.tick = function () {
     if (!ledInitComplete) {
         drainLedInit();
     } else {
-        pollDSP();
+        if ((tickCount % POLL_INTERVAL) === 0) pollDSP();
         if (sessionView) {
             updateSessionLEDs();
             updateSceneMapLEDs();
@@ -449,6 +495,7 @@ globalThis.tick = function () {
  * power down from the Move UI. */
 
 globalThis.onMidiMessageInternal = function (data) {
+    if (isNoiseMessage(data)) return;
     const status = data[0] | 0;
     const d1     = (data[1] ?? 0) | 0;
     const d2     = (data[2] ?? 0) | 0;
@@ -483,7 +530,11 @@ globalThis.onMidiMessageInternal = function (data) {
          * reconnects without overtake_dsp:load, reloads JS only, calls init(). */
         if (d1 === MoveBack && d2 === 127 && shiftHeld) {
             removeFlagsWrap();
+            ledInitComplete = false;
             clearAllLEDs();
+            /* Belt-and-suspenders: explicitly zero track buttons immediately
+             * before hide — prevents any tick race from leaving them lit. */
+            for (let _i = 0; _i < 4; _i++) setButtonLED(40 + _i, LED_OFF);
             if (typeof host_hide_module === 'function') {
                 host_hide_module();
             }
@@ -578,10 +629,30 @@ globalThis.onMidiMessageInternal = function (data) {
                 }
             }
         } else {
-            /* Note View: Shift + bottom row selects active track (notes 68-75 for 8 tracks) */
-            if (shiftHeld && d1 >= TRACK_PAD_BASE && d1 < TRACK_PAD_BASE + NUM_TRACKS) {
-                activeTrack = d1 - TRACK_PAD_BASE;
+            if (d1 >= TRACK_PAD_BASE && d1 < TRACK_PAD_BASE + 32) {
+                const padIdx = d1 - TRACK_PAD_BASE;
+                if (shiftHeld && padIdx < NUM_TRACKS) {
+                    /* Shift + bottom row: select active track */
+                    activeTrack = padIdx;
+                    computePadNoteMap();
+                } else if (!shiftHeld) {
+                    const pitch = padNoteMap[padIdx];
+                    padPitch[padIdx] = pitch;
+                    if (!sessionView && typeof shadow_send_midi_to_dsp === 'function')
+                        shadow_send_midi_to_dsp([0x90, pitch, Math.max(80, d2)]);
+                }
             }
+        }
+    }
+
+    /* Pad releases: note-off for both 0x80 and 0x90-velocity-0. */
+    if ((status & 0xF0) === 0x80 || ((status & 0xF0) === 0x90 && d2 === 0)) {
+        if (d1 >= TRACK_PAD_BASE && d1 < TRACK_PAD_BASE + 32) {
+            const padIdx = d1 - TRACK_PAD_BASE;
+            const pitch = padPitch[padIdx] >= 0 ? padPitch[padIdx] : padNoteMap[padIdx];
+            padPitch[padIdx] = -1;
+            if (!sessionView && typeof shadow_send_midi_to_dsp === 'function')
+                shadow_send_midi_to_dsp([0x80, pitch, 0]);
         }
     }
 };

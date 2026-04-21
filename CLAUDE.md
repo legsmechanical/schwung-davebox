@@ -60,6 +60,15 @@ Phase 0 complete — scaffold, MIDI buffer stress test, and button logging.
 - **Transport**: Play resets step to 0 and clears tick accum. Stop/panic sends brute-force note-off (0x80) for all 128 notes on each active channel. CC 123 not used — Braids and some instruments ignore it.
 - **Gate**: 12 ticks (of 24 per step). Note-off fires at tick 12; next step's note-on fires at tick 0 of the following step.
 
+## Phase 5 findings
+
+- **Live pad input — correct pattern**: `shadow_send_midi_to_dsp([status, d1, d2])` called directly from JS `onMidiMessageInternal`. No C DSP involvement, no `host_module_set_param`, no SPSC queue. Confirmed working in api_version 2 + DSP tool modules — all overtake/tool modules share the same QuickJS globalThis as shadow_ui.js, so `shadow_send_midi_to_dsp` is accessible. No stuck notes, polyphony works correctly.
+- **Live pad input latency floor: ~3–7ms** (JS architecture limit). The JS runtime ticks at ~196Hz (~5ms intervals); a pad press arriving mid-tick waits up to 5ms plus shadow_ui.js dispatch overhead. Native Move performance mode bypasses JS entirely — no equivalent C-level hook is exposed to tool modules. This gap is structural and cannot be closed.
+- **`on_midi` does not receive internal MIDI in tool mode**: Confirmed on hardware. The C `on_midi` callback only fires for external USB-A MIDI. Internal pad/button events route exclusively to JS `onMidiMessageInternal`.
+- **Batch `state_snapshot` param**: replaces 25 individual `host_module_get_param` calls in `pollDSP()` with one. Format: `"playing cs0..cs7 ac0..ac7 qc0..qc7"` (25 space-separated ints). Essential for JS thread responsiveness — each IPC call blocks the JS thread, so 25 calls per poll tick was the largest single source of MIDI event queuing delay.
+- **`host_module_set_param` key filtering**: Schwung API silently drops calls for keys not matching registered param patterns. Only keys registered in the C `set_param` dispatch table reach C. Do not use `host_module_set_param` for MIDI output — use `shadow_send_midi_to_dsp` directly.
+- **Move pressure grid phantom note-offs**: Move sends phantom note-off/note-on pairs during simultaneous multi-pad presses. With `shadow_send_midi_to_dsp` these are harmless pass-throughs — the instrument handles duplicate note-offs as no-ops. No state tracking required beyond remembering which pitch was sent at note-on (for matching note-off pitch if the map changes mid-hold).
+
 ## Phase 4 findings
 
 - **Move LED palette**: Fixed 128-entry color index palette — NOT a brightness scale. Adjacent values are unrelated colors. `setLED(note, velocity)` selects a palette color by index, not brightness. Using an arbitrary low value (e.g. 15) will show the color at that palette slot (Cyan=14, so 15 is near-cyan), not a dim version of the intended color.
@@ -81,21 +90,31 @@ Phase 0 complete — scaffold, MIDI buffer stress test, and button logging.
 
 ### C DSP routing
 
-SEQ8 uses two routing destinations, selected per-track via `tN_route` param (`"schwung"` or `"move"`):
+`pfx_send` uses `host->midi_send_internal` for all tracks. `ROUTE_SCHWUNG` and `ROUTE_MOVE` are preserved as labels in the `tN_route` param API but both currently use the same path.
 
-- **`ROUTE_SCHWUNG` (default, tracks 0–3)**: `host->midi_send_internal` → Schwung synth chains. These are the chains attached to the active scene in Ableton Move. Confirmed correct for sequencer output.
-- **`ROUTE_MOVE` (planned for tracks 4–7)**: `move_midi_inject_to_move()` → native Move tracks (the Move's own internal tracks, separate internal bus from Schwung chains, no channel collision). Looked up at init time via `dlsym(RTLD_DEFAULT, "move_midi_inject_to_move")` — `NULL` if not available, `pfx_send` falls back to `midi_send_internal`.
+- **`host->midi_send_internal`**: Routes to the **active Schwung chain** in the overtake/tool context. MIDI channel in the status byte does NOT route to different chains — hardware test confirmed channel 2 did not reach a chain set to receive on channel 2. All 8 SEQ8 tracks play through whichever chain is active in the current scene. Users can layer SEQ8 tracks by setting all Schwung chains to receive on all channels (omni).
+- **`host->midi_send_external`**: Sends to **USB-A** via SPI hardware. Does **not** appear on USB-C — USB-C is Move's host/charging port, not a device port. **USB-A loopback (USB-A to USB-C) is not possible** — both ports are host ports; a host-to-host cable carries no signal. `midi_send_external` is only useful with actual external MIDI hardware (synths, drum machines) connected to USB-A. If used from a JS deferred queue (not render path), a SPSC ring buffer pattern works safely. **CRITICAL — never call from the render path.** SPI I/O is blocking; calling it in `render_block` causes audio cracking and can deadlock `suspend_overtake`. Confirmed Phase 4.
 
-These are **separate internal buses** — Schwung chains and native Move tracks do not share MIDI channels. No collision risk when routing tracks to different buses.
+### ROUTE_MOVE investigation (Phase 5 — exhaustively confirmed no path)
 
-- **`host->midi_send_external`**: Sends to **USB-A** via SPI hardware (`spi_fd`, `hw_mmap` in shim log). Does **not** appear on USB-C — USB-C is Move's host/charging port (connects to Ableton Live), not a MIDI output. External MIDI hardware connects via USB-A only.
-  - **CRITICAL — never call from the render path, under any circumstances.** SPI I/O is blocking. Calling `midi_send_external` inside `render_block`, or in any function invoked from `render_block` (including `pfx_send`), causes audio cracking and can deadlock `suspend_overtake` on shutdown. Confirmed in Phase 4 testing. Any external MIDI monitoring must use a deferred queue flushed from outside the render callback.
+All approaches to routing MIDI to multiple native Move chains independently were tested and failed:
+
+- **`dlsym(RTLD_DEFAULT, "move_midi_inject_to_move")`**: Always returns NULL. The shim binary exports zero dynamic symbols — `nm -D shadow_ui` returns empty.
+- **`move_midi_inject_to_move` as a JS global**: Exists and callable from JS (`song-mode` uses it). Injects into the Move hardware MIDI event stream simulating **physical pad presses** (notes 68–99). Does NOT route arbitrary MIDI pitches to chain sound generators — hardware confirmed.
+- **JS bridge (C DSP → param queue → JS → inject)**: Implemented and tested. Fails for the same reason as above.
+- **MIDI channel routing via `midi_send_internal`**: Hardware-tested — channel 2 did not reach a chain set to receive on channel 2. `midi_send_internal` reaches only the active chain regardless of MIDI channel.
+- **USB-A loopback via `midi_send_external`**: Not possible — USB-A is a host port, cannot connect to USB-C (also host).
+- **`/schwung-midi-inject` SHM**: Exists (`SHADOW_MIDI_INJECT_BUFFER_SIZE 256`, `shadow_drain_midi_inject`). Struct layout unknown, no safe write path identified.
+- **`song-mode` mechanism**: Launches clips via pad note injection (68–99) only — not arbitrary-pitch note sequencing.
+
+**Current state**: All 8 SEQ8 tracks use `midi_send_internal` → active Schwung chain. ROUTE_MOVE reserved. ROUTE_EXTERNAL available for real external USB-A hardware via deferred JS queue if needed in future.
 
 ### JS routing
 
 - **`shadow_send_midi_to_dsp([status, d1, d2])`**: JS global for Schwung DSP chain's sound generator. Used by pure-JS overtake modules (api_version 1, no DSP). In api_version 2 + DSP, use `host->midi_send_internal` from C instead.
 - **`move_midi_internal_send([cable|CIN, status, d1, d2])`**: JS global for Move hardware MIDI (LEDs, button lights) — NOT for instrument notes.
-- **`move_midi_external_send([cable|CIN, status, d1, d2])`**: JS global for USB-A external MIDI.
+- **`move_midi_inject_to_move([cable|CIN, status, d1, d2])`**: JS global. Injects into Move hardware MIDI event stream. Simulates pad presses for notes 68–99 (clip launch). Does NOT play arbitrary pitches on chain instruments.
+- **`move_midi_external_send([cable|CIN, status, d1, d2])`**: JS global for USB-A external MIDI. Safe from JS tick (deferred); never call from render path.
 
 ## Key constraints
 

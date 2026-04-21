@@ -1,7 +1,7 @@
 /*
  * SEQ8 — RS7000-inspired 8-track MIDI sequencer for Ableton Move.
- * Phase 5: 8 tracks, 256 steps per clip. Tracks 0-3 route to Schwung chains,
- *          tracks 4-7 route to native Move tracks via ROUTE_MOVE.
+ * Phase 5: 8 tracks, 256 steps per clip. Tracks 0-3 route to native Move tracks
+ *          via ROUTE_MOVE (fallback: SCHWUNG). Tracks 4-7 route to Schwung chains.
  *
  * Param namespace:
  *   tN_cM_step_S     — track N, clip M, step S on/off (S: 0..255)
@@ -20,7 +20,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <dlfcn.h>
 
 #include "host/plugin_api_v1.h"
 
@@ -35,8 +34,11 @@
 #define NUM_CLIPS           16
 
 /* MIDI routing: where track output is delivered */
-#define ROUTE_SCHWUNG  0   /* host->midi_send_internal  → Schwung synth chains */
-#define ROUTE_MOVE     1   /* g_midi_inject_to_move()   → native Move tracks   */
+#define ROUTE_SCHWUNG  0   /* host->midi_send_internal → Schwung active chain */
+#define ROUTE_MOVE     1   /* reserved — no confirmed multi-chain path exists */
+
+/* Pad input modes */
+#define PAD_MODE_MELODIC_SCALE  0   /* isomorphic 4ths diatonic layout */
 
 /* Sequencer engine */
 #define BPM_DEFAULT         140
@@ -65,12 +67,6 @@ static const int CLOCK_VALUES[NUM_CLOCK_VALUES] = {
     0, 30, 60, 80, 120, 160, 240, 320, 480, 960, 1920
 };
 
-/* ------------------------------------------------------------------ */
-/* Runtime function lookup for ROUTE_MOVE                              */
-/* ------------------------------------------------------------------ */
-
-typedef int (*move_midi_inject_fn)(const uint8_t *msg, int len);
-static move_midi_inject_fn g_midi_inject_to_move = NULL;
 
 /* ------------------------------------------------------------------ */
 /* Play effects structs (direct port from NoteTwist)                   */
@@ -152,6 +148,8 @@ typedef struct {
     uint8_t   note_active;
     uint8_t   pending_note;         /* orig note key used for active note-on */
     play_fx_t pfx;
+    uint8_t   pad_octave;           /* live pad root octave (0-8, default 3) */
+    uint8_t   pad_mode;             /* PAD_MODE_MELODIC_SCALE = 0 */
 } seq8_track_t;
 
 typedef struct {
@@ -171,9 +169,14 @@ typedef struct {
 
     /* Print mode: bake chain output into step data */
     uint8_t  printing;
+
+    /* Live pad input: global key/scale stored for state persistence */
+    uint8_t  pad_key;               /* root key 0-11, default 9 (A) */
+    uint8_t  pad_scale;             /* 0=minor, 1=major */
 } seq8_instance_t;
 
 static const host_api_v1_t *g_host = NULL;
+
 
 /* ------------------------------------------------------------------ */
 /* Utility                                                              */
@@ -203,8 +206,7 @@ static int pfx_rand(play_fx_t *fx, int lo, int hi) {
 static void seq8_ilog(seq8_instance_t *inst, const char *msg) {
     if (!inst || !inst->log_fp) return;
     fprintf(inst->log_fp, "%s\n", msg);
-    /* fflush intentionally omitted — synchronous disk I/O from on_midi/set_param
-     * blocked the render path, causing multi-minute delay on power button press. */
+    fflush(inst->log_fp);
 }
 
 /* --- State persistence (Option C: cold-boot recovery) ------------------- */
@@ -295,21 +297,18 @@ static void seq8_load_state(seq8_instance_t *inst) {
 /* MIDI output helpers                                                  */
 /* ------------------------------------------------------------------ */
 
-/* Send 3-byte MIDI message through the track's configured route.
- * ROUTE_SCHWUNG → host->midi_send_internal  (Schwung synth chains)
- * ROUTE_MOVE    → g_midi_inject_to_move()   (native Move tracks)
+/* Send 3-byte MIDI message to the active Schwung chain.
+ * All routes (SCHWUNG and MOVE) use midi_send_internal — no confirmed API
+ * exists to route to multiple chains independently. ROUTE_MOVE is reserved.
  *
  * CRITICAL: never call midi_send_external from this path. pfx_send is
- * invoked from render_block (audio thread). midi_send_external routes via
- * SPI hardware — blocking I/O in the render path causes audio cracking. */
+ * invoked from render_block (audio thread); SPI I/O is blocking and will
+ * cause audio cracking and deadlock suspend_overtake on shutdown. */
 static void pfx_send(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
+    (void)fx;
+    if (!g_host || !g_host->midi_send_internal) return;
     const uint8_t msg[4] = { (uint8_t)(status >> 4), status, d1, d2 };
-    if (fx->route == ROUTE_MOVE && g_midi_inject_to_move) {
-        g_midi_inject_to_move(msg, 4);
-    } else {
-        if (!g_host || !g_host->midi_send_internal) return;
-        g_host->midi_send_internal(msg, 4);
-    }
+    g_host->midi_send_internal(msg, 4);
 }
 
 /* Brute-force note-off for all 128 notes on all active channels.
@@ -591,6 +590,28 @@ static void pfx_note_off(seq8_instance_t *inst, seq8_track_t *tr,
     an->active = 0;
 }
 
+/* Immediate note-off for live pad releases — bypasses gate_smp minimum.
+ * gate_smp is a sequencer concept (note rings for its step duration); pads
+ * should stop the moment the finger lifts regardless of how long gate_time is. */
+static void pfx_note_off_imm(seq8_instance_t *inst, seq8_track_t *tr,
+                              uint8_t orig_note) {
+    play_fx_t   *fx  = &tr->pfx;
+    pfx_active_t *an = &fx->active_notes[orig_note];
+    if (!an->active) return;
+
+    uint64_t now     = fx->sample_counter;
+    uint64_t uni_ext = (uint64_t)(UNISON_STAGGER * an->stored_unison);
+    uint8_t  off_s   = (uint8_t)(0x80 | an->channel);
+
+    int i;
+    for (i = 0; i < an->gen_count; i++)
+        pfx_send(fx, off_s, an->gen_notes[i], 0);
+
+    pfx_sched_delay_offs(fx, an, an->on_time + uni_ext, pfx_gate_smp(inst, tr));
+    an->active = 0;
+    (void)now;
+}
+
 /* ------------------------------------------------------------------ */
 /* Plugin lifecycle                                                     */
 /* ------------------------------------------------------------------ */
@@ -623,14 +644,18 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
                            ? (float)g_host->sample_rate : 44100.0f;
     inst->log_fp         = fopen(SEQ8_LOG_PATH, "a");
 
+    inst->pad_key   = 9;   /* A */
+    inst->pad_scale = 0;   /* minor */
+
     int t, c;
     for (t = 0; t < NUM_TRACKS; t++) {
         inst->tracks[t].channel     = (uint8_t)t;
         inst->tracks[t].queued_clip = -1;
+        inst->tracks[t].pad_octave  = 3;
+        inst->tracks[t].pad_mode    = PAD_MODE_MELODIC_SCALE;
         for (c = 0; c < NUM_CLIPS; c++)
             clip_init(&inst->tracks[t].clips[c]);
         pfx_init_defaults(&inst->tracks[t].pfx);
-        if (t >= 4) inst->tracks[t].pfx.route = ROUTE_MOVE;
     }
 
     inst->tick_threshold = (uint32_t)(inst->sample_rate * 60.0f);
@@ -669,15 +694,7 @@ static void destroy_instance(void *instance) {
 /* ------------------------------------------------------------------ */
 
 static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
-    seq8_instance_t *inst = (seq8_instance_t *)instance;
-    if (!msg || len < 1) return;
-    char buf[64];
-    uint8_t d1 = len > 1 ? msg[1] : 0;
-    uint8_t d2 = len > 2 ? msg[2] : 0;
-    snprintf(buf, sizeof(buf),
-             "SEQ8 MIDI src=%d status=0x%02X d1=%u d2=%u",
-             source, msg[0], d1, d2);
-    seq8_ilog(inst, buf);
+    (void)instance; (void)msg; (void)len; (void)source;
 }
 
 /* ------------------------------------------------------------------ */
@@ -804,6 +821,20 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
 
+    /* --- Global pad tonality --- */
+    if (!strcmp(key, "key")) {
+        inst->pad_key = (uint8_t)clamp_i(my_atoi(val), 0, 11);
+        return;
+    }
+    if (!strcmp(key, "scale")) {
+        inst->pad_scale = (uint8_t)clamp_i(my_atoi(val), 0, 1);
+        return;
+    }
+    if (!strcmp(key, "debug_log")) {
+        seq8_ilog(inst, val);
+        return;
+    }
+
     /* --- Scene launch (global): switch all tracks to clip M immediately --- */
     if (!strcmp(key, "launch_scene")) {
         int cidx = clamp_i(my_atoi(val), 0, NUM_CLIPS - 1);
@@ -871,6 +902,16 @@ static void set_param(void *instance, const char *key, const char *val) {
             return;
         }
 
+        /* tN_pad_octave / tN_pad_mode */
+        if (!strcmp(sub, "pad_octave")) {
+            tr->pad_octave = (uint8_t)clamp_i(my_atoi(val), 0, 8);
+            return;
+        }
+        if (!strcmp(sub, "pad_mode")) {
+            tr->pad_mode = (uint8_t)clamp_i(my_atoi(val), 0, 0);
+            return;
+        }
+
         /* All play effects params */
         pfx_set(inst, tr, sub, val);
         return;
@@ -926,12 +967,33 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         return snprintf(out, out_len, "%d", inst ? (int)inst->playing : 0);
     if (!strcmp(key, "active_track"))
         return snprintf(out, out_len, "%d", inst ? (int)inst->active_track : 0);
+    if (!strcmp(key, "key"))
+        return snprintf(out, out_len, "%d", inst ? (int)inst->pad_key : 9);
+    if (!strcmp(key, "scale"))
+        return snprintf(out, out_len, "%d", inst ? (int)inst->pad_scale : 0);
     if (!strcmp(key, "version"))
         return snprintf(out, out_len, "4");
     if (!strcmp(key, "bpm")) {
         double b = (inst && inst->tracks[0].pfx.cached_bpm > 0)
                    ? inst->tracks[0].pfx.cached_bpm : (double)BPM_DEFAULT;
         return snprintf(out, out_len, "%.0f", b);
+    }
+
+    /* state_snapshot: single call returning all poll-loop values.
+     * Format: "playing cs0 cs1..cs7 ac0 ac1..ac7 qc0 qc1..qc7" (25 ints)
+     * Replaces 25 individual get_param calls in pollDSP(). */
+    if (!strcmp(key, "state_snapshot")) {
+        if (!inst) return snprintf(out, out_len, "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -1 -1 -1 -1 -1 -1 -1 -1");
+        int t;
+        int pos = 0;
+        pos += snprintf(out + pos, (size_t)(out_len - pos), "%d", (int)inst->playing);
+        for (t = 0; t < NUM_TRACKS; t++)
+            pos += snprintf(out + pos, (size_t)(out_len - pos), " %d", (int)inst->tracks[t].current_step);
+        for (t = 0; t < NUM_TRACKS; t++)
+            pos += snprintf(out + pos, (size_t)(out_len - pos), " %d", (int)inst->tracks[t].active_clip);
+        for (t = 0; t < NUM_TRACKS; t++)
+            pos += snprintf(out + pos, (size_t)(out_len - pos), " %d", (int)inst->tracks[t].queued_clip);
+        return pos;
     }
 
     if (!inst) return -1;
@@ -948,6 +1010,10 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
             return snprintf(out, out_len, "%d", (int)tr->active_clip);
         if (!strcmp(sub, "queued_clip"))
             return snprintf(out, out_len, "%d", (int)tr->queued_clip);
+        if (!strcmp(sub, "pad_octave"))
+            return snprintf(out, out_len, "%d", (int)tr->pad_octave);
+        if (!strcmp(sub, "pad_mode"))
+            return snprintf(out, out_len, "%d", (int)tr->pad_mode);
 
         /* tN_cM_step_S / tN_cM_length / tN_cM_active */
         if (sub[0] == 'c' && sub[1] >= '0' && sub[1] <= '9') {
@@ -1071,10 +1137,5 @@ static plugin_api_v2_t g_api = {
 
 plugin_api_v2_t *move_plugin_init_v2(const host_api_v1_t *host) {
     g_host = host;
-    /* Look up move_midi_inject_to_move in the host process (shim exports it
-     * as a global symbol). Used by ROUTE_MOVE tracks to send to native Move
-     * chains. NULL if not available — pfx_send falls back to midi_send_internal. */
-    g_midi_inject_to_move = (move_midi_inject_fn)
-        dlsym(RTLD_DEFAULT, "move_midi_inject_to_move");
     return &g_api;
 }
