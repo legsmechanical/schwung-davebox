@@ -133,7 +133,8 @@ typedef struct {
 
 typedef struct {
     uint8_t  steps[SEQ_STEPS];          /* 0=off, 1=on */
-    uint8_t  step_note[SEQ_STEPS];      /* default SEQ_NOTE */
+    uint8_t  step_notes[SEQ_STEPS][4]; /* up to 4 notes per step (chord); [0] = primary */
+    uint8_t  step_note_count[SEQ_STEPS]; /* 0..4; 0 = step deactivated */
     uint8_t  step_vel[SEQ_STEPS];       /* default SEQ_VEL */
     uint8_t  step_gate[SEQ_STEPS];      /* gate ticks 1..GATE_TICKS (capped), applied at render */
     uint8_t  step_gate_orig[SEQ_STEPS]; /* original gate ticks before noteFX_gate scaling */
@@ -154,7 +155,8 @@ typedef struct {
     int8_t    queued_clip;          /* next clip (-1 = none) */
     uint16_t  current_step;
     uint8_t   note_active;
-    uint8_t   pending_note;         /* orig note key used for active note-on */
+    uint8_t   pending_notes[4];     /* notes fired at note-on; matched at note-off */
+    uint8_t   pending_note_count;   /* how many entries in pending_notes are valid */
     play_fx_t pfx;
     uint8_t   pad_octave;           /* live pad root octave (0-8, default 3) */
     uint8_t   pad_mode;             /* PAD_MODE_MELODIC_SCALE = 0 */
@@ -251,12 +253,35 @@ static void seq8_save_state(seq8_instance_t *inst) {
         fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
     for (t = 0; t < NUM_TRACKS; t++) {
         for (c = 0; c < NUM_CLIPS; c++) {
+            clip_t *cl = &inst->tracks[t].clips[c];
+            /* steps[] on/off string */
             fprintf(fp, ",\"t%dc%d\":\"", t, c);
             for (s = 0; s < SEQ_STEPS; s++)
-                fputc(inst->tracks[t].clips[c].steps[s] ? '1' : '0', fp);
+                fputc(cl->steps[s] ? '1' : '0', fp);
             fputc('"', fp);
-            fprintf(fp, ",\"t%dc%d_len\":%d", t, c,
-                    (int)inst->tracks[t].clips[c].length);
+            fprintf(fp, ",\"t%dc%d_len\":%d", t, c, (int)cl->length);
+            /* sparse step notes — only emit clips with at least one non-default note */
+            int has_nondefault = 0;
+            for (s = 0; s < SEQ_STEPS; s++) {
+                if (cl->step_note_count[s] != 1 || cl->step_notes[s][0] != SEQ_NOTE) {
+                    has_nondefault = 1; break;
+                }
+            }
+            if (has_nondefault) {
+                int n;
+                fprintf(fp, ",\"t%dc%d_sn\":\"", t, c);
+                for (s = 0; s < SEQ_STEPS; s++) {
+                    if (cl->step_note_count[s] == 1 && cl->step_notes[s][0] == SEQ_NOTE)
+                        continue;
+                    fprintf(fp, "%d:", s);
+                    for (n = 0; n < (int)cl->step_note_count[s]; n++) {
+                        if (n > 0) fputc(',', fp);
+                        fprintf(fp, "%d", (int)cl->step_notes[s][n]);
+                    }
+                    fputc(';', fp);
+                }
+                fputc('"', fp);
+            }
         }
     }
     fprintf(fp, "}");
@@ -278,7 +303,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
     buf[n] = '\0';
 
     int t, c, i;
-    char key[24];
+    char key[32];
     for (t = 0; t < NUM_TRACKS; t++) {
         snprintf(key, sizeof(key), "t%d_ac", t);
         inst->tracks[t].active_clip = (uint8_t)clamp_i(
@@ -296,6 +321,46 @@ static void seq8_load_state(seq8_instance_t *inst) {
             for (i = 0; i < SEQ_STEPS; i++)
                 if (inst->tracks[t].clips[c].steps[i]) { any = 1; break; }
             inst->tracks[t].clips[c].active = (uint8_t)any;
+
+            /* sparse step notes (backward-compat: absent key → clip_init defaults) */
+            {
+                char search[40];
+                snprintf(search, sizeof(search), "\"t%dc%d_sn\":\"", t, c);
+                const char *p = strstr(buf, search);
+                if (p) {
+                    p += strlen(search);
+                    clip_t *cl = &inst->tracks[t].clips[c];
+                    while (*p && *p != '"') {
+                        /* parse step index */
+                        int sidx = 0;
+                        while (*p >= '0' && *p <= '9')
+                            sidx = sidx * 10 + (*p++ - '0');
+                        if (*p != ':') break;
+                        p++;
+                        if (sidx < 0 || sidx >= SEQ_STEPS) {
+                            while (*p && *p != ';' && *p != '"') p++;
+                            if (*p == ';') p++;
+                            continue;
+                        }
+                        /* parse comma-separated note numbers until ';' */
+                        int cnt = 0;
+                        while (*p && *p != ';' && *p != '"') {
+                            int note = 0;
+                            while (*p >= '0' && *p <= '9')
+                                note = note * 10 + (*p++ - '0');
+                            if (cnt < 4)
+                                cl->step_notes[sidx][cnt++] =
+                                    (uint8_t)clamp_i(note, 0, 127);
+                            if (*p == ',') p++;
+                        }
+                        cl->step_note_count[sidx] = (uint8_t)cnt;
+                        /* zero unused slots */
+                        for (i = cnt; i < 4; i++)
+                            cl->step_notes[sidx][i] = 0;
+                        if (*p == ';') p++;
+                    }
+                }
+            }
         }
     }
     free(buf);
@@ -568,7 +633,8 @@ static void pfx_note_on(seq8_instance_t *inst, seq8_track_t *tr,
     /* Print mode: capture primary output note and velocity into active clip. */
     if (inst->printing) {
         clip_t *cl = &tr->clips[tr->active_clip];
-        cl->step_note[tr->current_step] = gen[0];
+        cl->step_notes[tr->current_step][0] = gen[0];
+        cl->step_note_count[tr->current_step] = 1;
         cl->step_vel[tr->current_step]  = (uint8_t)v;
     }
 }
@@ -639,11 +705,15 @@ static void clip_init(clip_t *cl) {
     cl->clock_shift_pos = 0;
     cl->stretch_exp     = 0;
     for (s = 0; s < SEQ_STEPS; s++) {
-        cl->steps[s]          = 0;
-        cl->step_note[s]      = SEQ_NOTE;
-        cl->step_vel[s]       = SEQ_VEL;
-        cl->step_gate[s]      = GATE_TICKS;
-        cl->step_gate_orig[s] = GATE_TICKS;
+        cl->steps[s]             = 0;
+        cl->step_notes[s][0]     = SEQ_NOTE;
+        cl->step_notes[s][1]     = 0;
+        cl->step_notes[s][2]     = 0;
+        cl->step_notes[s][3]     = 0;
+        cl->step_note_count[s]   = 1;
+        cl->step_vel[s]          = SEQ_VEL;
+        cl->step_gate[s]         = GATE_TICKS;
+        cl->step_gate_orig[s]    = GATE_TICKS;
     }
 }
 
@@ -817,6 +887,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 int t;
                 for (t = 0; t < NUM_TRACKS; t++) {
                     inst->tracks[t].note_active         = 0;
+                    inst->tracks[t].pending_note_count  = 0;
                     inst->tracks[t].queued_clip         = -1;
                     inst->tracks[t].pfx.event_count     = 0;
                     memset(inst->tracks[t].pfx.active_notes, 0,
@@ -831,6 +902,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             int t;
             for (t = 0; t < NUM_TRACKS; t++) {
                 inst->tracks[t].note_active         = 0;
+                inst->tracks[t].pending_note_count  = 0;
                 inst->tracks[t].queued_clip         = -1;
                 inst->tracks[t].pfx.event_count     = 0;
                 memset(inst->tracks[t].pfx.active_notes, 0,
@@ -915,8 +987,13 @@ static void set_param(void *instance, const char *key, const char *val) {
             clip_t *cl = &tr->clips[cidx];
 
             if (!strncmp(p, "_step_", 6)) {
-                int sidx = my_atoi(p + 6);
-                if (sidx >= 0 && sidx < SEQ_STEPS) {
+                const char *q = p + 6;
+                int sidx = 0;
+                while (*q >= '0' && *q <= '9') { sidx = sidx * 10 + (*q++ - '0'); }
+                if (sidx < 0 || sidx >= SEQ_STEPS) return;
+
+                if (*q == '\0') {
+                    /* tN_cC_step_S — legacy on/off toggle */
                     cl->steps[sidx] = (val[0] == '1') ? 1 : 0;
                     if (cl->steps[sidx]) {
                         int g = (int)GATE_TICKS * tr->pfx.gate_time / 100;
@@ -928,8 +1005,42 @@ static void set_param(void *instance, const char *key, const char *val) {
                     int i, any = 0;
                     for (i = 0; i < SEQ_STEPS; i++) if (cl->steps[i]) { any = 1; break; }
                     cl->active = (uint8_t)any;
+                    seq8_save_state(inst);
+                    return;
                 }
-                seq8_save_state(inst);
+
+                if (!strcmp(q, "_toggle")) {
+                    /* tN_cC_step_S_toggle val=<note 0-127>
+                     * If note present: remove it. If absent and room: add it.
+                     * Activates/deactivates step as count crosses 0. */
+                    int note = clamp_i(my_atoi(val), 0, 127);
+                    int n, found = -1;
+                    for (n = 0; n < (int)cl->step_note_count[sidx]; n++) {
+                        if (cl->step_notes[sidx][n] == (uint8_t)note) { found = n; break; }
+                    }
+                    if (found >= 0) {
+                        /* remove: shift remaining notes down */
+                        for (n = found; n < (int)cl->step_note_count[sidx] - 1; n++)
+                            cl->step_notes[sidx][n] = cl->step_notes[sidx][n + 1];
+                        cl->step_notes[sidx][cl->step_note_count[sidx] - 1] = 0;
+                        cl->step_note_count[sidx]--;
+                        if (cl->step_note_count[sidx] == 0)
+                            cl->steps[sidx] = 0;
+                    } else if (cl->step_note_count[sidx] < 4) {
+                        /* add */
+                        if (cl->step_note_count[sidx] == 0)
+                            cl->steps[sidx] = 1;
+                        cl->step_notes[sidx][cl->step_note_count[sidx]++] = (uint8_t)note;
+                    }
+                    /* else: 4-note limit reached — silent no-op */
+                    {
+                        int i, any = 0;
+                        for (i = 0; i < SEQ_STEPS; i++) if (cl->steps[i]) { any = 1; break; }
+                        cl->active = (uint8_t)any;
+                    }
+                    seq8_save_state(inst);
+                    return;
+                }
                 return;
             }
             if (!strncmp(p, "_length", 7)) {
@@ -963,40 +1074,46 @@ static void set_param(void *instance, const char *key, const char *val) {
             clip_t *cl = &tr->clips[tr->active_clip];
             int len = (int)cl->length;
             if (len < 2) return;
-            uint8_t tmp_s, tmp_n, tmp_v, tmp_g, tmp_go;
+            uint8_t tmp_s, tmp_nc, tmp_ns[4], tmp_v, tmp_g, tmp_go;
             if (dir == 1) {
                 tmp_s  = cl->steps[len-1];
-                tmp_n  = cl->step_note[len-1];
+                memcpy(tmp_ns, cl->step_notes[len-1], 4);
+                tmp_nc = cl->step_note_count[len-1];
                 tmp_v  = cl->step_vel[len-1];
                 tmp_g  = cl->step_gate[len-1];
                 tmp_go = cl->step_gate_orig[len-1];
-                memmove(&cl->steps[1],          &cl->steps[0],          (size_t)(len-1));
-                memmove(&cl->step_note[1],       &cl->step_note[0],      (size_t)(len-1));
-                memmove(&cl->step_vel[1],        &cl->step_vel[0],       (size_t)(len-1));
-                memmove(&cl->step_gate[1],       &cl->step_gate[0],      (size_t)(len-1));
-                memmove(&cl->step_gate_orig[1],  &cl->step_gate_orig[0], (size_t)(len-1));
-                cl->steps[0]          = tmp_s;
-                cl->step_note[0]      = tmp_n;
-                cl->step_vel[0]       = tmp_v;
-                cl->step_gate[0]      = tmp_g;
-                cl->step_gate_orig[0] = tmp_go;
+                memmove(&cl->steps[1],            &cl->steps[0],            (size_t)(len-1));
+                memmove(&cl->step_notes[1][0],    &cl->step_notes[0][0],    (size_t)(len-1) * 4);
+                memmove(&cl->step_note_count[1],  &cl->step_note_count[0],  (size_t)(len-1));
+                memmove(&cl->step_vel[1],         &cl->step_vel[0],         (size_t)(len-1));
+                memmove(&cl->step_gate[1],        &cl->step_gate[0],        (size_t)(len-1));
+                memmove(&cl->step_gate_orig[1],   &cl->step_gate_orig[0],   (size_t)(len-1));
+                cl->steps[0]             = tmp_s;
+                memcpy(cl->step_notes[0], tmp_ns, 4);
+                cl->step_note_count[0]   = tmp_nc;
+                cl->step_vel[0]          = tmp_v;
+                cl->step_gate[0]         = tmp_g;
+                cl->step_gate_orig[0]    = tmp_go;
                 cl->clock_shift_pos = (uint16_t)((cl->clock_shift_pos + 1) % (uint16_t)len);
             } else {
                 tmp_s  = cl->steps[0];
-                tmp_n  = cl->step_note[0];
+                memcpy(tmp_ns, cl->step_notes[0], 4);
+                tmp_nc = cl->step_note_count[0];
                 tmp_v  = cl->step_vel[0];
                 tmp_g  = cl->step_gate[0];
                 tmp_go = cl->step_gate_orig[0];
-                memmove(&cl->steps[0],          &cl->steps[1],          (size_t)(len-1));
-                memmove(&cl->step_note[0],       &cl->step_note[1],      (size_t)(len-1));
-                memmove(&cl->step_vel[0],        &cl->step_vel[1],       (size_t)(len-1));
-                memmove(&cl->step_gate[0],       &cl->step_gate[1],      (size_t)(len-1));
-                memmove(&cl->step_gate_orig[0],  &cl->step_gate_orig[1], (size_t)(len-1));
-                cl->steps[len-1]          = tmp_s;
-                cl->step_note[len-1]      = tmp_n;
-                cl->step_vel[len-1]       = tmp_v;
-                cl->step_gate[len-1]      = tmp_g;
-                cl->step_gate_orig[len-1] = tmp_go;
+                memmove(&cl->steps[0],            &cl->steps[1],            (size_t)(len-1));
+                memmove(&cl->step_notes[0][0],    &cl->step_notes[1][0],    (size_t)(len-1) * 4);
+                memmove(&cl->step_note_count[0],  &cl->step_note_count[1],  (size_t)(len-1));
+                memmove(&cl->step_vel[0],         &cl->step_vel[1],         (size_t)(len-1));
+                memmove(&cl->step_gate[0],        &cl->step_gate[1],        (size_t)(len-1));
+                memmove(&cl->step_gate_orig[0],   &cl->step_gate_orig[1],   (size_t)(len-1));
+                cl->steps[len-1]           = tmp_s;
+                memcpy(cl->step_notes[len-1], tmp_ns, 4);
+                cl->step_note_count[len-1] = tmp_nc;
+                cl->step_vel[len-1]        = tmp_v;
+                cl->step_gate[len-1]       = tmp_g;
+                cl->step_gate_orig[len-1]  = tmp_go;
                 cl->clock_shift_pos = (uint16_t)((cl->clock_shift_pos + (uint16_t)(len-1)) % (uint16_t)len);
             }
             int i, any = 0;
@@ -1012,7 +1129,8 @@ static void set_param(void *instance, const char *key, const char *val) {
             int len = (int)cl->length;
             int i, new_len, any;
             uint8_t tmp_steps[SEQ_STEPS];
-            uint8_t tmp_note[SEQ_STEPS];
+            uint8_t tmp_notes[SEQ_STEPS][4];
+            uint8_t tmp_nc[SEQ_STEPS];
             uint8_t tmp_vel[SEQ_STEPS];
             uint8_t tmp_gate[SEQ_STEPS];
             uint8_t tmp_gate_orig[SEQ_STEPS];
@@ -1022,19 +1140,24 @@ static void set_param(void *instance, const char *key, const char *val) {
                 if (len * 2 > SEQ_STEPS) return;
                 new_len = len * 2;
                 for (i = len - 1; i >= 1; i--) {
-                    cl->steps[i*2]          = cl->steps[i];
-                    cl->step_note[i*2]      = cl->step_note[i];
-                    cl->step_vel[i*2]       = cl->step_vel[i];
-                    cl->step_gate[i*2]      = cl->step_gate[i];
-                    cl->step_gate_orig[i*2] = cl->step_gate_orig[i];
+                    cl->steps[i*2]   = cl->steps[i];
+                    memcpy(cl->step_notes[i*2], cl->step_notes[i], 4);
+                    cl->step_note_count[i*2] = cl->step_note_count[i];
+                    cl->step_vel[i*2]        = cl->step_vel[i];
+                    cl->step_gate[i*2]       = cl->step_gate[i];
+                    cl->step_gate_orig[i*2]  = cl->step_gate_orig[i];
                     cl->steps[i] = 0;
                 }
                 for (i = 1; i < new_len; i += 2) {
-                    cl->steps[i]          = 0;
-                    cl->step_note[i]      = SEQ_NOTE;
-                    cl->step_vel[i]       = SEQ_VEL;
-                    cl->step_gate[i]      = GATE_TICKS;
-                    cl->step_gate_orig[i] = GATE_TICKS;
+                    cl->steps[i]             = 0;
+                    cl->step_notes[i][0]     = SEQ_NOTE;
+                    cl->step_notes[i][1]     = 0;
+                    cl->step_notes[i][2]     = 0;
+                    cl->step_notes[i][3]     = 0;
+                    cl->step_note_count[i]   = 1;
+                    cl->step_vel[i]          = SEQ_VEL;
+                    cl->step_gate[i]         = GATE_TICKS;
+                    cl->step_gate_orig[i]    = GATE_TICKS;
                 }
                 cl->length = (uint16_t)new_len;
                 cl->stretch_exp++;
@@ -1061,7 +1184,11 @@ static void set_param(void *instance, const char *key, const char *val) {
                 new_len = len / 2;
                 memset(tmp_steps, 0, sizeof(tmp_steps));
                 for (i = 0; i < SEQ_STEPS; i++) {
-                    tmp_note[i]      = SEQ_NOTE;
+                    tmp_notes[i][0]  = SEQ_NOTE;
+                    tmp_notes[i][1]  = 0;
+                    tmp_notes[i][2]  = 0;
+                    tmp_notes[i][3]  = 0;
+                    tmp_nc[i]        = 1;
                     tmp_vel[i]       = SEQ_VEL;
                     tmp_gate[i]      = GATE_TICKS;
                     tmp_gate_orig[i] = GATE_TICKS;
@@ -1070,19 +1197,21 @@ static void set_param(void *instance, const char *key, const char *val) {
                     if (cl->steps[i]) {
                         int dst = i / 2;
                         if (!tmp_steps[dst]) {
-                            tmp_steps[dst]    = 1;
-                            tmp_note[dst]     = cl->step_note[i];
-                            tmp_vel[dst]      = cl->step_vel[i];
-                            tmp_gate[dst]     = cl->step_gate[i];
+                            tmp_steps[dst] = 1;
+                            memcpy(tmp_notes[dst], cl->step_notes[i], 4);
+                            tmp_nc[dst]        = cl->step_note_count[i];
+                            tmp_vel[dst]       = cl->step_vel[i];
+                            tmp_gate[dst]      = cl->step_gate[i];
                             tmp_gate_orig[dst] = cl->step_gate_orig[i];
                         }
                     }
                 }
-                memcpy(cl->steps,          tmp_steps,     sizeof(tmp_steps));
-                memcpy(cl->step_note,      tmp_note,      sizeof(tmp_note));
-                memcpy(cl->step_vel,       tmp_vel,       sizeof(tmp_vel));
-                memcpy(cl->step_gate,      tmp_gate,      sizeof(tmp_gate));
-                memcpy(cl->step_gate_orig, tmp_gate_orig, sizeof(tmp_gate_orig));
+                memcpy(cl->steps,           tmp_steps,       sizeof(tmp_steps));
+                memcpy(cl->step_notes,      tmp_notes,       sizeof(tmp_notes));
+                memcpy(cl->step_note_count, tmp_nc,          sizeof(tmp_nc));
+                memcpy(cl->step_vel,        tmp_vel,         sizeof(tmp_vel));
+                memcpy(cl->step_gate,       tmp_gate,        sizeof(tmp_gate));
+                memcpy(cl->step_gate_orig,  tmp_gate_orig,   sizeof(tmp_gate_orig));
                 cl->length = (uint16_t)new_len;
                 cl->stretch_exp--;
             }
@@ -1225,9 +1354,27 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
             clip_t *cl = &tr->clips[cidx];
 
             if (!strncmp(p, "_step_", 6)) {
-                int sidx = my_atoi(p + 6);
+                const char *q = p + 6;
+                int sidx = 0;
+                while (*q >= '0' && *q <= '9') { sidx = sidx * 10 + (*q++ - '0'); }
                 if (sidx < 0 || sidx >= SEQ_STEPS) return -1;
-                return snprintf(out, out_len, "%d", (int)cl->steps[sidx]);
+
+                if (*q == '\0')
+                    return snprintf(out, out_len, "%d", (int)cl->steps[sidx]);
+
+                if (!strcmp(q, "_notes")) {
+                    /* tN_cC_step_S_notes — space-separated MIDI note numbers */
+                    int cnt = (int)cl->step_note_count[sidx];
+                    if (cnt == 0) { out[0] = '\0'; return 0; }
+                    int pos = 0, n;
+                    for (n = 0; n < cnt; n++) {
+                        if (n > 0 && pos < out_len - 1) out[pos++] = ' ';
+                        pos += snprintf(out + pos, (size_t)(out_len - pos),
+                                        "%d", (int)cl->step_notes[sidx][n]);
+                    }
+                    return pos;
+                }
+                return -1;
             }
             if (!strncmp(p, "_steps", 6) && p[6] == '\0') {
                 if (out_len < SEQ_STEPS + 1) return -1;
@@ -1299,13 +1446,20 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
             clip_t *cl = &tr->clips[tr->active_clip];
 
             if (inst->tick_in_step == 0 && cl->steps[tr->current_step]) {
-                tr->pending_note = cl->step_note[tr->current_step];
-                pfx_note_on(inst, tr, tr->pending_note, cl->step_vel[tr->current_step]);
+                int n;
+                tr->pending_note_count = cl->step_note_count[tr->current_step];
+                for (n = 0; n < (int)tr->pending_note_count; n++) {
+                    tr->pending_notes[n] = cl->step_notes[tr->current_step][n];
+                    pfx_note_on(inst, tr, tr->pending_notes[n], cl->step_vel[tr->current_step]);
+                }
                 tr->note_active = 1;
             }
             if (inst->tick_in_step == cl->step_gate[tr->current_step] && tr->note_active) {
-                pfx_note_off(inst, tr, tr->pending_note);
+                int n;
+                for (n = 0; n < (int)tr->pending_note_count; n++)
+                    pfx_note_off(inst, tr, tr->pending_notes[n]);
                 tr->note_active = 0;
+                tr->pending_note_count = 0;
             }
         }
 

@@ -12,6 +12,7 @@ SEQ8 is a Schwung **tool module** (`component_type: tool`) for Ableton Move — 
 - Phase 5c complete — clip length control via Loop + step buttons.
 - Phase 5d complete — Track View parameter banks: Beat Stretch, Clock Shift, Note FX, Harmonize, MIDI Delay, per-track live pad octave shift, step out-of-bounds LEDs.
 - Phase 5e complete — Gate time shortening fix: per-step `step_gate`/`step_gate_orig` arrays in `clip_t`; render loop fires note-off at `step_gate[current_step]` ticks instead of fixed GATE_TICKS; `noteFX_gate` destructively scales all active steps; range extended to 0–400%; clock_shift and beat_stretch preserve gate arrays; Gate knob K3 NOTE FX bank wired, sens=2.
+- Phase 5f complete — Polyphonic step data model: `step_note[256]` replaced with `step_notes[256][4]` + `step_note_count[256]` in `clip_t`; `pending_note` replaced with `pending_notes[4]` + `pending_note_count` in `seq8_track_t`; render loop fires note-on/off for each note in the step; clock_shift and beat_stretch rotate/compress all note columns atomically; new get param `tN_cC_step_S_notes`, new set param `tN_cC_step_S_toggle`; state file persists step notes as sparse format, backward-compatible with old files.
 
 Phase 4 complete — clip model, Session View, background running via tool suspend.
 Phase 3 complete — 4-track expansion with Note View LEDs and track selection.
@@ -58,7 +59,7 @@ Intended as a quick-start for a new session. Verify against code before acting o
 
 ## Upcoming tasks (in order)
 
-1. **Step entry data model restructure** — Replace `step_note[256]` (single uint8_t per step) with `step_notes[256][4]` + `step_vels[256][4]` + `step_note_count[256]` to support up to 4 notes per step (chords). Update all handlers that touch step arrays (clock_shift, beat_stretch, clip_init, state file save/load). Prerequisite for melodic step entry UI.
+1. **Melodic step entry UI** — Use `tN_cC_step_S_toggle` to assign pads to steps. Data model is ready (Phase 5f). UI: enter step-edit mode, highlight active step, pads assign/remove notes, display shows chord members.
 2. **Arpeggiator** — Port sequencer arpeggiator from NoteTwist reference. New DSP build required.
 3. **Mute/Solo** — Per-track mute/solo, likely via Shift + track-select pads.
 4. **Drum + Chromatic pad modes** — `pad_mode` param already wired in TRACK bank K3; DSP and JS logic not yet implemented.
@@ -97,6 +98,8 @@ All new keys added in Phase 5d. All `tN_` keys accept N = 0..7 (track index).
 | `tN_clock_shift` | set | `"1"` or `"-1"` | Rotate all steps in active clip right (+1) or left (−1) by one position. |
 | `tN_clock_shift_pos` | get | integer string | Current shift position (0..length−1). |
 | `tN_clip_length` | set/get | integer string `"1"`..`"256"` | Active clip length in steps. Clamps current_step if needed. Calls `seq8_save_state`. |
+| `tN_cC_step_S_notes` | get | space-separated MIDI note numbers, or `""` if count=0 | Notes assigned to step S of clip C on track N. e.g. `"60"`, `"60 64 67"`. |
+| `tN_cC_step_S_toggle` | set | MIDI note number as string, e.g. `"64"` | Toggle note into/out of step S. Adds if absent (up to 4-note limit), removes if present. Activates/deactivates step automatically. Calls `seq8_save_state`. |
 
 Previously existing keys (for reference): `tN_active_clip`, `tN_current_step`, `tN_queued_clip`, `tN_cC_steps`, `tN_cC_length`, `tN_cC_step_S`, `tN_launch_clip`, `launch_scene`, `transport`, `playing`, `state_snapshot`, `tN_route`, `tN_pad_mode`, `tN_pad_octave`, `key`, `scale`, `noteFX_octave/offset/gate/velocity`, `harm_unison/octaver/interval1/interval2`, `delay_time/level/repeats/vel_fb/pitch_fb/gate_fb/clock_fb/pitch_random`.
 
@@ -105,15 +108,16 @@ Previously existing keys (for reference): `tN_active_clip`, `tN_current_step`, `
 ### `clip_t` (current fields)
 ```c
 typedef struct {
-    uint8_t  steps[SEQ_STEPS];          /* 256 steps, 0/1 */
-    uint8_t  step_note[SEQ_STEPS];
+    uint8_t  steps[SEQ_STEPS];            /* 256 steps, 0/1 */
+    uint8_t  step_notes[SEQ_STEPS][4];    /* up to 4 notes per step; [0] = primary */
+    uint8_t  step_note_count[SEQ_STEPS];  /* 0..4; invariant: steps[s]==1 iff count[s]>=1 */
     uint8_t  step_vel[SEQ_STEPS];
-    uint8_t  step_gate[SEQ_STEPS];      /* gate ticks 1..GATE_TICKS; render loop fires note-off here */
-    uint8_t  step_gate_orig[SEQ_STEPS]; /* original gate before noteFX_gate scaling; init=GATE_TICKS */
-    uint16_t length;                    /* active length, 1..256 */
+    uint8_t  step_gate[SEQ_STEPS];        /* gate ticks 1..GATE_TICKS; render loop fires note-off here */
+    uint8_t  step_gate_orig[SEQ_STEPS];   /* original gate before noteFX_gate scaling; init=GATE_TICKS */
+    uint16_t length;                      /* active length, 1..256 */
     uint8_t  active;
-    uint16_t clock_shift_pos;           /* current rotation offset; wraps at length */
-    int8_t   stretch_exp;               /* beat stretch exponent: 0=1x, +1=x2, -1=/2. Not persisted. */
+    uint16_t clock_shift_pos;             /* current rotation offset; wraps at length */
+    int8_t   stretch_exp;                 /* beat stretch exponent: 0=1x, +1=x2, -1=/2. Not persisted. */
 } clip_t;
 ```
 
@@ -121,7 +125,9 @@ typedef struct {
 ```c
 typedef struct {
     /* ... */
-    uint8_t   stretch_blocked;  /* 1 if last compress was blocked by step collision; cleared on expand or non-blocked compress */
+    uint8_t   pending_notes[4];     /* notes fired at last note-on; used for note-off matching */
+    uint8_t   pending_note_count;   /* number of valid entries in pending_notes */
+    uint8_t   stretch_blocked;      /* 1 if last compress was blocked by step collision; cleared on expand or non-blocked compress */
 } seq8_track_t;
 ```
 
@@ -154,7 +160,8 @@ let bankParams = Array.from({length: NUM_TRACKS}, () =>
 - **Do not load SEQ8 from within SEQ8** — selecting SEQ8 from the Tools menu while already inside SEQ8 causes LED corruption. The Tools menu button sets `SHADOW_UI_FLAG_JUMP_TO_TOOLS` (0x80) via the shim's ui_flags bitmask; shadow_ui.js polls this with `shadow_get_ui_flags()` and calls `enterToolsMenu()` directly. `onMidiMessageInternal` is never called — there is no MIDI event to intercept. Workaround: hide first (Shift+Back), then re-enter from the Tools menu.
 - **Live pad latency floor: ~3–7ms** — structural, cannot be closed. See Phase 5 findings.
 - **All 8 tracks route to the same Schwung chain** — no confirmed multi-chain path exists. See ROUTE_MOVE investigation.
-- **`step_note`, `step_vel`, `step_gate`/`step_gate_orig` not persisted** — The state file only stores `steps[]` (on/off), `length`, and `active_clip`. Per-step note, velocity, and gate values all reset to defaults on cold boot (note=60, vel=100, gate=GATE_TICKS). Correct default behavior for current monophonic-pitch sequencer; will need to change when step entry is built.
+- **`step_vel`, `step_gate`/`step_gate_orig` not persisted** — The state file stores `steps[]`, `length`, `active_clip`, and `step_notes`/`step_note_count` (sparse). Per-step velocity and gate values reset to defaults on cold boot (vel=100, gate=GATE_TICKS). Acceptable until step entry UI is built.
+- **`step_notes`/`step_note_count` persist format** — State file uses sparse key `"tNcC_sn":"S:n1,n2;S2:n3;"` per clip. Steps matching the default (count=1, note=60) are omitted. Old state files without this key load cleanly with default pitch.
 - **MIDI Delay repeats: no upper clamp enforced** — the `delay_repeats` param accepts 0–64 but high values can create very long feedback chains. TODO: clamp to 8 in DSP `set_param` handler and update BANKS range to match.
 - **Clip lengths not persisted via state file** — `tN_clip_length` and `tN_cC_length` set_param handlers do not call `seq8_save_state`. Cold boot restores step data but not clip lengths. Known gap, acceptable for now.
 - **`stretch_exp` not persisted** — Beat Stretch exponent resets to 0 on every cold boot or JS re-entry. Not saved to state file.
@@ -239,27 +246,26 @@ let bankParams = Array.from({length: NUM_TRACKS}, () =>
 
 Completed a full read of `seq8.c` and `SEQ8_SPEC.md` to establish baseline before implementing melodic step entry.
 
-**There is no `step_t` struct.** Step data is stored as parallel arrays in `clip_t` — no per-step wrapper type exists. Current `clip_t` fields exactly as found:
+**There is no `step_t` struct.** Step data is stored as parallel arrays in `clip_t` — no per-step wrapper type exists. Phase 5f restructured the note fields to support polyphony. Current `clip_t` fields:
 
 ```c
 typedef struct {
-    uint8_t  steps[SEQ_STEPS];          /* 0=off, 1=on */
-    uint8_t  step_note[SEQ_STEPS];      /* default SEQ_NOTE (60) */
-    uint8_t  step_vel[SEQ_STEPS];       /* default SEQ_VEL (100) */
-    uint8_t  step_gate[SEQ_STEPS];      /* gate ticks 1..GATE_TICKS (capped) */
-    uint8_t  step_gate_orig[SEQ_STEPS]; /* original gate before noteFX_gate scaling */
-    uint16_t length;                    /* 1..256, default 16 */
-    uint8_t  active;                    /* 1 if any step is on */
+    uint8_t  steps[SEQ_STEPS];            /* 0=off, 1=on */
+    uint8_t  step_notes[SEQ_STEPS][4];    /* up to 4 notes per step; [0] = primary; default SEQ_NOTE */
+    uint8_t  step_note_count[SEQ_STEPS];  /* 0..4; default 1; invariant: steps[s]==1 iff count[s]>=1 */
+    uint8_t  step_vel[SEQ_STEPS];         /* default SEQ_VEL (100) */
+    uint8_t  step_gate[SEQ_STEPS];        /* gate ticks 1..GATE_TICKS (capped) */
+    uint8_t  step_gate_orig[SEQ_STEPS];   /* original gate before noteFX_gate scaling */
+    uint16_t length;                      /* 1..256, default 16 */
+    uint8_t  active;                      /* 1 if any step is on */
     uint16_t clock_shift_pos;
     int8_t   stretch_exp;
 } clip_t;
 ```
 
-**`step_note[]` exists and is already wired into the render loop** (`cl->step_note[tr->current_step]` is passed to `pfx_note_on`), but is always 60 — the step toggle set_param handler does not write to it. No set_param or get_param key exists for per-step note assignment. No step note data is persisted to the state file.
+**`step_notes[s][0]` is wired into the render loop.** All active steps fire all their notes (count 1..4) at note-on, and fire matching note-offs at the gate tick. New params `tN_cC_step_S_toggle` and `tN_cC_step_S_notes` expose note assignment. Step note data is persisted to the state file (sparse format).
 
-**Polyphony decision: 4 notes per step.** Step entry will support up to 4 simultaneous notes per step (chords). The current `step_note[256]` single-note array must be replaced with `step_notes[256][4]` + `step_note_count[256]` before step entry UI can be built. See upcoming tasks.
-
-**State file does not persist `step_note`, `step_vel`, `step_gate`, or `step_gate_orig`.** Only `steps[]`, `length`, and `active_clip` survive cold boot. State file persistence must be extended as part of the data model restructure.
+**Polyphony: 4 notes per step.** Step entry UI (upcoming) will use `tN_cC_step_S_toggle` to assign notes.
 
 ### Hardware and external MIDI (Phase 5)
 
