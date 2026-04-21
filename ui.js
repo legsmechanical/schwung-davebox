@@ -10,6 +10,7 @@ import {
 
 /* CC 50 = Note/Session toggle (three-bar button left of track buttons). */
 const MoveNoteSession = 50;
+const MoveLoop        = 58;
 
 import {
     Red,
@@ -82,6 +83,7 @@ let ledInitQueue    = [];
 let ledInitIndex    = 0;
 let ledInitComplete = false;  /* false until init queue fully flushed; tick() blocks normal render */
 let shiftHeld       = false;
+let loopHeld        = false;
 
 /* Live pad note input — isomorphic 4ths diatonic layout.
  * Rows increase by +3 scale degrees (diatonic), columns by +1 scale degree.
@@ -233,7 +235,15 @@ function pollDSP() {
 
 function updateStepLEDs() {
     if (!ledInitComplete) return;
-    const ac     = trackActiveClip[activeTrack];
+    const ac = trackActiveClip[activeTrack];
+
+    if (loopHeld) {
+        const pagesInUse = Math.max(1, Math.ceil(clipLength[activeTrack][ac] / 16));
+        for (let i = 0; i < 16; i++)
+            setLED(16 + i, i < pagesInUse ? TRACK_COLORS[activeTrack] : DarkGrey);
+        return;
+    }
+
     const steps  = clipSteps[activeTrack][ac];
     const cs     = trackCurrentStep[activeTrack];
     const page   = trackCurrentPage[activeTrack];
@@ -381,13 +391,20 @@ function drawUI() {
         }
         print(4, 46, line4, 1);
     } else {
-        const ac = trackActiveClip[activeTrack];
+        const ac         = trackActiveClip[activeTrack];
         const page       = trackCurrentPage[activeTrack];
         const totalPages = Math.max(1, Math.ceil(clipLength[activeTrack][ac] / 16));
         /* \xb7 = middle dot · */
         print(4, 10, 'TR' + (activeTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac] +
                      '  PG ' + (page + 1) + '/' + totalPages, 1);
-        print(4, 34, '1 2 3 4 5 6 7 8', 1);
+        if (loopHeld) {
+            const steps = clipLength[activeTrack][ac];
+            const pages = Math.max(1, Math.ceil(steps / 16));
+            print(4, 22, 'LOOP LEN: ' + steps + ' STEPS', 1);
+            print(4, 34, pages + ' OF 16 PAGES', 1);
+        } else {
+            print(4, 34, '1 2 3 4 5 6 7 8', 1);
+        }
         let line4 = '';
         for (let t = 0; t < NUM_TRACKS; t++) {
             line4 += SCENE_LETTERS[trackActiveClip[t]];
@@ -520,6 +537,12 @@ globalThis.onMidiMessageInternal = function (data) {
             forceRedraw();
         }
 
+        /* Loop button (CC 58): hold + step buttons sets clip length */
+        if (d1 === MoveLoop && !sessionView) {
+            loopHeld = d2 === 127;
+            forceRedraw();
+        }
+
         /* Shift+Back = hide: clear all LEDs first so the native Move UI inherits
          * a clean state, then hide. DSP stays alive, MIDI keeps playing.
          * host_hide_module() → hideToolOvertake() (tool path):
@@ -599,6 +622,18 @@ globalThis.onMidiMessageInternal = function (data) {
             } else {
                 sceneGroup = targetGroup;
             }
+        } else if (loopHeld) {
+            /* Hold Loop + step N = set clip length to (N+1)*16 steps */
+            const ac      = trackActiveClip[activeTrack];
+            const newLen  = (idx + 1) * 16;
+            clipLength[activeTrack][ac] = newLen;
+            /* Clamp page so it stays within the new length */
+            const maxPage = Math.max(0, Math.ceil(newLen / 16) - 1);
+            if (trackCurrentPage[activeTrack] > maxPage)
+                trackCurrentPage[activeTrack] = maxPage;
+            if (typeof host_module_set_param === 'function')
+                host_module_set_param('t' + activeTrack + '_c' + ac + '_length', String(newLen));
+            forceRedraw();
         } else {
             /* Toggle step at current page offset */
             const ac     = trackActiveClip[activeTrack];

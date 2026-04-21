@@ -22,6 +22,7 @@ Phase 0 complete — scaffold, MIDI buffer stress test, and button logging.
 - **256-step clips**: Expand from 16 steps to 256 steps per clip.
 - **Arpeggiator**: Port sequencer arpeggiator from NoteTwist reference.
 - **Track View**: New view mode showing all 8 tracks simultaneously.
+- ~~**Clip length control**: Hold Loop (CC 58) + step button N sets clip length to (N+1)×16 steps. Step LEDs show pages-in-use (bright) vs unused (dim) while held. Complete (Phase 5c).~~
 
 ## Known limitations
 
