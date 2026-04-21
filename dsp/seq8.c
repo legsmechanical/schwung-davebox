@@ -248,7 +248,7 @@ static void seq8_save_state(seq8_instance_t *inst) {
     FILE *fp = fopen(SEQ8_STATE_PATH, "w");
     if (!fp) return;
     int t, c, s;
-    fprintf(fp, "{\"playing\":%d", inst->playing);
+    fprintf(fp, "{\"v\":1,\"playing\":%d", inst->playing);
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
     for (t = 0; t < NUM_TRACKS; t++) {
@@ -294,13 +294,21 @@ static void seq8_load_state(seq8_instance_t *inst) {
     fseek(fp, 0, SEEK_END);
     long fsz = ftell(fp);
     fseek(fp, 0, SEEK_SET);
-    if (fsz <= 0) { fclose(fp); return; }
+    if (fsz <= 0) { fclose(fp); remove(SEQ8_STATE_PATH); return; }
     char *buf = (char *)malloc((size_t)fsz + 1);
     if (!buf) { fclose(fp); return; }
     size_t n = fread(buf, 1, (size_t)fsz, fp);
     fclose(fp);
-    if (!n) { free(buf); return; }
+    if (!n) { free(buf); remove(SEQ8_STATE_PATH); return; }
     buf[n] = '\0';
+
+    /* Version gate: delete and ignore any state file that isn't v=1. */
+    if (json_get_int(buf, "v", -1) != 1) {
+        free(buf);
+        remove(SEQ8_STATE_PATH);
+        seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
+        return;
+    }
 
     int t, c, i;
     char key[32];
@@ -322,7 +330,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
                 if (inst->tracks[t].clips[c].steps[i]) { any = 1; break; }
             inst->tracks[t].clips[c].active = (uint8_t)any;
 
-            /* sparse step notes (backward-compat: absent key → clip_init defaults) */
+            /* sparse step notes — absent key means all steps use clip_init defaults */
             {
                 char search[40];
                 snprintf(search, sizeof(search), "\"t%dc%d_sn\":\"", t, c);
@@ -331,7 +339,6 @@ static void seq8_load_state(seq8_instance_t *inst) {
                     p += strlen(search);
                     clip_t *cl = &inst->tracks[t].clips[c];
                     while (*p && *p != '"') {
-                        /* parse step index */
                         int sidx = 0;
                         while (*p >= '0' && *p <= '9')
                             sidx = sidx * 10 + (*p++ - '0');
@@ -342,7 +349,6 @@ static void seq8_load_state(seq8_instance_t *inst) {
                             if (*p == ';') p++;
                             continue;
                         }
-                        /* parse comma-separated note numbers until ';' */
                         int cnt = 0;
                         while (*p && *p != ';' && *p != '"') {
                             int note = 0;
@@ -354,7 +360,6 @@ static void seq8_load_state(seq8_instance_t *inst) {
                             if (*p == ',') p++;
                         }
                         cl->step_note_count[sidx] = (uint8_t)cnt;
-                        /* zero unused slots */
                         for (i = cnt; i < 4; i++)
                             cl->step_notes[sidx][i] = 0;
                         if (*p == ';') p++;
