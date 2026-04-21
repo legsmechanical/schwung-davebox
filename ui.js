@@ -113,57 +113,55 @@ function bankHeader(bankIdx) {
 /* Parameter bank definitions                                           */
 /* ------------------------------------------------------------------ */
 
-/* p(abbrev, fullName, dspKey, scope, min, max, defaultVal, fmtFn)
+/* p(abbrev, fullName, dspKey, scope, min, max, defaultVal, fmtFn, sens)
  * scope: 'global' = key sent as-is; 'track' = prefixed tN_;
- *        'clip' = JS clipLength state; 'stub' = JS-only, no DSP call */
-function p(abbrev, full, dspKey, scope, min, max, def, fmt) {
-    return { abbrev, full, dspKey, scope, min, max, def, fmt };
+ *        'clip' = JS clipLength state; 'stub' = JS-only, no DSP call
+ * sens: raw encoder ticks required per unit change (default 1). */
+function p(abbrev, full, dspKey, scope, min, max, def, fmt, sens) {
+    return { abbrev, full, dspKey, scope, min, max, def, fmt, sens: sens || 1 };
 }
 const _X = p(null, null, null, 'stub', 0, 0, 0, fmtNA);
 
 const BANKS = [
-    /* 0 — NOTE (pad 92) */
-    { name: 'NOTE', knobs: [
-        p('Root', 'Root Note',       'key',             'global', 0,    11,  9,   fmtNote ),
-        p('Oct',  'Octave',          'pad_octave',       'track',  0,    8,   3,   fmtPlain),
-        p('Gate', 'Gate Time',       'noteFX_gate',      'track',  0,    200, 100, fmtPct  ),
-        p('Vel',  'Velocity Offset', 'noteFX_velocity',  'track',  -127, 127, 0,   fmtSign ),
-        p('Res',  'Resolution',       null,              'stub',   0,    0,   0,   fmtNA   ), /* NOT IN DSP */
-        p('Len',  'Clip Length',      null,              'clip',   1,    16,  1,   fmtPages),
-        _X, _X,
+    /* 0 — TRACK (pad 92) */
+    { name: 'TRACK', knobs: [
+        p('Ch',   'MIDI Channel', null,       'stub',  1, 16, 1, fmtPlain), /* tN_channel NOT IN DSP */
+        p('Rte',  'Route',        'route',    'track', 0, 1,  0, fmtRoute),
+        p('Mode', 'Track Mode',   'pad_mode', 'track', 0, 1,  0, fmtPlain),
+        p('Res',  'Resolution',   null,       'stub',  0, 0,  0, fmtNA   ), /* NOT IN DSP */
+        p('Len',  'Clip Length',  null,       'stub',  0, 0,  0, fmtNA   ), /* use Loop+step */
+        _X, _X, _X,
     ]},
-    /* 1 — TIMING (pad 93) — stub: Beat Stretch, Clock Shift, Swing not in DSP */
+    /* 1 — TIMING (pad 93) — stub: DSP not yet built */
     { name: 'TIMING', knobs: [
-        p('Stch', 'Beat Stretch',  null, 'stub', 0, 0, 0, fmtNA),
-        p('Shft', 'Clock Shift',   null, 'stub', 0, 0, 0, fmtNA),
-        p('SwAm', 'Swing Amount',  null, 'stub', 0, 0, 0, fmtNA),
-        p('SwRs', 'Swing Res',     null, 'stub', 0, 0, 0, fmtNA),
-        _X, _X, _X, _X,
+        p('Stch', 'Beat Stretch', null, 'stub', 0, 0, 0, fmtNA),
+        p('Shft', 'Clock Shift',  null, 'stub', 0, 0, 0, fmtNA),
+        _X, _X, _X, _X, _X, _X,
     ]},
-    /* 2 — NOTE FX (pad 94) — fully wired */
+    /* 2 — NOTE FX (pad 94) — fully wired; Oct/Ofs slowed */
     { name: 'NOTE FX', knobs: [
-        p('Oct',  'Octave Shift',    'noteFX_octave',   'track', -4,   4,   0,   fmtSign),
-        p('Ofs',  'Note Offset',     'noteFX_offset',   'track', -24,  24,  0,   fmtSign),
-        p('Gate', 'Gate Time',       'noteFX_gate',     'track',  0,   200, 100, fmtPct ),
-        p('Vel',  'Velocity Offset', 'noteFX_velocity', 'track', -127, 127, 0,   fmtSign),
+        p('Oct',  'Octave Shift',    'noteFX_octave',   'track', -4,   4,   0,   fmtSign, 6),
+        p('Ofs',  'Note Offset',     'noteFX_offset',   'track', -24,  24,  0,   fmtSign, 4),
+        p('Gate', 'Gate Time',       'noteFX_gate',     'track',  0,   200, 100, fmtPct     ),
+        p('Vel',  'Velocity Offset', 'noteFX_velocity', 'track', -127, 127, 0,   fmtSign    ),
         _X, _X, _X, _X,
     ]},
-    /* 3 — HARMZ (pad 95) — fully wired */
+    /* 3 — HARMZ (pad 95) — fully wired; all params slowed */
     { name: 'HARMZ', knobs: [
-        p('Unis', 'Unison',     'harm_unison',    'track', 0,   2,  0, fmtUnis),
-        p('Oct',  'Octaver',    'harm_octaver',   'track', -4,  4,  0, fmtSign),
-        p('Hrm1', 'Harmony 1',  'harm_interval1', 'track', -24, 24, 0, fmtSign),
-        p('Hrm2', 'Harmony 2',  'harm_interval2', 'track', -24, 24, 0, fmtSign),
+        p('Unis', 'Unison',     'harm_unison',    'track', 0,   2,  0, fmtUnis, 4),
+        p('Oct',  'Octaver',    'harm_octaver',   'track', -4,  4,  0, fmtSign, 4),
+        p('Hrm1', 'Harmony 1',  'harm_interval1', 'track', -24, 24, 0, fmtSign, 4),
+        p('Hrm2', 'Harmony 2',  'harm_interval2', 'track', -24, 24, 0, fmtSign, 4),
         _X, _X, _X, _X,
     ]},
     /* 4 — SEQ ARP (pad 96) — stub: arpeggiator not in DSP */
     { name: 'SEQ ARP', knobs: [
-        p('On',   'Arp On/Off',  null, 'stub', 0, 0, 0, fmtNA),
-        p('Type', 'Arp Type',    null, 'stub', 0, 0, 0, fmtNA),
-        p('Sort', 'Note Sort',   null, 'stub', 0, 0, 0, fmtNA),
-        p('Hold', 'Hold',        null, 'stub', 0, 0, 0, fmtNA),
-        p('OctR', 'Octave Range',null, 'stub', 0, 0, 0, fmtNA),
-        p('Spd',  'Speed',       null, 'stub', 0, 0, 0, fmtNA),
+        p('On',   'Arp On/Off',   null, 'stub', 0, 0, 0, fmtNA),
+        p('Type', 'Arp Type',     null, 'stub', 0, 0, 0, fmtNA),
+        p('Sort', 'Note Sort',    null, 'stub', 0, 0, 0, fmtNA),
+        p('Hold', 'Hold',         null, 'stub', 0, 0, 0, fmtNA),
+        p('OctR', 'Octave Range', null, 'stub', 0, 0, 0, fmtNA),
+        p('Spd',  'Speed',        null, 'stub', 0, 0, 0, fmtNA),
         _X, _X,
     ]},
     /* 5 — MIDI DLY (pad 97) — fully wired */
@@ -177,23 +175,18 @@ const BANKS = [
         p('Clk',  'Clock Feedback', 'delay_clock_fb',     'track', -100, 100, 0, fmtSign ),
         p('Rnd',  'Pitch Random',   'delay_pitch_random', 'track', 0,    1,   0, fmtBool ),
     ]},
-    /* 6 — MIDI (pad 98) */
-    { name: 'MIDI', knobs: [
-        p('Ch',   'MIDI Channel', null,        'stub',  1, 16, 1, fmtPlain), /* tN_channel NOT IN DSP — stub */
-        p('Rte',  'Route',        'route',     'track', 0, 1,  0, fmtRoute),
-        p('Mode', 'Track Mode',   'pad_mode',  'track', 0, 0,  0, fmtPlain),
-        _X, _X, _X, _X, _X,
-    ]},
-    /* 7 — LIVE ARP (pad 99) — stub: live arpeggiator not in DSP */
+    /* 6 — LIVE ARP (pad 98) — stub: live arpeggiator not in DSP */
     { name: 'LIVE ARP', knobs: [
-        p('On',   'Arp On/Off',  null, 'stub', 0, 0, 0, fmtNA),
-        p('Type', 'Arp Type',    null, 'stub', 0, 0, 0, fmtNA),
-        p('Sort', 'Note Sort',   null, 'stub', 0, 0, 0, fmtNA),
-        p('Hold', 'Hold',        null, 'stub', 0, 0, 0, fmtNA),
-        p('OctR', 'Octave Range',null, 'stub', 0, 0, 0, fmtNA),
-        p('Spd',  'Speed',       null, 'stub', 0, 0, 0, fmtNA),
+        p('On',   'Arp On/Off',   null, 'stub', 0, 0, 0, fmtNA),
+        p('Type', 'Arp Type',     null, 'stub', 0, 0, 0, fmtNA),
+        p('Sort', 'Note Sort',    null, 'stub', 0, 0, 0, fmtNA),
+        p('Hold', 'Hold',         null, 'stub', 0, 0, 0, fmtNA),
+        p('OctR', 'Octave Range', null, 'stub', 0, 0, 0, fmtNA),
+        p('Spd',  'Speed',        null, 'stub', 0, 0, 0, fmtNA),
         _X, _X,
     ]},
+    /* 7 — Reserved (pad 99) — ignore pad press */
+    { name: 'RESERVED', knobs: [_X, _X, _X, _X, _X, _X, _X, _X] },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -240,13 +233,18 @@ const POLL_INTERVAL  = 4;
 /* Parameter bank state                                                 */
 /* ------------------------------------------------------------------ */
 
-/* activeBank[track]: index 0-7 (pad 92-99), or -1 = none selected.
- * Each track remembers its own bank independently. */
-let activeBank     = new Array(NUM_TRACKS).fill(-1);
+/* activeBank[track]: index 0-7 (pad 92-99). TRACK bank (0) is default; never -1. */
+let activeBank     = new Array(NUM_TRACKS).fill(0);
 
 /* knobTouched: 0-7 (MoveKnob1Touch-8Touch note numbers), or -1 = none */
 let knobTouched    = -1;
 let jogTouched     = false;
+
+/* Per-physical-knob sensitivity accumulators.
+ * knobAccum[k] counts raw encoder ticks; fires delta when >= pm.sens.
+ * knobLastDir[k] tracks last direction for reversal detection. */
+let knobAccum   = new Array(8).fill(0);
+let knobLastDir = new Array(8).fill(0);
 
 /* bankSelectTick: tickCount at last bank select, used for 2-second State 3 timeout.
  * -1 = timeout not active. */
@@ -622,6 +620,7 @@ function drawUI() {
         /* \xb7 = middle dot · */
         print(4, 10, 'TR' + (activeTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac] +
                      '  PG ' + (page + 1) + '/' + totalPages, 1);
+        print(4, 22, 'KNOB: [' + BANKS[activeBank[activeTrack]].name + ']', 1);
         if (loopHeld) {
             const steps = clipLength[activeTrack][ac];
             const pages = Math.max(1, Math.ceil(steps / 16));
@@ -688,6 +687,9 @@ globalThis.init = function () {
         if (kp !== null && kp !== undefined) padKey   = parseInt(kp, 10) | 0;
         const sp = host_module_get_param('scale');
         if (sp !== null && sp !== undefined) padScale = parseInt(sp, 10) | 0;
+
+        /* Populate TRACK bank (index 0) params for all tracks — active by default. */
+        for (let t = 0; t < NUM_TRACKS; t++) readBankParams(t, 0);
     }
 
     computePadNoteMap();
@@ -829,16 +831,22 @@ globalThis.onMidiMessageInternal = function (data) {
 
         /* Knob CCs 71-78: apply delta to active bank parameter.
          * Relative encoder: d2 1-63 = CW (+1), d2 64-127 = CCW (-1).
-         * TODO: add acceleration for wide-range params (e.g. gate_time 0-200). */
+         * pm.sens > 1 = accumulate that many ticks before firing one unit change. */
         if (d1 >= 71 && d1 <= 78) {
             const knobIdx = d1 - 71;
             const bank    = activeBank[activeTrack];
-            if (bank >= 0) {
-                const pm = BANKS[bank].knobs[knobIdx];
-                if (pm && pm.abbrev && pm.scope !== 'stub') {
-                    const delta = (d2 >= 1 && d2 <= 63) ? 1 : -1;
-                    const cur   = bankParams[activeTrack][bank][knobIdx];
-                    const nv    = Math.max(pm.min, Math.min(pm.max, cur + delta));
+            const pm      = BANKS[bank].knobs[knobIdx];
+            if (pm && pm.abbrev && pm.scope !== 'stub') {
+                const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
+                if (dir !== knobLastDir[knobIdx]) {
+                    knobAccum[knobIdx]   = 0;
+                    knobLastDir[knobIdx] = dir;
+                }
+                knobAccum[knobIdx]++;
+                if (knobAccum[knobIdx] >= pm.sens) {
+                    knobAccum[knobIdx] = 0;
+                    const cur = bankParams[activeTrack][bank][knobIdx];
+                    const nv  = Math.max(pm.min, Math.min(pm.max, cur + dir));
                     if (nv !== cur) {
                         bankParams[activeTrack][bank][knobIdx] = nv;
                         applyBankParam(activeTrack, bank, knobIdx, nv);
@@ -899,17 +907,20 @@ globalThis.onMidiMessageInternal = function (data) {
             if (d1 >= TRACK_PAD_BASE && d1 < TRACK_PAD_BASE + 32) {
                 const padIdx = d1 - TRACK_PAD_BASE;
 
-                if (shiftHeld && padIdx >= 24 && padIdx <= 31) {
-                    /* Shift + top-row pad (notes 92-99): select parameter bank */
-                    const bankIdx = padIdx - 24;  /* 0-7 maps to BANKS[0..7] */
-                    if (activeBank[activeTrack] === bankIdx) {
-                        /* Same bank pressed again: deselect */
-                        activeBank[activeTrack] = -1;
-                        bankSelectTick = -1;
-                    } else {
-                        activeBank[activeTrack] = bankIdx;
-                        readBankParams(activeTrack, bankIdx);
-                        bankSelectTick = tickCount;  /* trigger State 3 timeout */
+                if ((shiftHeld || jogTouched) && padIdx >= 24 && padIdx <= 31) {
+                    /* Shift (or jog touch) + top-row pad (notes 92-99): select bank.
+                     * Pad 99 (bankIdx 7) = reserved — ignore. */
+                    const bankIdx = padIdx - 24;
+                    if (bankIdx < 7) {
+                        if (activeBank[activeTrack] === bankIdx) {
+                            /* Same bank pressed again: return to TRACK bank (0) */
+                            activeBank[activeTrack] = 0;
+                            bankSelectTick = -1;
+                        } else {
+                            activeBank[activeTrack] = bankIdx;
+                            readBankParams(activeTrack, bankIdx);
+                            bankSelectTick = tickCount;
+                        }
                     }
                 } else if (shiftHeld && padIdx < NUM_TRACKS) {
                     /* Shift + bottom-row pad: select active track */
