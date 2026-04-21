@@ -6,27 +6,50 @@ SEQ8 is a Schwung **tool module** (`component_type: tool`) for Ableton Move — 
 
 ## Current build phase
 
-**Phase 5 — 8 tracks, 256 steps, arpeggiator, Track View (in progress).**
+**Phase 5 — 8 tracks, 256 steps, arpeggiator, Track View.**
+- Phase 5a complete — live pad input via `shadow_send_midi_to_dsp`, polyphony, no stuck notes.
+- Phase 5b complete — latency investigation, poll throttling, batch `state_snapshot`.
+- Phase 5c complete — clip length control via Loop + step buttons.
+- Phase 5d in progress — Track View parameter banks.
+
 Phase 4 complete — clip model, Session View, background running via tool suspend.
 Phase 3 complete — 4-track expansion with Note View LEDs and track selection.
 Phase 2 complete — NoteTwist port + play effects chain (Note FX, Harmonize, MIDI Delay).
 Phase 1 complete — single-track 16-step sequencer, transport, step LEDs, BPM 140.
 Phase 0 complete — scaffold, MIDI buffer stress test, and button logging.
 
-## Phase 5 todos
+## What's Built (current feature summary)
 
-- **Session View navigation — Up/Down buttons**: CC 54 (Up) and CC 55 (Down) scroll the scene row view one row at a time. Currently the view is fixed at `sceneGroup * 4`.
-- **Session View navigation — step buttons as scene map**: In Session View, the 16 step buttons (notes 16–31) show the current scene position across all 16 rows (one LED per row) and navigate to that row on press.
-- **Shift + step button launches scene**: In Session View, Shift + step button press launches that scene row (equivalent to pressing all 4 pads in a row).
-- **8-track expansion**: Expand from 4 tracks to 8 tracks in both DSP and UI.
-- **256-step clips**: Expand from 16 steps to 256 steps per clip.
+Intended as a quick-start for a new session. Verify against code before acting on anything here.
+
+**Transport**: Play/Stop/Panic via Move Play button. Shift+Play = panic. BPM follows host (cached every 512 blocks).
+
+**8 tracks, 16 clips each, 256 steps per clip**: Full clip model in DSP and JS. Step sequencer running on all 8 tracks simultaneously. Clip launch per-track or as scenes (all tracks at once).
+
+**Two views — Track View and Session View**:
+- **Track View** (default): 16 step buttons show current page of active clip. Pads play live notes (isomorphic 4ths diatonic layout). Left/Right nav between pages. Track selection via Shift + bottom pad row.
+- **Session View** (toggle via CC 50): 4×8 pad grid shows all clips for the visible scene group. Step buttons show scene map. Up/Down (CC 54/55) scrolls scene groups. Shift+step launches scene. Track buttons launch clips or scenes.
+
+**Clip length control** (Phase 5c): Hold Loop (CC 58) + press step button N → clip length = (N+1)×16 steps (16..256). Step LEDs show pages-in-use (bright) vs unused (dim) while held. Page is clamped on shrink.
+
+**Live pad input**: Pads play notes through the active Schwung chain via `shadow_send_midi_to_dsp` directly from JS. No C DSP involvement. Isomorphic 4ths diatonic layout, per-track octave. Velocity floor at 80 (`Math.max(80, d2)`).
+
+**Play effects chain** (full NoteTwist port in C DSP): Note FX (octave, offset, gate, velocity), Harmonize (unison, octaver, interval 1+2), MIDI Delay (time, level, repeats, feedback). Applied to sequencer MIDI output. Not yet exposed via UI parameter banks.
+
+**Background running**: Shift+Back hides SEQ8 (DSP stays alive, MIDI keeps playing). Re-entry via Tools menu reconnects instantly (JS-only reload). Cold boot recovery via `seq8-state.json`.
+
+**State persistence**: Clips, lengths, active clips written to `/data/UserData/schwung/seq8-state.json` on every step change, transport change, launch, and destroy.
+
+## Phase 5 remaining todos
+
 - **Arpeggiator**: Port sequencer arpeggiator from NoteTwist reference.
-- **Track View**: New view mode showing all 8 tracks simultaneously.
-- ~~**Clip length control**: Hold Loop (CC 58) + step button N sets clip length to (N+1)×16 steps. Step LEDs show pages-in-use (bright) vs unused (dim) while held. Complete (Phase 5c).~~
+- **Track View parameter banks**: Expose play effects (Note FX, Harmonize, MIDI Delay) via knob-driven parameter banks in Track View. Master knob (CC 14) and/or step buttons for navigation; `claims_master_knob: true` already set in module.json.
 
 ## Known limitations
 
 - **Do not load SEQ8 from within SEQ8** — selecting SEQ8 from the Tools menu while already inside SEQ8 causes LED corruption. The Tools menu button sets `SHADOW_UI_FLAG_JUMP_TO_TOOLS` (0x80) via the shim's ui_flags bitmask; shadow_ui.js polls this with `shadow_get_ui_flags()` and calls `enterToolsMenu()` directly. `onMidiMessageInternal` is never called — there is no MIDI event to intercept. Workaround: hide first (Shift+Back), then re-enter from the Tools menu.
+- **Live pad latency floor: ~3–7ms** — structural, cannot be closed. See Phase 5 findings.
+- **All 8 tracks route to the same Schwung chain** — no confirmed multi-chain path exists. See ROUTE_MOVE investigation.
 
 ## Background running (Phase 4 — confirmed working on hardware)
 
@@ -63,12 +86,42 @@ Phase 0 complete — scaffold, MIDI buffer stress test, and button logging.
 
 ## Phase 5 findings
 
-- **Live pad input — correct pattern**: `shadow_send_midi_to_dsp([status, d1, d2])` called directly from JS `onMidiMessageInternal`. No C DSP involvement, no `host_module_set_param`, no SPSC queue. Confirmed working in api_version 2 + DSP tool modules — all overtake/tool modules share the same QuickJS globalThis as shadow_ui.js, so `shadow_send_midi_to_dsp` is accessible. No stuck notes, polyphony works correctly.
-- **Live pad input latency floor: ~3–7ms** (JS architecture limit). The JS runtime ticks at ~196Hz (~5ms intervals); a pad press arriving mid-tick waits up to 5ms plus shadow_ui.js dispatch overhead. Native Move performance mode bypasses JS entirely — no equivalent C-level hook is exposed to tool modules. This gap is structural and cannot be closed.
+### Live pad input (Phase 5a)
+
+- **Correct pattern: `shadow_send_midi_to_dsp([status, d1, d2])`** called directly from JS `onMidiMessageInternal`. No C DSP involvement, no `host_module_set_param`, no SPSC queue. Confirmed working in api_version 2 + DSP tool modules — all overtake/tool modules share the same QuickJS globalThis as shadow_ui.js, so `shadow_send_midi_to_dsp` is accessible. No stuck notes, polyphony works correctly.
+- **Previous architecture (removed)**: Live pad notes were routed `host_module_set_param → C set_param → midi_send_internal`. This caused stuck notes and out-of-order note-off/note-on pairs under polyphonic pressure. The SPSC pad queue, `pad_bypass_chain` flag, `live_notes[128]` timeout table, and all related C infrastructure were fully removed in Phase 5a.
+- **`shadow_send_midi_to_dsp` in api_version 2 + DSP**: Confirmed working for live pad input. The note in the JS routing section ("In api_version 2 + DSP, use `host->midi_send_internal` from C instead") applies to the *sequencer engine* output in `render_block` — not to live pad input from JS. Both paths coexist correctly.
 - **`on_midi` does not receive internal MIDI in tool mode**: Confirmed on hardware. The C `on_midi` callback only fires for external USB-A MIDI. Internal pad/button events route exclusively to JS `onMidiMessageInternal`.
-- **Batch `state_snapshot` param**: replaces 25 individual `host_module_get_param` calls in `pollDSP()` with one. Format: `"playing cs0..cs7 ac0..ac7 qc0..qc7"` (25 space-separated ints). Essential for JS thread responsiveness — each IPC call blocks the JS thread, so 25 calls per poll tick was the largest single source of MIDI event queuing delay.
+- **Velocity floor**: `Math.max(80, d2)` — ensures light hardware taps produce audible signal while preserving relative dynamics above 80.
+- **`padPitch[32]`**: Stores the pitch sent at note-on per pad. Ensures matching note-off pitch even if `padNoteMap` changes while a pad is held (e.g., track switch). Value -1 = pad not active.
+- **Move pressure grid phantom note-offs**: Move sends phantom note-off/note-on pairs during simultaneous multi-pad presses. With `shadow_send_midi_to_dsp` these are harmless pass-throughs. No state tracking required.
+
+### Latency and poll performance (Phase 5b)
+
+- **Live pad input latency floor: ~3–7ms** (JS architecture limit). The JS runtime ticks at ~196Hz (~5ms intervals); a pad press arriving mid-tick waits up to 5ms plus shadow_ui.js dispatch overhead. Native Move performance mode bypasses JS entirely — no equivalent C-level hook is exposed to tool modules. This gap is structural and cannot be closed.
+- **JS tick rate**: Measured at 196Hz (~5.1ms per tick) on hardware.
+- **Poll throttling**: `pollDSP()` is called every 4 ticks (`POLL_INTERVAL = 4`, ~49Hz) rather than every tick. Reduces JS thread blocking window.
+- **Batch `state_snapshot` param**: Replaces 25 individual `host_module_get_param` calls in `pollDSP()` with one. Format: `"playing cs0..cs7 ac0..ac7 qc0..qc7"` (25 space-separated ints). Each IPC call blocks the JS thread; 25 calls per tick was the largest single source of MIDI event queuing delay.
+- **`isNoiseMessage` filtering**: Filters 0xA0 (poly aftertouch) and 0xD0 (channel aftertouch) at the top of `onMidiMessageInternal` — these are high-frequency noise from the Move pressure grid and were adding dispatch overhead on every pad hold.
 - **`host_module_set_param` key filtering**: Schwung API silently drops calls for keys not matching registered param patterns. Only keys registered in the C `set_param` dispatch table reach C. Do not use `host_module_set_param` for MIDI output — use `shadow_send_midi_to_dsp` directly.
-- **Move pressure grid phantom note-offs**: Move sends phantom note-off/note-on pairs during simultaneous multi-pad presses. With `shadow_send_midi_to_dsp` these are harmless pass-throughs — the instrument handles duplicate note-offs as no-ops. No state tracking required beyond remembering which pitch was sent at note-on (for matching note-off pitch if the map changes mid-hold).
+
+### Clip length control (Phase 5c)
+
+- **Hold Loop (CC 58) + step button N** sets clip length to (N+1)×16 steps (16..256 in 16-step pages).
+- **`loopHeld` state**: `true` while CC 58 is held. `updateStepLEDs()` and `drawUI()` both branch on `loopHeld` so tick()'s render loop owns the display immediately on press.
+- **Step LEDs while held**: pages-in-use show bright track color; unused pages show DarkGrey.
+- **Display while held**: line 2 shows "LOOP LEN: N STEPS", line 3 shows "M OF 16 PAGES".
+- **Page clamped on shrink**: `trackCurrentPage[activeTrack]` is clamped to the new last page if current page would be out of bounds.
+- **DSP `_length` set_param does not call `seq8_save_state`**: Clip lengths are not persisted on cold boot via the state file. This is a known gap — acceptable for now.
+
+### Hardware and external MIDI (Phase 5)
+
+- **WIDI Bud Pro**: Confirmed working for wireless USB-A MIDI. Plugs into Move's USB-A port and appears as a standard USB MIDI device. Useful for connecting external hardware wirelessly.
+- **Master knob (CC 14, `MoveMainKnob`)**: `claims_master_knob: true` is set in module.json but CC 14 is not yet handled in ui.js. Reserved for Track View parameter bank navigation.
+- **Move encoder constants** (from `/data/UserData/schwung/shared/constants.mjs`):
+  - `MoveMainKnob = 14` (CC, no LED)
+  - `MoveMainButton = 3` (note, no LED — also used to confirm power-down)
+  - `MoveMainTouch = 9` (note, no LED)
 
 ## Phase 4 findings
 
@@ -94,7 +147,7 @@ Phase 0 complete — scaffold, MIDI buffer stress test, and button logging.
 `pfx_send` uses `host->midi_send_internal` for all tracks. `ROUTE_SCHWUNG` and `ROUTE_MOVE` are preserved as labels in the `tN_route` param API but both currently use the same path.
 
 - **`host->midi_send_internal`**: Routes to the **active Schwung chain** in the overtake/tool context. MIDI channel in the status byte does NOT route to different chains — hardware test confirmed channel 2 did not reach a chain set to receive on channel 2. All 8 SEQ8 tracks play through whichever chain is active in the current scene. Users can layer SEQ8 tracks by setting all Schwung chains to receive on all channels (omni).
-- **`host->midi_send_external`**: Sends to **USB-A** via SPI hardware. Does **not** appear on USB-C — USB-C is Move's host/charging port, not a device port. **USB-A loopback (USB-A to USB-C) is not possible** — both ports are host ports; a host-to-host cable carries no signal. `midi_send_external` is only useful with actual external MIDI hardware (synths, drum machines) connected to USB-A. If used from a JS deferred queue (not render path), a SPSC ring buffer pattern works safely. **CRITICAL — never call from the render path.** SPI I/O is blocking; calling it in `render_block` causes audio cracking and can deadlock `suspend_overtake`. Confirmed Phase 4.
+- **`host->midi_send_external`**: Sends to **USB-A** via SPI hardware. Does **not** appear on USB-C — USB-C is Move's host/charging port, not a device port. **CRITICAL — never call from the render path.** SPI I/O is blocking; calling it in `render_block` causes audio cracking and can deadlock `suspend_overtake`. Confirmed Phase 4. Safe from a JS deferred queue if needed for external hardware.
 
 ### ROUTE_MOVE investigation (Phase 5 — exhaustively confirmed no path)
 
@@ -108,11 +161,11 @@ All approaches to routing MIDI to multiple native Move chains independently were
 - **`/schwung-midi-inject` SHM**: Exists (`SHADOW_MIDI_INJECT_BUFFER_SIZE 256`, `shadow_drain_midi_inject`). Struct layout unknown, no safe write path identified.
 - **`song-mode` mechanism**: Launches clips via pad note injection (68–99) only — not arbitrary-pitch note sequencing.
 
-**Current state**: All 8 SEQ8 tracks use `midi_send_internal` → active Schwung chain. ROUTE_MOVE reserved. ROUTE_EXTERNAL available for real external USB-A hardware via deferred JS queue if needed in future.
+**Current state**: All 8 SEQ8 tracks use `midi_send_internal` → active Schwung chain. ROUTE_MOVE reserved. ROUTE_EXTERNAL available for real external USB-A hardware (including WIDI Bud Pro) via deferred JS queue if needed in future.
 
 ### JS routing
 
-- **`shadow_send_midi_to_dsp([status, d1, d2])`**: JS global for Schwung DSP chain's sound generator. Used by pure-JS overtake modules (api_version 1, no DSP). In api_version 2 + DSP, use `host->midi_send_internal` from C instead.
+- **`shadow_send_midi_to_dsp([status, d1, d2])`**: JS global for live pad MIDI output to the Schwung chain. Confirmed working in api_version 2 + DSP tool modules. Used for live pad input only — sequencer MIDI output uses `host->midi_send_internal` from C.
 - **`move_midi_internal_send([cable|CIN, status, d1, d2])`**: JS global for Move hardware MIDI (LEDs, button lights) — NOT for instrument notes.
 - **`move_midi_inject_to_move([cable|CIN, status, d1, d2])`**: JS global. Injects into Move hardware MIDI event stream. Simulates pad presses for notes 68–99 (clip launch). Does NOT play arbitrary pitches on chain instruments.
 - **`move_midi_external_send([cable|CIN, status, d1, d2])`**: JS global for USB-A external MIDI. Safe from JS tick (deferred); never call from render path.
