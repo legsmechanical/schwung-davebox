@@ -86,7 +86,13 @@ const TOP_PAD_BASE   = 92;   /* top row — Shift+top-row = bank select */
 const NOTE_KEYS = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 const DELAY_LABELS = ['---','1/64','1/32','16T','1/16','8T','1/8','4T','1/4','1/2','1/1'];
 
-function fmtSign(v)  { return (v >= 0 ? '+' : '') + v; }
+function fmtSign(v)    { return (v >= 0 ? '+' : '') + v; }
+function fmtStretch(exp) {
+    if (exp === 0) return '1x';
+    if (exp > 0)   return 'x' + (1 << exp);
+    return '/' + (1 << (-exp));
+}
+function fmtLen(v) { return v + 'st'; }
 function fmtPct(v)   { return v + '%'; }
 function fmtNote(v)  { return NOTE_KEYS[((v | 0) % 12 + 12) % 12]; }
 function fmtPages(v) { return v + 'pg'; }
@@ -109,16 +115,38 @@ function bankHeader(bankIdx) {
     return '[' + (n + '          ').slice(0, 10) + ']';
 }
 
+function parseActionRaw(raw, def) {
+    if (!raw || raw === '1x') return 0;
+    const pow2 = [1, 2, 4, 8, 16, 32, 64, 128];
+    if (raw[0] === 'x') {
+        const n = parseInt(raw.slice(1), 10);
+        const idx = pow2.indexOf(n);
+        return idx >= 0 ? idx : (def || 0);
+    }
+    if (raw[0] === '/') {
+        const n = parseInt(raw.slice(1), 10);
+        const idx = pow2.indexOf(n);
+        return idx >= 0 ? -idx : (def || 0);
+    }
+    return parseInt(raw, 10) | 0;
+}
+
 /* ------------------------------------------------------------------ */
 /* Parameter bank definitions                                           */
 /* ------------------------------------------------------------------ */
 
-/* p(abbrev, fullName, dspKey, scope, min, max, defaultVal, fmtFn, sens)
+/* p(abbrev, fullName, dspKey, scope, min, max, defaultVal, fmtFn, sens, actionSuffix, lock)
  * scope: 'global' = key sent as-is; 'track' = prefixed tN_;
- *        'clip' = JS clipLength state; 'stub' = JS-only, no DSP call
- * sens: raw encoder ticks required per unit change (default 1). */
-function p(abbrev, full, dspKey, scope, min, max, def, fmt, sens) {
-    return { abbrev, full, dspKey, scope, min, max, def, fmt, sens: sens || 1 };
+ *        'clip' = JS clipLength state; 'stub' = JS-only, no DSP call;
+ *        'action' = one-shot DSP trigger, no bounded value
+ * sens: raw encoder ticks required per unit change (default 1).
+ * actionSuffix: get_param suffix for reading back state (default '_pos').
+ * lock: if true, knob fires once then locks until touch release (default false). */
+function p(abbrev, full, dspKey, scope, min, max, def, fmt, sens, actionSuffix, lock) {
+    return { abbrev, full, dspKey, scope, min, max, def, fmt,
+             sens: sens || 1,
+             actionSuffix: actionSuffix || '_pos',
+             lock: lock || false };
 }
 const _X = p(null, null, null, 'stub', 0, 0, 0, fmtNA);
 
@@ -129,20 +157,20 @@ const BANKS = [
         p('Rte',  'Route',        'route',    'track', 0, 1,  0, fmtRoute),
         p('Mode', 'Track Mode',   'pad_mode', 'track', 0, 1,  0, fmtPlain),
         p('Res',  'Resolution',   null,       'stub',  0, 0,  0, fmtNA   ), /* NOT IN DSP */
-        p('Len',  'Clip Length',  null,       'stub',  0, 0,  0, fmtNA   ), /* use Loop+step */
+        p('Len',  'Clip Length',  'clip_length', 'track', 1, 256, 16, fmtLen, 4),
         _X, _X, _X,
     ]},
-    /* 1 — TIMING (pad 93) — stub: DSP not yet built */
+    /* 1 — TIMING (pad 93) — Beat Stretch and Clock Shift wired */
     { name: 'TIMING', knobs: [
-        p('Stch', 'Beat Stretch', null, 'stub', 0, 0, 0, fmtNA),
-        p('Shft', 'Clock Shift',  null, 'stub', 0, 0, 0, fmtNA),
+        p('Stch', 'Beat Stretch', 'beat_stretch', 'action', 0, 0, 0, fmtStretch, 16, '_factor', true),
+        p('Shft', 'Clock Shift',  'clock_shift',  'action', 0, 0, 0, fmtPlain,   8),
         _X, _X, _X, _X, _X, _X,
     ]},
     /* 2 — NOTE FX (pad 94) — fully wired; Oct/Ofs slowed */
     { name: 'NOTE FX', knobs: [
         p('Oct',  'Octave Shift',    'noteFX_octave',   'track', -4,   4,   0,   fmtSign, 6),
         p('Ofs',  'Note Offset',     'noteFX_offset',   'track', -24,  24,  0,   fmtSign, 4),
-        p('Gate', 'Gate Time',       'noteFX_gate',     'track',  0,   200, 100, fmtPct     ),
+        p('Gate', 'Gate Time',       'noteFX_gate',     'track',  0,   400, 100, fmtPct,  2 ),
         p('Vel',  'Velocity Offset', 'noteFX_velocity', 'track', -127, 127, 0,   fmtSign    ),
         _X, _X, _X, _X,
     ]},
@@ -242,14 +270,21 @@ let jogTouched     = false;
 
 /* Per-physical-knob sensitivity accumulators.
  * knobAccum[k] counts raw encoder ticks; fires delta when >= pm.sens.
- * knobLastDir[k] tracks last direction for reversal detection. */
+ * knobLastDir[k] tracks last direction for reversal detection.
+ * knobLocked[k] blocks further firing until touch release (used by lock=true params). */
 let knobAccum   = new Array(8).fill(0);
 let knobLastDir = new Array(8).fill(0);
+let knobLocked  = new Array(8).fill(false);
 
 /* bankSelectTick: tickCount at last bank select, used for 2-second State 3 timeout.
  * -1 = timeout not active. */
 let bankSelectTick = -1;
 const BANK_DISPLAY_TICKS = 392;  /* ~2000ms at 196Hz tick rate */
+let stretchBlockedEndTick = -1;  /* tickCount deadline for COMPRESS LIMIT display; -1 = inactive */
+const STRETCH_BLOCKED_TICKS = 294;  /* ~1500ms at 196Hz */
+let trackOctave = new Array(NUM_TRACKS).fill(0);  /* per-track live pad octave shift, -4..+4 */
+let octaveOverlayEndTick = -1;                    /* tickCount deadline for octave overlay; -1 = inactive */
+const OCTAVE_OVERLAY_TICKS = 196;                 /* ~1000ms at 196Hz */
 
 /* bankParams[track][bankIdx][knobIdx] = integer value (JS-authoritative).
  * Initialized from BANKS defaults; refreshed from DSP on bank select. */
@@ -381,6 +416,12 @@ function readBankParams(t, bankIdx) {
             bankParams[t][bankIdx][k] = Math.max(1, Math.round(clipLength[t][ac] / 16));
             continue;
         }
+        if (pm.scope === 'action') {
+            const stateKey = 't' + t + '_' + pm.dspKey + pm.actionSuffix;
+            const raw = host_module_get_param(stateKey);
+            bankParams[t][bankIdx][k] = parseActionRaw(raw, pm.def);
+            continue;
+        }
         const key = pm.scope === 'global' ? pm.dspKey : 't' + t + '_' + pm.dspKey;
         const raw = host_module_get_param(key);
         if (raw === null || raw === undefined) {
@@ -415,6 +456,12 @@ function applyBankParam(t, bankIdx, knobIdx, val) {
         else if (pm.dspKey === 'delay_pitch_random') strVal = val ? 'on' : 'off';
         else                                         strVal = String(val);
         host_module_set_param('t' + t + '_' + pm.dspKey, strVal);
+        if (pm.dspKey === 'clip_length') {
+            const ac = trackActiveClip[t];
+            clipLength[t][ac] = val;
+            const maxPage = Math.max(0, Math.ceil(val / 16) - 1);
+            if (trackCurrentPage[t] > maxPage) trackCurrentPage[t] = maxPage;
+        }
     } else if (pm.scope === 'clip') {
         const ac    = trackActiveClip[t];
         const steps = val * 16;
@@ -442,10 +489,13 @@ function updateStepLEDs() {
     const cs     = trackCurrentStep[activeTrack];
     const page   = trackCurrentPage[activeTrack];
     const base   = page * 16;
+    const len    = clipLength[activeTrack][ac];
     for (let i = 0; i < 16; i++) {
         const absStep = base + i;
         let color;
-        if (playing && absStep === cs) {
+        if (absStep >= len) {
+            color = White;
+        } else if (playing && absStep === cs) {
             color = LED_STEP_CURSOR;
         } else if (steps[absStep]) {
             color = TRACK_COLORS[activeTrack];
@@ -585,6 +635,36 @@ function drawUI() {
     /* Track View — priority display state machine */
     const bank      = activeBank[activeTrack];
     const inTimeout = bankSelectTick >= 0;
+
+    /* Compress-limit override: highest priority for ~1500ms after a blocked compress */
+    if (stretchBlockedEndTick >= 0) {
+        if (tickCount >= stretchBlockedEndTick) {
+            stretchBlockedEndTick = -1;
+        } else {
+            print(4, 10, '[TIMING     ]', 1);
+            print(4, 22, 'Beat Stretch', 1);
+            print(4, 34, 'COMPRESS LIMIT', 1);
+            return;
+        }
+    }
+
+    /* Octave overlay: ~1000ms after Up/Down octave shift */
+    if (octaveOverlayEndTick >= 0) {
+        if (tickCount >= octaveOverlayEndTick) {
+            octaveOverlayEndTick = -1;
+        } else {
+            const ac         = trackActiveClip[activeTrack];
+            const page       = trackCurrentPage[activeTrack];
+            const totalPages = Math.max(1, Math.ceil(clipLength[activeTrack][ac] / 16));
+            const oct        = trackOctave[activeTrack];
+            print(4, 10, 'TR' + (activeTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac] +
+                         '  PG ' + (page + 1) + '/' + totalPages, 1);
+            print(4, 22, 'KNOB: [' + BANKS[activeBank[activeTrack]].name + ']', 1);
+            print(4, 34, 'Octave: ' + (oct > 0 ? '+' + oct : String(oct)), 1);
+            print(4, 46, '1 2 3 4 5 6 7 8', 1);
+            return;
+        }
+    }
 
     if (bank >= 0 && knobTouched >= 0) {
         /* State 1: knob touched — single parameter */
@@ -746,13 +826,21 @@ globalThis.onMidiMessageInternal = function (data) {
                 if (d1 <= 7 && activeBank[activeTrack] >= 0) knobTouched = d1;
                 if (d1 === MoveMainTouch && activeBank[activeTrack] >= 0) jogTouched = true;
             } else if (d2 < 64) {
-                if (d1 <= 7) knobTouched = -1;
+                if (d1 <= 7) {
+                    knobTouched = -1;
+                    knobLocked[d1] = false;
+                    knobAccum[d1]  = 0;
+                }
                 if (d1 === MoveMainTouch) jogTouched = false;
             }
             return;
         }
         if ((status & 0xF0) === 0x80) {
-            if (d1 <= 7) knobTouched = -1;
+            if (d1 <= 7) {
+                knobTouched = -1;
+                knobLocked[d1] = false;
+                knobAccum[d1]  = 0;
+            }
             if (d1 === MoveMainTouch) jogTouched = false;
             return;
         }
@@ -812,9 +900,17 @@ globalThis.onMidiMessageInternal = function (data) {
                 trackCurrentPage[activeTrack] = Math.min(totalPages - 1, trackCurrentPage[activeTrack] + 1);
         }
 
-        /* Up/Down: scene group nav in Session View */
+        /* Up/Down: scene group nav in Session View; octave shift in Track View */
         if (d1 === MoveDown && d2 === 127 && sessionView && sceneGroup < 3) { sceneGroup++; forceRedraw(); }
         if (d1 === MoveUp   && d2 === 127 && sessionView && sceneGroup > 0) { sceneGroup--; forceRedraw(); }
+        if (d1 === MoveUp   && d2 > 0 && !sessionView) {
+            trackOctave[activeTrack] = Math.min(4, trackOctave[activeTrack] + 1);
+            octaveOverlayEndTick = tickCount + OCTAVE_OVERLAY_TICKS;
+        }
+        if (d1 === MoveDown && d2 > 0 && !sessionView) {
+            trackOctave[activeTrack] = Math.max(-4, trackOctave[activeTrack] - 1);
+            octaveOverlayEndTick = tickCount + OCTAVE_OVERLAY_TICKS;
+        }
 
         /* Track buttons CC40-43 */
         if (d1 >= 40 && d1 <= 43 && d2 === 127) {
@@ -831,12 +927,13 @@ globalThis.onMidiMessageInternal = function (data) {
 
         /* Knob CCs 71-78: apply delta to active bank parameter.
          * Relative encoder: d2 1-63 = CW (+1), d2 64-127 = CCW (-1).
-         * pm.sens > 1 = accumulate that many ticks before firing one unit change. */
+         * pm.sens > 1 = accumulate that many ticks before firing one unit change.
+         * pm.lock = true: fire once then block until touch release (knobLocked). */
         if (d1 >= 71 && d1 <= 78) {
             const knobIdx = d1 - 71;
             const bank    = activeBank[activeTrack];
             const pm      = BANKS[bank].knobs[knobIdx];
-            if (pm && pm.abbrev && pm.scope !== 'stub') {
+            if (pm && pm.abbrev && pm.scope !== 'stub' && !knobLocked[knobIdx]) {
                 const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
                 if (dir !== knobLastDir[knobIdx]) {
                     knobAccum[knobIdx]   = 0;
@@ -845,11 +942,73 @@ globalThis.onMidiMessageInternal = function (data) {
                 knobAccum[knobIdx]++;
                 if (knobAccum[knobIdx] >= pm.sens) {
                     knobAccum[knobIdx] = 0;
-                    const cur = bankParams[activeTrack][bank][knobIdx];
-                    const nv  = Math.max(pm.min, Math.min(pm.max, cur + dir));
-                    if (nv !== cur) {
-                        bankParams[activeTrack][bank][knobIdx] = nv;
-                        applyBankParam(activeTrack, bank, knobIdx, nv);
+                    if (pm.scope === 'action') {
+                        const t   = activeTrack;
+                        const ac  = trackActiveClip[t];
+                        const len = clipLength[t][ac];
+                        if (pm.lock) {
+                            /* Beat Stretch: one-shot, then lock until touch release */
+                            const canFire = dir === 1 ? (len * 2 <= 256) : (len >= 2);
+                            if (canFire && typeof host_module_set_param === 'function') {
+                                host_module_set_param('t' + t + '_' + pm.dspKey, String(dir));
+                                knobLocked[knobIdx] = true;
+                                /* For compress: check if DSP blocked due to step collision */
+                                if (dir === -1 && host_module_get_param('t' + t + '_beat_stretch_blocked') === '1') {
+                                    stretchBlockedEndTick = tickCount + STRETCH_BLOCKED_TICKS;
+                                } else {
+                                    /* Mirror DSP step rewrite in JS clipSteps */
+                                    const steps = clipSteps[t][ac];
+                                    if (dir === 1) {
+                                        for (let si = len - 1; si >= 1; si--) {
+                                            steps[si * 2] = steps[si];
+                                            steps[si] = 0;
+                                        }
+                                        for (let si = 1; si < len * 2; si += 2) steps[si] = 0;
+                                        clipLength[t][ac] = len * 2;
+                                    } else {
+                                        const halfLen = len >> 1;
+                                        const tmp = new Array(halfLen).fill(0);
+                                        for (let si = 0; si < len; si++) {
+                                            if (steps[si] && !tmp[si >> 1]) tmp[si >> 1] = 1;
+                                        }
+                                        for (let si = 0; si < len; si++) steps[si] = 0;
+                                        for (let si = 0; si < halfLen; si++) steps[si] = tmp[si];
+                                        clipLength[t][ac] = halfLen;
+                                    }
+                                    /* Clamp page index to new length */
+                                    const newPages = Math.max(1, Math.ceil(clipLength[t][ac] / 16));
+                                    if (trackCurrentPage[t] >= newPages)
+                                        trackCurrentPage[t] = newPages - 1;
+                                    /* Read factor back from DSP — authoritative */
+                                    const rawFactor = host_module_get_param('t' + t + '_beat_stretch_factor');
+                                    bankParams[t][bank][knobIdx] = parseActionRaw(rawFactor, 0);
+                                }
+                            }
+                        } else {
+                            /* Clock Shift: continuous rotation, no lock */
+                            if (len >= 2 && typeof host_module_set_param === 'function') {
+                                host_module_set_param('t' + t + '_' + pm.dspKey, String(dir));
+                                const steps = clipSteps[t][ac];
+                                if (dir === 1) {
+                                    const last = steps[len - 1];
+                                    for (let si = len - 1; si > 0; si--) steps[si] = steps[si - 1];
+                                    steps[0] = last;
+                                } else {
+                                    const first = steps[0];
+                                    for (let si = 0; si < len - 1; si++) steps[si] = steps[si + 1];
+                                    steps[len - 1] = first;
+                                }
+                                const cur = bankParams[t][bank][knobIdx];
+                                bankParams[t][bank][knobIdx] = (cur + (dir === 1 ? 1 : len - 1)) % len;
+                            }
+                        }
+                    } else {
+                        const cur = bankParams[activeTrack][bank][knobIdx];
+                        const nv  = Math.max(pm.min, Math.min(pm.max, cur + dir));
+                        if (nv !== cur) {
+                            bankParams[activeTrack][bank][knobIdx] = nv;
+                            applyBankParam(activeTrack, bank, knobIdx, nv);
+                        }
                     }
                 }
             }
@@ -927,8 +1086,9 @@ globalThis.onMidiMessageInternal = function (data) {
                     activeTrack = padIdx;
                     computePadNoteMap();
                 } else if (!shiftHeld) {
-                    /* Live note */
-                    const pitch = padNoteMap[padIdx];
+                    /* Live note — apply per-track octave shift, clamp 0-127 */
+                    const basePitch = padNoteMap[padIdx];
+                    const pitch = Math.max(0, Math.min(127, basePitch + trackOctave[activeTrack] * 12));
                     padPitch[padIdx] = pitch;
                     if (typeof shadow_send_midi_to_dsp === 'function')
                         shadow_send_midi_to_dsp([0x90 | activeTrack, pitch, Math.max(80, d2)]);

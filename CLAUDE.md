@@ -10,7 +10,8 @@ SEQ8 is a Schwung **tool module** (`component_type: tool`) for Ableton Move — 
 - Phase 5a complete — live pad input via `shadow_send_midi_to_dsp`, polyphony, no stuck notes.
 - Phase 5b complete — latency investigation, poll throttling, batch `state_snapshot`.
 - Phase 5c complete — clip length control via Loop + step buttons.
-- Phase 5d in progress — Track View parameter banks.
+- Phase 5d complete — Track View parameter banks: Beat Stretch, Clock Shift, Note FX, Harmonize, MIDI Delay, per-track live pad octave shift, step out-of-bounds LEDs.
+- Phase 5e complete — Gate time shortening fix: per-step `step_gate`/`step_gate_orig` arrays in `clip_t`; render loop fires note-off at `step_gate[current_step]` ticks instead of fixed GATE_TICKS; `noteFX_gate` destructively scales all active steps; range extended to 0–400%; clock_shift and beat_stretch preserve gate arrays; Gate knob K3 NOTE FX bank wired, sens=2.
 
 Phase 4 complete — clip model, Session View, background running via tool suspend.
 Phase 3 complete — 4-track expansion with Note View LEDs and track selection.
@@ -32,24 +33,131 @@ Intended as a quick-start for a new session. Verify against code before acting o
 
 **Clip length control** (Phase 5c): Hold Loop (CC 58) + press step button N → clip length = (N+1)×16 steps (16..256). Step LEDs show pages-in-use (bright) vs unused (dim) while held. Page is clamped on shrink.
 
+**Step out-of-bounds indicator** (Phase 5d): In Track View, step buttons whose absolute index is ≥ clip length light White, making the clip boundary visible while editing.
+
 **Live pad input**: Pads play notes through the active Schwung chain via `shadow_send_midi_to_dsp` directly from JS. No C DSP involvement. Isomorphic 4ths diatonic layout, per-track octave. Velocity floor at 80 (`Math.max(80, d2)`).
 
-**Play effects chain** (full NoteTwist port in C DSP): Note FX (octave, offset, gate, velocity), Harmonize (unison, octaver, interval 1+2), MIDI Delay (time, level, repeats, feedback). Applied to sequencer MIDI output. Not yet exposed via UI parameter banks.
+**Per-track live pad octave shift** (Phase 5d): Up button (CC 55) / Down button (CC 54) shifts `trackOctave[activeTrack]` ±1 (range −4..+4) while in Track View. Applied as `trackOctave[activeTrack] * 12` to the base pitch at note-on, clamped to 0–127. `padPitch[32]` stores the shifted pitch sent at note-on so the matching note-off is always correct. Display shows a 1-second "Octave: ±N" overlay after each shift.
+
+**Play effects chain** (full NoteTwist port in C DSP): Note FX (octave, offset, gate, velocity), Harmonize (unison, octaver, interval 1+2), MIDI Delay (time, level, repeats, feedback). Applied to sequencer MIDI output. Fully exposed via Track View parameter banks.
+
+**Track View parameter banks** (Phase 5d): 8 knob-driven parameter banks accessible via Shift + top-row pad (notes 92–98). See **Parameter Bank Reference** below for full table. Display priority state machine:
+1. Compress Limit overlay (~1500ms after blocked beat-stretch compress) — highest priority
+2. Octave overlay (~1000ms after Up/Down octave shift)
+3. State 1 (knob touched) — single parameter name + value
+4. States 2/3 (jog touched or bank-select timeout) — 4-knob overview grid
+5. State 4 (normal) — track/clip/page header
+
+**Beat Stretch** (Phase 5d): Knob 1 of TIMING bank (lock=true, sens=16). CW doubles clip length (expand); CCW halves it (compress). Compress is blocked entirely if any two active steps would map to the same destination — `stretch_blocked` flag set in DSP, checked by JS after set_param. "COMPRESS LIMIT" overlay shown for ~1500ms on block. `stretch_exp` tracks the current stretch exponent (0=1x, +1=x2, −1=/2).
+
+**Clock Shift** (Phase 5d): Knob 2 of TIMING bank (continuous rotation, sens=8). CW/CCW rotates all steps in the active clip by one position. JS mirrors the rotation in `clipSteps`.
 
 **Background running**: Shift+Back hides SEQ8 (DSP stays alive, MIDI keeps playing). Re-entry via Tools menu reconnects instantly (JS-only reload). Cold boot recovery via `seq8-state.json`.
 
 **State persistence**: Clips, lengths, active clips written to `/data/UserData/schwung/seq8-state.json` on every step change, transport change, launch, and destroy.
 
-## Phase 5 remaining todos
+## Upcoming tasks (in order)
 
-- **Arpeggiator**: Port sequencer arpeggiator from NoteTwist reference.
-- **Track View parameter banks**: Expose play effects (Note FX, Harmonize, MIDI Delay) via knob-driven parameter banks in Track View. Master knob (CC 14) and/or step buttons for navigation; `claims_master_knob: true` already set in module.json.
+1. **Step entry data model restructure** — Replace `step_note[256]` (single uint8_t per step) with `step_notes[256][4]` + `step_vels[256][4]` + `step_note_count[256]` to support up to 4 notes per step (chords). Update all handlers that touch step arrays (clock_shift, beat_stretch, clip_init, state file save/load). Prerequisite for melodic step entry UI.
+2. **Arpeggiator** — Port sequencer arpeggiator from NoteTwist reference. New DSP build required.
+3. **Mute/Solo** — Per-track mute/solo, likely via Shift + track-select pads.
+4. **Drum + Chromatic pad modes** — `pad_mode` param already wired in TRACK bank K3; DSP and JS logic not yet implemented.
+5. **Global menu** — BPM, key, scale, swing controls accessible from a top-level menu.
+
+## Parameter Bank Reference
+
+Banks are selected via **Shift + top-row pad** (notes 92–99). Pressing the same bank again returns to TRACK (0). Pad 99 (bank 7) is reserved and ignored.
+
+| Bank | Pad | K1 | K2 | K3 | K4 | K5 | K6 | K7 | K8 |
+|------|-----|----|----|----|----|----|----|----|----|
+| 0 TRACK | 92 | Ch (stub) | Rte (route, track) | Mode (pad_mode, track) | Res (stub) | Len (clip_length, track, sens=4) | — | — | — |
+| 1 TIMING | 93 | Stch (beat_stretch, action, sens=16, lock) | Shft (clock_shift, action, sens=8) | — | — | — | — | — | — |
+| 2 NOTE FX | 94 | Oct (noteFX_octave, track, sens=6) | Ofs (noteFX_offset, track, sens=4) | Gate (noteFX_gate, track, sens=2) | Vel (noteFX_velocity, track) | — | — | — | — |
+| 3 HARMZ | 95 | Unis (harm_unison, track, sens=4) | Oct (harm_octaver, track, sens=4) | Hrm1 (harm_interval1, track, sens=4) | Hrm2 (harm_interval2, track, sens=4) | — | — | — | — |
+| 4 SEQ ARP | 96 | On (stub) | Type (stub) | Sort (stub) | Hold (stub) | OctR (stub) | Spd (stub) | — | — |
+| 5 MIDI DLY | 97 | Dly (delay_time, track) | Lvl (delay_level, track) | Rep (delay_repeats, track) | Vfb (delay_vel_fb, track) | Pfb (delay_pitch_fb, track) | Gfb (delay_gate_fb, track) | Clk (delay_clock_fb, track) | Rnd (delay_pitch_random, track) |
+| 6 LIVE ARP | 98 | On (stub) | Type (stub) | Sort (stub) | Hold (stub) | OctR (stub) | Spd (stub) | — | — |
+| 7 RESERVED | 99 | — | — | — | — | — | — | — | — |
+
+**Scope notes**: `track` = key sent as `tN_<dspKey>`; `action` = one-shot DSP trigger (no bounded value), read-back via `tN_<dspKey><actionSuffix>`; `stub` = JS-only, no DSP call.
+
+**Sensitivity**: default sens=1 (1 tick per unit). Slow knobs listed above with explicit `sens=N`.
+
+**Lock**: Beat Stretch only — fires once per touch, then blocks until knob is released.
+
+## DSP Parameter Key Reference
+
+All new keys added in Phase 5d. All `tN_` keys accept N = 0..7 (track index).
+
+| Key | Direction | Format | Notes |
+|-----|-----------|--------|-------|
+| `tN_beat_stretch` | set | `"1"` or `"-1"` | Expand (+1) or compress (−1) active clip. Compress silently no-ops if blocked. |
+| `tN_beat_stretch_factor` | get | `"1x"`, `"x2"`, `"x4"`, `"/2"`, `"/4"`, … | Current stretch exponent as formatted string. |
+| `tN_beat_stretch_blocked` | get | `"0"` or `"1"` | 1 if last compress attempt was blocked by step collision. |
+| `tN_clock_shift` | set | `"1"` or `"-1"` | Rotate all steps in active clip right (+1) or left (−1) by one position. |
+| `tN_clock_shift_pos` | get | integer string | Current shift position (0..length−1). |
+| `tN_clip_length` | set/get | integer string `"1"`..`"256"` | Active clip length in steps. Clamps current_step if needed. Calls `seq8_save_state`. |
+
+Previously existing keys (for reference): `tN_active_clip`, `tN_current_step`, `tN_queued_clip`, `tN_cC_steps`, `tN_cC_length`, `tN_cC_step_S`, `tN_launch_clip`, `launch_scene`, `transport`, `playing`, `state_snapshot`, `tN_route`, `tN_pad_mode`, `tN_pad_octave`, `key`, `scale`, `noteFX_octave/offset/gate/velocity`, `harm_unison/octaver/interval1/interval2`, `delay_time/level/repeats/vel_fb/pitch_fb/gate_fb/clock_fb/pitch_random`.
+
+## DSP Struct Reference
+
+### `clip_t` (current fields)
+```c
+typedef struct {
+    uint8_t  steps[SEQ_STEPS];          /* 256 steps, 0/1 */
+    uint8_t  step_note[SEQ_STEPS];
+    uint8_t  step_vel[SEQ_STEPS];
+    uint8_t  step_gate[SEQ_STEPS];      /* gate ticks 1..GATE_TICKS; render loop fires note-off here */
+    uint8_t  step_gate_orig[SEQ_STEPS]; /* original gate before noteFX_gate scaling; init=GATE_TICKS */
+    uint16_t length;                    /* active length, 1..256 */
+    uint8_t  active;
+    uint16_t clock_shift_pos;           /* current rotation offset; wraps at length */
+    int8_t   stretch_exp;               /* beat stretch exponent: 0=1x, +1=x2, -1=/2. Not persisted. */
+} clip_t;
+```
+
+### `seq8_track_t` (relevant fields)
+```c
+typedef struct {
+    /* ... */
+    uint8_t   stretch_blocked;  /* 1 if last compress was blocked by step collision; cleared on expand or non-blocked compress */
+} seq8_track_t;
+```
+
+### Beat Stretch compress — collision detection
+
+Dry-run using `uint8_t seen[SEQ_STEPS]` before any mutations. If any two active steps in the current clip would map to the same destination (`i/2`), sets `stretch_blocked=1` and returns without touching `steps[]` or `stretch_exp`. This ensures atomicity — no partial rewrites.
+
+## JS State Variables (Phase 5d additions)
+
+```js
+let activeBank     = new Array(NUM_TRACKS).fill(0);   /* active bank index 0-7 per track; 0 = TRACK (default) */
+let knobTouched    = -1;                              /* 0-7 = which knob is currently touched; -1 = none */
+let jogTouched     = false;                           /* jog wheel capacitive touch (MoveMainTouch = note 9) */
+let knobAccum      = new Array(8).fill(0);            /* raw encoder tick accumulator per knob */
+let knobLastDir    = new Array(8).fill(0);            /* last direction per knob for reversal detection */
+let knobLocked     = new Array(8).fill(false);        /* blocks further firing until touch release (lock=true params) */
+let bankSelectTick = -1;                              /* tickCount at last bank select; -1 = timeout not active */
+const BANK_DISPLAY_TICKS = 392;                       /* ~2000ms at 196Hz */
+let stretchBlockedEndTick = -1;                       /* tickCount deadline for COMPRESS LIMIT overlay; -1 = inactive */
+const STRETCH_BLOCKED_TICKS = 294;                    /* ~1500ms at 196Hz */
+let trackOctave = new Array(NUM_TRACKS).fill(0);      /* per-track live pad octave shift, -4..+4 */
+let octaveOverlayEndTick = -1;                        /* tickCount deadline for octave overlay; -1 = inactive */
+const OCTAVE_OVERLAY_TICKS = 196;                     /* ~1000ms at 196Hz */
+let bankParams = Array.from({length: NUM_TRACKS}, () =>
+    BANKS.map(bank => bank.knobs.map(k => k.def)));   /* [track][bankIdx][knobIdx] = integer value */
+```
 
 ## Known limitations
 
 - **Do not load SEQ8 from within SEQ8** — selecting SEQ8 from the Tools menu while already inside SEQ8 causes LED corruption. The Tools menu button sets `SHADOW_UI_FLAG_JUMP_TO_TOOLS` (0x80) via the shim's ui_flags bitmask; shadow_ui.js polls this with `shadow_get_ui_flags()` and calls `enterToolsMenu()` directly. `onMidiMessageInternal` is never called — there is no MIDI event to intercept. Workaround: hide first (Shift+Back), then re-enter from the Tools menu.
 - **Live pad latency floor: ~3–7ms** — structural, cannot be closed. See Phase 5 findings.
 - **All 8 tracks route to the same Schwung chain** — no confirmed multi-chain path exists. See ROUTE_MOVE investigation.
+- **`step_note`, `step_vel`, `step_gate`/`step_gate_orig` not persisted** — The state file only stores `steps[]` (on/off), `length`, and `active_clip`. Per-step note, velocity, and gate values all reset to defaults on cold boot (note=60, vel=100, gate=GATE_TICKS). Correct default behavior for current monophonic-pitch sequencer; will need to change when step entry is built.
+- **MIDI Delay repeats: no upper clamp enforced** — the `delay_repeats` param accepts 0–64 but high values can create very long feedback chains. TODO: clamp to 8 in DSP `set_param` handler and update BANKS range to match.
+- **Clip lengths not persisted via state file** — `tN_clip_length` and `tN_cC_length` set_param handlers do not call `seq8_save_state`. Cold boot restores step data but not clip lengths. Known gap, acceptable for now.
+- **`stretch_exp` not persisted** — Beat Stretch exponent resets to 0 on every cold boot or JS re-entry. Not saved to state file.
 
 ## Background running (Phase 4 — confirmed working on hardware)
 
@@ -93,7 +201,7 @@ Intended as a quick-start for a new session. Verify against code before acting o
 - **`shadow_send_midi_to_dsp` in api_version 2 + DSP**: Confirmed working for live pad input. The note in the JS routing section ("In api_version 2 + DSP, use `host->midi_send_internal` from C instead") applies to the *sequencer engine* output in `render_block` — not to live pad input from JS. Both paths coexist correctly.
 - **`on_midi` does not receive internal MIDI in tool mode**: Confirmed on hardware. The C `on_midi` callback only fires for external USB-A MIDI. Internal pad/button events route exclusively to JS `onMidiMessageInternal`.
 - **Velocity floor**: `Math.max(80, d2)` — ensures light hardware taps produce audible signal while preserving relative dynamics above 80.
-- **`padPitch[32]`**: Stores the pitch sent at note-on per pad. Ensures matching note-off pitch even if `padNoteMap` changes while a pad is held (e.g., track switch). Value -1 = pad not active.
+- **`padPitch[32]`**: Stores the pitch sent at note-on per pad (including octave shift). Ensures matching note-off pitch even if `padNoteMap` or `trackOctave` changes while a pad is held. Value -1 = pad not active.
 - **Move pressure grid phantom note-offs**: Move sends phantom note-off/note-on pairs during simultaneous multi-pad presses. With `shadow_send_midi_to_dsp` these are harmless pass-throughs. No state tracking required.
 
 ### Latency and poll performance (Phase 5b)
@@ -114,10 +222,49 @@ Intended as a quick-start for a new session. Verify against code before acting o
 - **Page clamped on shrink**: `trackCurrentPage[activeTrack]` is clamped to the new last page if current page would be out of bounds.
 - **DSP `_length` set_param does not call `seq8_save_state`**: Clip lengths are not persisted on cold boot via the state file. This is a known gap — acceptable for now.
 
+### Track View parameter banks (Phase 5d)
+
+- **Bank select**: Shift + top-row pad (notes 92–98). `activeBank[activeTrack]` set to 0–6. Pressing the same bank again returns to TRACK (0). Pad 99 (bank 7) reserved, ignored.
+- **`bankSelectTick`**: Set to `tickCount` on bank select. Triggers State 3 (overview display) for ~2000ms (`BANK_DISPLAY_TICKS = 392`). Cleared when timeout expires or State 4 returns.
+- **Knob touch (notes 0–7)**: d2=127 = touch-on → `knobTouched = knobIdx`. d2 < 64 or 0x80 note-off = touch-off → `knobTouched = -1`, `knobLocked[k] = false`, `knobAccum[k] = 0`.
+- **Jog touch (note 9)**: `jogTouched = true/false`. Triggers State 2 (overview display, no timeout).
+- **Sensitivity accumulator**: `knobAccum[k]++` per raw encoder tick in that direction. Fires one unit change when `>= pm.sens`. Reversal (direction change) resets `knobAccum` to 0.
+- **`parseActionRaw(raw, def)`**: Decodes DSP's formatted exponent strings (`"1x"` → 0, `"x2"` → 1, `"/2"` → -1, etc.) back to integer exponents for `bankParams` storage.
+- **Beat Stretch compress collision**: JS checks `tN_beat_stretch_blocked` immediately after calling `set_param`. If `"1"`, sets `stretchBlockedEndTick` and does NOT mirror the step rewrite in `clipSteps`. If `"0"`, mirrors the expand/compress in `clipSteps` and reads `tN_beat_stretch_factor` back from DSP as authoritative.
+- **Clock Shift JS mirror**: After each shift set_param, JS rotates `clipSteps[t][ac]` in the same direction. `bankParams[t][bank][knobIdx]` updated as `(cur + delta) % len` (wrapping position counter for display).
+- **`applyBankParam` clip_length side-effect**: When `dspKey === 'clip_length'`, JS also updates `clipLength[t][ac]` and clamps `trackCurrentPage[t]` to the new last page.
+- **`readBankParams`**: Called on bank select and during `init()` for TRACK bank (index 0). Uses `parseActionRaw` for `scope === 'action'` params.
+
+### Step entry research (pre-implementation)
+
+Completed a full read of `seq8.c` and `SEQ8_SPEC.md` to establish baseline before implementing melodic step entry.
+
+**There is no `step_t` struct.** Step data is stored as parallel arrays in `clip_t` — no per-step wrapper type exists. Current `clip_t` fields exactly as found:
+
+```c
+typedef struct {
+    uint8_t  steps[SEQ_STEPS];          /* 0=off, 1=on */
+    uint8_t  step_note[SEQ_STEPS];      /* default SEQ_NOTE (60) */
+    uint8_t  step_vel[SEQ_STEPS];       /* default SEQ_VEL (100) */
+    uint8_t  step_gate[SEQ_STEPS];      /* gate ticks 1..GATE_TICKS (capped) */
+    uint8_t  step_gate_orig[SEQ_STEPS]; /* original gate before noteFX_gate scaling */
+    uint16_t length;                    /* 1..256, default 16 */
+    uint8_t  active;                    /* 1 if any step is on */
+    uint16_t clock_shift_pos;
+    int8_t   stretch_exp;
+} clip_t;
+```
+
+**`step_note[]` exists and is already wired into the render loop** (`cl->step_note[tr->current_step]` is passed to `pfx_note_on`), but is always 60 — the step toggle set_param handler does not write to it. No set_param or get_param key exists for per-step note assignment. No step note data is persisted to the state file.
+
+**Polyphony decision: 4 notes per step.** Step entry will support up to 4 simultaneous notes per step (chords). The current `step_note[256]` single-note array must be replaced with `step_notes[256][4]` + `step_note_count[256]` before step entry UI can be built. See upcoming tasks.
+
+**State file does not persist `step_note`, `step_vel`, `step_gate`, or `step_gate_orig`.** Only `steps[]`, `length`, and `active_clip` survive cold boot. State file persistence must be extended as part of the data model restructure.
+
 ### Hardware and external MIDI (Phase 5)
 
 - **WIDI Bud Pro**: Confirmed working for wireless USB-A MIDI. Plugs into Move's USB-A port and appears as a standard USB MIDI device. Useful for connecting external hardware wirelessly.
-- **Master knob (CC 14, `MoveMainKnob`)**: `claims_master_knob: true` is set in module.json but CC 14 is not yet handled in ui.js. Reserved for Track View parameter bank navigation.
+- **Master knob (CC 14, `MoveMainKnob`)**: `claims_master_knob: true` is set in module.json. Not yet handled in ui.js — reserved for future use.
 - **Move encoder constants** (from `/data/UserData/schwung/shared/constants.mjs`):
   - `MoveMainKnob = 14` (CC, no LED)
   - `MoveMainButton = 3` (note, no LED — also used to confirm power-down)
@@ -175,6 +322,7 @@ All approaches to routing MIDI to multiple native Move chains independently were
 - GLIBC max 2.35 on Move — nothing newer may be linked.
 - No complex static initializers.
 - Cache BPM every 512 render blocks (not per-block).
+- **Schwung core on device: v0.9.7** (installed Apr 14 2026; no version file — date confirmed from binary timestamps).
 
 ## Always run after every build
 
@@ -205,6 +353,7 @@ ssh ableton@move.local "tail -f /data/UserData/schwung/seq8.log"
 - `src/notetwist.c` — the main DSP implementation
 - `scripts/build.sh` — build system to adapt for SEQ8
 - `Dockerfile` — cross-compilation environment to adapt
+- `SEQ8_SPEC.md` — Full design specification. Read at the start of every session and consult when making architectural decisions.
 
 Stages to port directly: octave transposer, note page, harmonize, MIDI delay, tempo sync.
 
