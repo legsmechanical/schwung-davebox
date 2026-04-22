@@ -40,7 +40,8 @@ import {
 import {
     setLED,
     setButtonLED,
-    isNoiseMessage
+    isNoiseMessage,
+    decodeDelta
 } from '/data/UserData/schwung/shared/input_filter.mjs';
 
 import {
@@ -1279,12 +1280,24 @@ globalThis.onMidiMessageInternal = function (data) {
 
         if (d1 === MoveMainKnob) {
             if (globalMenuOpen) {
-                handleMenuInput({
-                    cc: MoveMainKnob, value: d2,
-                    items: globalMenuItems, state: globalMenuState, stack: globalMenuStack,
-                    onBack: function() { globalMenuOpen = false; },
-                    shiftHeld: shiftHeld
-                });
+                /* BPM item (index 0) in edit mode: bypass acceleration, use linear ±1. */
+                if (globalMenuState.editing && globalMenuState.selectedIndex === 0) {
+                    const delta = decodeDelta(d2);
+                    if (delta !== 0) {
+                        const next = Math.round(Math.min(250, Math.max(40,
+                            (globalMenuState.editValue || 120) + delta)));
+                        if (next !== globalMenuState.editValue) {
+                            globalMenuState.editValue = next;
+                        }
+                    }
+                } else {
+                    handleMenuInput({
+                        cc: MoveMainKnob, value: d2,
+                        items: globalMenuItems, state: globalMenuState, stack: globalMenuStack,
+                        onBack: function() { globalMenuOpen = false; },
+                        shiftHeld: shiftHeld
+                    });
+                }
             }
             return;
         }
