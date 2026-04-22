@@ -961,7 +961,7 @@ static void set_param(void *instance, const char *key, const char *val) {
 
     if (!strcmp(key, "bpm")) {
         double bpm = (double)my_atoi(val);
-        if (bpm < 20.0 || bpm > 300.0) return;
+        if (bpm < 40.0 || bpm > 250.0) return;
         inst->tick_delta = (uint32_t)((double)MOVE_FRAMES_PER_BLOCK * bpm * (double)PPQN);
         int tb;
         for (tb = 0; tb < NUM_TRACKS; tb++)

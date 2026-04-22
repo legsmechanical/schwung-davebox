@@ -255,8 +255,8 @@ function buildGlobalMenuItems() {
                 return (v > 0 && isFinite(v)) ? Math.round(v) : 120;
             },
             set: function(v) { host_module_set_param('bpm', String(Math.round(v))); },
-            min: 20, max: 300, step: 1,
-            format: function(v) { return Math.round(v) + ' bpm'; }
+            min: 40, max: 250, step: 1,
+            format: function(v) { return String(Math.round(v)); }
         }),
         createEnum('Key', {
             get: function() { return padKey; },
