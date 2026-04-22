@@ -249,7 +249,15 @@ let stubInpQuant = false;
 
 function buildGlobalMenuItems() {
     return [
-        createInfo('BPM', '---'),
+        createValue('BPM', {
+            get: function() {
+                const v = parseFloat(host_module_get_param('bpm'));
+                return (v > 0 && isFinite(v)) ? Math.round(v) : 120;
+            },
+            set: function(v) { host_module_set_param('bpm', String(Math.round(v))); },
+            min: 20, max: 300, step: 1,
+            format: function(v) { return Math.round(v) + ' bpm'; }
+        }),
         createEnum('Key', {
             get: function() { return padKey; },
             set: function(v) {
@@ -481,11 +489,6 @@ function disarmRecord() {
 
 function openGlobalMenu() {
     globalMenuItems = buildGlobalMenuItems();
-    if (typeof host_module_get_param === 'function') {
-        const rawBpm = parseFloat(host_module_get_param('bpm'));
-        globalMenuItems[0].value = (rawBpm > 0 && isFinite(rawBpm))
-            ? (Math.round(rawBpm) + ' bpm') : '--- bpm';
-    }
     globalMenuState = createMenuState();
     globalMenuStack = createMenuStack();
     globalMenuOpen  = true;
@@ -636,12 +639,6 @@ function pollDSP() {
         }
     }
 
-    /* Refresh BPM display for global menu */
-    if (globalMenuOpen && globalMenuItems) {
-        const rawBpm = parseFloat(host_module_get_param('bpm'));
-        globalMenuItems[0].value = (rawBpm > 0 && isFinite(rawBpm))
-            ? (Math.round(rawBpm) + ' bpm') : '--- bpm';
-    }
 }
 
 /* ------------------------------------------------------------------ */

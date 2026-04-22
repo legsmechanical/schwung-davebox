@@ -57,7 +57,6 @@
 #define UNISON_STAGGER      220          /* ~5 ms at 44100 Hz */
 #define NUM_CLOCK_VALUES    11
 #define MAX_DELAY_SAMPLES   (30ULL * 44100)
-#define BPM_CACHE_INTERVAL  512
 
 /* 1 SEQ8 tick = 480/96 = 5 clocks at 480 PPQN (NoteTwist's resolution) */
 #define TICKS_TO_480PPQN    5
@@ -960,6 +959,16 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
 
+    if (!strcmp(key, "bpm")) {
+        double bpm = (double)my_atoi(val);
+        if (bpm < 20.0 || bpm > 300.0) return;
+        inst->tick_delta = (uint32_t)((double)MOVE_FRAMES_PER_BLOCK * bpm * (double)PPQN);
+        int tb;
+        for (tb = 0; tb < NUM_TRACKS; tb++)
+            inst->tracks[tb].pfx.cached_bpm = bpm;
+        return;
+    }
+
     /* --- Global pad tonality --- */
     if (!strcmp(key, "key")) {
         inst->pad_key = (uint8_t)clamp_i(my_atoi(val), 0, 11);
@@ -1533,16 +1542,6 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
     for (t = 0; t < NUM_TRACKS; t++)
         inst->tracks[t].pfx.sample_counter += (uint64_t)frames;
 
-    /* Cache host BPM every 512 blocks; also update tick_delta so tempo tracks Move. */
-    if ((inst->block_count % BPM_CACHE_INTERVAL) == 0) {
-        double bpm = (g_host && g_host->get_bpm)
-            ? (double)g_host->get_bpm() : (double)BPM_DEFAULT;
-        if (bpm < 20.0 || bpm > 300.0) bpm = (double)BPM_DEFAULT;
-        for (t = 0; t < NUM_TRACKS; t++)
-            inst->tracks[t].pfx.cached_bpm = bpm;
-        inst->tick_delta = (uint32_t)((double)MOVE_FRAMES_PER_BLOCK * bpm * (double)PPQN);
-
-    }
 
     for (t = 0; t < NUM_TRACKS; t++)
         pfx_q_fire(&inst->tracks[t].pfx, inst->tracks[t].pfx.sample_counter);
