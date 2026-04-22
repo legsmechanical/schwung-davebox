@@ -12,7 +12,7 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 
 ## What's Built
 
-**Transport**: Play/Stop/Panic (Shift+Play = panic). BPM cached every 512 blocks.
+**Transport**: Play/Stop/Panic (Shift+Play = panic). BPM read from `g_host->get_bpm()` at init and refreshed every 512 blocks (~1.5s); `tick_delta` updated on each refresh so sequencer tempo tracks Move natively (including clock-derived BPM when Move transport is running).
 
 **8 tracks, 16 clips, 256 steps per clip**: All tracks play simultaneously. Clip launch per-track or as scenes.
 
@@ -147,8 +147,10 @@ Beat Stretch compress: dry-run with `uint8_t seen[SEQ_STEPS]`. Any two active st
 
 ## Key constraints
 
-- GLIBC ≤ 2.35. No complex static initializers. BPM cached every 512 blocks.
+- GLIBC ≤ 2.35. No complex static initializers.
 - **Schwung core on device: v0.9.7** (Apr 14 2026; no version file — confirmed from binary timestamps).
+- **`g_host->get_clock_status` is NULL in v0.9.7** — DSP cannot poll Move transport state. Field exists in the struct but host sets it to NULL. Background transport follow is therefore not possible at DSP level; needs host update.
+- **`g_host->get_bpm` is non-null** — returns `sampler_get_bpm()` fallback chain: live MIDI clock → set tempo → settings → 120. Tracks Move's active transport tempo in real time.
 
 ## Build / deploy / debug
 
