@@ -4,9 +4,9 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 
 ## Current build phase
 
-**Phase 5 — 8 tracks, 256 steps, arpeggiator, Track View.** All subphases complete through 5q:
+**Phase 5 — 8 tracks, 256 steps, arpeggiator, Track View.** All subphases complete through 5r:
 
-5a live pad input · 5b poll throttling · 5c clip length · 5d Track View banks + beat stretch + clock shift + octave shift · 5e per-step gate time · 5f polyphonic step notes (4 per step) · 5g melodic step entry UI · 5h tap vs hold step buttons · 5i phantom notes + sparse state fix (state v=2) · 5j Delete key combos · 5k atomic step/clip clear DSP params · 5l playback head indicator + chord-to-step input · 5m Session Overview overlay · 5n real-time recording + count-in · 5o recording fixes (toggle, count-in redesign, silent notes race fix) · 5q global menu via platform framework + jog click CC 3 fix + BPM editable (real-time, linear jog) + count-in duration fix
+5a live pad input · 5b poll throttling · 5c clip length · 5d Track View banks + beat stretch + clock shift + octave shift · 5e per-step gate time · 5f polyphonic step notes (4 per step) · 5g melodic step entry UI · 5h tap vs hold step buttons · 5i phantom notes + sparse state fix (state v=2) · 5j Delete key combos · 5k atomic step/clip clear DSP params · 5l playback head indicator + chord-to-step input · 5m Session Overview overlay · 5n real-time recording + count-in · 5o recording fixes (toggle, count-in redesign, silent notes race fix) · 5q global menu via platform framework + jog click CC 3 fix + BPM editable (real-time, linear jog) + count-in duration fix · 5r clip deactivation (stop-at-end) + Session View jog row scroll
 
 Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play effects → clip model/Session View/background running.
 
@@ -18,7 +18,9 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 
 **Track View** (default): 16 step buttons = current page of active clip. Pads = live notes (isomorphic 4ths diatonic). Left/Right pages. Shift + bottom pad row = track select. Step buttons ≥ clip length light White (out-of-bounds). Playback head step always White.
 
-**Session View** (tap CC 50): 4×8 pad grid = clips for visible scene group. Shift+step = launch scene. Up/Down (CC 54/55) scrolls scene groups.
+**Session View** (tap CC 50): 4×8 pad grid = clips for visible scene group. Jog rotates one row at a time (clamped 0–12). Up/Down (CC 54/55) jump by group (4 rows). Shift+step = launch scene. Side buttons (CC 40–43) = launch scene.
+
+**Clip deactivation** (Track View only, via side buttons CC 40–43): Tap the active clip's side button while playing → arm stop-at-end (`tN_stop_at_end`); clip silences at the next loop boundary (step 0). Tap again while pending → cancel and re-launch. Tap while stopped → deactivate immediately. Session View side buttons always launch scene, no deactivation. Session View clip pads also support tap-to-deactivate/relaunch for the active track.
 
 **Session Overview** (hold CC 50 ≥200ms): Graphical 8×16 grid on OLED (8 cols=tracks, 16 rows=scenes, 16×4px cells). Release to exit. All input swallowed while held.
 
@@ -82,6 +84,8 @@ All `tN_` keys: N = 0..7 (track index).
 | `tN_clock_shift` | set | `"1"` or `"-1"` | Rotate all steps right/left by one. |
 | `tN_clock_shift_pos` | get | integer string | Current shift position. |
 | `tN_clip_length` | set/get | `"1"`..`"256"` | Active clip length. Saves state. |
+| `tN_stop_at_end` | set | any | Arm track to silence at start of next loop (step 0). Sets `pending_stop=1`. |
+| `tN_clip_stopped` | get | `"0"` or `"1"` | 1 = track is silenced; cleared on launch. |
 | `tN_cC_step_S_notes` | get | space-sep MIDI note numbers or `""` | Notes on step S. |
 | `tN_cC_step_S_toggle` | set | MIDI note string | Toggle note in/out of step. Saves state. |
 | `tN_cC_step_S_clear` | set | any | Atomic zero + deactivate step. Saves state. |
@@ -113,13 +117,18 @@ typedef struct {
     uint8_t pending_note_count;
     uint8_t stretch_blocked;     /* 1 = last compress blocked by step collision */
     uint8_t recording;           /* 1 = overdub active; cleared on stop/panic */
+    uint8_t pending_stop;        /* 1 = silence at start of next loop; render fires → clip_stopped=1 */
+    uint8_t clip_stopped;        /* 1 = track silenced; step advance frozen; cleared on launch */
 } seq8_track_t;
 ```
 
 Beat Stretch compress: dry-run with `uint8_t seen[SEQ_STEPS]`. Any two active steps mapping to the same `i/2` → `stretch_blocked=1`, abort. Atomic — no partial rewrites.
 
+`pending_stop` fires in the render loop when `tick_in_step==0 && current_step==0` — i.e., at the loop boundary before any note-on. `clip_stopped` blocks both note-on and step advance. Both cleared by `launch_clip`, `launch_scene`, transport stop, and transport panic.
+
 ## Known limitations
 
+- **Transport stop clears deactivation state** — `pending_stop` and `clip_stopped` are reset to 0 on transport stop/panic. JS mirrors (`trackPendingStop`, `trackClipStopped`) also cleared. Deactivated clips return to active if transport is stopped and restarted.
 - **Do not load SEQ8 from within SEQ8** — causes LED corruption (Tools menu sets `FLAG_JUMP_TO_TOOLS` 0x80 via ui_flags; no MIDI event fires so it can't be intercepted). Workaround: Shift+Back first, then re-enter from Tools menu.
 - **Live pad latency floor: ~3–7ms** — structural. JS ticks at ~196Hz.
 - **All 8 tracks route to the same Schwung chain** — no multi-chain path. Exhaustively tested.
