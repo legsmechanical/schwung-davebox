@@ -160,4 +160,4 @@ nm -D dist/seq8/dsp.so | grep GLIBC   # run after every build
 ssh ableton@move.local "tail -f /data/UserData/schwung/seq8.log"
 ```
 
-`~/schwung-notetwist` — NoteTwist reference (port source, key file `src/notetwist.c`). `SEQ8_SPEC.md` — full design spec, read at session start.
+`~/schwung-notetwist` — NoteTwist reference (port source, key file `src/notetwist.c`). `SEQ8_SPEC.md` — full design spec; consult specific sections as needed, do not read in full at session start.
