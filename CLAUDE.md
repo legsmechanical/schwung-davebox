@@ -6,13 +6,13 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 
 **Phase 5 — 8 tracks, 256 steps, arpeggiator, Track View.** All subphases complete through 5q:
 
-5a live pad input · 5b poll throttling · 5c clip length · 5d Track View banks + beat stretch + clock shift + octave shift · 5e per-step gate time · 5f polyphonic step notes (4 per step) · 5g melodic step entry UI · 5h tap vs hold step buttons · 5i phantom notes + sparse state fix (state v=2) · 5j Delete key combos · 5k atomic step/clip clear DSP params · 5l playback head indicator + chord-to-step input · 5m Session Overview overlay · 5n real-time recording + count-in · 5o recording fixes (toggle, count-in redesign, silent notes race fix) · 5q global menu via platform framework + jog click CC 3 fix
+5a live pad input · 5b poll throttling · 5c clip length · 5d Track View banks + beat stretch + clock shift + octave shift · 5e per-step gate time · 5f polyphonic step notes (4 per step) · 5g melodic step entry UI · 5h tap vs hold step buttons · 5i phantom notes + sparse state fix (state v=2) · 5j Delete key combos · 5k atomic step/clip clear DSP params · 5l playback head indicator + chord-to-step input · 5m Session Overview overlay · 5n real-time recording + count-in · 5o recording fixes (toggle, count-in redesign, silent notes race fix) · 5q global menu via platform framework + jog click CC 3 fix + BPM editable (real-time, linear jog) + count-in duration fix
 
 Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play effects → clip model/Session View/background running.
 
 ## What's Built
 
-**Transport**: Play/Stop/Panic (Shift+Play = panic). BPM read from `g_host->get_bpm()` at init and refreshed every 512 blocks (~1.5s); `tick_delta` updated on each refresh so sequencer tempo tracks Move natively (including clock-derived BPM when Move transport is running).
+**Transport**: Play/Stop/Panic (Shift+Play = panic). BPM is SEQ8-owned: read from `g_host->get_bpm()` once at init as a starting default, then controlled via the global menu. DSP `set_param("bpm")` updates `tick_delta` and `cached_bpm` for all tracks. No ongoing polling — BPM does not auto-follow Move after init.
 
 **8 tracks, 16 clips, 256 steps per clip**: All tracks play simultaneously. Clip launch per-track or as scenes.
 
@@ -38,7 +38,7 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 
 **Clock Shift** (TIMING K2, sens=8): Rotates all steps one position CW/CCW.
 
-**Global menu** (Shift + CC 50 in Track View): Platform framework (`drawHierarchicalMenu`). Jog rotate = navigate; **jog click = CC 3** (0xB0 d1=3, NOT Note 3) = edit mode via `handleMenuInput`; Back = exit. Items: BPM (display only), Key (wired), Scale (wired), Swing Amt/Res/Input Vel/Inp Quant (stub, session-local).
+**Global menu** (Shift + CC 50 in Track View): Platform framework (`drawHierarchicalMenu`). Jog rotate = navigate; **jog click = CC 3** (0xB0 d1=3, NOT Note 3) = edit mode via `handleMenuInput`; Back = exit. Items: BPM (editable 40–250, real-time jog, linear ±1/detent — acceleration bypassed), Key (wired), Scale (wired), Swing Amt/Res/Input Vel/Inp Quant (stub, session-local). BPM jog intercept: CC 14 handled directly in `onMidiMessageInternal` when BPM selected+editing, writing to `globalMenuState.editValue` and sending `set_param("bpm")` each tick.
 
 **Play effects chain**: Note FX (octave, offset, gate, velocity), Harmonize (unison, octaver, 2×interval), MIDI Delay (time, level, repeats, feedback). Exposed via parameter banks.
 
@@ -89,7 +89,7 @@ All `tN_` keys: N = 0..7 (track index).
 | `tN_cC_clear` | set | any | Atomic wipe all steps in clip C. Saves state. |
 | `tN_recording` | set/get | `"0"` or `"1"` | 1 = recording (defers save). 0 = disarm + flush. DSP clears on stop/panic. |
 
-Other keys: `tN_active_clip`, `tN_current_step`, `tN_queued_clip`, `tN_cC_steps`, `tN_cC_length`, `tN_cC_step_S`, `tN_launch_clip`, `launch_scene`, `transport`, `playing`, `state_snapshot`, `tN_route`, `tN_pad_mode`, `tN_pad_octave`, `key`, `scale`, `noteFX_octave/offset/gate/velocity`, `harm_unison/octaver/interval1/interval2`, `delay_time/level/repeats/vel_fb/pitch_fb/gate_fb/clock_fb/pitch_random`.
+Other keys: `tN_active_clip`, `tN_current_step`, `tN_queued_clip`, `tN_cC_steps`, `tN_cC_length`, `tN_cC_step_S`, `tN_launch_clip`, `launch_scene`, `transport`, `playing`, `state_snapshot`, `tN_route`, `tN_pad_mode`, `tN_pad_octave`, `key`, `scale`, `bpm` (set/get — integer string, 40–250; updates `tick_delta` + all `cached_bpm`), `noteFX_octave/offset/gate/velocity`, `harm_unison/octaver/interval1/interval2`, `delay_time/level/repeats/vel_fb/pitch_fb/gate_fb/clock_fb/pitch_random`.
 
 ## DSP Struct Reference
 
@@ -149,8 +149,8 @@ Beat Stretch compress: dry-run with `uint8_t seen[SEQ_STEPS]`. Any two active st
 
 - GLIBC ≤ 2.35. No complex static initializers.
 - **Schwung core on device: v0.9.7** (Apr 14 2026; no version file — confirmed from binary timestamps).
-- **`g_host->get_clock_status` is NULL in v0.9.7** — DSP cannot poll Move transport state. Field exists in the struct but host sets it to NULL. Background transport follow is therefore not possible at DSP level; needs host update.
-- **`g_host->get_bpm` is non-null** — returns `sampler_get_bpm()` fallback chain: live MIDI clock → set tempo → settings → 120. Tracks Move's active transport tempo in real time.
+- **`g_host->get_clock_status` is NULL in v0.9.7** — DSP cannot poll Move transport state. Background transport follow not possible at DSP level; needs host update. Ableton Link also not viable (port conflict with Move's native Link instance).
+- **`g_host->get_bpm` is non-null** — used once at init only. Returns `sampler_get_bpm()` fallback chain (live MIDI clock → set tempo → settings → 120). Does not reliably track BPM changes made in Move's UI while stopped, so SEQ8 owns its own BPM after init.
 
 ## Build / deploy / debug
 
