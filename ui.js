@@ -320,11 +320,8 @@ const NOTE_SESSION_HOLD_TICKS = 40;  /* ~200ms at 196Hz */
 let overviewCache           = null;  /* null or Array[NUM_TRACKS][NUM_CLIPS] of booleans */
 
 /* Real-time recording state */
-let recordArmed         = false; /* true = Record pressed; count-in or actively recording */
-let recordCountingIn    = false; /* true = JS-side count-in phase (transport not yet started) */
+let recordArmed         = false; /* true = Record pressed and recording is active */
 let recordArmedTrack    = -1;    /* track index that was active when Record was pressed */
-let countInStartTick    = -1;    /* tickCount when count-in began; -1 = inactive */
-let countInQuarterTicks = 0;     /* JS ticks per quarter note at BPM read on arm */
 let playingPrev         = false; /* previous value of `playing`, for stop-transition detection */
 let recordCaptureStep   = -1;    /* step index pinned for chord capture; -1 = no active window */
 let recordCaptureClip   = -1;    /* clip index pinned for chord capture */
@@ -378,10 +375,7 @@ function disarmRecord() {
     if (!recordArmed) return;
     const t = recordArmedTrack;
     recordArmed          = false;
-    recordCountingIn     = false;
     recordArmedTrack     = -1;
-    countInStartTick     = -1;
-    countInQuarterTicks  = 0;
     recordCaptureStep    = -1;
     recordCaptureClip    = -1;
     recordCaptureEndTick = -1;
@@ -813,17 +807,6 @@ function drawUI() {
     const bank      = activeBank[activeTrack];
     const inTimeout = bankSelectTick >= 0;
 
-    /* Count-in overlay: shown while waiting for cycle start before recording */
-    if (recordArmed && recordCountingIn && !sessionView) {
-        const ac_r       = trackActiveClip[recordArmedTrack];
-        const totalPages = Math.max(1, Math.ceil(clipLength[recordArmedTrack][ac_r] / 16));
-        print(4, 10, 'TR' + (recordArmedTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac_r] +
-                     '  PG 1/' + totalPages, 1);
-        print(4, 22, 'COUNT-IN', 1);
-        print(4, 34, 'REC ARMED', 1);
-        print(4, 46, '1 2 3 4 5 6 7 8', 1);
-        return;
-    }
 
     /* Compress-limit override: highest priority for ~1500ms after a blocked compress */
     if (stretchBlockedEndTick >= 0) {
@@ -904,7 +887,7 @@ function drawUI() {
         /* \xb7 = middle dot · */
         print(4, 10, 'TR' + (activeTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac] +
                      '  PG ' + (page + 1) + '/' + totalPages, 1);
-        const recTag = (recordArmed && !recordCountingIn && recordArmedTrack === activeTrack)
+        const recTag = (recordArmed && recordArmedTrack === activeTrack)
             ? ' REC' : '';
         print(4, 22, 'KNOB: [' + BANKS[activeBank[activeTrack]].name + ']' + recTag, 1);
         if (loopHeld) {
@@ -1049,21 +1032,6 @@ globalThis.tick = function () {
             recordCaptureEndTick = -1;
         }
 
-        /* Count-in timer: after 1 bar start transport + recording simultaneously */
-        if (recordArmed && recordCountingIn && countInStartTick >= 0) {
-            const elapsed = tickCount - countInStartTick;
-            if (elapsed >= countInQuarterTicks * 4) {
-                console.log('SEQ8 count-in fire: elapsed=' + elapsed + ' qt=' + countInQuarterTicks + ' rt=' + recordArmedTrack + ' playing=' + playing);
-                recordCountingIn = false;
-                countInStartTick = -1;
-                const rt = recordArmedTrack;
-                if (typeof host_module_set_param === 'function') {
-                    host_module_set_param('transport', 'play');
-                    host_module_set_param('t' + rt + '_recording', '1');
-                }
-            }
-        }
-
         /* Transport LEDs */
         setButtonLED(MovePlay, playing ? Green : LED_OFF);
         setButtonLED(MoveRec,  recordArmed ? Red : LED_OFF);
@@ -1073,13 +1041,6 @@ globalThis.tick = function () {
             updateSceneMapLEDs();
         } else {
             updateStepLEDs();
-            /* Count-in flash: override all 16 step buttons with Red pulse at quarter-note rate */
-            if (recordArmed && recordCountingIn && countInStartTick >= 0) {
-                const elapsed = tickCount - countInStartTick;
-                const flashOn = (elapsed % countInQuarterTicks) < (countInQuarterTicks >> 1);
-                const flashColor = flashOn ? White : LED_OFF;
-                for (let _i = 0; _i < 16; _i++) setLED(16 + _i, flashColor);
-            }
         }
         updateTrackLEDs();
     }
@@ -1215,28 +1176,18 @@ globalThis.onMidiMessageInternal = function (data) {
         /* Record button (CC 86): toggle arm/disarm */
         if (d1 === MoveRec && d2 === 127) {
             if (recordArmed) {
-                /* Already armed (count-in or recording) → disarm */
+                /* Already recording → disarm */
                 disarmRecord();
-            } else if (!playing) {
-                /* Stopped → JS-side 1-bar count-in; transport does NOT start yet */
-                const rawBpm = typeof host_module_get_param === 'function'
-                    ? parseFloat(host_module_get_param('bpm')) : 120;
-                const bpm = (rawBpm > 0 && isFinite(rawBpm)) ? rawBpm : 120;
-                recordArmed         = true;
-                recordCountingIn    = true;
-                recordArmedTrack    = activeTrack;
-                countInStartTick    = tickCount;
-                countInQuarterTicks = Math.round(196 * 60 / bpm);
-                console.log('SEQ8 count-in arm: bpm=' + bpm + ' qt=' + countInQuarterTicks + ' start=' + countInStartTick + ' track=' + recordArmedTrack);
-                setButtonLED(MoveRec, Red);
             } else {
-                /* Playing → arm immediately, begin recording with no count-in */
+                /* Arm immediately; start transport if stopped */
                 recordArmed      = true;
-                recordCountingIn = false;
                 recordArmedTrack = activeTrack;
                 setButtonLED(MoveRec, Red);
-                if (typeof host_module_set_param === 'function')
+                if (typeof host_module_set_param === 'function') {
+                    if (!playing)
+                        host_module_set_param('transport', 'play');
                     host_module_set_param('t' + activeTrack + '_recording', '1');
+                }
             }
         }
 
@@ -1492,7 +1443,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     /* Overdub capture: add to current step of armed track.
                      * Pin step index for RECORD_CAPTURE_TICKS so chord notes arriving
                      * across poll boundaries all land on the same step. */
-                    if (recordArmed && !recordCountingIn &&
+                    if (recordArmed &&
                             activeTrack === recordArmedTrack &&
                             typeof host_module_set_param === 'function') {
                         const rt   = recordArmedTrack;
