@@ -941,11 +941,8 @@ static void set_param(void *instance, const char *key, const char *val) {
     /* --- DSP-side count-in --- */
     if (!strcmp(key, "record_count_in")) {
         int track = clamp_i(my_atoi(val), 0, NUM_TRACKS - 1);
-        double bpm = inst->tracks[0].pfx.cached_bpm > 0
-                     ? inst->tracks[0].pfx.cached_bpm : (double)BPM_DEFAULT;
-        /* tick_delta is fixed at BPM_DEFAULT; scale bar duration to actual BPM */
         inst->count_in_track = (uint8_t)track;
-        inst->count_in_ticks = (int32_t)((double)(4 * PPQN * BPM_DEFAULT) / bpm + 0.5);
+        inst->count_in_ticks = 4 * PPQN;  /* 1 bar; tick_delta already tracks actual BPM */
         return;
     }
     if (!strcmp(key, "record_count_in_cancel")) {
