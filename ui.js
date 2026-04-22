@@ -406,6 +406,7 @@ let globalMenuOpen  = false;
 let globalMenuItems = null;
 let globalMenuState = null;
 let globalMenuStack = null;
+let bpmWasEditing   = false;
 
 /* Session overview overlay (hold CC 50) */
 let noteSessionPressedTick  = -1;    /* tickCount when CC 50 pressed; -1 = not pending */
@@ -1110,6 +1111,21 @@ globalThis.init = function () {
 
 globalThis.tick = function () {
     tickCount++;
+
+    /* Real-time BPM preview while editing in global menu */
+    if (globalMenuOpen && globalMenuState && globalMenuItems) {
+        const bpmIsSelected = globalMenuState.selectedIndex === 0;
+        if (bpmIsSelected && globalMenuState.editing && globalMenuState.editValue !== null) {
+            host_module_set_param('bpm', String(Math.round(globalMenuState.editValue)));
+            bpmWasEditing = true;
+        } else if (bpmWasEditing && !globalMenuState.editing) {
+            /* Edit ended (confirm or cancel) — sync DSP to the JS item's current value.
+             * After confirm, item.get() returns the confirmed value.
+             * After cancel (Back), item.get() returns the pre-edit value, restoring DSP. */
+            host_module_set_param('bpm', String(Math.round(globalMenuItems[0].get())));
+            bpmWasEditing = false;
+        }
+    }
 
     pulseStep = (pulseStep + 1) % PULSE_PERIOD;
     const phase = Math.floor(pulseStep * 4 / PULSE_PERIOD);
