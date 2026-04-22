@@ -161,6 +161,7 @@ typedef struct {
     uint8_t   pad_octave;           /* live pad root octave (0-8, default 3) */
     uint8_t   pad_mode;             /* PAD_MODE_MELODIC_SCALE = 0 */
     uint8_t   stretch_blocked;      /* 1 if last compress was blocked by collision */
+    uint8_t   recording;            /* 1 = actively recording (overdub) into active clip */
 } seq8_track_t;
 
 typedef struct {
@@ -248,7 +249,7 @@ static void seq8_save_state(seq8_instance_t *inst) {
     FILE *fp = fopen(SEQ8_STATE_PATH, "w");
     if (!fp) return;
     int t, c, s;
-    fprintf(fp, "{\"v\":1,\"playing\":%d", inst->playing);
+    fprintf(fp, "{\"v\":2,\"playing\":%d", inst->playing);
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
     for (t = 0; t < NUM_TRACKS; t++) {
@@ -260,18 +261,16 @@ static void seq8_save_state(seq8_instance_t *inst) {
                 fputc(cl->steps[s] ? '1' : '0', fp);
             fputc('"', fp);
             fprintf(fp, ",\"t%dc%d_len\":%d", t, c, (int)cl->length);
-            /* sparse step notes — only emit clips with at least one non-default note */
+            /* sparse step notes — emit any step with count > 0 (count=0 is default) */
             int has_nondefault = 0;
             for (s = 0; s < SEQ_STEPS; s++) {
-                if (cl->step_note_count[s] != 1 || cl->step_notes[s][0] != SEQ_NOTE) {
-                    has_nondefault = 1; break;
-                }
+                if (cl->step_note_count[s] != 0) { has_nondefault = 1; break; }
             }
             if (has_nondefault) {
                 int n;
                 fprintf(fp, ",\"t%dc%d_sn\":\"", t, c);
                 for (s = 0; s < SEQ_STEPS; s++) {
-                    if (cl->step_note_count[s] == 1 && cl->step_notes[s][0] == SEQ_NOTE)
+                    if (cl->step_note_count[s] == 0)
                         continue;
                     fprintf(fp, "%d:", s);
                     for (n = 0; n < (int)cl->step_note_count[s]; n++) {
@@ -302,8 +301,8 @@ static void seq8_load_state(seq8_instance_t *inst) {
     if (!n) { free(buf); remove(SEQ8_STATE_PATH); return; }
     buf[n] = '\0';
 
-    /* Version gate: delete and ignore any state file that isn't v=1. */
-    if (json_get_int(buf, "v", -1) != 1) {
+    /* Version gate: delete and ignore any state file that isn't v=2. */
+    if (json_get_int(buf, "v", -1) != 2) {
         free(buf);
         remove(SEQ8_STATE_PATH);
         seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
@@ -711,11 +710,11 @@ static void clip_init(clip_t *cl) {
     cl->stretch_exp     = 0;
     for (s = 0; s < SEQ_STEPS; s++) {
         cl->steps[s]             = 0;
-        cl->step_notes[s][0]     = SEQ_NOTE;
+        cl->step_notes[s][0]     = 0;
         cl->step_notes[s][1]     = 0;
         cl->step_notes[s][2]     = 0;
         cl->step_notes[s][3]     = 0;
-        cl->step_note_count[s]   = 1;
+        cl->step_note_count[s]   = 0;
         cl->step_vel[s]          = SEQ_VEL;
         cl->step_gate[s]         = GATE_TICKS;
         cl->step_gate_orig[s]    = GATE_TICKS;
@@ -898,10 +897,12 @@ static void set_param(void *instance, const char *key, const char *val) {
                     memset(inst->tracks[t].pfx.active_notes, 0,
                            sizeof(inst->tracks[t].pfx.active_notes));
                     inst->tracks[t].clips[inst->tracks[t].active_clip].clock_shift_pos = 0;
+                    inst->tracks[t].recording           = 0;
                 }
                 inst->playing = 0;
                 send_panic(inst);
                 seq8_ilog(inst, "SEQ8 transport: stop");
+                seq8_save_state(inst);
             }
         } else if (!strcmp(val, "panic")) {
             int t;
@@ -913,12 +914,13 @@ static void set_param(void *instance, const char *key, const char *val) {
                 memset(inst->tracks[t].pfx.active_notes, 0,
                        sizeof(inst->tracks[t].pfx.active_notes));
                 inst->tracks[t].clips[inst->tracks[t].active_clip].clock_shift_pos = 0;
+                inst->tracks[t].recording           = 0;
             }
             inst->playing = 0;
             send_panic(inst);
             seq8_ilog(inst, "SEQ8 transport: panic");
+            seq8_save_state(inst);
         }
-        seq8_save_state(inst);
         return;
     }
 
@@ -1032,12 +1034,57 @@ static void set_param(void *instance, const char *key, const char *val) {
                         if (cl->step_note_count[sidx] == 0)
                             cl->steps[sidx] = 0;
                     } else if (cl->step_note_count[sidx] < 4) {
-                        /* add */
-                        if (cl->step_note_count[sidx] == 0)
+                        /* add: write note+count BEFORE activating step to avoid render-thread race */
+                        cl->step_notes[sidx][cl->step_note_count[sidx]] = (uint8_t)note;
+                        cl->step_note_count[sidx]++;
+                        if (cl->step_note_count[sidx] == 1)
                             cl->steps[sidx] = 1;
-                        cl->step_notes[sidx][cl->step_note_count[sidx]++] = (uint8_t)note;
                     }
                     /* else: 4-note limit reached — silent no-op */
+                    {
+                        int i, any = 0;
+                        for (i = 0; i < SEQ_STEPS; i++) if (cl->steps[i]) { any = 1; break; }
+                        cl->active = (uint8_t)any;
+                    }
+                    seq8_save_state(inst);
+                    return;
+                }
+
+                if (!strcmp(q, "_add")) {
+                    /* tN_cC_step_S_add val=<note 0-127>
+                     * Add-only: no-op if note already present or step has 4 notes.
+                     * Used for overdub recording — never removes existing notes.
+                     * Skips seq8_save_state when track is recording (deferred to disarm). */
+                    int note = clamp_i(my_atoi(val), 0, 127);
+                    int n, found = 0;
+                    for (n = 0; n < (int)cl->step_note_count[sidx]; n++) {
+                        if (cl->step_notes[sidx][n] == (uint8_t)note) { found = 1; break; }
+                    }
+                    if (!found && cl->step_note_count[sidx] < 4) {
+                        /* write note+count BEFORE activating step to avoid render-thread race */
+                        cl->step_notes[sidx][cl->step_note_count[sidx]] = (uint8_t)note;
+                        cl->step_note_count[sidx]++;
+                        if (cl->step_note_count[sidx] == 1)
+                            cl->steps[sidx] = 1;
+                        {
+                            int i, any = 0;
+                            for (i = 0; i < SEQ_STEPS; i++) if (cl->steps[i]) { any = 1; break; }
+                            cl->active = (uint8_t)any;
+                        }
+                        if (!tr->recording)
+                            seq8_save_state(inst);
+                    }
+                    return;
+                }
+
+                if (!strcmp(q, "_clear")) {
+                    /* tN_cC_step_S_clear — atomically deactivate step and wipe all note data */
+                    cl->steps[sidx] = 0;
+                    cl->step_notes[sidx][0] = 0;
+                    cl->step_notes[sidx][1] = 0;
+                    cl->step_notes[sidx][2] = 0;
+                    cl->step_notes[sidx][3] = 0;
+                    cl->step_note_count[sidx] = 0;
                     {
                         int i, any = 0;
                         for (i = 0; i < SEQ_STEPS; i++) if (cl->steps[i]) { any = 1; break; }
@@ -1052,6 +1099,21 @@ static void set_param(void *instance, const char *key, const char *val) {
                 cl->length = (uint16_t)clamp_i(my_atoi(val), 1, SEQ_STEPS);
                 return;
             }
+            if (!strncmp(p, "_clear", 6) && p[6] == '\0') {
+                /* tN_cC_clear — atomically wipe all steps in clip */
+                int i;
+                for (i = 0; i < SEQ_STEPS; i++) {
+                    cl->steps[i] = 0;
+                    cl->step_notes[i][0] = 0;
+                    cl->step_notes[i][1] = 0;
+                    cl->step_notes[i][2] = 0;
+                    cl->step_notes[i][3] = 0;
+                    cl->step_note_count[i] = 0;
+                }
+                cl->active = 0;
+                seq8_save_state(inst);
+                return;
+            }
             return;
         }
 
@@ -1062,6 +1124,14 @@ static void set_param(void *instance, const char *key, const char *val) {
         }
         if (!strcmp(sub, "pad_mode")) {
             tr->pad_mode = (uint8_t)clamp_i(my_atoi(val), 0, 0);
+            return;
+        }
+
+        if (!strcmp(sub, "recording")) {
+            int v = my_atoi(val);
+            tr->recording = (uint8_t)(v ? 1 : 0);
+            if (!tr->recording)
+                seq8_save_state(inst); /* flush deferred writes on disarm */
             return;
         }
 
@@ -1155,11 +1225,11 @@ static void set_param(void *instance, const char *key, const char *val) {
                 }
                 for (i = 1; i < new_len; i += 2) {
                     cl->steps[i]             = 0;
-                    cl->step_notes[i][0]     = SEQ_NOTE;
+                    cl->step_notes[i][0]     = 0;
                     cl->step_notes[i][1]     = 0;
                     cl->step_notes[i][2]     = 0;
                     cl->step_notes[i][3]     = 0;
-                    cl->step_note_count[i]   = 1;
+                    cl->step_note_count[i]   = 0;
                     cl->step_vel[i]          = SEQ_VEL;
                     cl->step_gate[i]         = GATE_TICKS;
                     cl->step_gate_orig[i]    = GATE_TICKS;
@@ -1189,11 +1259,11 @@ static void set_param(void *instance, const char *key, const char *val) {
                 new_len = len / 2;
                 memset(tmp_steps, 0, sizeof(tmp_steps));
                 for (i = 0; i < SEQ_STEPS; i++) {
-                    tmp_notes[i][0]  = SEQ_NOTE;
+                    tmp_notes[i][0]  = 0;
                     tmp_notes[i][1]  = 0;
                     tmp_notes[i][2]  = 0;
                     tmp_notes[i][3]  = 0;
-                    tmp_nc[i]        = 1;
+                    tmp_nc[i]        = 0;
                     tmp_vel[i]       = SEQ_VEL;
                     tmp_gate[i]      = GATE_TICKS;
                     tmp_gate_orig[i] = GATE_TICKS;
@@ -1346,6 +1416,8 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         }
         if (!strcmp(sub, "beat_stretch_blocked"))
             return snprintf(out, out_len, "%d", (int)tr->stretch_blocked);
+        if (!strcmp(sub, "recording"))
+            return snprintf(out, out_len, "%d", (int)tr->recording);
         if (!strcmp(sub, "clip_length"))
             return snprintf(out, out_len, "%d",
                             (int)tr->clips[tr->active_clip].length);

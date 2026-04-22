@@ -36,7 +36,7 @@ SEQ8 is a Schwung **tool module** for Ableton Move: a standalone 8-track MIDI st
 | Knobs 1–8 | CCs 71–78 | ✅ | Parameter control. **Relative encoder:** clockwise = 1–63, counter-clockwise = 64–127 |
 | Knob touches 1–8 | Notes 0–7 | ✅ | Touch detection (on = 127, off = 0–63). No turn required. |
 | Volume encoder touch | Note 8 (`MoveMasterTouch`) | ✅ | — |
-| Volume encoder | CC 79 | — | Move system volume (pass-through — SEQ8 must not consume this CC) |
+| Volume encoder | CC 79 | — | Move system volume — SEQ8 must not consume this CC, pass through to firmware **[NOT BUILT — currently being consumed]** |
 | Jog wheel rotate | CC 14 (`MoveMainKnob`) | ✅ | Bank/parameter navigation (Track View) **[NOT BUILT]** |
 | Jog wheel click | Note 3 (`MoveMainButton`) | ✅ | Confirm / power-down confirm |
 | Jog wheel touch | Note 9 (`MoveMainTouch`) | ✅ | — |
@@ -84,6 +84,19 @@ Notes increase bottom-to-top, same scheme as Push 2's upper 4 rows.
 | Shift + Step button (Session View) | Navigate to scene group AND launch that scene row | ✅ Built |
 | Mute + Undo | Clear all mutes and solos | **[NOT BUILT]** — currently unassigned |
 | Loop (hold) + step button | Set clip length | ✅ Built |
+| Hold CC 50 (Note/Session toggle) | Show Session Overview on display | **[NOT BUILT]** |
+
+### 2.3.1 Delete Key Combos **[NOT BUILT]**
+
+Delete (CC 119) acts as a modifier when held:
+
+| Combo | Function | Undoable |
+|-------|----------|----------|
+| Delete + step button (Track View) | Clear all notes from that step (deactivates step) | Yes |
+| Delete + track button (Track View) | Clear all sequence data from active clip on that track | Yes |
+| Delete + clip pad (Session View) | Clear all sequence data from that clip | Yes |
+
+> **Note:** Undo/redo (roadmap item 14) is not yet built. Delete operations should be designed with undo in mind but the undo part is a stub until that feature is built.
 
 > **Design change from v0.1:** Original spec assigned "Mute + Play" to clear all mutes and solos. Changed to **Mute + Undo** to avoid conflict with transport. Not yet implemented — currently unassigned.
 
@@ -114,7 +127,7 @@ project/
   clips[8][16]       (track × scene)
 ```
 
-**State persistence:** Auto-save to `/data/UserData/schwung/seq8-state.json` on every step change, transport change, clip launch, and destroy. Restores on load including across full device reboots (cold boot recovery confirmed working).
+**State persistence:** Auto-save to `/data/UserData/schwung/seq8-state.json` on every step change, transport change, clip launch, and destroy. Restores on load including across full device reboots (cold boot recovery confirmed working). State file is version-gated (`"v":2`) — wrong or missing version causes file deletion and clean start. Per-step note assignments (`step_notes`, `step_note_count`) are persisted in a sparse format. Per-step velocity and gate values are not yet persisted.
 
 > **Design change from v0.1:** Original spec said "explicit save only." Auto-save is the current implementation. User-facing project save/load in `.sq8` format is **[NOT BUILT]**.
 
@@ -171,12 +184,15 @@ clip/
 
 ```
 step/
-  active:      bool
-  note:        0–127            (0 = track root note)
-  velocity:    1–127
-  gate:        uint8 (12 ticks per step = default gate)
+  active:      bool                (steps[s] == 1 iff step_note_count[s] >= 1)
+  notes[4]:    uint8 (up to 4 MIDI note numbers per step — chord entry)
+  note_count:  uint8 (0..4; default 1 at SEQ_NOTE=60)
+  velocity:    1–127               (per-step, shared across all notes in chord)
+  gate:        uint8               (ticks; default 12 of 24 per step)
   pitch_off:   int8 (semitone offset, parameter lock) [NOT BUILT — no UI]
 ```
+
+> **Phase 5f:** Step data model restructured to support up to 4 notes per step (chords). `step_note[256]` replaced with `step_notes[256][4]` + `step_note_count[256]`. Render loop fires note-on/off for all notes in a step atomically. clock_shift and beat_stretch handle all note columns together.
 
 > **Timing detail:** Gate default = 12 ticks of 24 per step. Note-off fires at tick 12; next step's note-on fires at tick 0 of the next step.
 
@@ -228,6 +244,26 @@ Only one clip plays per track at a time.
 SEQ8 has **two views**. The Note/Session toggle (CC 50) switches between them.
 
 > **Architecture correction from v0.1:** The original spec described three views: Note View, Session View, and Track View (overlay). This was incorrect. SEQ8 has **two views only**: Track View (the main editing view, previously called Note View in early development) and Session View. Track View is the default top-level view — not an overlay.
+
+### 5.0 Note/Session Toggle Behavior (CC 50)
+
+The toggle button (CC 50) uses press/hold distinction:
+
+- **Tap** → switch between Track View and Session View (existing behavior)
+- **Hold** → show Session Overview on OLED display; release → return to previous view
+
+### 5.0.1 Session Overview (Hold CC 50) ✅ BUILT (Phase 5m)
+
+A full-display graphical overview of the entire session, accessible from either view by holding the Note/Session toggle.
+
+- **Display:** Pure graphical 8×16 cell grid filling the 128×64 OLED (16×4 px per cell). 8 columns = tracks, 16 rows = scenes. No text labels.
+- **Cell states:**
+  - Empty slot — unlit
+  - Has content (not active clip) — center bar (14×2 px)
+  - Active clip (non-active track) — solid 16×4 fill
+  - Active clip on active track — blinking (alternates solid fill and center bar)
+- **Interaction:** Display only — all input swallowed except CC 50 release.
+- **Exit:** Release CC 50 → return to previous view immediately.
 
 ### 5.1 Track View (Default)
 
@@ -310,6 +346,14 @@ A L L L L L L L
 - Line 2: Active parameter bank name, format "KNOB: [BANKNAME]"
 - Line 3: Track numbers 1–8
 - Line 4: Active clip scene letter for each track
+
+**Display priority (highest to lowest):**
+1. Compress Limit overlay (~1500ms after blocked beat-stretch compress)
+2. Octave overlay (~1000ms after Up/Down octave shift)
+3. Step edit display (while step button held) — shows track/clip/step header + assigned note names
+4. Knob touched — single parameter name + value
+5. Jog touched or bank-select timeout (~2000ms) — 4-knob overview grid
+6. Normal — track/clip/page header
 
 **While Loop held:**
 ```
@@ -599,12 +643,14 @@ Hold Sample button (CC TBD — check constants.mjs) during playback → SEQ8 con
 |-------|-----------|--------|--------|
 | 1 | Beat Stretch | New (destructive step data) | ✅ Built |
 | 2 | Clock Shift | New (destructive step rotation) | ✅ Built |
-| 3 | Note FX | NoteTwist stages 1+3 port | Built, UI wired. Gate shortening pending fix. |
-| 4 | Harmonize | NoteTwist stage 2 port | Built, UI wired |
+| 3 | Note FX | NoteTwist stages 1+3 port | ✅ Built, UI wired. Gate shortening fixed (Phase 5e). |
+| 4 | Harmonize | NoteTwist stage 2 port | ✅ Built, UI wired |
 | 5 | Seq Arpeggiator | New | **NOT BUILT** |
-| 6 | MIDI Delay | NoteTwist stage 5 port | Built, UI wired |
+| 6 | MIDI Delay | NoteTwist stage 5 port | ✅ Built, UI wired |
 | 7 | Swing | New (sequencer engine) | **NOT BUILT** |
 | Global | Live Arpeggiator | New | **NOT BUILT** |
+
+> **Known gap — live input bypasses play effects chain:** Live pad input is sent directly from JS via `shadow_send_midi_to_dsp`, completely bypassing the C DSP play effects chain. Harmonize and MIDI Delay (and all other chain stages) currently have no effect on live pad notes — they only process sequencer output from `render_block`. Two options for fixing: (A) route live pad input through the DSP chain (C-side path, cleaner architecture, latency implications to evaluate); (B) reimplement Harmonize and MIDI Delay in JS for the live path (keeps latency minimal, adds JS complexity). Design decision pending.
 
 ---
 
@@ -726,12 +772,17 @@ WIDI Bud Pro confirmed working for wireless USB-A MIDI.
 |----------|---------|-------|
 | 1 | **Track View parameter banks** | ✅ Complete. All 8 banks built, knob touch display, jog touch, 2s timeout, per-track bank memory. |
 | 2 | **Beat Stretch + Clock Shift** | ✅ Complete. Both destructive step data operations. |
-| 2a | **Gate time shortening fix** | Gate <100% has no effect due to render loop architecture. Fix requires per-step gate_original field. Planned as isolated DSP task. |
-| 3 | **Step entry — melodic** | Hold step + tap pads to assign/remove notes. Bright white LEDs for active notes. Oct +/- to shift visible range while held. Step edit overlay with relative vel/length/oct/interval params. |
+| 2a | **Gate time shortening fix** | ✅ Complete. Per-step `step_gate`/`step_gate_orig` arrays; noteFX_gate destructively scales all active steps. |
+| 2b | **Polyphonic step data model** | ✅ Complete (Phase 5f/5k). `step_notes[256][4]` + `step_note_count[256]`. New params: `tN_cC_step_S_notes` (get), `tN_cC_step_S_toggle` (set), `tN_cC_step_S_clear` (atomic step clear), `tN_cC_clear` (atomic clip clear). State file persists note data (version-gated, v=2). |
+| 3 | **Step entry — melodic** | ✅ Complete (Phase 5g/5h/5i/5k/5l). Hold step → step edit mode. Tap pads to assign/remove notes. Tap step to toggle on/off. Multi-step simultaneous tap. Playback head shows bright white. Pad grid always reflects sounding notes. |
+| 3-fix | **Volume knob (CC 79)** | `claims_master_knob: true` causes firmware to skip its own CC 79 handler and forward to SEQ8. `host_get_volume()` / `host_set_volume(int)` are the correct API but fix is not yet working. On backburner. |
 | 3a | **Step entry — drum** | Per-note lanes, monophonic, tap drum pad to access lane. |
 | 3b | **Real-time recording** | Record arms active track, count-in, auto-disarms after one cycle, overdub on re-arm. Transport LEDs (Play=green, Record=red) — verify LED CCs first. |
 | 3c | **Post-recording quantize** | Shift + Step 16 → 50% snap toward grid. Multiple presses converge. |
 | 3d | **Global menu** | Jog click enters. Jog turns navigate, jog click confirms, Back exits. Contains: root note, scale, BPM, swing amount, swing resolution, incoming velocity override, input quantize toggle, metronome volume. |
+| 3e | **Session Overview display** | ✅ Complete (Phase 5m). Hold CC 50 → full-display 8×16 graphical clip grid. Solid fill = active clip, center bar = has content, empty = unlit, blink = active clip on active track. Release returns to previous view. Tap still switches views. |
+| 3f | **Delete key combos** | ✅ Complete (Phase 5j/5k). Delete + step = atomic step clear (`tN_cC_step_S_clear`). Delete + track button = atomic clip clear (`tN_cC_clear`). Delete + clip pad (Session View) = clear that clip. |
+| 3f-fix | **Delete + track button clip targeting** | Currently Delete + track button always clears the active clip regardless of which track button is pressed. Should clear the clip corresponding to that track button's position in the visible scene group, without switching the active clip. **Pending.** |
 | 4 | **Arpeggiator (Seq + Live)** | New DSP build — not in NoteTwist. |
 | 5 | **Mute/Solo** | Full implementation — mute/solo per track, Session View pad control, reset via Mute+Undo. |
 | 6 | **Drum + Chromatic pad modes** | Pad layout expansion. Set via TRACK bank Mode param. |
@@ -750,6 +801,7 @@ WIDI Bud Pro confirmed working for wireless USB-A MIDI.
 | 19 | **Step button out-of-bounds indicator** | ✅ Complete. Steps beyond clip length show white. |
 | 20 | **Clip blink state** | Queued clips not yet blinking. |
 | 21 | **Mute/solo display** | Session View line 4 not correctly implemented. |
+| x.1 | **Chord input: hold pads + press step** | Hold one or more pads then press a step button to additively assign all held notes to that step. Attempted in Phase 5l — root cause is MIDI queue ordering: pad note-ons queued after the step press haven't been processed when capture fires; phantom note-off/note-on pairs add a secondary race. Deferred settling window approach was tried but felt unreliable. Needs a more robust architecture — deferred to v1.1. |
 
 ---
 
@@ -880,4 +932,35 @@ The full RS7000 Owner's Manual is in project files (`RS7000E1.pdf`). Pages 87–
 
 ---
 
-*End of SEQ8 Specification v0.2 — Built through Phase 5c*
+*End of SEQ8 Specification v0.2 — Built through Phase 5m*
+
+---
+
+## 18. Development Workflow
+
+### Roles
+- **Claude.ai (this session)** — planning, spec maintenance, prompt authoring, architecture decisions, interpreting CC output, troubleshooting. Has access to project files. Cannot access the device directly.
+- **Claude Code (CC)** — coding, building, deploying, testing on hardware. Reads CLAUDE.md and SEQ8_SPEC.md from the repo at `~/schwung-seq8/`. Cannot access Claude.ai project files.
+
+### Session Workflow
+1. **Research** — CC reads files and reports findings only, no code written
+2. **Plan** — Claude.ai designs implementation based on CC's report
+3. **Fresh CC session** — new terminal session (`cd ~/schwung-seq8 && claude --dangerously-skip-permissions`). CC reads CLAUDE.md automatically on start.
+4. **Implement** — single focused task per session
+5. **Test** — on hardware, report results to Claude.ai
+6. **CLAUDE.md update** — CC updates CLAUDE.md at end of every session before closing
+7. **Spec update** — Claude.ai updates SEQ8_SPEC.md in Claude.ai outputs; human copies to device as `~/schwung-seq8/SEQ8_SPEC.md`
+
+### Key Rules
+- Claude.ai always provides CC prompts in a single copyable text block
+- CC sessions are kept short and focused — one task per session
+- All prompts from Claude.ai include explicit read-first instructions
+- Claude.ai updates the spec incrementally after every design decision — no full rewrites
+- Spec is dated on output (e.g. SEQ8_SPEC_2026-04-21.md) for version tracking; device copy is always SEQ8_SPEC.md (undated)
+- New Claude.ai sessions: re-upload latest dated spec to project files and tell Claude.ai we're continuing SEQ8 development
+
+### File Locations
+- CLAUDE.md: `~/schwung-seq8/CLAUDE.md` — CC's working reference (implementation details, param keys, struct fields, known pitfalls)
+- SEQ8_SPEC.md: `~/schwung-seq8/SEQ8_SPEC.md` — design authority (what the module does and why)
+- State file: `/data/UserData/schwung/seq8-state.json`
+- Log: `/data/UserData/schwung/seq8.log`
