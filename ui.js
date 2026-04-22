@@ -13,6 +13,8 @@ const MoveNoteSession = 50;
 const MoveLoop        = 58;
 const MoveMainTouch   = 9;   /* jog wheel capacitive touch — note, no LED */
 const MoveRec         = 86;  /* Record button + LED (CC) */
+const MoveMainButton  = 3;   /* jog wheel click (CC, not note — fires as 0xB0 d1=3) */
+const MoveMainKnob    = 14;  /* jog wheel rotate (CC) */
 
 import {
     Red,
@@ -44,6 +46,22 @@ import {
 import {
     installConsoleOverride
 } from '/data/UserData/schwung/shared/logger.mjs';
+
+import {
+    createInfo, createValue, createEnum, createToggle
+} from '/data/UserData/schwung/shared/menu_items.mjs';
+
+import {
+    createMenuState, handleMenuInput
+} from '/data/UserData/schwung/shared/menu_nav.mjs';
+
+import {
+    createMenuStack
+} from '/data/UserData/schwung/shared/menu_stack.mjs';
+
+import {
+    drawHierarchicalMenu
+} from '/data/UserData/schwung/shared/menu_render.mjs';
 
 const LED_OFF         = 0;
 const LED_STEP_ACTIVE = 36;
@@ -85,6 +103,7 @@ const TOP_PAD_BASE   = 92;   /* top row — Shift+top-row = bank select */
 /* ------------------------------------------------------------------ */
 
 const NOTE_KEYS = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const SCALE_NAMES = ['Minor', 'Major'];
 const DELAY_LABELS = ['---','1/64','1/32','16T','1/16','8T','1/8','4T','1/4','1/2','1/1'];
 
 function fmtSign(v)    { return (v >= 0 ? '+' : '') + v; }
@@ -219,6 +238,67 @@ const BANKS = [
 ];
 
 /* ------------------------------------------------------------------ */
+/* Global menu items                                                    */
+/* ------------------------------------------------------------------ */
+
+/* Stub state for not-yet-wired global menu params */
+let stubSwingAmt = 0;
+let stubSwingRes = 0;
+let stubInputVel = 0;
+let stubInpQuant = false;
+
+function buildGlobalMenuItems() {
+    return [
+        createInfo('BPM', '---'),
+        createEnum('Key', {
+            get: function() { return padKey; },
+            set: function(v) {
+                padKey = v;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('key', String(v));
+                computePadNoteMap();
+            },
+            options: [0,1,2,3,4,5,6,7,8,9,10,11],
+            format: function(v) { return NOTE_KEYS[((v | 0) % 12 + 12) % 12]; }
+        }),
+        createEnum('Scale', {
+            get: function() { return padScale; },
+            set: function(v) {
+                padScale = v;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('scale', String(v));
+                computePadNoteMap();
+            },
+            options: [0, 1],
+            format: function(v) { return SCALE_NAMES[v] || 'Minor'; }
+        }),
+        createValue('Swing Amt', {
+            get: function() { return stubSwingAmt; },
+            set: function(v) { stubSwingAmt = v; },
+            min: 0, max: 100,
+            format: function(v) { return v + '%'; }
+        }),
+        createEnum('Swing Res', {
+            get: function() { return stubSwingRes; },
+            set: function(v) { stubSwingRes = v; },
+            options: [0, 1],
+            format: function(v) { return ['1/16','1/8'][v] || '1/16'; }
+        }),
+        createValue('Input Vel', {
+            get: function() { return stubInputVel; },
+            set: function(v) { stubInputVel = v; },
+            min: 0, max: 127,
+            format: function(v) { return v === 0 ? 'Off' : String(v); }
+        }),
+        createToggle('Inp Quant', {
+            get: function() { return stubInpQuant; },
+            set: function(v) { stubInpQuant = v; },
+            onLabel: 'On', offLabel: 'Off'
+        }),
+    ];
+}
+
+/* ------------------------------------------------------------------ */
 /* UI state                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -313,6 +393,12 @@ let seqLastStep        = -1;   /* last step index queried for seqActiveNotes */
 let seqLastClip        = -1;   /* last clip index queried for seqActiveNotes */
 let deleteHeld         = false; /* true while Delete (CC 119) is held */
 
+/* Global menu state (Phase 5q) */
+let globalMenuOpen  = false;
+let globalMenuItems = null;
+let globalMenuState = null;
+let globalMenuStack = null;
+
 /* Session overview overlay (hold CC 50) */
 let noteSessionPressedTick  = -1;    /* tickCount when CC 50 pressed; -1 = not pending */
 let sessionOverlayHeld      = false; /* true while CC 50 held for graphical overview */
@@ -320,8 +406,12 @@ const NOTE_SESSION_HOLD_TICKS = 40;  /* ~200ms at 196Hz */
 let overviewCache           = null;  /* null or Array[NUM_TRACKS][NUM_CLIPS] of booleans */
 
 /* Real-time recording state */
-let recordArmed         = false; /* true = Record pressed and recording is active */
+let recordArmed         = false; /* true = Record pressed (count-in or recording active) */
+let recordCountingIn    = false; /* true = JS-side count-in phase (transport not yet started) */
 let recordArmedTrack    = -1;    /* track index that was active when Record was pressed */
+let countInStartTick    = -1;    /* tickCount when count-in began; -1 = inactive */
+let countInQuarterTicks = 0;     /* JS ticks per quarter note at BPM read on arm (visual only) */
+let countInDspPrev      = false; /* previous DSP count_in_active value, for end-detection */
 let playingPrev         = false; /* previous value of `playing`, for stop-transition detection */
 let recordCaptureStep   = -1;    /* step index pinned for chord capture; -1 = no active window */
 let recordCaptureClip   = -1;    /* clip index pinned for chord capture */
@@ -375,13 +465,36 @@ function disarmRecord() {
     if (!recordArmed) return;
     const t = recordArmedTrack;
     recordArmed          = false;
+    recordCountingIn     = false;
     recordArmedTrack     = -1;
-    recordCaptureStep    = -1;
+    countInStartTick    = -1;
+    countInQuarterTicks = 0;
+    recordCaptureStep   = -1;
     recordCaptureClip    = -1;
     recordCaptureEndTick = -1;
-    if (t >= 0 && typeof host_module_set_param === 'function')
-        host_module_set_param('t' + t + '_recording', '0');
+    if (typeof host_module_set_param === 'function') {
+        host_module_set_param('record_count_in_cancel', '1');
+        if (t >= 0) host_module_set_param('t' + t + '_recording', '0');
+    }
     setButtonLED(MoveRec, LED_OFF);
+}
+
+function openGlobalMenu() {
+    globalMenuItems = buildGlobalMenuItems();
+    if (typeof host_module_get_param === 'function') {
+        const rawBpm = parseFloat(host_module_get_param('bpm'));
+        globalMenuItems[0].value = (rawBpm > 0 && isFinite(rawBpm))
+            ? (Math.round(rawBpm) + ' bpm') : '--- bpm';
+    }
+    globalMenuState = createMenuState();
+    globalMenuStack = createMenuStack();
+    globalMenuOpen  = true;
+}
+
+
+function drawGlobalMenu() {
+    clear_screen();
+    drawHierarchicalMenu({ title: 'GLOBAL', items: globalMenuItems, state: globalMenuState });
 }
 
 function clipHasContent(t, c) {
@@ -477,13 +590,22 @@ function pollDSP() {
     const snap = host_module_get_param('state_snapshot');
     if (!snap) return;
     const v = snap.split(' ');
-    if (v.length < 25) return;
+    if (v.length < 26) return;
     playing = (v[0] === '1');
     for (let t = 0; t < NUM_TRACKS; t++) {
         trackCurrentStep[t] = parseInt(v[1 + t], 10) | 0;
         trackActiveClip[t]  = parseInt(v[9 + t], 10) | 0;
         trackQueuedClip[t]  = parseInt(v[17 + t], 10) | 0;
     }
+    const countInDspActive = (v[25] === '1');
+
+    /* Count-in end: DSP fired transport+recording — sync JS state */
+    if (countInDspPrev && !countInDspActive && playing) {
+        recordCountingIn    = false;
+        countInStartTick    = -1;
+        countInQuarterTicks = 0;
+    }
+    countInDspPrev = countInDspActive;
 
     /* Stop transition: transport just stopped — clear recording state */
     if (playingPrev && !playing) {
@@ -512,6 +634,13 @@ function pollDSP() {
                 });
             }
         }
+    }
+
+    /* Refresh BPM display for global menu */
+    if (globalMenuOpen && globalMenuItems) {
+        const rawBpm = parseFloat(host_module_get_param('bpm'));
+        globalMenuItems[0].value = (rawBpm > 0 && isFinite(rawBpm))
+            ? (Math.round(rawBpm) + ' bpm') : '--- bpm';
     }
 }
 
@@ -788,6 +917,7 @@ function drawSessionOverview() {
 
 function drawUI() {
     if (sessionOverlayHeld) { drawSessionOverview(); return; }
+    if (globalMenuOpen) { drawGlobalMenu(); return; }
     clear_screen();
     if (sessionView) {
         const base = sceneGroup * 4;
@@ -807,6 +937,17 @@ function drawUI() {
     const bank      = activeBank[activeTrack];
     const inTimeout = bankSelectTick >= 0;
 
+    /* Count-in overlay: highest priority while waiting for bar to elapse */
+    if (recordArmed && recordCountingIn && !sessionView) {
+        const ac_r       = trackActiveClip[recordArmedTrack];
+        const totalPages = Math.max(1, Math.ceil(clipLength[recordArmedTrack][ac_r] / 16));
+        print(4, 10, 'TR' + (recordArmedTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac_r] +
+                     '  PG 1/' + totalPages, 1);
+        print(4, 22, 'COUNT-IN', 1);
+        print(4, 34, 'REC ARMED', 1);
+        print(4, 46, '1 2 3 4 5 6 7 8', 1);
+        return;
+    }
 
     /* Compress-limit override: highest priority for ~1500ms after a blocked compress */
     if (stretchBlockedEndTick >= 0) {
@@ -887,7 +1028,7 @@ function drawUI() {
         /* \xb7 = middle dot · */
         print(4, 10, 'TR' + (activeTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac] +
                      '  PG ' + (page + 1) + '/' + totalPages, 1);
-        const recTag = (recordArmed && recordArmedTrack === activeTrack)
+        const recTag = (recordArmed && !recordCountingIn && recordArmedTrack === activeTrack)
             ? ' REC' : '';
         print(4, 22, 'KNOB: [' + BANKS[activeBank[activeTrack]].name + ']' + recTag, 1);
         if (loopHeld) {
@@ -1041,6 +1182,13 @@ globalThis.tick = function () {
             updateSceneMapLEDs();
         } else {
             updateStepLEDs();
+            /* Count-in flash: blink all step buttons white at quarter-note rate */
+            if (recordArmed && recordCountingIn && countInQuarterTicks > 0) {
+                const elapsed  = tickCount - countInStartTick;
+                const flashOn  = (elapsed % countInQuarterTicks) < (countInQuarterTicks >> 1);
+                const flashClr = flashOn ? White : LED_OFF;
+                for (let _i = 0; _i < 16; _i++) setLED(16 + _i, flashClr);
+            }
         }
         updateTrackLEDs();
     }
@@ -1063,6 +1211,7 @@ globalThis.onMidiMessageInternal = function (data) {
         const isScroll  = (status === 0xB0 && (d1 === MoveUp || d1 === MoveDown) && d2 === 127);
         if (!isRelease && !isScroll) return;
     }
+
 
     /* Knob touch (notes 0-7) and jog wheel touch (note 9).
      * MoveKnob1-8Touch = notes 0-7; MoveMainTouch = note 9.
@@ -1104,6 +1253,29 @@ globalThis.onMidiMessageInternal = function (data) {
             return;
         }
 
+        /* CC 3 = jog wheel physical click */
+        if (d1 === 3 && d2 === 127 && globalMenuOpen) {
+            handleMenuInput({
+                cc: 3, value: d2,
+                items: globalMenuItems, state: globalMenuState, stack: globalMenuStack,
+                onBack: function() { globalMenuOpen = false; },
+                shiftHeld: shiftHeld
+            });
+            return;
+        }
+
+        if (d1 === MoveMainKnob) {
+            if (globalMenuOpen) {
+                handleMenuInput({
+                    cc: MoveMainKnob, value: d2,
+                    items: globalMenuItems, state: globalMenuState, stack: globalMenuStack,
+                    onBack: function() { globalMenuOpen = false; },
+                    shiftHeld: shiftHeld
+                });
+            }
+            return;
+        }
+
         if (d1 === MoveShift) {
             shiftHeld = d2 === 127;
         }
@@ -1112,10 +1284,15 @@ globalThis.onMidiMessageInternal = function (data) {
             deleteHeld = d2 === 127;
         }
 
-        /* Note/Session view toggle: tap = switch view, hold = session overview */
+        /* Note/Session view toggle: Shift+press = open global menu (Track View only);
+         * tap = switch view; hold = session overview */
         if (d1 === MoveNoteSession) {
             if (d2 === 127) {
-                noteSessionPressedTick = tickCount;
+                if (shiftHeld && !sessionView) {
+                    openGlobalMenu();
+                } else {
+                    noteSessionPressedTick = tickCount;
+                }
             } else if (d2 === 0) {
                 if (sessionOverlayHeld) {
                     sessionOverlayHeld = false;
@@ -1153,13 +1330,22 @@ globalThis.onMidiMessageInternal = function (data) {
             forceRedraw();
         }
 
-        /* Shift+Back = hide */
-        if (d1 === MoveBack && d2 === 127 && shiftHeld) {
-            removeFlagsWrap();
-            ledInitComplete = false;
-            clearAllLEDs();
-            for (let _i = 0; _i < 4; _i++) setButtonLED(40 + _i, LED_OFF);
-            if (typeof host_hide_module === 'function') host_hide_module();
+        /* Back: exit global menu or (with Shift) hide module */
+        if (d1 === MoveBack && d2 === 127) {
+            if (globalMenuOpen) {
+                handleMenuInput({
+                    cc: MoveBack, value: d2,
+                    items: globalMenuItems, state: globalMenuState, stack: globalMenuStack,
+                    onBack: function() { globalMenuOpen = false; },
+                    shiftHeld: shiftHeld
+                });
+            } else if (shiftHeld) {
+                removeFlagsWrap();
+                ledInitComplete = false;
+                clearAllLEDs();
+                for (let _i = 0; _i < 4; _i++) setButtonLED(40 + _i, LED_OFF);
+                if (typeof host_hide_module === 'function') host_hide_module();
+            }
         }
 
         /* Play: toggle transport; Shift+Play = panic */
@@ -1176,18 +1362,28 @@ globalThis.onMidiMessageInternal = function (data) {
         /* Record button (CC 86): toggle arm/disarm */
         if (d1 === MoveRec && d2 === 127) {
             if (recordArmed) {
-                /* Already recording → disarm */
                 disarmRecord();
+            } else if (!playing) {
+                /* Stopped → DSP-side 1-bar count-in; transport+recording fire from render thread */
+                const rawBpm = typeof host_module_get_param === 'function'
+                    ? parseFloat(host_module_get_param('bpm')) : 120;
+                const bpm = (rawBpm > 0 && isFinite(rawBpm)) ? rawBpm : 120;
+                recordArmed         = true;
+                recordCountingIn    = true;
+                recordArmedTrack    = activeTrack;
+                countInStartTick    = tickCount;
+                countInQuarterTicks = Math.round(196 * 60 / bpm);
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('record_count_in', String(activeTrack));
+                setButtonLED(MoveRec, Red);
             } else {
-                /* Arm immediately; start transport if stopped */
+                /* Playing → arm immediately with no count-in */
                 recordArmed      = true;
+                recordCountingIn = false;
                 recordArmedTrack = activeTrack;
                 setButtonLED(MoveRec, Red);
-                if (typeof host_module_set_param === 'function') {
-                    if (!playing)
-                        host_module_set_param('transport', 'play');
+                if (typeof host_module_set_param === 'function')
                     host_module_set_param('t' + activeTrack + '_recording', '1');
-                }
             }
         }
 
@@ -1440,10 +1636,21 @@ globalThis.onMidiMessageInternal = function (data) {
                     liveActiveNotes.add(pitch);
                     if (typeof shadow_send_midi_to_dsp === 'function')
                         shadow_send_midi_to_dsp([0x90 | activeTrack, pitch, Math.max(80, d2)]);
+                    /* Pre-roll capture: note in last 1/16th of count-in → step 0 */
+                    if (recordArmed && recordCountingIn &&
+                            activeTrack === recordArmedTrack &&
+                            countInQuarterTicks > 0 &&
+                            (tickCount - countInStartTick) >= Math.round(countInQuarterTicks * 7 / 2) &&
+                            typeof host_module_set_param === 'function') {
+                        const rt   = recordArmedTrack;
+                        const ac_r = trackActiveClip[rt];
+                        host_module_set_param('t' + rt + '_c' + ac_r + '_step_0_add', String(pitch));
+                        clipSteps[rt][ac_r][0] = 1;
+                    }
                     /* Overdub capture: add to current step of armed track.
                      * Pin step index for RECORD_CAPTURE_TICKS so chord notes arriving
                      * across poll boundaries all land on the same step. */
-                    if (recordArmed &&
+                    if (recordArmed && !recordCountingIn &&
                             activeTrack === recordArmedTrack &&
                             typeof host_module_set_param === 'function') {
                         const rt   = recordArmedTrack;

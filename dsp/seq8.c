@@ -179,6 +179,10 @@ typedef struct {
     uint32_t tick_delta;            /* MOVE_FRAMES_PER_BLOCK * BPM * PPQN */
     uint32_t tick_in_step;
 
+    /* DSP-side count-in: counts down in DSP ticks; fires transport+recording when done */
+    int32_t  count_in_ticks;        /* remaining ticks; 0 = inactive */
+    uint8_t  count_in_track;        /* track to arm for recording on fire */
+
     /* Print mode: bake chain output into step data */
     uint8_t  printing;
 
@@ -884,7 +888,6 @@ static void set_param(void *instance, const char *key, const char *val) {
                 inst->playing      = 1;
                 inst->tick_accum   = 0;
                 inst->tick_in_step = 0;
-                seq8_ilog(inst, "SEQ8 transport: play");
             }
         } else if (!strcmp(val, "stop")) {
             if (inst->playing) {
@@ -899,7 +902,8 @@ static void set_param(void *instance, const char *key, const char *val) {
                     inst->tracks[t].clips[inst->tracks[t].active_clip].clock_shift_pos = 0;
                     inst->tracks[t].recording           = 0;
                 }
-                inst->playing = 0;
+                inst->playing        = 0;
+                inst->count_in_ticks = 0;
                 send_panic(inst);
                 seq8_ilog(inst, "SEQ8 transport: stop");
                 seq8_save_state(inst);
@@ -916,11 +920,27 @@ static void set_param(void *instance, const char *key, const char *val) {
                 inst->tracks[t].clips[inst->tracks[t].active_clip].clock_shift_pos = 0;
                 inst->tracks[t].recording           = 0;
             }
-            inst->playing = 0;
+            inst->playing        = 0;
+            inst->count_in_ticks = 0;
             send_panic(inst);
             seq8_ilog(inst, "SEQ8 transport: panic");
             seq8_save_state(inst);
         }
+        return;
+    }
+
+    /* --- DSP-side count-in --- */
+    if (!strcmp(key, "record_count_in")) {
+        int track = clamp_i(my_atoi(val), 0, NUM_TRACKS - 1);
+        double bpm = inst->tracks[0].pfx.cached_bpm > 0
+                     ? inst->tracks[0].pfx.cached_bpm : (double)BPM_DEFAULT;
+        /* tick_delta is fixed at BPM_DEFAULT; scale bar duration to actual BPM */
+        inst->count_in_track = (uint8_t)track;
+        inst->count_in_ticks = (int32_t)((double)(4 * PPQN * BPM_DEFAULT) / bpm + 0.5);
+        return;
+    }
+    if (!strcmp(key, "record_count_in_cancel")) {
+        inst->count_in_ticks = 0;
         return;
     }
 
@@ -1384,6 +1404,8 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
             pos += snprintf(out + pos, (size_t)(out_len - pos), " %d", (int)inst->tracks[t].active_clip);
         for (t = 0; t < NUM_TRACKS; t++)
             pos += snprintf(out + pos, (size_t)(out_len - pos), " %d", (int)inst->tracks[t].queued_clip);
+        pos += snprintf(out + pos, (size_t)(out_len - pos), " %d",
+                        (int)(inst->count_in_ticks > 0 ? 1 : 0));
         return pos;
     }
 
@@ -1511,6 +1533,29 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
 
     for (t = 0; t < NUM_TRACKS; t++)
         pfx_q_fire(&inst->tracks[t].pfx, inst->tracks[t].pfx.sample_counter);
+
+    /* DSP-side count-in: tick down using same accumulator; fire transport+rec when done */
+    if (inst->count_in_ticks > 0) {
+        if (inst->tick_threshold > 0) {
+            inst->tick_accum += inst->tick_delta;
+            while (inst->tick_accum >= inst->tick_threshold && inst->count_in_ticks > 0) {
+                inst->tick_accum -= inst->tick_threshold;
+                inst->count_in_ticks--;
+            }
+            if (inst->count_in_ticks == 0) {
+                inst->tick_accum   = 0;
+                inst->tick_in_step = 0;
+                for (t = 0; t < NUM_TRACKS; t++) {
+                    inst->tracks[t].current_step        = 0;
+                    inst->tracks[t].note_active          = 0;
+                    inst->tracks[t].pfx.sample_counter   = 0;
+                }
+                inst->playing = 1;
+                inst->tracks[inst->count_in_track].recording = 1;
+            }
+        }
+        return; /* skip main sequencer while counting in (or this block after fire) */
+    }
 
     if (!inst->playing || inst->tick_threshold == 0) return;
 

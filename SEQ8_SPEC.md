@@ -37,7 +37,7 @@ SEQ8 is a Schwung **tool module** for Ableton Move: a standalone 8-track MIDI st
 | Knob touches 1–8 | Notes 0–7 | ✅ | Touch detection (on = 127, off = 0–63). No turn required. |
 | Volume encoder touch | Note 8 (`MoveMasterTouch`) | ✅ | — |
 | Volume encoder | CC 79 | — | Move system volume — SEQ8 must not consume this CC, pass through to firmware **[NOT BUILT — currently being consumed]** |
-| Jog wheel rotate | CC 14 (`MoveMainKnob`) | ✅ | Bank/parameter navigation (Track View) **[NOT BUILT]** |
+| Jog wheel rotate | CC 14 (`MoveMainKnob`) | ✅ | Cycle through parameter banks in Track View (no modifier). Shift + jog = cycle through tracks 1–8. **[NOT BUILT]** |
 | Jog wheel click | Note 3 (`MoveMainButton`) | ✅ | Confirm / power-down confirm |
 | Jog wheel touch | Note 9 (`MoveMainTouch`) | ✅ | — |
 | Shift | CC 49 | ✅ | Modifier |
@@ -80,6 +80,8 @@ Notes increase bottom-to-top, same scheme as Push 2's upper 4 rows.
 | Shift + Step buttons 1–8 | (Reserved — not implemented) | — |
 | Shift + Pads bottom row (pads 1–8, notes 68–75) | Track select (tracks 1–8) | ✅ Built |
 | Shift + Pads top row (pads 25–32, notes 92–99) | Parameter bank select (Track View) | ✅ Built |
+| Jog wheel rotate (no modifier) | Cycle through parameter banks (Track View) | **[NOT BUILT]** |
+| Shift + Jog wheel rotate | Cycle through tracks 1–8 | **[NOT BUILT]** |
 | Step button (Session View) | Navigate to scene group (no launch) | ✅ Built |
 | Shift + Step button (Session View) | Navigate to scene group AND launch that scene row | ✅ Built |
 | Mute + Undo | Clear all mutes and solos | **[NOT BUILT]** — currently unassigned |
@@ -470,17 +472,19 @@ Same as melodic step entry except:
 - Lanes are monophonic — no hold-step-to-input paradigm
 - No relative scaling of step edit params per note (each drum hit is independent)
 
-#### Real-Time Recording
+#### Real-Time Recording ✅ BUILT (Phase 5n/5o/5p)
 
-- **Arm:** Press Record (CC 118) while transport is stopped → arms active track only, gives metronome count-in, starts playback
-- **Auto-disarm:** Recording automatically stops after one full cycle of the sequence
-- **Overdub:** Press Record again while playing to re-arm for another pass. Recording is always additive (overdub) — never replaces existing notes
-- **Input quantize:** Global menu toggle. When on, notes snap to nearest step on input. When off, exact sub-step timing is preserved. **[Sub-step timing requires tick_offset field in step_t — planned with clip-specific data model restructure]**
-- **Post-recording quantize:** Shift + Step 16 → moves all notes in active clip 50% closer to nearest grid position. Multiple presses converge toward the grid.
+- **Arm:** Press Record (CC 86) while transport is stopped → 1-bar DSP-side count-in, then transport + recording start atomically from audio thread. While playing → arms immediately, no count-in. Record LED lights red.
+- **Count-in:** JS calls `record_count_in` param from `onMidiMessageInternal`. DSP counts down one bar using the sequencer tick accumulator scaled to actual BPM. When complete, DSP atomically sets `playing=1` and `track.recording=1` from the audio thread. JS observes via `count_in_active` flag (26th value in `state_snapshot`). Step buttons flash bright white at 1/4 note intervals during count-in.
+- **Pre-roll:** Pad presses in the last 1/16th of the count-in bar are written to step 0 via `_add` so notes land correctly on the downbeat.
+- **Recording:** Notes played on pads are captured into the active clip at the current sequencer position via `tN_cC_step_S_add` (additive/overdub — never removes existing notes). Input is quantized to nearest step.
+- **Disarm:** Press Record again at any time → disarms, triggers state save flush. Stop/panic also clears recording.
+- **No auto-disarm** — recording stays active until user presses Record again.
+- **Post-recording quantize:** Shift + Step 16 → moves all notes 50% closer to nearest grid position. Multiple presses converge. **[NOT BUILT]**
 
 #### Transport LEDs
-- Play button: lit green when transport is active **[NOT BUILT — verify LED CC with constants.mjs]**
-- Record button: lit red when recording is armed **[NOT BUILT — verify LED CC with constants.mjs]**
+- Play button: ✅ lit green when transport is active
+- Record button: ✅ lit red when recording is armed
 
 ### 6.5 Beat Stretch (TIMING Bank K1) — BUILT ✅
 
@@ -777,12 +781,14 @@ WIDI Bud Pro confirmed working for wireless USB-A MIDI.
 | 3 | **Step entry — melodic** | ✅ Complete (Phase 5g/5h/5i/5k/5l). Hold step → step edit mode. Tap pads to assign/remove notes. Tap step to toggle on/off. Multi-step simultaneous tap. Playback head shows bright white. Pad grid always reflects sounding notes. |
 | 3-fix | **Volume knob (CC 79)** | `claims_master_knob: true` causes firmware to skip its own CC 79 handler and forward to SEQ8. `host_get_volume()` / `host_set_volume(int)` are the correct API but fix is not yet working. On backburner. |
 | 3a | **Step entry — drum** | Per-note lanes, monophonic, tap drum pad to access lane. |
-| 3b | **Real-time recording** | Record arms active track, count-in, auto-disarms after one cycle, overdub on re-arm. Transport LEDs (Play=green, Record=red) — verify LED CCs first. |
+| 3b | **Real-time recording** | ✅ Complete (Phase 5n/5o/5p). Press Record while stopped → 1-bar DSP count-in (step buttons flash white) → transport + recording start atomically. Press Record while playing → arm immediately. Additive overdub via `tN_cC_step_S_add`. Manual disarm. Play LED green, Record LED red. |
+| 3b-fix | **Count-in** | ✅ Complete (Phase 5p). DSP-side count-in timer, atomic transport+record start from audio thread, pre-roll capture for downbeat notes. |
 | 3c | **Post-recording quantize** | Shift + Step 16 → 50% snap toward grid. Multiple presses converge. |
 | 3d | **Global menu** | Jog click enters. Jog turns navigate, jog click confirms, Back exits. Contains: root note, scale, BPM, swing amount, swing resolution, incoming velocity override, input quantize toggle, metronome volume. |
 | 3e | **Session Overview display** | ✅ Complete (Phase 5m). Hold CC 50 → full-display 8×16 graphical clip grid. Solid fill = active clip, center bar = has content, empty = unlit, blink = active clip on active track. Release returns to previous view. Tap still switches views. |
 | 3f | **Delete key combos** | ✅ Complete (Phase 5j/5k). Delete + step = atomic step clear (`tN_cC_step_S_clear`). Delete + track button = atomic clip clear (`tN_cC_clear`). Delete + clip pad (Session View) = clear that clip. |
 | 3f-fix | **Delete + track button clip targeting** | Currently Delete + track button always clears the active clip regardless of which track button is pressed. Should clear the clip corresponding to that track button's position in the visible scene group, without switching the active clip. **Pending.** |
+| 3g | **Jog wheel bank + track navigation** | Jog wheel (no modifier) cycles through parameter banks in Track View. Shift + jog cycles through tracks 1–8. Both additive to existing Shift + pad methods. |
 | 4 | **Arpeggiator (Seq + Live)** | New DSP build — not in NoteTwist. |
 | 5 | **Mute/Solo** | Full implementation — mute/solo per track, Session View pad control, reset via Mute+Undo. |
 | 6 | **Drum + Chromatic pad modes** | Pad layout expansion. Set via TRACK bank Mode param. |
@@ -802,6 +808,8 @@ WIDI Bud Pro confirmed working for wireless USB-A MIDI.
 | 20 | **Clip blink state** | Queued clips not yet blinking. |
 | 21 | **Mute/solo display** | Session View line 4 not correctly implemented. |
 | x.1 | **Chord input: hold pads + press step** | Hold one or more pads then press a step button to additively assign all held notes to that step. Attempted in Phase 5l — root cause is MIDI queue ordering: pad note-ons queued after the step press haven't been processed when capture fires; phantom note-off/note-on pairs add a secondary race. Deferred settling window approach was tried but felt unreliable. Needs a more robust architecture — deferred to v1.1. |
+| x.1 | **Per-lane loop length (drum tracks)** | Each note lane in a drum track has its own independent loop length, enabling polyrhythmic patterns within a single clip (e.g. kick on 16 steps, hi-hat on 12). Requires data model extension: per-lane length field in drum clip structure. |
+| x.1 | **Euclidean sequencing (drum tracks)** | Per-lane euclidean rhythm generation — distribute N hits across M steps using Bjorklund algorithm. Applied per note lane. Works with per-lane loop length. |
 
 ---
 
@@ -904,6 +912,10 @@ No symbols above 2.35 should appear.
 
 Selecting SEQ8 from the Tools menu while already inside SEQ8 causes LED corruption. The Tools menu button sets `SHADOW_UI_FLAG_JUMP_TO_TOOLS` (0x80) via ui_flags; `onMidiMessageInternal` is never called so it cannot be intercepted. Workaround: hide first (Shift+Back), then re-enter from Tools menu.
 
+### 16.4.1 LED State on Exit to Native UI
+
+Exiting SEQ8 back to the native Move UI (via Shift+Back or tool exit) can leave LEDs in a corrupted state in the native UI — pads and buttons may show wrong colors or remain lit. This generally resolves after some user interaction with the native UI. Root cause not yet investigated — likely SEQ8 is not fully restoring LED state on exit. Known issue, not yet fixed.
+
 ### 16.5 Power Button
 
 Not a MIDI CC — D-Bus signal. The shim detects it and shows "Press wheel to shut down." Encoder push (note 3) confirms. Always exit SEQ8 (Shift+Back) before powering down.
@@ -932,7 +944,7 @@ The full RS7000 Owner's Manual is in project files (`RS7000E1.pdf`). Pages 87–
 
 ---
 
-*End of SEQ8 Specification v0.2 — Built through Phase 5m*
+*End of SEQ8 Specification v0.2 — Built through Phase 5p*
 
 ---
 
