@@ -343,7 +343,7 @@ let trackClipStopped = new Array(NUM_TRACKS).fill(false);
 let playing          = false;
 let activeTrack      = 0;
 let sessionView      = false;
-let sceneGroup       = 0;
+let sceneRow         = 0;
 let pulseStep        = 0;
 let pulseUseBright   = false;
 let tickCount        = 0;
@@ -822,7 +822,7 @@ function updateSceneMapLEDs() {
             color = pulseUseBright ? White : LED_OFF;
         } else {
             const group = Math.floor(i / 4);
-            color = (group === sceneGroup) ? LED_STEP_CURSOR
+            color = (i >= sceneRow && i < sceneRow + 4) ? LED_STEP_CURSOR
                   : groupHasContent(group) ? LED_STEP_ACTIVE
                   : LED_OFF;
         }
@@ -833,7 +833,7 @@ function updateSceneMapLEDs() {
 function updateSessionLEDs() {
     if (!ledInitComplete) return;
     for (let row = 0; row < 4; row++) {
-        const sceneIdx = sceneGroup * 4 + row;
+        const sceneIdx = sceneRow + row;
         for (let t = 0; t < 8; t++) {
             const note = 92 - row * 8 + t;
             if (t >= NUM_TRACKS) { setLED(note, LED_OFF); continue; }
@@ -874,7 +874,7 @@ function updateTrackLEDs() {
 
     for (let idx = 0; idx < 4; idx++) {
         const row      = 3 - idx;
-        const sceneIdx = sceneGroup * 4 + row;
+        const sceneIdx = sceneRow + row;
         let color;
         if (sessionView) {
             color = sceneAllPlaying(sceneIdx) ? White : LED_OFF;
@@ -922,7 +922,7 @@ function forceRedraw() {
 function drawSessionOverview() {
     /* White background everywhere; current scene group band stays black. */
     fill_rect(0, 0, 128, 64, 1);
-    const bandY = sceneGroup * 16;
+    const bandY = Math.floor(sceneRow / 4) * 16;
     fill_rect(0, bandY, 128, 16, 0);
 
     /* Horizontal grid lines: white inside band, black outside. */
@@ -946,7 +946,7 @@ function drawSessionOverview() {
         const ac = trackActiveClip[t];
         for (let s = 0; s < NUM_CLIPS; s++) {
             const y      = s * 4 + 1;
-            const color  = (s >= sceneGroup * 4 && s < (sceneGroup + 1) * 4) ? 1 : 0;
+            const color  = (s >= sceneRow && s < sceneRow + 4) ? 1 : 0;
             const isActive         = (s === ac);
             const isActiveOnActive = (isActive && t === activeTrack);
             if (isActiveOnActive) {
@@ -965,9 +965,9 @@ function drawUI() {
     if (globalMenuOpen) { drawGlobalMenu(); return; }
     clear_screen();
     if (sessionView) {
-        const base = sceneGroup * 4;
-        print(4, 10, 'SESSION  GRP ' + (sceneGroup + 1), 1);
-        print(4, 22, SCENE_LETTERS[base] + '-' + SCENE_LETTERS[base + 3] + '  ROWS 1-4', 1);
+        const base = sceneRow;
+        print(4, 10, 'SESSION  GRP ' + (Math.floor(sceneRow / 4) + 1), 1);
+        print(4, 22, SCENE_LETTERS[base] + '-' + SCENE_LETTERS[base + 3], 1);
         print(4, 34, '1 2 3 4 5 6 7 8', 1);
         let line4 = '';
         for (let t = 0; t < NUM_TRACKS; t++) {
@@ -1365,7 +1365,7 @@ globalThis.onMidiMessageInternal = function (data) {
                 if (delta !== 0) {
                     if (sessionView) {
                         if (!shiftHeld) {
-                            sceneGroup = (sceneGroup + delta + 4) % 4;
+                            sceneRow = Math.min(NUM_CLIPS - 4, Math.max(0, sceneRow + delta));
                             forceRedraw();
                         }
                         /* Shift + jog in Session View: no-op */
@@ -1516,8 +1516,8 @@ globalThis.onMidiMessageInternal = function (data) {
         }
 
         /* Up/Down: scene group nav in Session View or while overview held; octave shift in Track View */
-        if (d1 === MoveDown && d2 === 127 && (sessionView || sessionOverlayHeld) && sceneGroup < 3) { sceneGroup++; forceRedraw(); }
-        if (d1 === MoveUp   && d2 === 127 && (sessionView || sessionOverlayHeld) && sceneGroup > 0) { sceneGroup--; forceRedraw(); }
+        if (d1 === MoveDown && d2 === 127 && (sessionView || sessionOverlayHeld) && sceneRow < NUM_CLIPS - 4) { sceneRow = Math.min(NUM_CLIPS - 4, sceneRow + 4); forceRedraw(); }
+        if (d1 === MoveUp   && d2 === 127 && (sessionView || sessionOverlayHeld) && sceneRow > 0)              { sceneRow = Math.max(0, sceneRow - 4);              forceRedraw(); }
         if (d1 === MoveUp   && d2 > 0 && !sessionView && !sessionOverlayHeld) {
             trackOctave[activeTrack] = Math.min(4, trackOctave[activeTrack] + 1);
             octaveOverlayEndTick = tickCount + OCTAVE_OVERLAY_TICKS;
@@ -1535,17 +1535,17 @@ globalThis.onMidiMessageInternal = function (data) {
             if (deleteHeld) {
                 if (!sessionView) {
                     /* Delete + track button (Track View): clear the clip at this scene position on active track */
-                    const clipIdx = sceneGroup * 4 + (3 - idx);
+                    const clipIdx = sceneRow + (3 - idx);
                     clearClip(activeTrack, clipIdx);
                     forceRedraw();
                 }
                 /* In Session View: swallow — no accidental scene launch */
             } else if (sessionView) {
                 if (typeof host_module_set_param === 'function')
-                    host_module_set_param('launch_scene', String(sceneGroup * 4 + (3 - idx)));
+                    host_module_set_param('launch_scene', String(sceneRow + (3 - idx)));
             } else {
                 const t       = activeTrack;
-                const clipIdx = sceneGroup * 4 + (3 - idx);
+                const clipIdx = sceneRow + (3 - idx);
                 if (trackActiveClip[t] === clipIdx) {
                     if (trackClipStopped[t] || trackPendingStop[t]) {
                         trackClipStopped[t] = false;
@@ -1671,7 +1671,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('launch_scene', String(idx));
                 } else {
-                    sceneGroup = targetGroup;
+                    sceneRow = targetGroup * 4;
                 }
             }
             /* deleteHeld in Session View: swallow step buttons */
@@ -1706,11 +1706,11 @@ globalThis.onMidiMessageInternal = function (data) {
                     const t = d1 - rowBase;
                     if (deleteHeld) {
                         /* Delete + clip pad (Session View): clear that clip */
-                        const clipIdx = sceneGroup * 4 + row;
+                        const clipIdx = sceneRow + row;
                         clearClip(t, clipIdx);
                         forceRedraw();
                     } else {
-                        const clipIdx = sceneGroup * 4 + row;
+                        const clipIdx = sceneRow + row;
                         if (trackActiveClip[t] === clipIdx) {
                             if (trackClipStopped[t] || trackPendingStop[t]) {
                                 /* Re-launch: clip is stopped or pending stop — cancel and restart */
