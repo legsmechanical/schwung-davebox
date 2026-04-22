@@ -750,17 +750,27 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     }
 
     inst->tick_threshold = (uint32_t)(inst->sample_rate * 60.0f);
-    inst->tick_delta     = (uint32_t)MOVE_FRAMES_PER_BLOCK
-                           * (uint32_t)BPM_DEFAULT
-                           * (uint32_t)PPQN;
+    {
+        double init_bpm = (g_host && g_host->get_bpm)
+            ? (double)g_host->get_bpm() : (double)BPM_DEFAULT;
+        if (init_bpm < 20.0 || init_bpm > 300.0) init_bpm = (double)BPM_DEFAULT;
+        for (t = 0; t < NUM_TRACKS; t++)
+            inst->tracks[t].pfx.cached_bpm = init_bpm;
+        inst->tick_delta = (uint32_t)((double)MOVE_FRAMES_PER_BLOCK * init_bpm * (double)PPQN);
+    }
 
     seq8_load_state(inst);  /* Option C: restore clips/active_clip from file if present */
 
-    char szlog[80];
-    snprintf(szlog, sizeof(szlog),
-             "SEQ8 Phase 5 init: sizeof(seq8_instance_t)=%zu",
-             sizeof(seq8_instance_t));
-    seq8_ilog(inst, szlog);
+    {
+        char szlog[128];
+        snprintf(szlog, sizeof(szlog),
+                 "SEQ8 Phase 5 init: sizeof=%zu get_bpm=%s get_clock_status=%s bpm=%.1f",
+                 sizeof(seq8_instance_t),
+                 (g_host && g_host->get_bpm) ? "ok" : "null",
+                 (g_host && g_host->get_clock_status) ? "ok" : "null",
+                 inst->tracks[0].pfx.cached_bpm);
+        seq8_ilog(inst, szlog);
+    }
     return inst;
 }
 
@@ -781,7 +791,7 @@ static void destroy_instance(void *instance) {
 }
 
 /* ------------------------------------------------------------------ */
-/* on_midi (external MIDI input — log only)                            */
+/* on_midi                                                              */
 /* ------------------------------------------------------------------ */
 
 static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
@@ -1523,12 +1533,15 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
     for (t = 0; t < NUM_TRACKS; t++)
         inst->tracks[t].pfx.sample_counter += (uint64_t)frames;
 
-    /* Cache host BPM every 512 blocks — one call, written to all tracks. */
+    /* Cache host BPM every 512 blocks; also update tick_delta so tempo tracks Move. */
     if ((inst->block_count % BPM_CACHE_INTERVAL) == 0) {
         double bpm = (g_host && g_host->get_bpm)
             ? (double)g_host->get_bpm() : (double)BPM_DEFAULT;
+        if (bpm < 20.0 || bpm > 300.0) bpm = (double)BPM_DEFAULT;
         for (t = 0; t < NUM_TRACKS; t++)
             inst->tracks[t].pfx.cached_bpm = bpm;
+        inst->tick_delta = (uint32_t)((double)MOVE_FRAMES_PER_BLOCK * bpm * (double)PPQN);
+
     }
 
     for (t = 0; t < NUM_TRACKS; t++)
