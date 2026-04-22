@@ -11,7 +11,7 @@ import {
 /* CC 50 = Note/Session toggle (three-bar button left of track buttons). */
 const MoveNoteSession = 50;
 const MoveLoop        = 58;
-const MoveMainTouch   = 9;   /* jog wheel capacitive touch — note, no LED */
+const MoveMainTouch   = 9;   /* jog wheel capacitive touch — swallowed, no behavior */
 const MoveRec         = 86;  /* Record button + LED (CC) */
 const MoveMainButton  = 3;   /* jog wheel click (CC, not note — fires as 0xB0 d1=3) */
 const MoveMainKnob    = 14;  /* jog wheel rotate (CC) */
@@ -49,7 +49,7 @@ import {
 } from '/data/UserData/schwung/shared/logger.mjs';
 
 import {
-    createInfo, createValue, createEnum, createToggle
+    createInfo, createValue, createEnum, createToggle, formatItemValue
 } from '/data/UserData/schwung/shared/menu_items.mjs';
 
 import {
@@ -61,8 +61,8 @@ import {
 } from '/data/UserData/schwung/shared/menu_stack.mjs';
 
 import {
-    drawHierarchicalMenu
-} from '/data/UserData/schwung/shared/menu_render.mjs';
+    drawMenuHeader, drawMenuList, menuLayoutDefaults
+} from '/data/UserData/schwung/shared/menu_layout.mjs';
 
 const LED_OFF         = 0;
 const LED_STEP_ACTIVE = 36;
@@ -174,7 +174,7 @@ const _X = p(null, null, null, 'stub', 0, 0, 0, fmtNA);
 const BANKS = [
     /* 0 — TRACK (pad 92) */
     { name: 'TRACK', knobs: [
-        p('Ch',   'MIDI Channel', null,       'stub',  1, 16, 1, fmtPlain), /* tN_channel NOT IN DSP */
+        p('Ch',   'MIDI Channel', 'channel',  'track', 1, 16, 1, fmtPlain),
         p('Rte',  'Route',        'route',    'track', 0, 1,  0, fmtRoute),
         p('Mode', 'Track Mode',   'pad_mode', 'track', 0, 1,  0, fmtPlain),
         p('Res',  'Resolution',   null,       'stub',  0, 0,  0, fmtNA   ), /* NOT IN DSP */
@@ -338,6 +338,8 @@ let trackCurrentStep = new Array(NUM_TRACKS).fill(-1);
 let trackCurrentPage = new Array(NUM_TRACKS).fill(0);
 let trackActiveClip  = new Array(NUM_TRACKS).fill(0);
 let trackQueuedClip  = new Array(NUM_TRACKS).fill(-1);
+let trackPendingStop = new Array(NUM_TRACKS).fill(false);
+let trackClipStopped = new Array(NUM_TRACKS).fill(false);
 let playing          = false;
 let activeTrack      = 0;
 let sessionView      = false;
@@ -356,7 +358,6 @@ let activeBank     = new Array(NUM_TRACKS).fill(0);
 
 /* knobTouched: 0-7 (MoveKnob1Touch-8Touch note numbers), or -1 = none */
 let knobTouched    = -1;
-let jogTouched     = false;
 let masterVolDelta = 0;              /* accumulated CC 79 ticks; drained in tick() */
 
 /* Per-physical-knob sensitivity accumulators.
@@ -370,6 +371,7 @@ let knobLocked  = new Array(8).fill(false);
 /* bankSelectTick: tickCount at last bank select, used for 2-second State 3 timeout.
  * -1 = timeout not active. */
 let bankSelectTick = -1;
+let jogTouched     = false;       /* true while jog wheel is physically held */
 const BANK_DISPLAY_TICKS = 392;  /* ~2000ms at 196Hz tick rate */
 let stretchBlockedEndTick = -1;  /* tickCount deadline for COMPRESS LIMIT display; -1 = inactive */
 const STRETCH_BLOCKED_TICKS = 294;  /* ~1500ms at 196Hz */
@@ -494,12 +496,27 @@ function openGlobalMenu() {
     globalMenuState = createMenuState();
     globalMenuStack = createMenuStack();
     globalMenuOpen  = true;
+    jogTouched      = false;
 }
 
 
 function drawGlobalMenu() {
     clear_screen();
-    drawHierarchicalMenu({ title: 'GLOBAL', items: globalMenuItems, state: globalMenuState });
+    drawMenuHeader('GLOBAL');
+    drawMenuList({
+        items: globalMenuItems,
+        selectedIndex: globalMenuState.selectedIndex,
+        listArea: { topY: menuLayoutDefaults.listTopY, bottomY: menuLayoutDefaults.listBottomNoFooter },
+        valueAlignRight: true,
+        prioritizeSelectedValue: true,
+        selectedMinLabelChars: 9,
+        getLabel: function(item) { return item ? (item.label || '') : ''; },
+        getValue: function(item, index) {
+            if (!item) return '';
+            const isEditing = globalMenuState.editing && index === globalMenuState.selectedIndex;
+            return formatItemValue(item, isEditing, globalMenuState.editValue);
+        }
+    });
 }
 
 function clipHasContent(t, c) {
@@ -615,8 +632,24 @@ function pollDSP() {
     /* Stop transition: transport just stopped — clear recording state */
     if (playingPrev && !playing) {
         disarmRecord();
+        trackPendingStop.fill(false);
+        trackClipStopped.fill(false);
     }
     playingPrev = playing;
+
+    /* Detect when a pending stop has fired in the DSP */
+    if (playing) {
+        for (let _t = 0; _t < NUM_TRACKS; _t++) {
+            if (trackPendingStop[_t]) {
+                const cs = host_module_get_param('t' + _t + '_clip_stopped');
+                if (cs === '1') {
+                    trackClipStopped[_t] = true;
+                    trackPendingStop[_t] = false;
+                    forceRedraw();
+                }
+            }
+        }
+    }
 
     /* Track sequencer notes for active track pad highlighting */
     const t  = activeTrack;
@@ -716,6 +749,19 @@ function applyBankParam(t, bankIdx, knobIdx, val) {
     }
 }
 
+/* Send a live note (note-on or note-off) for track t, applying per-track
+ * channel and route from the TRACK bank params (bank 0, knobs 0 and 1). */
+function liveSendNote(t, type, pitch, vel) {
+    const ch    = (bankParams[t][0][0] - 1) & 0x0F;  /* Ch knob: 1-indexed → 0-indexed */
+    const route = bankParams[t][0][1];                /* Rte knob: 0=Schwung, 1=Move */
+    const status = type | ch;
+    if (route === 1) {
+        if (typeof move_midi_external_send === 'function') move_midi_external_send([status, pitch, vel]);
+    } else {
+        if (typeof shadow_send_midi_to_dsp === 'function') shadow_send_midi_to_dsp([status, pitch, vel]);
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* LED update functions                                                 */
 /* ------------------------------------------------------------------ */
@@ -792,7 +838,7 @@ function updateSessionLEDs() {
             const note = 92 - row * 8 + t;
             if (t >= NUM_TRACKS) { setLED(note, LED_OFF); continue; }
             const hasContent = clipHasContent(t, sceneIdx);
-            const isActive   = trackActiveClip[t] === sceneIdx;
+            const isActive   = trackActiveClip[t] === sceneIdx && !trackClipStopped[t];
             const isPlaying  = isActive && playing && hasContent;
             const isQueued   = hasContent && trackQueuedClip[t] === sceneIdx;
             let color;
@@ -835,13 +881,13 @@ function updateTrackLEDs() {
         } else {
             const t          = activeTrack;
             const hasContent = clipHasContent(t, sceneIdx);
-            const isActive   = trackActiveClip[t] === sceneIdx;
+            const isActive   = trackActiveClip[t] === sceneIdx && !trackClipStopped[t];
             const isPlaying  = isActive && playing && hasContent;
             const isQueued   = hasContent && trackQueuedClip[t] === sceneIdx;
-            if (isPlaying || isQueued) {
-                color = pulseUseBright ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
-            } else if (isActive && hasContent) {
+            if (isActive) {
                 color = TRACK_COLORS[t];
+            } else if (isPlaying || isQueued) {
+                color = pulseUseBright ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
             } else if (hasContent) {
                 color = TRACK_DIM_COLORS[t];
             } else {
@@ -934,7 +980,7 @@ function drawUI() {
 
     /* Track View — priority display state machine */
     const bank      = activeBank[activeTrack];
-    const inTimeout = bankSelectTick >= 0;
+    const inTimeout = bankSelectTick >= 0 || jogTouched;
 
     /* Count-in overlay: highest priority while waiting for bar to elapse */
     if (recordArmed && recordCountingIn && !sessionView) {
@@ -1002,7 +1048,7 @@ function drawUI() {
         print(4, 34, pm.fmt(val), 1);
         /* line 4 blank */
 
-    } else if (bank >= 0 && (jogTouched || inTimeout)) {
+    } else if (bank >= 0 && inTimeout) {
         /* States 2/3: bank overview */
         const knobs = BANKS[bank].knobs;
         const vals  = bankParams[activeTrack][bank];
@@ -1113,18 +1159,29 @@ globalThis.init = function () {
 globalThis.tick = function () {
     tickCount++;
 
-    /* Real-time BPM preview while editing in global menu */
+    /* Real-time preview while editing any global menu parameter */
     if (globalMenuOpen && globalMenuState && globalMenuItems) {
-        const bpmIsSelected = globalMenuState.selectedIndex === 0;
-        if (bpmIsSelected && globalMenuState.editing && globalMenuState.editValue !== null) {
-            host_module_set_param('bpm', String(Math.round(globalMenuState.editValue)));
+        const item = globalMenuItems[globalMenuState.selectedIndex];
+        if (item && globalMenuState.editing && globalMenuState.editValue !== null) {
+            if (item.set) item.set(globalMenuState.editValue);
             bpmWasEditing = true;
         } else if (bpmWasEditing && !globalMenuState.editing) {
-            /* Edit ended (confirm or cancel) — sync DSP to the JS item's current value.
-             * After confirm, item.get() returns the confirmed value.
-             * After cancel (Back), item.get() returns the pre-edit value, restoring DSP. */
-            host_module_set_param('bpm', String(Math.round(globalMenuItems[0].get())));
+            if (item && item.set && item.get) item.set(item.get());
             bpmWasEditing = false;
+        }
+    }
+
+    /* Drain DSP ext_queue: ROUTE_MOVE sequencer notes → external MIDI */
+    if (typeof host_module_get_param === 'function' && typeof move_midi_external_send === 'function') {
+        const eq = host_module_get_param('ext_queue');
+        if (eq && eq.length > 0) {
+            for (const ev of eq.split(';')) {
+                const p = ev.split(' ');
+                if (p.length === 3) {
+                    const s = parseInt(p[0], 10), d1 = parseInt(p[1], 10), d2 = parseInt(p[2], 10);
+                    if (!isNaN(s) && !isNaN(d1) && !isNaN(d2)) move_midi_external_send([s, d1, d2]);
+                }
+            }
         }
     }
 
@@ -1227,21 +1284,21 @@ globalThis.onMidiMessageInternal = function (data) {
     }
 
 
-    /* Knob touch (notes 0-7) and jog wheel touch (note 9).
-     * MoveKnob1-8Touch = notes 0-7; MoveMainTouch = note 9.
-     * Hardware: d2=127 = touch on; d2 in 0-63 (via 0x90 or 0x80) = touch off. */
+    /* Knob touch (notes 0-7). MoveKnob1-8Touch = notes 0-7.
+     * Hardware: d2=127 = touch on; d2 in 0-63 (via 0x90 or 0x80) = touch off.
+     * Note 9 (jog touch): shows bank overview while held, locked out in global menu. */
     if (d1 >= 0 && d1 <= 9) {
         if ((status & 0xF0) === 0x90) {
             if (d2 === 127) {
                 if (d1 <= 7 && activeBank[activeTrack] >= 0) knobTouched = d1;
-                if (d1 === MoveMainTouch && activeBank[activeTrack] >= 0) jogTouched = true;
+                if (d1 === MoveMainTouch && !globalMenuOpen && !shiftHeld) { jogTouched = true; forceRedraw(); }
             } else if (d2 < 64) {
                 if (d1 <= 7) {
                     knobTouched = -1;
                     knobLocked[d1] = false;
                     knobAccum[d1]  = 0;
                 }
-                if (d1 === MoveMainTouch) jogTouched = false;
+                if (d1 === MoveMainTouch && jogTouched) { jogTouched = false; forceRedraw(); }
             }
             return;
         }
@@ -1251,7 +1308,7 @@ globalThis.onMidiMessageInternal = function (data) {
                 knobLocked[d1] = false;
                 knobAccum[d1]  = 0;
             }
-            if (d1 === MoveMainTouch) jogTouched = false;
+            if (d1 === MoveMainTouch && jogTouched) { jogTouched = false; forceRedraw(); }
             return;
         }
     }
@@ -1280,14 +1337,19 @@ globalThis.onMidiMessageInternal = function (data) {
 
         if (d1 === MoveMainKnob) {
             if (globalMenuOpen) {
-                /* BPM item (index 0) in edit mode: bypass acceleration, use linear ±1. */
-                if (globalMenuState.editing && globalMenuState.selectedIndex === 0) {
+                if (globalMenuState.editing) {
+                    /* Edit mode: linear jog for all item types, no acceleration. */
                     const delta = decodeDelta(d2);
                     if (delta !== 0) {
-                        const next = Math.round(Math.min(250, Math.max(40,
-                            (globalMenuState.editValue || 120) + delta)));
-                        if (next !== globalMenuState.editValue) {
-                            globalMenuState.editValue = next;
+                        const item = globalMenuItems[globalMenuState.selectedIndex];
+                        if (item && item.type === 'value') {
+                            const cur = globalMenuState.editValue !== null ? globalMenuState.editValue : item.get();
+                            globalMenuState.editValue = Math.min(item.max, Math.max(item.min, cur + delta));
+                        } else if (item && item.type === 'enum') {
+                            const opts = item.options || [];
+                            const idx  = opts.indexOf(globalMenuState.editValue);
+                            const sign = delta > 0 ? 1 : -1;
+                            globalMenuState.editValue = opts[((idx + sign) % opts.length + opts.length) % opts.length];
                         }
                     }
                 } else {
@@ -1298,12 +1360,45 @@ globalThis.onMidiMessageInternal = function (data) {
                         shiftHeld: shiftHeld
                     });
                 }
+            } else {
+                const delta = decodeDelta(d2);
+                if (delta !== 0) {
+                    if (sessionView) {
+                        if (!shiftHeld) {
+                            sceneGroup = (sceneGroup + delta + 4) % 4;
+                            forceRedraw();
+                        }
+                        /* Shift + jog in Session View: no-op */
+                    } else if (shiftHeld) {
+                        /* Track View + Shift: step active track 0–7, clamp at ends */
+                        const next = Math.min(NUM_TRACKS - 1, Math.max(0, activeTrack + delta));
+                        if (next !== activeTrack) {
+                            activeTrack = next;
+                            computePadNoteMap();
+                            seqActiveNotes.clear();
+                            seqLastStep = -1;
+                            seqLastClip = -1;
+                            forceRedraw();
+                        }
+                    } else {
+                        /* Track View: step active bank 0–6, clamp at ends (bank 7 reserved) */
+                        const cur  = activeBank[activeTrack];
+                        const next = Math.min(6, Math.max(0, cur + delta));
+                        if (next !== cur) {
+                            activeBank[activeTrack] = next;
+                            readBankParams(activeTrack, next);
+                            bankSelectTick = tickCount;
+                            forceRedraw();
+                        }
+                    }
+                }
             }
             return;
         }
 
         if (d1 === MoveShift) {
             shiftHeld = d2 === 127;
+            if (!shiftHeld && jogTouched) { jogTouched = false; forceRedraw(); }
         }
 
         if (d1 === 119) {
@@ -1315,7 +1410,8 @@ globalThis.onMidiMessageInternal = function (data) {
         if (d1 === MoveNoteSession) {
             if (d2 === 127) {
                 if (shiftHeld && !sessionView) {
-                    openGlobalMenu();
+                    if (globalMenuOpen) { globalMenuOpen = false; forceRedraw(); }
+                    else { openGlobalMenu(); }
                 } else {
                     noteSessionPressedTick = tickCount;
                 }
@@ -1356,15 +1452,11 @@ globalThis.onMidiMessageInternal = function (data) {
             forceRedraw();
         }
 
-        /* Back: exit global menu or (with Shift) hide module */
+        /* Back: close global menu if open; otherwise (with Shift) hide module */
         if (d1 === MoveBack && d2 === 127) {
             if (globalMenuOpen) {
-                handleMenuInput({
-                    cc: MoveBack, value: d2,
-                    items: globalMenuItems, state: globalMenuState, stack: globalMenuStack,
-                    onBack: function() { globalMenuOpen = false; },
-                    shiftHeld: shiftHeld
-                });
+                globalMenuOpen = false;
+                forceRedraw();
             } else if (shiftHeld) {
                 removeFlagsWrap();
                 ledInitComplete = false;
@@ -1452,9 +1544,30 @@ globalThis.onMidiMessageInternal = function (data) {
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('launch_scene', String(sceneGroup * 4 + (3 - idx)));
             } else {
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('t' + activeTrack + '_launch_clip',
-                                          String(sceneGroup * 4 + (3 - idx)));
+                const t       = activeTrack;
+                const clipIdx = sceneGroup * 4 + (3 - idx);
+                if (trackActiveClip[t] === clipIdx) {
+                    if (trackClipStopped[t] || trackPendingStop[t]) {
+                        trackClipStopped[t] = false;
+                        trackPendingStop[t] = false;
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
+                    } else if (playing) {
+                        trackPendingStop[t] = true;
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + t + '_stop_at_end', '1');
+                    } else {
+                        trackClipStopped[t] = true;
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + t + '_stop_at_end', '1');
+                        forceRedraw();
+                    }
+                } else {
+                    trackClipStopped[t] = false;
+                    trackPendingStop[t] = false;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
+                }
             }
         }
 
@@ -1597,10 +1710,34 @@ globalThis.onMidiMessageInternal = function (data) {
                         clearClip(t, clipIdx);
                         forceRedraw();
                     } else {
-                        activeTrack = t;
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + t + '_launch_clip',
-                                                  String(sceneGroup * 4 + row));
+                        const clipIdx = sceneGroup * 4 + row;
+                        if (trackActiveClip[t] === clipIdx) {
+                            if (trackClipStopped[t] || trackPendingStop[t]) {
+                                /* Re-launch: clip is stopped or pending stop — cancel and restart */
+                                trackClipStopped[t] = false;
+                                trackPendingStop[t] = false;
+                                activeTrack = t;
+                                if (typeof host_module_set_param === 'function')
+                                    host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
+                            } else if (playing) {
+                                /* Arm stop at end of current loop */
+                                trackPendingStop[t] = true;
+                                if (typeof host_module_set_param === 'function')
+                                    host_module_set_param('t' + t + '_stop_at_end', '1');
+                            } else {
+                                /* Transport stopped: deactivate immediately */
+                                trackClipStopped[t] = true;
+                                if (typeof host_module_set_param === 'function')
+                                    host_module_set_param('t' + t + '_stop_at_end', '1');
+                                forceRedraw();
+                            }
+                        } else {
+                            trackClipStopped[t] = false;
+                            trackPendingStop[t] = false;
+                            activeTrack = t;
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
+                        }
                     }
                     break;
                 }
@@ -1628,11 +1765,10 @@ globalThis.onMidiMessageInternal = function (data) {
                     /* Preview note */
                     padPitch[padIdx] = pitch;
                     liveActiveNotes.add(pitch);
-                    if (typeof shadow_send_midi_to_dsp === 'function')
-                        shadow_send_midi_to_dsp([0x90 | activeTrack, pitch, Math.max(80, d2)]);
+                    liveSendNote(activeTrack, 0x90, pitch, Math.max(80, d2));
                     forceRedraw();
-                } else if ((shiftHeld || jogTouched) && padIdx >= 24 && padIdx <= 31) {
-                    /* Shift (or jog touch) + top-row pad (notes 92-99): select bank.
+                } else if (shiftHeld && padIdx >= 24 && padIdx <= 31) {
+                    /* Shift + top-row pad (notes 92-99): select bank.
                      * Pad 99 (bankIdx 7) = reserved — ignore. */
                     const bankIdx = padIdx - 24;
                     if (bankIdx < 7) {
@@ -1660,8 +1796,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     padPitch[padIdx] = pitch;
                     lastPlayedNote = pitch;
                     liveActiveNotes.add(pitch);
-                    if (typeof shadow_send_midi_to_dsp === 'function')
-                        shadow_send_midi_to_dsp([0x90 | activeTrack, pitch, Math.max(80, d2)]);
+                    liveSendNote(activeTrack, 0x90, pitch, Math.max(80, d2));
                     /* Pre-roll capture: note in last 1/16th of count-in → step 0 */
                     if (recordArmed && recordCountingIn &&
                             activeTrack === recordArmedTrack &&
@@ -1761,8 +1896,7 @@ globalThis.onMidiMessageInternal = function (data) {
             const pitch = padPitch[padIdx] >= 0 ? padPitch[padIdx] : padNoteMap[padIdx];
             liveActiveNotes.delete(pitch);
             padPitch[padIdx] = -1;
-            if (!sessionView && typeof shadow_send_midi_to_dsp === 'function')
-                shadow_send_midi_to_dsp([0x80 | activeTrack, pitch, 0]);
+            if (!sessionView) liveSendNote(activeTrack, 0x80, pitch, 0);
         }
     }
 };

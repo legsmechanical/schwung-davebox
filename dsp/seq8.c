@@ -35,7 +35,11 @@
 
 /* MIDI routing: where track output is delivered */
 #define ROUTE_SCHWUNG  0   /* host->midi_send_internal → Schwung active chain */
-#define ROUTE_MOVE     1   /* reserved — no confirmed multi-chain path exists */
+#define ROUTE_MOVE     1   /* JS-side external send via move_midi_external_send */
+
+/* External MIDI queue: DSP buffers ROUTE_MOVE events; JS drains via get_param("ext_queue") */
+#define EXT_QUEUE_SIZE 64
+typedef struct { uint8_t s; uint8_t d1; uint8_t d2; } ext_msg_t;
 
 /* Pad input modes */
 #define PAD_MODE_MELODIC_SCALE  0   /* isomorphic 4ths diatonic layout */
@@ -161,6 +165,8 @@ typedef struct {
     uint8_t   pad_mode;             /* PAD_MODE_MELODIC_SCALE = 0 */
     uint8_t   stretch_blocked;      /* 1 if last compress was blocked by collision */
     uint8_t   recording;            /* 1 = actively recording (overdub) into active clip */
+    uint8_t   pending_stop;         /* 1 = silence track at start of next loop */
+    uint8_t   clip_stopped;         /* 1 = track silenced; cleared on launch */
 } seq8_track_t;
 
 typedef struct {
@@ -188,9 +194,15 @@ typedef struct {
     /* Live pad input: global key/scale stored for state persistence */
     uint8_t  pad_key;               /* root key 0-11, default 9 (A) */
     uint8_t  pad_scale;             /* 0=minor, 1=major */
+
+    /* External MIDI queue: ROUTE_MOVE note events buffered here; JS drains each tick */
+    ext_msg_t ext_queue[EXT_QUEUE_SIZE];
+    int       ext_head;             /* next write index */
+    int       ext_tail;             /* next read index */
 } seq8_instance_t;
 
 static const host_api_v1_t *g_host = NULL;
+static seq8_instance_t     *g_inst = NULL;
 
 
 /* ------------------------------------------------------------------ */
@@ -255,6 +267,10 @@ static void seq8_save_state(seq8_instance_t *inst) {
     fprintf(fp, "{\"v\":2,\"playing\":%d", inst->playing);
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
+    for (t = 0; t < NUM_TRACKS; t++)
+        fprintf(fp, ",\"t%d_ch\":%d,\"t%d_rt\":%d",
+                t, (int)inst->tracks[t].channel,
+                t, (int)inst->tracks[t].pfx.route);
     for (t = 0; t < NUM_TRACKS; t++) {
         for (c = 0; c < NUM_CLIPS; c++) {
             clip_t *cl = &inst->tracks[t].clips[c];
@@ -319,6 +335,14 @@ static void seq8_load_state(seq8_instance_t *inst) {
         inst->tracks[t].active_clip = (uint8_t)clamp_i(
             json_get_int(buf, key, 0), 0, NUM_CLIPS - 1);
 
+        snprintf(key, sizeof(key), "t%d_ch", t);
+        inst->tracks[t].channel = (uint8_t)clamp_i(
+            json_get_int(buf, key, t), 0, 15);
+
+        snprintf(key, sizeof(key), "t%d_rt", t);
+        inst->tracks[t].pfx.route = (uint8_t)clamp_i(
+            json_get_int(buf, key, ROUTE_SCHWUNG), ROUTE_SCHWUNG, ROUTE_MOVE);
+
         for (c = 0; c < NUM_CLIPS; c++) {
             snprintf(key, sizeof(key), "t%dc%d", t, c);
             json_get_steps(buf, key, inst->tracks[t].clips[c].steps, SEQ_STEPS);
@@ -378,18 +402,27 @@ static void seq8_load_state(seq8_instance_t *inst) {
 /* MIDI output helpers                                                  */
 /* ------------------------------------------------------------------ */
 
-/* Send 3-byte MIDI message to the active Schwung chain.
- * All routes (SCHWUNG and MOVE) use midi_send_internal — no confirmed API
- * exists to route to multiple chains independently. ROUTE_MOVE is reserved.
- *
- * CRITICAL: never call midi_send_external from this path. pfx_send is
- * invoked from render_block (audio thread); SPI I/O is blocking and will
- * cause audio cracking and deadlock suspend_overtake on shutdown. */
+/* Send 3-byte MIDI message. Routes on fx->route:
+ *   ROUTE_SCHWUNG → midi_send_internal (Schwung chain, immediate)
+ *   ROUTE_MOVE    → enqueue in g_inst->ext_queue; JS drains each tick via
+ *                   get_param("ext_queue") and sends with move_midi_external_send.
+ *                   midi_send_external is never called from the render path. */
 static void pfx_send(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
-    (void)fx;
-    if (!g_host || !g_host->midi_send_internal) return;
+    if (!g_host) return;
+    if (fx->route == ROUTE_MOVE) {
+        if (g_inst) {
+            int next = (g_inst->ext_head + 1) % EXT_QUEUE_SIZE;
+            if (next != g_inst->ext_tail) {
+                g_inst->ext_queue[g_inst->ext_head].s  = status;
+                g_inst->ext_queue[g_inst->ext_head].d1 = d1;
+                g_inst->ext_queue[g_inst->ext_head].d2 = d2;
+                g_inst->ext_head = next;
+            }
+        }
+        return;
+    }
     const uint8_t msg[4] = { (uint8_t)(status >> 4), status, d1, d2 };
-    g_host->midi_send_internal(msg, 4);
+    if (g_host->midi_send_internal) g_host->midi_send_internal(msg, 4);
 }
 
 /* Brute-force note-off for all 128 notes on all active channels.
@@ -398,7 +431,8 @@ static void send_panic(seq8_instance_t *inst) {
     int t, n;
     for (t = 0; t < NUM_TRACKS; t++) {
         for (n = 0; n < 128; n++)
-            pfx_send(&inst->tracks[t].pfx, (uint8_t)(0x80 | t), (uint8_t)n, 0);
+            pfx_send(&inst->tracks[t].pfx,
+                     (uint8_t)(0x80 | inst->tracks[t].channel), (uint8_t)n, 0);
     }
 }
 
@@ -729,6 +763,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
 
     seq8_instance_t *inst = (seq8_instance_t *)calloc(1, sizeof(seq8_instance_t));
     if (!inst) return NULL;
+    g_inst = inst;
 
     inst->sample_rate    = (g_host && g_host->sample_rate > 0)
                            ? (float)g_host->sample_rate : 44100.0f;
@@ -784,6 +819,7 @@ static void destroy_instance(void *instance) {
                sizeof(inst->tracks[t].pfx.active_notes));
     }
     send_panic(inst);
+    g_inst = NULL;
     seq8_ilog(inst, "SEQ8 instance destroyed");
     if (inst->log_fp) fclose(inst->log_fp);
     free(inst);
@@ -910,6 +946,8 @@ static void set_param(void *instance, const char *key, const char *val) {
                            sizeof(inst->tracks[t].pfx.active_notes));
                     inst->tracks[t].clips[inst->tracks[t].active_clip].clock_shift_pos = 0;
                     inst->tracks[t].recording           = 0;
+                    inst->tracks[t].pending_stop        = 0;
+                    inst->tracks[t].clip_stopped        = 0;
                 }
                 inst->playing        = 0;
                 inst->count_in_ticks = 0;
@@ -928,6 +966,8 @@ static void set_param(void *instance, const char *key, const char *val) {
                        sizeof(inst->tracks[t].pfx.active_notes));
                 inst->tracks[t].clips[inst->tracks[t].active_clip].clock_shift_pos = 0;
                 inst->tracks[t].recording           = 0;
+                inst->tracks[t].pending_stop        = 0;
+                inst->tracks[t].clip_stopped        = 0;
             }
             inst->playing        = 0;
             inst->count_in_ticks = 0;
@@ -1008,6 +1048,21 @@ static void set_param(void *instance, const char *key, const char *val) {
             tr->current_step  = (uint16_t)(tr->current_step % newlen);
             tr->active_clip  = (uint8_t)new_cidx;
             tr->queued_clip  = -1;
+            tr->pending_stop = 0;
+            tr->clip_stopped = 0;
+            seq8_save_state(inst);
+            return;
+        }
+
+        /* tN_stop_at_end: arm track to silence at start of next loop */
+        if (!strcmp(sub, "stop_at_end")) {
+            tr->pending_stop = 1;
+            return;
+        }
+
+        /* tN_channel: set MIDI channel for this track (1-indexed in, 0-indexed stored) */
+        if (!strcmp(sub, "channel")) {
+            tr->channel = (uint8_t)clamp_i(my_atoi(val) - 1, 0, 15);
             seq8_save_state(inst);
             return;
         }
@@ -1018,6 +1073,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 tr->pfx.route = ROUTE_SCHWUNG;
             else if (!strcmp(val, "move"))
                 tr->pfx.route = ROUTE_MOVE;
+            seq8_save_state(inst);
             return;
         }
 
@@ -1352,6 +1408,9 @@ static void set_param(void *instance, const char *key, const char *val) {
 static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
     play_fx_t *fx = &tr->pfx;
 
+    if (!strcmp(key, "channel"))
+        return snprintf(out, out_len, "%d", (int)tr->channel + 1);
+
     if (!strcmp(key, "route"))
         return snprintf(out, out_len, "%s",
                         fx->route == ROUTE_MOVE ? "move" : "schwung");
@@ -1406,6 +1465,27 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         return snprintf(out, out_len, "%.0f", b);
     }
 
+    /* ext_queue: drain ROUTE_MOVE events buffered by DSP render path.
+     * Returns "S D1 D2;S D1 D2;..." or "" if empty. Clears queue on read. */
+    if (!strcmp(key, "ext_queue")) {
+        if (!inst || inst->ext_head == inst->ext_tail)
+            return snprintf(out, out_len, "");
+        int pos = 0;
+        while (inst->ext_tail != inst->ext_head) {
+            ext_msg_t *m = &inst->ext_queue[inst->ext_tail];
+            if (pos > 0) {
+                if (pos < out_len - 1) out[pos++] = ';';
+                else break;
+            }
+            int n = snprintf(out + pos, (size_t)(out_len - pos),
+                             "%d %d %d", (int)m->s, (int)m->d1, (int)m->d2);
+            if (n < 0 || pos + n >= out_len) break;
+            pos += n;
+            inst->ext_tail = (inst->ext_tail + 1) % EXT_QUEUE_SIZE;
+        }
+        return pos;
+    }
+
     /* state_snapshot: single call returning all poll-loop values.
      * Format: "playing cs0 cs1..cs7 ac0 ac1..ac7 qc0 qc1..qc7" (25 ints)
      * Replaces 25 individual get_param calls in pollDSP(). */
@@ -1456,6 +1536,8 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
             return snprintf(out, out_len, "%d", (int)tr->stretch_blocked);
         if (!strcmp(sub, "recording"))
             return snprintf(out, out_len, "%d", (int)tr->recording);
+        if (!strcmp(sub, "clip_stopped"))
+            return snprintf(out, out_len, "%d", (int)tr->clip_stopped);
         if (!strcmp(sub, "clip_length"))
             return snprintf(out, out_len, "%d",
                             (int)tr->clips[tr->active_clip].length);
@@ -1576,7 +1658,18 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
             seq8_track_t *tr = &inst->tracks[t];
             clip_t *cl = &tr->clips[tr->active_clip];
 
-            if (inst->tick_in_step == 0 && cl->steps[tr->current_step]) {
+            if (inst->tick_in_step == 0 && tr->current_step == 0 && tr->pending_stop) {
+                tr->pending_stop = 0;
+                tr->clip_stopped = 1;
+                if (tr->note_active) {
+                    int n;
+                    for (n = 0; n < (int)tr->pending_note_count; n++)
+                        pfx_note_off(inst, tr, tr->pending_notes[n]);
+                    tr->note_active = 0;
+                    tr->pending_note_count = 0;
+                }
+            }
+            if (inst->tick_in_step == 0 && cl->steps[tr->current_step] && !tr->clip_stopped) {
                 int n;
                 tr->pending_note_count = cl->step_note_count[tr->current_step];
                 for (n = 0; n < (int)tr->pending_note_count; n++) {
@@ -1600,7 +1693,8 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
             for (t = 0; t < NUM_TRACKS; t++) {
                 seq8_track_t *tr = &inst->tracks[t];
                 clip_t *cl = &tr->clips[tr->active_clip];
-                tr->current_step = (uint8_t)((tr->current_step + 1) % cl->length);
+                if (!tr->clip_stopped)
+                    tr->current_step = (uint8_t)((tr->current_step + 1) % cl->length);
             }
         }
     }
