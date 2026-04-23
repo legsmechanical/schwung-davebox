@@ -465,6 +465,8 @@ const RECORD_CAPTURE_TICKS = 8;  /* ~40ms at 196Hz: chord notes within this wind
 
 let currentSetUuid   = '';        /* UUID of the active Move set; polled in tick() for change detection */
 let lastDspInstanceId = '';       /* DSP instance_nonce from last poll; change = hot-reload detected */
+let pendingSetLoad   = false;     /* true when set changed during init() but same DSP instance: save old, load new */
+let pendingDspSync   = 0;         /* ticks remaining before deferred syncClipsFromDsp() after set change */
 
 /* ------------------------------------------------------------------ */
 /* Utility                                                              */
@@ -1247,7 +1249,21 @@ globalThis.init = function () {
 
     console.log('SEQ8 init: ' + (p === '1' ? 'RESUMED playing' : 'FRESH/stopped'));
 
+    /* Detect set mismatch: compare active_set.txt UUID with what the DSP currently has loaded.
+     * Works regardless of JS context lifetime — no cross-init state needed.
+     * If they differ, DSP has old set's data: save it, then load the active set. */
     currentSetUuid = readActiveSetUuid();
+    const currentDspNonce = (typeof host_module_get_param === 'function')
+        ? host_module_get_param('instance_id') : null;
+    const dspUuid = (typeof host_module_get_param === 'function')
+        ? (host_module_get_param('state_uuid') || '') : '';
+    if (currentDspNonce) lastDspInstanceId = currentDspNonce;
+    if (currentSetUuid && dspUuid !== currentSetUuid) {
+        pendingSetLoad = true;
+    } else if (currentSetUuid && typeof host_file_exists === 'function') {
+        const sp = '/data/UserData/schwung/set_state/' + currentSetUuid + '/seq8-state.json';
+        if (!host_file_exists(sp)) pendingSetLoad = true;
+    }
 
     if (typeof host_module_get_param === 'function') {
         playing = dspSurvived;
@@ -1279,16 +1295,21 @@ globalThis.init = function () {
 globalThis.tick = function () {
     tickCount++;
 
-    /* Poll every 100 ticks (~0.5s): detect set change and DSP hot-reload. */
-    if ((tickCount % 100) === 0 && typeof host_read_file === 'function' &&
-            typeof host_module_set_param === 'function') {
+    /* Set change detected in init(): DSP re-reads active_set.txt and loads new set state. */
+    if (pendingSetLoad && typeof host_module_set_param === 'function') {
+        pendingSetLoad = false;
+        disarmRecord();
+        heldStep = -1; heldStepBtn = -1; heldStepNotes = [];
+        seqActiveNotes.clear(); seqLastStep = -1; seqLastClip = -1;
+        pendingDspSync = 5;
+        host_module_set_param('state_load', '1');
+    }
 
-        /* DSP hot-reload detection: instance_nonce changes when new binary loads. */
-        const newInstanceId = (typeof host_module_get_param === 'function')
-            ? host_module_get_param('instance_id') : null;
+    /* Poll every 100 ticks (~0.5s): detect DSP hot-reload via instance nonce. */
+    if ((tickCount % 100) === 0 && typeof host_module_get_param === 'function' &&
+            typeof host_module_set_param === 'function') {
+        const newInstanceId = host_module_get_param('instance_id');
         if (newInstanceId && lastDspInstanceId !== '' && newInstanceId !== lastDspInstanceId) {
-            host_module_set_param('debug_log', 'DIAG: DSP hot-reload detected nonce=' + newInstanceId);
-            host_module_set_param('state_path', uuidToStatePath(currentSetUuid));
             pollDSP();
             for (let _t = 0; _t < NUM_TRACKS; _t++)
                 trackCurrentPage[_t] = Math.max(0, Math.floor(trackCurrentStep[_t] / 16));
@@ -1298,24 +1319,17 @@ globalThis.tick = function () {
             forceRedraw();
         }
         if (newInstanceId) lastDspInstanceId = newInstanceId;
+    }
 
-        /* Set change detection: UUID in active_set.txt changed. */
-        const newUuid = readActiveSetUuid();
-        host_module_set_param('debug_log', 'DIAG poll: instance=' + JSON.stringify(newInstanceId) + ' uuid=' + JSON.stringify(newUuid));
-        if (newUuid && newUuid !== currentSetUuid) {
-            host_module_set_param('debug_log', 'DIAG: set changed to ' + newUuid);
-            host_module_set_param('save', '1');
-            currentSetUuid = newUuid;
-            host_module_set_param('state_path', uuidToStatePath(newUuid));
-            host_module_set_param('state_load', '1');
-            disarmRecord();
+    /* Deferred resync after set change: wait ~5 ticks for state_load to land on audio thread. */
+    if (pendingDspSync > 0) {
+        pendingDspSync--;
+        if (pendingDspSync === 0) {
             pollDSP();
             for (let _t = 0; _t < NUM_TRACKS; _t++)
                 trackCurrentPage[_t] = Math.max(0, Math.floor(trackCurrentStep[_t] / 16));
             syncClipsFromDsp();
             computePadNoteMap();
-            heldStep = -1; heldStepBtn = -1; heldStepNotes = [];
-            seqActiveNotes.clear(); seqLastStep = -1; seqLastClip = -1;
             invalidateLEDCache();
             forceRedraw();
         }

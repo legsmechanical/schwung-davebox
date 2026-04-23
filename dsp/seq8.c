@@ -793,6 +793,30 @@ static void clip_init(clip_t *cl) {
     }
 }
 
+static void seq8_clear_state(seq8_instance_t *inst) {
+    int t, c;
+    send_panic(inst);
+    inst->playing        = 0;
+    inst->count_in_ticks = 0;
+    for (t = 0; t < NUM_TRACKS; t++) {
+        seq8_track_t *tr = &inst->tracks[t];
+        tr->note_active         = 0;
+        tr->pending_note_count  = 0;
+        tr->pfx.event_count     = 0;
+        memset(tr->pfx.active_notes, 0, sizeof(tr->pfx.active_notes));
+        tr->clip_playing        = 0;
+        tr->will_relaunch       = 0;
+        tr->pending_page_stop   = 0;
+        tr->record_armed        = 0;
+        tr->recording           = 0;
+        tr->queued_clip         = -1;
+        tr->active_clip         = 0;
+        tr->current_step        = 0;
+        for (c = 0; c < NUM_CLIPS; c++)
+            clip_init(&tr->clips[c]);
+    }
+}
+
 static void *create_instance(const char *module_dir, const char *json_defaults) {
     (void)module_dir; (void)json_defaults;
 
@@ -1127,10 +1151,54 @@ static void set_param(void *instance, const char *key, const char *val) {
     if (!strcmp(key, "state_path")) {
         strncpy(inst->state_path, val, sizeof(inst->state_path) - 1);
         inst->state_path[sizeof(inst->state_path) - 1] = '\0';
+        seq8_ilog(inst, inst->state_path);
         return;
     }
 
     if (!strcmp(key, "state_load")) {
+        /* Re-read active_set.txt so path is always current when JS triggers a set switch. */
+        {
+            char uuid[128] = {0};
+            FILE *uf = fopen("/data/UserData/schwung/active_set.txt", "r");
+            if (uf) {
+                if (fgets(uuid, sizeof(uuid), uf)) {
+                    int i2 = (int)strlen(uuid) - 1;
+                    while (i2 >= 0 && (uuid[i2] == '\n' || uuid[i2] == '\r' || uuid[i2] == ' '))
+                        uuid[i2--] = '\0';
+                }
+                fclose(uf);
+            }
+            if (uuid[0])
+                snprintf(inst->state_path, sizeof(inst->state_path),
+                         "/data/UserData/schwung/set_state/%s/seq8-state.json", uuid);
+            else
+                strncpy(inst->state_path, SEQ8_STATE_PATH_FALLBACK,
+                        sizeof(inst->state_path) - 1);
+        }
+        seq8_ilog(inst, inst->state_path);
+        /* Reset internal state without MIDI panic to avoid flooding the MIDI buffer. */
+        {
+            int t2, c2;
+            inst->playing        = 0;
+            inst->count_in_ticks = 0;
+            for (t2 = 0; t2 < NUM_TRACKS; t2++) {
+                seq8_track_t *tr2 = &inst->tracks[t2];
+                tr2->note_active        = 0;
+                tr2->pending_note_count = 0;
+                tr2->pfx.event_count    = 0;
+                memset(tr2->pfx.active_notes, 0, sizeof(tr2->pfx.active_notes));
+                tr2->clip_playing       = 0;
+                tr2->will_relaunch      = 0;
+                tr2->pending_page_stop  = 0;
+                tr2->record_armed       = 0;
+                tr2->recording          = 0;
+                tr2->queued_clip        = -1;
+                tr2->active_clip        = 0;
+                tr2->current_step       = 0;
+                for (c2 = 0; c2 < NUM_CLIPS; c2++)
+                    clip_init(&tr2->clips[c2]);
+            }
+        }
         seq8_load_state(inst);
         return;
     }
@@ -1608,6 +1676,22 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         return snprintf(out, out_len, "4");
     if (!strcmp(key, "instance_id"))
         return snprintf(out, out_len, "%u", inst ? inst->instance_nonce : 0);
+    if (!strcmp(key, "state_uuid")) {
+        /* Extract UUID from state_path: .../set_state/<UUID>/seq8-state.json */
+        if (!inst) return snprintf(out, out_len, "");
+        const char *p = strstr(inst->state_path, "/set_state/");
+        if (p) {
+            p += 11; /* strlen("/set_state/") */
+            const char *end = strchr(p, '/');
+            if (end && (end - p) > 0 && (end - p) < out_len) {
+                int len = (int)(end - p);
+                memcpy(out, p, (size_t)len);
+                out[len] = '\0';
+                return len;
+            }
+        }
+        return snprintf(out, out_len, "");
+    }
     if (!strcmp(key, "bpm")) {
         double b = (inst && inst->tracks[0].pfx.cached_bpm > 0)
                    ? inst->tracks[0].pfx.cached_bpm : (double)BPM_DEFAULT;
