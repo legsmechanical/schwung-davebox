@@ -49,7 +49,7 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 
 **Clock Shift** (TIMING K2, sens=8): Rotates all steps one position CW/CCW.
 
-**Global menu** (Shift + CC 50 in Track View): Platform framework (`drawHierarchicalMenu`). Jog rotate = navigate; **jog click = CC 3** (0xB0 d1=3, NOT Note 3) = edit mode via `handleMenuInput`; Back = exit. Items: BPM (editable 40–250, real-time jog, linear ±1/detent — acceleration bypassed), Key (wired), Scale (wired), **Launch** (wired — Now/1/16/1/8/1/4/1/2/1-bar; sends `set_param("launch_quant", "0"–"5")`), Swing Amt/Res/Input Vel/Inp Quant (stub, session-local). BPM jog intercept: CC 14 handled directly in `onMidiMessageInternal` when BPM selected+editing, writing to `globalMenuState.editValue` and sending `set_param("bpm")` each tick.
+**Global menu** (Shift + CC 50, any view): Platform framework (`drawHierarchicalMenu`). Jog rotate = navigate; **jog click = CC 3** (0xB0 d1=3, NOT Note 3) = edit mode via `handleMenuInput`; Back = exit. Items: BPM (editable 40–250, real-time jog, linear ±1/detent — acceleration bypassed), Key (wired), Scale (wired), **Launch** (wired — Now/1/16/1/8/1/4/1/2/1-bar; sends `set_param("launch_quant", "0"–"5")`), Swing Amt/Res/Input Vel/Inp Quant (stub, session-local). BPM jog intercept: CC 14 handled directly in `onMidiMessageInternal` when BPM selected+editing, writing to `globalMenuState.editValue` and sending `set_param("bpm")` each tick.
 
 **Play effects chain**: Note FX (octave, offset, gate, velocity), Harmonize (unison, octaver, 2×interval), MIDI Delay (time, level, repeats, feedback). Exposed via parameter banks.
 
@@ -65,6 +65,26 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 2. **Mute/Solo** — Per-track, likely Shift + track-select pads.
 3. **Drum + Chromatic pad modes** — `pad_mode` wired in TRACK K3; DSP/JS logic not yet done.
 4. **Global menu stubs** — Wire Swing/Vel/Quant to DSP when those features land.
+5. **Per-set state** — Tie SEQ8 state to native Move sets (see below).
+
+## Per-set state (planned)
+
+**Goal**: SEQ8 state should save and load per native Move set, the same way Song Mode does.
+
+**How Schwung exposes per-set state** (researched from `charlesvestal/schwung`):
+- `/data/UserData/schwung/active_set.txt` — written by `shadow_ui.js` on every set change. Line 1: UUID, Line 2: set name.
+- `/data/UserData/schwung/set_state/<UUID>/` — directory created by Schwung core during set-change handling. Song Mode writes `song_mode.json` here.
+- `host_read_file`, `host_write_file`, `host_ensure_dir`, `host_file_exists` — all explicitly exposed to tool module JS context by `loadOvertakeModule()` in `shadow_ui.js`.
+- **No push event exists** for set changes. A background tool must poll `active_set.txt` in `tick()` and compare against the last-seen UUID to detect a set switch.
+
+**Why SEQ8 is different from Song Mode**: Song Mode is not background-running — it exits on dismiss, so each launch calls `init()` fresh and reads the UUID once. SEQ8 stays alive while hidden, so it must poll for UUID changes during `tick()`.
+
+**Planned implementation (approach A — DSP path configurable)**:
+1. **DSP**: Add `state_path` `set_param` key. When set, subsequent `seq8_save_state()` and `seq8_load_state()` calls use that path instead of the hardcoded `SEQ8_STATE_PATH`. Keep `SEQ8_STATE_PATH` as the default/fallback.
+2. **JS init**: Read `active_set.txt`, extract UUID. If UUID found, call `set_param("state_path", "/data/UserData/schwung/set_state/<UUID>/seq8-state.json")` before the existing state load. Ensure directory exists via `host_ensure_dir`.
+3. **JS tick polling**: Every ~300 ticks (~1.5s at 196Hz), re-read `active_set.txt` and compare UUID. On change: (a) send `set_param("transport", "stop")` if needed, (b) update `state_path` to old UUID path and trigger a save, (c) update `state_path` to new UUID path and trigger a load.
+4. **Target file path**: `/data/UserData/schwung/set_state/<UUID>/seq8-state.json`
+5. **State file version**: bump `v` when implementing (currently v=3).
 
 ## Parameter Bank Reference
 

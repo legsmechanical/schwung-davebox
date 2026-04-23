@@ -1539,7 +1539,7 @@ globalThis.onMidiMessageInternal = function (data) {
          * tap = switch view; hold = session overview */
         if (d1 === MoveNoteSession) {
             if (d2 === 127) {
-                if (shiftHeld && !sessionView) {
+                if (shiftHeld) {
                     if (globalMenuOpen) { globalMenuOpen = false; forceRedraw(); }
                     else { openGlobalMenu(); }
                 } else {
