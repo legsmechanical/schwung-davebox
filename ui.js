@@ -353,6 +353,14 @@ let flashSixteenth       = false;
 let tickCount            = 0;
 const POLL_INTERVAL  = 4;
 
+/* Per-tick scene state cache — computed once at top of tick(), O(1) lookup in LED update fns */
+let cachedSceneAllPlaying = new Array(16).fill(false);
+let cachedSceneAllQueued  = new Array(16).fill(false);
+
+/* LED send cache — skip move_midi_internal_send when color unchanged */
+const lastSentNoteLED     = new Array(128).fill(-1);
+const lastSentButtonLED   = new Array(128).fill(-1);
+
 /* ------------------------------------------------------------------ */
 /* Parameter bank state                                                 */
 /* ------------------------------------------------------------------ */
@@ -569,6 +577,7 @@ function installFlagsWrap() {
         const hit = f & SEQ8_NAV_FLAGS;
         if (hit && wrap._active) {
             ledInitComplete = false;
+            invalidateLEDCache();
             clearAllLEDs();
             if (typeof shadow_clear_ui_flags === 'function') shadow_clear_ui_flags(hit);
             return f & ~SEQ8_NAV_FLAGS;
@@ -832,13 +841,30 @@ function sceneAllQueued(sceneIdx) {
     return hasAny;
 }
 
+function cachedSetLED(note, color) {
+    if (lastSentNoteLED[note] === color) return;
+    lastSentNoteLED[note] = color;
+    setLED(note, color);
+}
+
+function cachedSetButtonLED(cc, color) {
+    if (lastSentButtonLED[cc] === color) return;
+    lastSentButtonLED[cc] = color;
+    setButtonLED(cc, color);
+}
+
+function invalidateLEDCache() {
+    lastSentNoteLED.fill(-1);
+    lastSentButtonLED.fill(-1);
+}
+
 function updateSceneMapLEDs() {
     if (!ledInitComplete) return;
     for (let i = 0; i < 16; i++) {
         let color;
-        if (sceneNonEmpty(i) && sceneAllPlaying(i)) {
+        if (sceneNonEmpty(i) && cachedSceneAllPlaying[i]) {
             color = White;
-        } else if (sceneNonEmpty(i) && sceneAllQueued(i)) {
+        } else if (sceneNonEmpty(i) && cachedSceneAllQueued[i]) {
             color = (!playing || flashSixteenth) ? White : LED_OFF;
         } else {
             const group = Math.floor(i / 4);
@@ -877,7 +903,7 @@ function updateSessionLEDs() {
             } else {
                 color = TRACK_DIM_COLORS[t];
             }
-            setLED(note, color);
+            cachedSetLED(note, color);
         }
     }
 }
@@ -894,7 +920,7 @@ function updateTrackLEDs() {
             const inHeld   = heldStep >= 0 && heldStepNotes.indexOf(pitch) >= 0;
             color = (sounding || inHeld) ? White
                   : (padNoteMap[i] % 12 === padKey ? rootColor : DarkGrey);
-            setLED(TRACK_PAD_BASE + i, color);
+            cachedSetLED(TRACK_PAD_BASE + i, color);
         }
     }
 
@@ -905,9 +931,9 @@ function updateTrackLEDs() {
         if (sessionView) {
             if (!sceneNonEmpty(sceneIdx)) {
                 color = LED_OFF;
-            } else if (sceneAllPlaying(sceneIdx)) {
+            } else if (cachedSceneAllPlaying[sceneIdx]) {
                 color = White;
-            } else if (sceneAllQueued(sceneIdx)) {
+            } else if (cachedSceneAllQueued[sceneIdx]) {
                 color = (!playing || flashSixteenth) ? White : LED_OFF;
             } else {
                 color = LED_OFF;
@@ -934,7 +960,7 @@ function updateTrackLEDs() {
                 color = DarkGrey;
             }
         }
-        setButtonLED(40 + idx, color);
+        cachedSetButtonLED(40 + idx, color);
     }
 }
 
@@ -1191,6 +1217,7 @@ globalThis.init = function () {
     computePadNoteMap();
 
     ledInitComplete = false;
+    invalidateLEDCache();
     ledInitQueue    = buildLedInitQueue();
     ledInitIndex    = 0;
 
@@ -1267,6 +1294,7 @@ globalThis.tick = function () {
                 (tickCount - noteSessionPressedTick) >= NOTE_SESSION_HOLD_TICKS) {
             noteSessionPressedTick = -1;
             sessionOverlayHeld = true;
+            invalidateLEDCache();
             overviewCache = Array.from({length: NUM_TRACKS}, function(_, t) {
                 return Array.from({length: NUM_CLIPS}, function(_, c) {
                     return clipHasContent(t, c);
@@ -1279,6 +1307,12 @@ globalThis.tick = function () {
             recordCaptureStep    = -1;
             recordCaptureClip    = -1;
             recordCaptureEndTick = -1;
+        }
+
+        /* Refresh scene state cache for O(1) lookups in LED update functions */
+        for (let _i = 0; _i < 16; _i++) {
+            cachedSceneAllPlaying[_i] = sceneAllPlaying(_i);
+            cachedSceneAllQueued[_i]  = sceneAllQueued(_i);
         }
 
         /* Transport LEDs */
@@ -1456,10 +1490,12 @@ globalThis.onMidiMessageInternal = function (data) {
                 if (sessionOverlayHeld) {
                     sessionOverlayHeld = false;
                     overviewCache = null;
+                    invalidateLEDCache();
                     forceRedraw();
                 } else if (noteSessionPressedTick >= 0) {
                     /* Tap: toggle view */
                     sessionView = !sessionView;
+                    invalidateLEDCache();
                     heldStepBtn        = -1;
                     heldStep           = -1;
                     heldStepNotes      = [];
@@ -1497,6 +1533,7 @@ globalThis.onMidiMessageInternal = function (data) {
             } else if (shiftHeld) {
                 removeFlagsWrap();
                 ledInitComplete = false;
+                invalidateLEDCache();
                 clearAllLEDs();
                 for (let _i = 0; _i < 4; _i++) setButtonLED(40 + _i, LED_OFF);
                 if (typeof host_hide_module === 'function') host_hide_module();
