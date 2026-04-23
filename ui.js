@@ -408,6 +408,8 @@ const STRETCH_BLOCKED_TICKS = 294;  /* ~1500ms at 196Hz */
 let trackOctave = new Array(NUM_TRACKS).fill(0);  /* per-track live pad octave shift, -4..+4 */
 let octaveOverlayEndTick = -1;                    /* tickCount deadline for octave overlay; -1 = inactive */
 const OCTAVE_OVERLAY_TICKS = 196;                 /* ~1000ms at 196Hz */
+let screenDirty = true;   /* true = OLED must redraw this tick */
+let lastBlinkOn = null;   /* tracks session overview blink state for dirty detection */
 
 /* bankParams[track][bankIdx][knobIdx] = integer value (JS-authoritative).
  * Initialized from BANKS defaults; refreshed from DSP on bank select. */
@@ -437,9 +439,10 @@ let deleteHeld         = false; /* true while Delete (CC 119) is held */
 /* Global menu state (Phase 5q) */
 let globalMenuOpen  = false;
 let globalMenuItems = null;
-let globalMenuState = null;
-let globalMenuStack = null;
-let bpmWasEditing   = false;
+let globalMenuState       = null;
+let globalMenuStack       = null;
+let bpmWasEditing         = false;
+let lastSentMenuEditValue = null;  /* dedup: only send set_param when edit value changes */
 
 /* Session overview overlay (hold CC 50) */
 let noteSessionPressedTick  = -1;    /* tickCount when CC 50 pressed; -1 = not pending */
@@ -524,11 +527,13 @@ function disarmRecord() {
 }
 
 function openGlobalMenu() {
-    globalMenuItems = buildGlobalMenuItems();
-    globalMenuState = createMenuState();
-    globalMenuStack = createMenuStack();
-    globalMenuOpen  = true;
-    jogTouched      = false;
+    globalMenuItems       = buildGlobalMenuItems();
+    globalMenuState       = createMenuState();
+    globalMenuStack       = createMenuStack();
+    globalMenuOpen        = true;
+    lastSentMenuEditValue = null;
+    screenDirty           = true;
+    jogTouched            = false;
 }
 
 
@@ -993,6 +998,7 @@ function updateTrackLEDs() {
 }
 
 function forceRedraw() {
+    screenDirty = true;
     if (!ledInitComplete) return;
     if (sessionView) {
         updateSessionLEDs();
@@ -1090,32 +1096,24 @@ function drawUI() {
 
     /* Compress-limit override: highest priority for ~1500ms after a blocked compress */
     if (stretchBlockedEndTick >= 0) {
-        if (tickCount >= stretchBlockedEndTick) {
-            stretchBlockedEndTick = -1;
-        } else {
-            print(4, 10, '[TIMING     ]', 1);
-            print(4, 22, 'Beat Stretch', 1);
-            print(4, 34, 'COMPRESS LIMIT', 1);
-            return;
-        }
+        print(4, 10, '[TIMING     ]', 1);
+        print(4, 22, 'Beat Stretch', 1);
+        print(4, 34, 'COMPRESS LIMIT', 1);
+        return;
     }
 
     /* Octave overlay: ~1000ms after Up/Down octave shift */
     if (octaveOverlayEndTick >= 0) {
-        if (tickCount >= octaveOverlayEndTick) {
-            octaveOverlayEndTick = -1;
-        } else {
-            const ac         = effectiveClip(activeTrack);
-            const page       = trackCurrentPage[activeTrack];
-            const totalPages = Math.max(1, Math.ceil(clipLength[activeTrack][ac] / 16));
-            const oct        = trackOctave[activeTrack];
-            print(4, 10, 'TR' + (activeTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac] +
-                         '  PG ' + (page + 1) + '/' + totalPages, 1);
-            print(4, 22, 'KNOB: [' + BANKS[activeBank[activeTrack]].name + ']', 1);
-            print(4, 34, 'Octave: ' + (oct > 0 ? '+' + oct : String(oct)), 1);
-            print(4, 46, '1 2 3 4 5 6 7 8', 1);
-            return;
-        }
+        const ac         = effectiveClip(activeTrack);
+        const page       = trackCurrentPage[activeTrack];
+        const totalPages = Math.max(1, Math.ceil(clipLength[activeTrack][ac] / 16));
+        const oct        = trackOctave[activeTrack];
+        print(4, 10, 'TR' + (activeTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac] +
+                     '  PG ' + (page + 1) + '/' + totalPages, 1);
+        print(4, 22, 'KNOB: [' + BANKS[activeBank[activeTrack]].name + ']', 1);
+        print(4, 34, 'Octave: ' + (oct > 0 ? '+' + oct : String(oct)), 1);
+        print(4, 46, '1 2 3 4 5 6 7 8', 1);
+        return;
     }
 
     /* Step edit: show assigned notes and step identity */
@@ -1255,15 +1253,22 @@ globalThis.init = function () {
 globalThis.tick = function () {
     tickCount++;
 
-    /* Real-time preview while editing any global menu parameter */
+    /* Real-time preview while editing any global menu parameter.
+     * Only send set_param when the edit value actually changes — avoids flooding
+     * the DSP param queue (which would starve tN_launch_clip / transport commands). */
     if (globalMenuOpen && globalMenuState && globalMenuItems) {
         const item = globalMenuItems[globalMenuState.selectedIndex];
         if (item && globalMenuState.editing && globalMenuState.editValue !== null) {
-            if (item.set) item.set(globalMenuState.editValue);
+            if (item.set && globalMenuState.editValue !== lastSentMenuEditValue) {
+                item.set(globalMenuState.editValue);
+                lastSentMenuEditValue = globalMenuState.editValue;
+                screenDirty = true;
+            }
             bpmWasEditing = true;
         } else if (bpmWasEditing && !globalMenuState.editing) {
             if (item && item.set && item.get) item.set(item.get());
             bpmWasEditing = false;
+            lastSentMenuEditValue = null;
         }
     }
 
@@ -1285,15 +1290,26 @@ globalThis.tick = function () {
         drainLedInit();
     } else {
         /* Bank select display timeout: State 3 → State 4 after ~2000ms */
-        if (bankSelectTick >= 0 && (tickCount - bankSelectTick) >= BANK_DISPLAY_TICKS)
+        if (bankSelectTick >= 0 && (tickCount - bankSelectTick) >= BANK_DISPLAY_TICKS) {
             bankSelectTick = -1;
+            screenDirty = true;
+        }
+        /* Overlay expiry: clear timer here so drawUI() can gate on flag alone */
+        if (stretchBlockedEndTick >= 0 && tickCount >= stretchBlockedEndTick) {
+            stretchBlockedEndTick = -1;
+            screenDirty = true;
+        }
+        if (octaveOverlayEndTick >= 0 && tickCount >= octaveOverlayEndTick) {
+            octaveOverlayEndTick = -1;
+            screenDirty = true;
+        }
 
         if (masterVolDelta !== 0 && typeof host_get_volume === 'function' && typeof host_set_volume === 'function') {
             host_set_volume(Math.max(0, Math.min(100, host_get_volume() + masterVolDelta)));
             masterVolDelta = 0;
         }
 
-        if ((tickCount % POLL_INTERVAL) === 0) pollDSP();
+        if ((tickCount % POLL_INTERVAL) === 0) { pollDSP(); screenDirty = true; }
 
         /* Step hold detection: any pending press crossing threshold → enter step edit (one at a time) */
         if (heldStep < 0) {
@@ -1323,6 +1339,7 @@ globalThis.tick = function () {
             noteSessionPressedTick = -1;
             sessionOverlayHeld = true;
             invalidateLEDCache();
+            screenDirty = true;
             overviewCache = Array.from({length: NUM_TRACKS}, function(_, t) {
                 return Array.from({length: NUM_CLIPS}, function(_, c) {
                     return clipHasContent(t, c);
@@ -1362,8 +1379,16 @@ globalThis.tick = function () {
             }
         }
         updateTrackLEDs();
+
+        /* Session overview blink: mark dirty when animation state toggles */
+        if (sessionOverlayHeld) {
+            const blinkOn = Math.floor(tickCount / 96) % 2 === 0;
+            if (blinkOn !== lastBlinkOn) { lastBlinkOn = blinkOn; screenDirty = true; }
+        } else {
+            lastBlinkOn = null;
+        }
     }
-    drawUI();
+    if (screenDirty) { screenDirty = false; drawUI(); }
 };
 
 /* ------------------------------------------------------------------ */
@@ -1390,13 +1415,14 @@ globalThis.onMidiMessageInternal = function (data) {
     if (d1 >= 0 && d1 <= 9) {
         if ((status & 0xF0) === 0x90) {
             if (d2 === 127) {
-                if (d1 <= 7 && activeBank[activeTrack] >= 0) knobTouched = d1;
+                if (d1 <= 7 && activeBank[activeTrack] >= 0) { knobTouched = d1; screenDirty = true; }
                 if (d1 === MoveMainTouch && !globalMenuOpen && !shiftHeld) { jogTouched = true; forceRedraw(); }
             } else if (d2 < 64) {
                 if (d1 <= 7) {
                     knobTouched = -1;
                     knobLocked[d1] = false;
                     knobAccum[d1]  = 0;
+                    screenDirty = true;
                 }
                 if (d1 === MoveMainTouch && jogTouched) { jogTouched = false; forceRedraw(); }
             }
@@ -1407,6 +1433,7 @@ globalThis.onMidiMessageInternal = function (data) {
                 knobTouched = -1;
                 knobLocked[d1] = false;
                 knobAccum[d1]  = 0;
+                screenDirty = true;
             }
             if (d1 === MoveMainTouch && jogTouched) { jogTouched = false; forceRedraw(); }
             return;
@@ -1432,6 +1459,7 @@ globalThis.onMidiMessageInternal = function (data) {
                 onBack: function() { globalMenuOpen = false; },
                 shiftHeld: shiftHeld
             });
+            screenDirty = true;
             return;
         }
 
@@ -1451,6 +1479,7 @@ globalThis.onMidiMessageInternal = function (data) {
                             const sign = delta > 0 ? 1 : -1;
                             globalMenuState.editValue = opts[((idx + sign) % opts.length + opts.length) % opts.length];
                         }
+                        screenDirty = true;
                     }
                 } else {
                     handleMenuInput({
@@ -1459,6 +1488,7 @@ globalThis.onMidiMessageInternal = function (data) {
                         onBack: function() { globalMenuOpen = false; },
                         shiftHeld: shiftHeld
                     });
+                    screenDirty = true;
                 }
             } else {
                 const delta = decodeDelta(d2);
@@ -1558,6 +1588,7 @@ globalThis.onMidiMessageInternal = function (data) {
         if (d1 === MoveBack && d2 === 127) {
             if (globalMenuOpen) {
                 globalMenuOpen = false;
+                lastSentMenuEditValue = null;
                 forceRedraw();
             } else if (shiftHeld) {
                 removeFlagsWrap();
@@ -1629,6 +1660,7 @@ globalThis.onMidiMessageInternal = function (data) {
                 trackCurrentPage[activeTrack] = Math.max(0, trackCurrentPage[activeTrack] - 1);
             else
                 trackCurrentPage[activeTrack] = Math.min(totalPages - 1, trackCurrentPage[activeTrack] + 1);
+            screenDirty = true;
         }
 
         /* Up/Down: scene group nav in Session View or while overview held; octave shift in Track View */
@@ -1637,11 +1669,13 @@ globalThis.onMidiMessageInternal = function (data) {
         if (d1 === MoveUp   && d2 > 0 && !sessionView && !sessionOverlayHeld) {
             trackOctave[activeTrack] = Math.min(4, trackOctave[activeTrack] + 1);
             octaveOverlayEndTick = tickCount + OCTAVE_OVERLAY_TICKS;
+            screenDirty = true;
             if (heldStep >= 0) forceRedraw();
         }
         if (d1 === MoveDown && d2 > 0 && !sessionView && !sessionOverlayHeld) {
             trackOctave[activeTrack] = Math.max(-4, trackOctave[activeTrack] - 1);
             octaveOverlayEndTick = tickCount + OCTAVE_OVERLAY_TICKS;
+            screenDirty = true;
             if (heldStep >= 0) forceRedraw();
         }
 
@@ -1711,6 +1745,7 @@ globalThis.onMidiMessageInternal = function (data) {
                 knobAccum[knobIdx]++;
                 if (knobAccum[knobIdx] >= pm.sens) {
                     knobAccum[knobIdx] = 0;
+                    screenDirty = true;
                     if (pm.scope === 'action') {
                         const t   = activeTrack;
                         const ac  = trackActiveClip[t];
@@ -1923,6 +1958,7 @@ globalThis.onMidiMessageInternal = function (data) {
                             readBankParams(activeTrack, bankIdx);
                             bankSelectTick = tickCount;
                         }
+                        screenDirty = true;
                     }
                 } else if (shiftHeld && padIdx < NUM_TRACKS) {
                     /* Shift + bottom-row pad: select active track */
@@ -1931,6 +1967,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     seqActiveNotes.clear();
                     seqLastStep = -1;
                     seqLastClip = -1;
+                    screenDirty = true;
                 } else if (!shiftHeld) {
                     /* Live note — apply per-track octave shift, clamp 0-127 */
                     const basePitch = padNoteMap[padIdx];
