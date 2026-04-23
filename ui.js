@@ -1835,14 +1835,13 @@ globalThis.onMidiMessageInternal = function (data) {
             }
         }
 
-        /* Mute button: toggle mute/solo on active track (Track View only); Delete+Mute = clear all */
-        if (d1 === MoveMute && d2 === 127 && !sessionView) {
+        /* Mute button: Delete+Mute = clear all (both views); toggle mute/solo on active track (Track View only) */
+        if (d1 === MoveMute && d2 === 127) {
             if (deleteHeld) {
                 clearAllMuteSolo();
-            } else if (shiftHeld) {
-                setTrackSolo(activeTrack, !trackSoloed[activeTrack]);
-            } else {
-                setTrackMute(activeTrack, !trackMuted[activeTrack]);
+            } else if (!sessionView) {
+                if (shiftHeld) setTrackSolo(activeTrack, !trackSoloed[activeTrack]);
+                else           setTrackMute(activeTrack, !trackMuted[activeTrack]);
             }
         }
 
