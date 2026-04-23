@@ -64,9 +64,10 @@ import {
     drawMenuHeader, drawMenuList, menuLayoutDefaults
 } from '/data/UserData/schwung/shared/menu_layout.mjs';
 
-const LED_OFF         = 0;
-const LED_STEP_ACTIVE = 36;
-const LED_STEP_CURSOR = 127;
+const LED_OFF              = 0;
+const LED_STEP_ACTIVE      = 36;
+const LED_STEP_CURSOR      = 127;
+const SCENE_BTN_FLASH_TICKS = 40;
 const LEDS_PER_FRAME  = 8;
 const NUM_TRACKS      = 8;
 const NUM_CLIPS       = 16;
@@ -343,7 +344,8 @@ let trackActiveClip  = new Array(NUM_TRACKS).fill(0);
 let trackQueuedClip  = new Array(NUM_TRACKS).fill(-1);
 let trackClipPlaying     = new Array(NUM_TRACKS).fill(false);
 let trackWillRelaunch    = new Array(NUM_TRACKS).fill(false);
-let trackPendingPageStop = new Array(NUM_TRACKS).fill(false);
+let trackPendingPageStop  = new Array(NUM_TRACKS).fill(false);
+let sceneBtnFlashTick     = new Array(4).fill(-1); /* tickCount of last scene btn press; -1 = none */
 let playing              = false;
 let activeTrack      = 0;
 let sessionView      = false;
@@ -356,6 +358,7 @@ const POLL_INTERVAL  = 4;
 /* Per-tick scene state cache — computed once at top of tick(), O(1) lookup in LED update fns */
 let cachedSceneAllPlaying = new Array(16).fill(false);
 let cachedSceneAllQueued  = new Array(16).fill(false);
+let cachedSceneAnyPlaying = new Array(16).fill(false);
 
 /* LED send cache — skip move_midi_internal_send when color unchanged */
 const lastSentNoteLED     = new Array(128).fill(-1);
@@ -843,6 +846,13 @@ function sceneAllPlaying(sceneIdx) {
     return hasAny;
 }
 
+function sceneAnyPlaying(sceneIdx) {
+    for (let t = 0; t < NUM_TRACKS; t++) {
+        if (trackClipPlaying[t] && trackActiveClip[t] === sceneIdx) return true;
+    }
+    return false;
+}
+
 function sceneAllQueued(sceneIdx) {
     let hasAny = false;
     for (let t = 0; t < NUM_TRACKS; t++) {
@@ -875,16 +885,19 @@ function invalidateLEDCache() {
 function updateSceneMapLEDs() {
     if (!ledInitComplete) return;
     for (let i = 0; i < 16; i++) {
+        const inView     = i >= sceneRow && i < sceneRow + 4;
+        const anyPlaying = cachedSceneAnyPlaying[i];
         let color;
-        if (sceneNonEmpty(i) && cachedSceneAllPlaying[i]) {
+        if (inView && anyPlaying) {
+            color = flashEighth ? LED_STEP_CURSOR : LED_OFF;
+        } else if (inView) {
+            color = LED_STEP_CURSOR;
+        } else if (anyPlaying) {
+            color = flashEighth ? White : LED_OFF;
+        } else if (sceneNonEmpty(i)) {
             color = White;
-        } else if (sceneNonEmpty(i) && cachedSceneAllQueued[i]) {
-            color = (!playing || flashSixteenth) ? White : LED_OFF;
         } else {
-            const group = Math.floor(i / 4);
-            color = (i >= sceneRow && i < sceneRow + 4) ? LED_STEP_CURSOR
-                  : groupHasContent(group) ? LED_STEP_ACTIVE
-                  : LED_OFF;
+            color = LED_OFF;
         }
         setLED(16 + i, color);
     }
@@ -943,35 +956,21 @@ function updateTrackLEDs() {
         const sceneIdx = sceneRow + row;
         let color;
         if (sessionView) {
-            if (!sceneNonEmpty(sceneIdx)) {
-                color = LED_OFF;
-            } else if (cachedSceneAllPlaying[sceneIdx]) {
-                color = White;
-            } else if (cachedSceneAllQueued[sceneIdx]) {
-                color = (!playing || flashSixteenth) ? White : LED_OFF;
-            } else {
-                color = LED_OFF;
-            }
+            const sincePress = sceneBtnFlashTick[idx] >= 0 ? (tickCount - sceneBtnFlashTick[idx]) : 999;
+            color = sincePress < SCENE_BTN_FLASH_TICKS ? White : LED_OFF;
         } else {
-            const t             = activeTrack;
-            const hasContent    = clipNonEmpty[t][sceneIdx];
-            const isActiveClip  = trackActiveClip[t] === sceneIdx;
-            const isPlaying     = trackClipPlaying[t] && isActiveClip;
-            const isPendingStop = trackPendingPageStop[t] && isActiveClip;
-            const isQueued      = trackQueuedClip[t] === sceneIdx;
-            const isWillRelaunch = trackWillRelaunch[t] && isActiveClip;
-            if (isPlaying && isPendingStop) {
-                color = (!playing || flashSixteenth) ? TRACK_DIM_COLORS[t] : LED_OFF;
-            } else if (isPlaying) {
+            const t         = activeTrack;
+            const focused   = effectiveClip(t);
+            const isFocused = sceneIdx === focused;
+            const isPlaying = trackClipPlaying[t] && trackActiveClip[t] === sceneIdx;
+            if (isFocused && isPlaying) {
                 color = flashEighth ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
-            } else if (isQueued) {
-                color = (!playing || flashSixteenth) ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
-            } else if (isWillRelaunch) {
+            } else if (isFocused) {
                 color = TRACK_COLORS[t];
-            } else if (hasContent) {
+            } else if (clipNonEmpty[t][sceneIdx]) {
                 color = TRACK_DIM_COLORS[t];
             } else {
-                color = DarkGrey;
+                color = LED_OFF;
             }
         }
         cachedSetButtonLED(40 + idx, color);
@@ -1327,6 +1326,7 @@ globalThis.tick = function () {
         for (let _i = 0; _i < 16; _i++) {
             cachedSceneAllPlaying[_i] = sceneAllPlaying(_i);
             cachedSceneAllQueued[_i]  = sceneAllQueued(_i);
+            cachedSceneAnyPlaying[_i] = sceneAnyPlaying(_i);
         }
 
         /* Transport LEDs */
@@ -1642,6 +1642,7 @@ globalThis.onMidiMessageInternal = function (data) {
                 }
                 /* In Session View: swallow — no accidental scene launch */
             } else if (sessionView) {
+                sceneBtnFlashTick[idx] = tickCount;
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('launch_scene', String(sceneRow + (3 - idx)));
             } else {
@@ -1772,16 +1773,11 @@ globalThis.onMidiMessageInternal = function (data) {
     if ((status & 0xF0) === 0x90 && d1 >= 16 && d1 <= 31 && d2 > 0) {
         const idx = d1 - 16;
         if (sessionView) {
-            if (!deleteHeld) {
-                const targetGroup = Math.floor(idx / 4);
-                if (shiftHeld) {
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('launch_scene', String(idx));
-                } else {
-                    sceneRow = targetGroup * 4;
-                }
+            if (!deleteHeld && !shiftHeld) {
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('launch_scene', String(idx));
             }
-            /* deleteHeld in Session View: swallow step buttons */
+            /* deleteHeld/shiftHeld in Session View: swallow step buttons */
         } else if (loopHeld) {
             const ac      = effectiveClip(activeTrack);
             const newLen  = (idx + 1) * 16;
@@ -1817,9 +1813,26 @@ globalThis.onMidiMessageInternal = function (data) {
                         clearClip(t, clipIdx);
                         forceRedraw();
                     } else {
-                        const clipIdx    = sceneRow + row;
+                        const clipIdx      = sceneRow + row;
                         const isActiveClip = trackActiveClip[t] === clipIdx;
-                        if (trackClipPlaying[t] && isActiveClip) {
+                        if (shiftHeld) {
+                            /* Shift+pad: focus clip in Track View; launch only if not already active */
+                            const isPlaying = trackClipPlaying[t] && isActiveClip;
+                            const isWR      = trackWillRelaunch[t] && isActiveClip;
+                            const isQueued  = trackQueuedClip[t] === clipIdx;
+                            if (!isPlaying && !isWR && !isQueued) {
+                                if (!playing) {
+                                    trackActiveClip[t]  = clipIdx;
+                                    trackCurrentPage[t] = 0;
+                                }
+                                if (typeof host_module_set_param === 'function')
+                                    host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
+                            }
+                            activeTrack = t;
+                            sessionView = false;
+                            invalidateLEDCache();
+                            forceRedraw();
+                        } else if (trackClipPlaying[t] && isActiveClip) {
                             if (trackPendingPageStop[t]) {
                                 /* Pending stop → cancel by re-launching */
                                 if (typeof host_module_set_param === 'function')
