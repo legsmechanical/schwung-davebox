@@ -364,6 +364,7 @@ let sceneBtnFlashTick     = new Array(4).fill(-1); /* tickCount of last scene bt
 let playing              = false;
 let activeTrack      = 0;
 let sessionView      = false;
+let hasInitedOnce    = false;   /* false only on first init() call in this JS session */
 let sceneRow         = 0;
 let flashEighth          = false;
 let flashSixteenth       = false;
@@ -1281,6 +1282,8 @@ globalThis.init = function () {
 
         syncClipsFromDsp();
     }
+
+    if (!hasInitedOnce) { sessionView = true; hasInitedOnce = true; }
 
     computePadNoteMap();
 
