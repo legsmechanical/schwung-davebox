@@ -1644,6 +1644,10 @@ globalThis.onMidiMessageInternal = function (data) {
                         host_module_set_param('t' + t + '_deactivate', '1');
                 } else {
                     /* Launch: legato if playing, queued if not */
+                    if (!playing) {
+                        trackActiveClip[t]  = clipIdx;
+                        trackCurrentPage[t] = 0;
+                    }
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
                 }
@@ -1812,6 +1816,10 @@ globalThis.onMidiMessageInternal = function (data) {
                         } else {
                             /* Launch clip for this track */
                             activeTrack = t;
+                            if (!playing) {
+                                trackActiveClip[t]  = clipIdx;
+                                trackCurrentPage[t] = 0;
+                            }
                             if (typeof host_module_set_param === 'function')
                                 host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
                         }
