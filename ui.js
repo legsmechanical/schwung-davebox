@@ -463,7 +463,8 @@ let recordCaptureClip   = -1;    /* clip index pinned for chord capture */
 let recordCaptureEndTick = -1;   /* tickCount when capture window expires */
 const RECORD_CAPTURE_TICKS = 8;  /* ~40ms at 196Hz: chord notes within this window land on same step */
 
-let currentSetUuid = '';         /* UUID of the active Move set; polled in tick() for change detection */
+let currentSetUuid   = '';        /* UUID of the active Move set; polled in tick() for change detection */
+let lastDspInstanceId = '';       /* DSP instance_nonce from last poll; change = hot-reload detected */
 
 /* ------------------------------------------------------------------ */
 /* Utility                                                              */
@@ -1246,14 +1247,7 @@ globalThis.init = function () {
 
     console.log('SEQ8 init: ' + (p === '1' ? 'RESUMED playing' : 'FRESH/stopped'));
 
-    /* Set per-set state path; trigger load only on fresh DSP start (not reconnect) */
-    if (typeof host_module_set_param === 'function') {
-        const uuid = readActiveSetUuid();
-        if (!uuid) console.log('SEQ8: active_set.txt unreadable or missing UUID, using fallback state path');
-        currentSetUuid = uuid;
-        host_module_set_param('state_path', uuidToStatePath(uuid));
-        if (!dspSurvived) host_module_set_param('state_load', '1');
-    }
+    currentSetUuid = readActiveSetUuid();
 
     if (typeof host_module_get_param === 'function') {
         playing = dspSurvived;
@@ -1285,13 +1279,31 @@ globalThis.init = function () {
 globalThis.tick = function () {
     tickCount++;
 
-    /* Set change detection: poll active_set.txt every 100 ticks (~0.5s).
-     * On UUID change: save old state, load new set's state, resync JS mirrors. */
+    /* Poll every 100 ticks (~0.5s): detect set change and DSP hot-reload. */
     if ((tickCount % 100) === 0 && typeof host_read_file === 'function' &&
             typeof host_module_set_param === 'function') {
+
+        /* DSP hot-reload detection: instance_nonce changes when new binary loads. */
+        const newInstanceId = (typeof host_module_get_param === 'function')
+            ? host_module_get_param('instance_id') : null;
+        if (newInstanceId && lastDspInstanceId !== '' && newInstanceId !== lastDspInstanceId) {
+            host_module_set_param('debug_log', 'DIAG: DSP hot-reload detected nonce=' + newInstanceId);
+            host_module_set_param('state_path', uuidToStatePath(currentSetUuid));
+            pollDSP();
+            for (let _t = 0; _t < NUM_TRACKS; _t++)
+                trackCurrentPage[_t] = Math.max(0, Math.floor(trackCurrentStep[_t] / 16));
+            syncClipsFromDsp();
+            computePadNoteMap();
+            invalidateLEDCache();
+            forceRedraw();
+        }
+        if (newInstanceId) lastDspInstanceId = newInstanceId;
+
+        /* Set change detection: UUID in active_set.txt changed. */
         const newUuid = readActiveSetUuid();
+        host_module_set_param('debug_log', 'DIAG poll: instance=' + JSON.stringify(newInstanceId) + ' uuid=' + JSON.stringify(newUuid));
         if (newUuid && newUuid !== currentSetUuid) {
-            console.log('SEQ8: set changed to ' + newUuid + ', saving old state and loading new');
+            host_module_set_param('debug_log', 'DIAG: set changed to ' + newUuid);
             host_module_set_param('save', '1');
             currentSetUuid = newUuid;
             host_module_set_param('state_path', uuidToStatePath(newUuid));

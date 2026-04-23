@@ -20,6 +20,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <time.h>
+#include <sys/stat.h>
 
 #include "host/plugin_api_v1.h"
 
@@ -209,6 +211,9 @@ typedef struct {
 
     /* State file path — set by JS via set_param("state_path") before first load/save */
     char state_path[256];
+
+    /* Monotonic nonce: unique per create_instance call; JS polls to detect DSP hot-reload */
+    uint32_t instance_nonce;
 } seq8_instance_t;
 
 static const host_api_v1_t *g_host = NULL;
@@ -270,7 +275,21 @@ static void json_get_steps(const char *buf, const char *key,
         steps[i] = (*p == '1') ? 1 : 0;
 }
 
+static void ensure_parent_dir(const char *path) {
+    char tmp[256];
+    char *p;
+    snprintf(tmp, sizeof(tmp), "%s", path);
+    for (p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = '\0';
+            mkdir(tmp, 0755);
+            *p = '/';
+        }
+    }
+}
+
 static void seq8_save_state(seq8_instance_t *inst) {
+    ensure_parent_dir(inst->state_path);
     FILE *fp = fopen(inst->state_path, "w");
     if (!fp) return;
     int t, c, s;
@@ -790,6 +809,26 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     inst->launch_quant = 0;   /* Now */
     strncpy(inst->state_path, SEQ8_STATE_PATH_FALLBACK, sizeof(inst->state_path) - 1);
 
+    /* Resolve per-set state path from active_set.txt */
+    {
+        char uuid[128] = {0};
+        FILE *uf = fopen("/data/UserData/schwung/active_set.txt", "r");
+        if (uf) {
+            if (fgets(uuid, sizeof(uuid), uf)) {
+                int i = (int)strlen(uuid) - 1;
+                while (i >= 0 && (uuid[i] == '\n' || uuid[i] == '\r' || uuid[i] == ' '))
+                    uuid[i--] = '\0';
+            }
+            fclose(uf);
+        }
+        if (uuid[0])
+            snprintf(inst->state_path, sizeof(inst->state_path),
+                     "/data/UserData/schwung/set_state/%s/seq8-state.json", uuid);
+    }
+
+    /* Unique nonce: JS polls this to detect DSP hot-reload */
+    inst->instance_nonce = (uint32_t)time(NULL) ^ (uint32_t)((uintptr_t)inst >> 3);
+
     int t, c;
     for (t = 0; t < NUM_TRACKS; t++) {
         inst->tracks[t].channel     = (uint8_t)t;
@@ -811,7 +850,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
         inst->tick_delta = (uint32_t)((double)MOVE_FRAMES_PER_BLOCK * init_bpm * (double)PPQN);
     }
 
-    /* State is loaded by JS after it sends state_path via set_param("state_path") + set_param("state_load") */
+    seq8_load_state(inst);
 
     {
         char szlog[128];
@@ -1567,6 +1606,8 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         return snprintf(out, out_len, "%d", inst ? (int)inst->pad_scale : 0);
     if (!strcmp(key, "version"))
         return snprintf(out, out_len, "4");
+    if (!strcmp(key, "instance_id"))
+        return snprintf(out, out_len, "%u", inst ? inst->instance_nonce : 0);
     if (!strcmp(key, "bpm")) {
         double b = (inst && inst->tracks[0].pfx.cached_bpm > 0)
                    ? inst->tracks[0].pfx.cached_bpm : (double)BPM_DEFAULT;
