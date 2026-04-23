@@ -492,12 +492,22 @@ function effectiveMute(t) {
 
 function setTrackMute(t, on) {
     trackMuted[t] = on;
+    if (on && trackSoloed[t]) {
+        trackSoloed[t] = false;
+        if (typeof host_module_set_param === 'function')
+            host_module_set_param('t' + t + '_solo', '0');
+    }
     if (typeof host_module_set_param === 'function')
         host_module_set_param('t' + t + '_mute', on ? '1' : '0');
 }
 
 function setTrackSolo(t, on) {
     trackSoloed[t] = on;
+    if (on && trackMuted[t]) {
+        trackMuted[t] = false;
+        if (typeof host_module_set_param === 'function')
+            host_module_set_param('t' + t + '_mute', '0');
+    }
     if (typeof host_module_set_param === 'function')
         host_module_set_param('t' + t + '_solo', on ? '1' : '0');
 }
