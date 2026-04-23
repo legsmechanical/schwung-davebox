@@ -977,7 +977,6 @@ static void set_param(void *instance, const char *key, const char *val) {
                 inst->count_in_ticks = 0;
                 send_panic(inst);
                 seq8_ilog(inst, "SEQ8 transport: stop");
-                seq8_save_state(inst);
             }
         } else if (!strcmp(val, "panic")) {
             int t;
@@ -999,7 +998,6 @@ static void set_param(void *instance, const char *key, const char *val) {
             inst->count_in_ticks = 0;
             send_panic(inst);
             seq8_ilog(inst, "SEQ8 transport: panic");
-            seq8_save_state(inst);
         } else if (!strcmp(val, "deactivate_all")) {
             int t;
             for (t = 0; t < NUM_TRACKS; t++) {
@@ -1078,6 +1076,11 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
 
+    if (!strcmp(key, "save")) {
+        seq8_save_state(inst);
+        return;
+    }
+
     /* --- Scene launch (global): all tracks to clip M --- */
     if (!strcmp(key, "launch_scene")) {
         int cidx = clamp_i(my_atoi(val), 0, NUM_CLIPS - 1);
@@ -1129,7 +1132,6 @@ static void set_param(void *instance, const char *key, const char *val) {
                 tr->queued_clip      = -1;
                 tr->pending_page_stop = 0;
                 tr->will_relaunch    = 0;
-                seq8_save_state(inst);
             } else {
                 /* Quantized or stopped: queue for next boundary */
                 tr->queued_clip   = (int8_t)new_cidx;
@@ -1157,7 +1159,6 @@ static void set_param(void *instance, const char *key, const char *val) {
         /* tN_channel: set MIDI channel for this track (1-indexed in, 0-indexed stored) */
         if (!strcmp(sub, "channel")) {
             tr->channel = (uint8_t)clamp_i(my_atoi(val) - 1, 0, 15);
-            seq8_save_state(inst);
             return;
         }
 
@@ -1167,7 +1168,6 @@ static void set_param(void *instance, const char *key, const char *val) {
                 tr->pfx.route = ROUTE_SCHWUNG;
             else if (!strcmp(val, "move"))
                 tr->pfx.route = ROUTE_MOVE;
-            seq8_save_state(inst);
             return;
         }
 
@@ -1198,7 +1198,6 @@ static void set_param(void *instance, const char *key, const char *val) {
                     int i, any = 0;
                     for (i = 0; i < SEQ_STEPS; i++) if (cl->steps[i]) { any = 1; break; }
                     cl->active = (uint8_t)any;
-                    seq8_save_state(inst);
                     return;
                 }
 
@@ -1232,15 +1231,13 @@ static void set_param(void *instance, const char *key, const char *val) {
                         for (i = 0; i < SEQ_STEPS; i++) if (cl->steps[i]) { any = 1; break; }
                         cl->active = (uint8_t)any;
                     }
-                    seq8_save_state(inst);
                     return;
                 }
 
                 if (!strcmp(q, "_add")) {
                     /* tN_cC_step_S_add val=<note 0-127>
                      * Add-only: no-op if note already present or step has 4 notes.
-                     * Used for overdub recording — never removes existing notes.
-                     * Skips seq8_save_state when track is recording (deferred to disarm). */
+                     * Used for overdub recording — never removes existing notes. */
                     int note = clamp_i(my_atoi(val), 0, 127);
                     int n, found = 0;
                     for (n = 0; n < (int)cl->step_note_count[sidx]; n++) {
@@ -1257,8 +1254,6 @@ static void set_param(void *instance, const char *key, const char *val) {
                             for (i = 0; i < SEQ_STEPS; i++) if (cl->steps[i]) { any = 1; break; }
                             cl->active = (uint8_t)any;
                         }
-                        if (!tr->recording)
-                            seq8_save_state(inst);
                     }
                     return;
                 }
@@ -1276,7 +1271,6 @@ static void set_param(void *instance, const char *key, const char *val) {
                         for (i = 0; i < SEQ_STEPS; i++) if (cl->steps[i]) { any = 1; break; }
                         cl->active = (uint8_t)any;
                     }
-                    seq8_save_state(inst);
                     return;
                 }
                 return;
@@ -1297,7 +1291,6 @@ static void set_param(void *instance, const char *key, const char *val) {
                     cl->step_note_count[i] = 0;
                 }
                 cl->active = 0;
-                seq8_save_state(inst);
                 return;
             }
             return;
@@ -1326,7 +1319,6 @@ static void set_param(void *instance, const char *key, const char *val) {
             } else {
                 tr->recording    = 0;
                 tr->record_armed = 0;
-                seq8_save_state(inst); /* flush deferred writes on disarm */
             }
             return;
         }
@@ -1336,7 +1328,6 @@ static void set_param(void *instance, const char *key, const char *val) {
             cl->length = (uint16_t)clamp_i(my_atoi(val), 1, SEQ_STEPS);
             if (tr->current_step >= cl->length)
                 tr->current_step = (uint16_t)(cl->length - 1);
-            seq8_save_state(inst);
             return;
         }
 
@@ -1390,7 +1381,6 @@ static void set_param(void *instance, const char *key, const char *val) {
             int i, any = 0;
             for (i = 0; i < len; i++) if (cl->steps[i]) { any = 1; break; }
             cl->active = (uint8_t)any;
-            seq8_save_state(inst);
             return;
         }
 
@@ -1495,7 +1485,6 @@ static void set_param(void *instance, const char *key, const char *val) {
                 if (cl->steps[i]) { any = 1; break; }
             cl->active = (uint8_t)any;
 
-            seq8_save_state(inst);
             return;
         }
 

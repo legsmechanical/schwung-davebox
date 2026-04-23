@@ -1597,6 +1597,7 @@ globalThis.onMidiMessageInternal = function (data) {
                 invalidateLEDCache();
                 clearAllLEDs();
                 for (let _i = 0; _i < 4; _i++) setButtonLED(40 + _i, LED_OFF);
+                if (typeof host_module_set_param === 'function') host_module_set_param('save', '1');
                 if (typeof host_hide_module === 'function') host_hide_module();
             }
         }
