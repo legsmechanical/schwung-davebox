@@ -70,6 +70,9 @@ static const int CLOCK_VALUES[NUM_CLOCK_VALUES] = {
     0, 30, 60, 80, 120, 160, 240, 320, 480, 960, 1920
 };
 
+/* QUANT_STEPS: launch quantization in steps. 0=Now(1), 1=1/16(1), 2=1/8(2), 3=1/4(4), 4=1/2(8), 5=1-bar(16) */
+static const uint32_t QUANT_STEPS[6] = {1, 1, 2, 4, 8, 16};
+
 
 /* ------------------------------------------------------------------ */
 /* Play effects structs (direct port from NoteTwist)                   */
@@ -167,7 +170,7 @@ typedef struct {
     uint8_t   recording;            /* 1 = actively recording (overdub) into active clip */
     uint8_t   clip_playing;         /* 1 = clip is actively running */
     uint8_t   will_relaunch;        /* 1 = was playing; restarts when transport plays */
-    uint8_t   pending_page_stop;    /* 1 = stop at next 16-step page boundary (current_step%16==0) */
+    uint8_t   pending_page_stop;    /* 1 = stop at next main clock bar boundary (global_tick%16==0) */
     uint8_t   record_armed;         /* 1 = set recording=1 atomically when queued clip launches */
 } seq8_track_t;
 
@@ -197,6 +200,7 @@ typedef struct {
     /* Live pad input: global key/scale stored for state persistence */
     uint8_t  pad_key;               /* root key 0-11, default 9 (A) */
     uint8_t  pad_scale;             /* 0=minor, 1=major */
+    uint8_t  launch_quant;          /* 0=Now,1=1/16,2=1/8,3=1/4,4=1/2,5=1-bar; default 5 */
 
     /* External MIDI queue: ROUTE_MOVE note events buffered here; JS drains each tick */
     ext_msg_t ext_queue[EXT_QUEUE_SIZE];
@@ -778,8 +782,9 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
                            ? (float)g_host->sample_rate : 44100.0f;
     inst->log_fp         = fopen(SEQ8_LOG_PATH, "a");
 
-    inst->pad_key   = 9;   /* A */
-    inst->pad_scale = 0;   /* minor */
+    inst->pad_key      = 9;   /* A */
+    inst->pad_scale    = 0;   /* minor */
+    inst->launch_quant = 5;   /* 1-bar */
 
     int t, c;
     for (t = 0; t < NUM_TRACKS; t++) {
@@ -1045,20 +1050,60 @@ static void set_param(void *instance, const char *key, const char *val) {
         inst->pad_scale = (uint8_t)clamp_i(my_atoi(val), 0, 1);
         return;
     }
+    if (!strcmp(key, "launch_quant")) {
+        uint8_t old_q = inst->launch_quant;
+        uint8_t new_q = (uint8_t)clamp_i(my_atoi(val), 0, 5);
+        inst->launch_quant = new_q;
+        /* Switching to Now while transport running: fire all queued clips immediately */
+        if (new_q == 0 && old_q != 0 && inst->playing) {
+            int t;
+            for (t = 0; t < NUM_TRACKS; t++) {
+                seq8_track_t *tr2 = &inst->tracks[t];
+                if (tr2->queued_clip >= 0) {
+                    uint16_t newlen = tr2->clips[tr2->queued_clip].length;
+                    tr2->current_step     = tr2->clip_playing
+                                           ? (uint16_t)(tr2->current_step % newlen)
+                                           : (uint16_t)(inst->global_tick % newlen);
+                    tr2->active_clip      = (uint8_t)tr2->queued_clip;
+                    tr2->clip_playing     = 1;
+                    tr2->queued_clip      = -1;
+                    tr2->pending_page_stop = 0;
+                }
+            }
+        }
+        return;
+    }
     if (!strcmp(key, "debug_log")) {
         seq8_ilog(inst, val);
         return;
     }
 
-    /* --- Scene launch (global): queue all tracks to clip M at next bar/page boundary --- */
+    /* --- Scene launch (global): all tracks to clip M --- */
     if (!strcmp(key, "launch_scene")) {
         int cidx = clamp_i(my_atoi(val), 0, NUM_CLIPS - 1);
         int t;
-        for (t = 0; t < NUM_TRACKS; t++) {
-            if (inst->tracks[t].clip_playing)
-                inst->tracks[t].pending_page_stop = 1;
-            inst->tracks[t].queued_clip   = (int8_t)cidx;
-            inst->tracks[t].will_relaunch = 0;
+        if (inst->launch_quant == 0 && inst->playing) {
+            /* Now + transport running: fire per-track immediately */
+            for (t = 0; t < NUM_TRACKS; t++) {
+                seq8_track_t *tr2 = &inst->tracks[t];
+                uint16_t newlen = tr2->clips[cidx].length;
+                tr2->current_step     = tr2->clip_playing
+                                       ? (uint16_t)(tr2->current_step % newlen)
+                                       : (uint16_t)(inst->global_tick % newlen);
+                tr2->active_clip      = (uint8_t)cidx;
+                tr2->clip_playing     = 1;
+                tr2->queued_clip      = -1;
+                tr2->pending_page_stop = 0;
+                tr2->will_relaunch    = 0;
+            }
+        } else {
+            /* Quantized or stopped: queue at next boundary */
+            for (t = 0; t < NUM_TRACKS; t++) {
+                if (inst->tracks[t].clip_playing)
+                    inst->tracks[t].pending_page_stop = 1;
+                inst->tracks[t].queued_clip   = (int8_t)cidx;
+                inst->tracks[t].will_relaunch = 0;
+            }
         }
         seq8_ilog(inst, "SEQ8 launch_scene");
         return;
@@ -1070,17 +1115,23 @@ static void set_param(void *instance, const char *key, const char *val) {
         const char *sub = key + 3;
         seq8_track_t *tr = &inst->tracks[tidx];
 
-        /* tN_launch_clip: legato if playing, else queue at next bar boundary */
+        /* tN_launch_clip: Now=immediate, quantized=queue at next boundary */
         if (!strcmp(sub, "launch_clip")) {
             int new_cidx = clamp_i(my_atoi(val), 0, NUM_CLIPS - 1);
-            if (tr->clip_playing) {
-                uint16_t newlen      = tr->clips[new_cidx].length;
-                tr->current_step     = (uint16_t)(tr->current_step % newlen);
+            if (inst->launch_quant == 0 && (tr->clip_playing || inst->playing)) {
+                /* Now + transport active: fire immediately */
+                uint16_t newlen = tr->clips[new_cidx].length;
+                tr->current_step     = tr->clip_playing
+                                       ? (uint16_t)(tr->current_step % newlen)
+                                       : (uint16_t)(inst->global_tick % newlen);
                 tr->active_clip      = (uint8_t)new_cidx;
+                tr->clip_playing     = 1;
                 tr->queued_clip      = -1;
                 tr->pending_page_stop = 0;
+                tr->will_relaunch    = 0;
                 seq8_save_state(inst);
             } else {
+                /* Quantized or stopped: queue for next boundary */
                 tr->queued_clip   = (int8_t)new_cidx;
                 tr->will_relaunch = 0;
             }
@@ -1727,9 +1778,9 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
             clip_t *cl = &tr->clips[tr->active_clip];
 
             if (inst->tick_in_step == 0) {
-                /* Bar boundary: launch queued clip (only if not waiting for page stop) */
+                /* Quantized boundary: launch queued clip (only if not waiting for page stop) */
                 if (tr->queued_clip >= 0 && !tr->pending_page_stop &&
-                    inst->global_tick % 16 == 0) {
+                    inst->global_tick % QUANT_STEPS[inst->launch_quant] == 0) {
                     if (tr->note_active) {
                         int n;
                         for (n = 0; n < (int)tr->pending_note_count; n++)
@@ -1748,8 +1799,10 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                     cl = &tr->clips[tr->active_clip];
                 }
 
-                /* Page stop: silence at next 16-step boundary; simultaneously launch queued */
-                if (tr->pending_page_stop && tr->current_step % 16 == 0) {
+                /* Page stop: silence at next main clock bar boundary (global_tick % 16).
+                 * Anchored to main clock, not track step page, so correctness is maintained
+                 * if per-track step resolution is introduced in the future. */
+                if (tr->pending_page_stop && inst->global_tick % 16 == 0) {
                     tr->pending_page_stop = 0;
                     tr->clip_playing = 0;
                     if (tr->note_active) {

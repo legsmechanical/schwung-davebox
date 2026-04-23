@@ -250,6 +250,9 @@ let stubSwingRes = 0;
 let stubInputVel = 0;
 let stubInpQuant = false;
 
+/* Launch quantization: 0=Now, 1=1/16, 2=1/8, 3=1/4, 4=1/2, 5=1-bar; default 5 */
+let launchQuant = 5;
+
 function buildGlobalMenuItems() {
     return [
         createValue('BPM', {
@@ -282,6 +285,18 @@ function buildGlobalMenuItems() {
             },
             options: [0, 1],
             format: function(v) { return SCALE_NAMES[v] || 'Minor'; }
+        }),
+        createEnum('Launch', {
+            get: function() { return launchQuant; },
+            set: function(v) {
+                launchQuant = v;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('launch_quant', String(v));
+            },
+            options: [0, 1, 2, 3, 4, 5],
+            format: function(v) {
+                return ['Now','1/16','1/8','1/4','1/2','1-bar'][v] || '1-bar';
+            }
         }),
         createValue('Swing Amt', {
             get: function() { return stubSwingAmt; },
