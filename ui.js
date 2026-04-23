@@ -532,6 +532,20 @@ function disarmRecord() {
     setButtonLED(MoveRec, LED_OFF);
 }
 
+/* Move recording to a different track while staying armed. No-op if not actively recording. */
+function handoffRecordingToTrack(newTrack) {
+    if (!recordArmed || recordCountingIn || newTrack === recordArmedTrack) return;
+    const old = recordArmedTrack;
+    recordCaptureStep    = -1;
+    recordCaptureClip    = -1;
+    recordCaptureEndTick = -1;
+    recordArmedTrack     = newTrack;
+    if (typeof host_module_set_param === 'function') {
+        if (old >= 0) host_module_set_param('t' + old + '_recording', '0');
+        host_module_set_param('t' + newTrack + '_recording', '1');
+    }
+}
+
 function openGlobalMenu() {
     globalMenuItems       = buildGlobalMenuItems();
     globalMenuState       = createMenuState();
@@ -1588,6 +1602,7 @@ globalThis.onMidiMessageInternal = function (data) {
                         /* Track View + Shift: step active track 0–7, clamp at ends */
                         const next = Math.min(NUM_TRACKS - 1, Math.max(0, activeTrack + delta));
                         if (next !== activeTrack) {
+                            handoffRecordingToTrack(next);
                             activeTrack = next;
                             computePadNoteMap();
                             seqActiveNotes.clear();
@@ -1964,6 +1979,7 @@ globalThis.onMidiMessageInternal = function (data) {
                                 if (typeof host_module_set_param === 'function')
                                     host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
                             }
+                            handoffRecordingToTrack(t);
                             activeTrack = t;
                             sessionView = false;
                             invalidateLEDCache();
@@ -1988,6 +2004,7 @@ globalThis.onMidiMessageInternal = function (data) {
                                 host_module_set_param('t' + t + '_deactivate', '1');
                         } else {
                             /* Launch clip for this track */
+                            handoffRecordingToTrack(t);
                             activeTrack = t;
                             if (!playing) {
                                 trackActiveClip[t]  = clipIdx;
@@ -2048,6 +2065,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     }
                 } else if (shiftHeld && padIdx < NUM_TRACKS) {
                     /* Shift + bottom-row pad: select active track */
+                    handoffRecordingToTrack(padIdx);
                     activeTrack = padIdx;
                     computePadNoteMap();
                     seqActiveNotes.clear();
