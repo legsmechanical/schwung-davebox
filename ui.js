@@ -774,7 +774,8 @@ function liveSendNote(t, type, pitch, vel) {
 
 function updateStepLEDs() {
     if (!ledInitComplete) return;
-    const ac = trackActiveClip[activeTrack];
+    const qc = trackQueuedClip[activeTrack];
+    const ac = (!playing && qc >= 0) ? qc : trackActiveClip[activeTrack];
 
     if (loopHeld) {
         const pagesInUse = Math.max(1, Math.ceil(clipLength[activeTrack][ac] / 16));
@@ -1647,8 +1648,6 @@ globalThis.onMidiMessageInternal = function (data) {
                     if (!playing) {
                         trackActiveClip[t]  = clipIdx;
                         trackCurrentPage[t] = 0;
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + t + '_active_clip', String(clipIdx));
                     }
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
@@ -1821,8 +1820,6 @@ globalThis.onMidiMessageInternal = function (data) {
                             if (!playing) {
                                 trackActiveClip[t]  = clipIdx;
                                 trackCurrentPage[t] = 0;
-                                if (typeof host_module_set_param === 'function')
-                                    host_module_set_param('t' + t + '_active_clip', String(clipIdx));
                             }
                             if (typeof host_module_set_param === 'function')
                                 host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
