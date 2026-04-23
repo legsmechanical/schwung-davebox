@@ -1324,6 +1324,26 @@ function syncClipsFromDsp() {
     if (sp !== null && sp !== undefined) padScale = parseInt(sp, 10) | 0;
 }
 
+function syncMuteSoloFromDsp() {
+    if (typeof host_module_get_param !== 'function') return;
+    const muteStr = host_module_get_param('mute_state');
+    const soloStr = host_module_get_param('solo_state');
+    if (muteStr) for (let _t = 0; _t < NUM_TRACKS; _t++) trackMuted[_t]  = muteStr[_t]  === '1';
+    if (soloStr) for (let _t = 0; _t < NUM_TRACKS; _t++) trackSoloed[_t] = soloStr[_t] === '1';
+    for (let _n = 0; _n < 16; _n++) {
+        const snap = host_module_get_param('snap_' + _n);
+        if (snap && snap.length >= 17) {
+            snapshots[_n] = {
+                mute: Array.from(snap.substring(0, 8)).map(function(c) { return c === '1'; }),
+                solo: Array.from(snap.substring(9, 17)).map(function(c) { return c === '1'; })
+            };
+        } else {
+            snapshots[_n] = null;
+        }
+    }
+    screenDirty = true;
+}
+
 globalThis.init = function () {
     installConsoleOverride('SEQ8');
 
@@ -1364,6 +1384,7 @@ globalThis.init = function () {
         }
 
         syncClipsFromDsp();
+        syncMuteSoloFromDsp();
     }
 
     if (!hasInitedOnce) { sessionView = true; hasInitedOnce = true; }
@@ -1400,6 +1421,7 @@ globalThis.tick = function () {
             for (let _t = 0; _t < NUM_TRACKS; _t++)
                 trackCurrentPage[_t] = Math.max(0, Math.floor(trackCurrentStep[_t] / 16));
             syncClipsFromDsp();
+            syncMuteSoloFromDsp();
             computePadNoteMap();
             invalidateLEDCache();
             forceRedraw();
@@ -1415,6 +1437,7 @@ globalThis.tick = function () {
             for (let _t = 0; _t < NUM_TRACKS; _t++)
                 trackCurrentPage[_t] = Math.max(0, Math.floor(trackCurrentStep[_t] / 16));
             syncClipsFromDsp();
+            syncMuteSoloFromDsp();
             computePadNoteMap();
             invalidateLEDCache();
             forceRedraw();

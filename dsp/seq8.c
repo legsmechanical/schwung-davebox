@@ -315,7 +315,7 @@ static void seq8_save_state(seq8_instance_t *inst) {
     FILE *fp = fopen(inst->state_path, "w");
     if (!fp) return;
     int t, c, s;
-    fprintf(fp, "{\"v\":3,\"playing\":%d", inst->playing);
+    fprintf(fp, "{\"v\":4,\"playing\":%d", inst->playing);
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
     for (t = 0; t < NUM_TRACKS; t++)
@@ -355,6 +355,26 @@ static void seq8_save_state(seq8_instance_t *inst) {
             }
         }
     }
+    /* Mute/solo state */
+    fprintf(fp, ",\"mute\":\"");
+    for (t = 0; t < NUM_TRACKS; t++) fputc(inst->mute[t] ? '1' : '0', fp);
+    fputc('"', fp);
+    fprintf(fp, ",\"solo\":\"");
+    for (t = 0; t < NUM_TRACKS; t++) fputc(inst->solo[t] ? '1' : '0', fp);
+    fputc('"', fp);
+    /* Snapshots — only emit occupied slots */
+    {
+        int n;
+        for (n = 0; n < 16; n++) {
+            if (!inst->snap_valid[n]) continue;
+            fprintf(fp, ",\"sn%d_m\":\"", n);
+            for (t = 0; t < NUM_TRACKS; t++) fputc(inst->snap_mute[n][t] ? '1' : '0', fp);
+            fputc('"', fp);
+            fprintf(fp, ",\"sn%d_s\":\"", n);
+            for (t = 0; t < NUM_TRACKS; t++) fputc(inst->snap_solo[n][t] ? '1' : '0', fp);
+            fputc('"', fp);
+        }
+    }
     fprintf(fp, "}");
     fclose(fp);
 }
@@ -373,8 +393,8 @@ static void seq8_load_state(seq8_instance_t *inst) {
     if (!n) { free(buf); remove(inst->state_path); return; }
     buf[n] = '\0';
 
-    /* Version gate: delete and ignore any state file that isn't v=3. */
-    if (json_get_int(buf, "v", -1) != 3) {
+    /* Version gate: delete and ignore any state file that isn't v=4. */
+    if (json_get_int(buf, "v", -1) != 4) {
         free(buf);
         remove(inst->state_path);
         seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
@@ -449,6 +469,23 @@ static void seq8_load_state(seq8_instance_t *inst) {
                     }
                 }
             }
+        }
+    }
+    /* Mute/solo state */
+    json_get_steps(buf, "mute", inst->mute, NUM_TRACKS);
+    json_get_steps(buf, "solo", inst->solo, NUM_TRACKS);
+    /* Snapshots */
+    {
+        int n;
+        char search[32], skey[12];
+        for (n = 0; n < 16; n++) {
+            snprintf(search, sizeof(search), "\"sn%d_m\":\"", n);
+            if (!strstr(buf, search)) continue;
+            snprintf(skey, sizeof(skey), "sn%d_m", n);
+            json_get_steps(buf, skey, inst->snap_mute[n], NUM_TRACKS);
+            snprintf(skey, sizeof(skey), "sn%d_s", n);
+            json_get_steps(buf, skey, inst->snap_solo[n], NUM_TRACKS);
+            inst->snap_valid[n] = 1;
         }
     }
     free(buf);
@@ -1912,6 +1949,38 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         }
 
         return pfx_get(tr, sub, out, out_len);
+    }
+
+    /* mute_state / solo_state: 8-char binary strings */
+    if (!strcmp(key, "mute_state")) {
+        int t;
+        for (t = 0; t < NUM_TRACKS && t < out_len - 1; t++)
+            out[t] = inst->mute[t] ? '1' : '0';
+        out[NUM_TRACKS] = '\0';
+        return NUM_TRACKS;
+    }
+    if (!strcmp(key, "solo_state")) {
+        int t;
+        for (t = 0; t < NUM_TRACKS && t < out_len - 1; t++)
+            out[t] = inst->solo[t] ? '1' : '0';
+        out[NUM_TRACKS] = '\0';
+        return NUM_TRACKS;
+    }
+    /* snap_N: "m0..m7 s0..s7" (17 chars) if valid, else "" */
+    if (key[0] == 's' && key[1] == 'n' && key[2] >= '0' && key[2] <= '9') {
+        int n = 0, t, pos = 0;
+        const char *p = key + 2;
+        while (*p >= '0' && *p <= '9') n = n * 10 + (*p++ - '0');
+        if (*p == '\0' && n >= 0 && n < 16) {
+            if (!inst->snap_valid[n]) { out[0] = '\0'; return 0; }
+            for (t = 0; t < NUM_TRACKS && pos < out_len - 1; t++)
+                out[pos++] = inst->snap_mute[n][t] ? '1' : '0';
+            if (pos < out_len - 1) out[pos++] = ' ';
+            for (t = 0; t < NUM_TRACKS && pos < out_len - 1; t++)
+                out[pos++] = inst->snap_solo[n][t] ? '1' : '0';
+            out[pos] = '\0';
+            return pos;
+        }
     }
 
     return -1;
