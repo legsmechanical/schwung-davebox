@@ -6,19 +6,19 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 
 **Phase 5 — 8 tracks, 256 steps, arpeggiator, Track View.** All subphases complete through 5r:
 
-5a live pad input · 5b poll throttling · 5c clip length · 5d Track View banks + beat stretch + clock shift + octave shift · 5e per-step gate time · 5f polyphonic step notes (4 per step) · 5g melodic step entry UI · 5h tap vs hold step buttons · 5i phantom notes + sparse state fix (state v=2) · 5j Delete key combos · 5k atomic step/clip clear DSP params · 5l playback head indicator + chord-to-step input · 5m Session Overview overlay · 5n real-time recording + count-in · 5o recording fixes (toggle, count-in redesign, silent notes race fix) · 5q global menu via platform framework + jog click CC 3 fix + BPM editable (real-time, linear jog) + count-in duration fix · 5r clip deactivation (stop-at-end) + Session View jog row scroll · 5s clip-launch-rework: 5-state clip model, bar-boundary launch, page-stop, scene queuing, Shift+Play=deactivate_all, Delete+Play=panic, will_relaunch persistence (state v=3)
+5a live pad input · 5b poll throttling · 5c clip length · 5d Track View banks + beat stretch + clock shift + octave shift · 5e per-step gate time · 5f polyphonic step notes (4 per step) · 5g melodic step entry UI · 5h tap vs hold step buttons · 5i phantom notes + sparse state fix (state v=2) · 5j Delete key combos · 5k atomic step/clip clear DSP params · 5l playback head indicator + chord-to-step input · 5m Session Overview overlay · 5n real-time recording + count-in · 5o recording fixes (toggle, count-in redesign, silent notes race fix) · 5q global menu via platform framework + jog click CC 3 fix + BPM editable (real-time, linear jog) + count-in duration fix · 5r clip deactivation (stop-at-end) + Session View jog row scroll · 5s clip-launch-rework: 5-state clip model, bar-boundary launch, page-stop, scene queuing, Shift+Play=deactivate_all, Delete+Play=panic, will_relaunch persistence (state v=3) · 5t stopped-transport fixes: effectiveClip helper, LED blink corrections, scene cache + LED dedup, Shift+Play deactivates all clips when stopped
 
 Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play effects → clip model/Session View/background running.
 
 ## What's Built
 
-**Transport**: Play/Stop. Shift+Play = deactivate_all (arms page-stop on all playing clips). Delete+Play = panic (full stop, clear all state). BPM is SEQ8-owned: read from `g_host->get_bpm()` once at init as a starting default, then controlled via the global menu. DSP `set_param("bpm")` updates `tick_delta` and `cached_bpm` for all tracks. No ongoing polling — BPM does not auto-follow Move after init.
+**Transport**: Play/Stop. Shift+Play: if playing → `deactivate_all` (arms page-stop on all playing clips, cancels queued); if stopped → sends `tN_deactivate` to all 8 tracks individually (clears will_relaunch + queued), with `suppressWRPollTicks` guard to prevent pollDSP from restoring stale state before DSP confirms. Delete+Play = panic (full stop, clear all state). BPM is SEQ8-owned: read from `g_host->get_bpm()` once at init as a starting default, then controlled via the global menu. DSP `set_param("bpm")` updates `tick_delta` and `cached_bpm` for all tracks. No ongoing polling — BPM does not auto-follow Move after init.
 
 **8 tracks, 16 clips, 256 steps per clip**: All tracks play simultaneously. Clip launch per-track or as scenes.
 
 **Track View** (default): 16 step buttons = current page of active clip. Pads = live notes (isomorphic 4ths diatonic). Left/Right pages. Shift + bottom pad row = track select. Step buttons ≥ clip length light White (out-of-bounds). Playback head step always White.
 
-**Session View** (tap CC 50): 4×8 pad grid = clips for visible scene group. Jog rotates one row at a time (clamped 0–12). Up/Down (CC 54/55) jump by group (4 rows). Shift+step = launch scene. Side buttons (CC 40–43) = launch scene.
+**Session View** (tap CC 50): 4×8 pad grid = clips for visible scene group. Jog rotates one row at a time (clamped 0–12). Up/Down (CC 54/55) jump by group (4 rows). Shift+step = launch scene. Side buttons (CC 40–43) = launch scene. White scene indicator: when playing, all playing clips on that row; when stopped, all will_relaunch/queued clips map to that row via `effectiveClip(t)`.
 
 **Clip state model** (5 states): Empty · Inactive-with-data · Will-relaunch (was playing when transport stopped; auto-relaunches on next play) · Queued (waiting for bar boundary) · Playing. Transitions:
 - Launch → if playing: legato (inherits position mod new length); if stopped: Queued.
@@ -56,6 +56,8 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 **Background running**: Shift+Back hides SEQ8. Re-entry from Tools menu reconnects instantly. Cold boot recovery via `seq8-state.json`.
 
 **State persistence**: Written to `/data/UserData/schwung/seq8-state.json` on step change, transport, launch, destroy.
+
+**JS internals**: `effectiveClip(t)` — returns `trackQueuedClip[t]` when `!playing && trackQueuedClip[t] >= 0`, else `trackActiveClip[t]`. Used everywhere in Track View for step display and input so the correct clip shows when stopped with a queued or will_relaunch clip. `suppressWRPollTicks` — set after bulk `tN_deactivate` sends; prevents pollDSP from overwriting `trackWillRelaunch`/`trackQueuedClip` mirrors until DSP confirms. `cachedSceneAllPlaying[16]`/`cachedSceneAllQueued[16]` — computed once per tick at top of `tick()`. `lastSentNoteLED[128]`/`lastSentButtonLED[128]` — LED dedup cache; `invalidateLEDCache()` resets on view switch, init, reconnect, session overview entry/exit.
 
 ## Upcoming tasks
 
