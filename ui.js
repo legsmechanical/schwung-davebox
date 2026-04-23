@@ -352,7 +352,6 @@ let flashEighth          = false;
 let flashSixteenth       = false;
 let tickCount            = 0;
 const POLL_INTERVAL  = 4;
-let suppressWRPollTicks  = 0; /* after bulk deactivate: skip pollDSP overwriting WR/QC mirrors */
 
 /* Per-tick scene state cache — computed once at top of tick(), O(1) lookup in LED update fns */
 let cachedSceneAllPlaying = new Array(16).fill(false);
@@ -636,17 +635,15 @@ function pollDSP() {
     const v = snap.split(' ');
     if (v.length < 52) return;
     playing = (v[0] === '1');
-    const suppressWR = suppressWRPollTicks > 0;
-    if (suppressWRPollTicks > 0) suppressWRPollTicks--;
     for (let t = 0; t < NUM_TRACKS; t++) {
         trackCurrentStep[t]      = parseInt(v[1 + t], 10) | 0;
         trackActiveClip[t]       = parseInt(v[9 + t], 10) | 0;
-        if (!suppressWR) trackQueuedClip[t] = parseInt(v[17 + t], 10) | 0;
+        trackQueuedClip[t]       = parseInt(v[17 + t], 10) | 0;
     }
     const countInDspActive = (v[25] === '1');
     for (let t = 0; t < NUM_TRACKS; t++) {
         trackClipPlaying[t]     = (v[26 + t] === '1');
-        if (!suppressWR) trackWillRelaunch[t] = (v[34 + t] === '1');
+        trackWillRelaunch[t]    = (v[34 + t] === '1');
         trackPendingPageStop[t] = (v[42 + t] === '1');
     }
     flashEighth    = (v[50] === '1');
@@ -1565,13 +1562,12 @@ globalThis.onMidiMessageInternal = function (data) {
             } else if (shiftHeld) {
                 if (typeof host_module_set_param === 'function') {
                     if (!playing) {
-                        /* Stopped: deactivate all tracks individually (clears will_relaunch + queued). */
+                        /* Stopped: panic clears will_relaunch + all clip state atomically for all tracks. */
+                        host_module_set_param('transport', 'panic');
                         for (let t = 0; t < NUM_TRACKS; t++) {
-                            host_module_set_param('t' + t + '_deactivate', '1');
                             trackWillRelaunch[t] = false;
                             trackQueuedClip[t]   = -1;
                         }
-                        suppressWRPollTicks = POLL_INTERVAL + 1;
                     } else {
                         host_module_set_param('transport', 'deactivate_all');
                     }

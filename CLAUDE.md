@@ -12,7 +12,7 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 
 ## What's Built
 
-**Transport**: Play/Stop. Shift+Play: if playing → `deactivate_all` (arms page-stop on all playing clips, cancels queued); if stopped → sends `tN_deactivate` to all 8 tracks individually (clears will_relaunch + queued), with `suppressWRPollTicks` guard to prevent pollDSP from restoring stale state before DSP confirms. Delete+Play = panic (full stop, clear all state). BPM is SEQ8-owned: read from `g_host->get_bpm()` once at init as a starting default, then controlled via the global menu. DSP `set_param("bpm")` updates `tick_delta` and `cached_bpm` for all tracks. No ongoing polling — BPM does not auto-follow Move after init.
+**Transport**: Play/Stop. Shift+Play: if playing → `deactivate_all` (arms page-stop on all playing clips, cancels queued); if stopped → `panic` (atomically clears will_relaunch + all clip state for all 8 tracks — single DSP command avoids per-track async queue races). Delete+Play = panic (full stop, clear all state). Note: per-track `tN_deactivate` calls are NOT reliable for bulk will_relaunch clearing — DSP processes them one per audio callback and pollDSP restores stale state in between. BPM is SEQ8-owned: read from `g_host->get_bpm()` once at init as a starting default, then controlled via the global menu. DSP `set_param("bpm")` updates `tick_delta` and `cached_bpm` for all tracks. No ongoing polling — BPM does not auto-follow Move after init.
 
 **8 tracks, 16 clips, 256 steps per clip**: All tracks play simultaneously. Clip launch per-track or as scenes.
 
@@ -57,7 +57,7 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 
 **State persistence**: Written to `/data/UserData/schwung/seq8-state.json` on step change, transport, launch, destroy.
 
-**JS internals**: `effectiveClip(t)` — returns `trackQueuedClip[t]` when `!playing && trackQueuedClip[t] >= 0`, else `trackActiveClip[t]`. Used everywhere in Track View for step display and input so the correct clip shows when stopped with a queued or will_relaunch clip. `suppressWRPollTicks` — set after bulk `tN_deactivate` sends; prevents pollDSP from overwriting `trackWillRelaunch`/`trackQueuedClip` mirrors until DSP confirms. `cachedSceneAllPlaying[16]`/`cachedSceneAllQueued[16]` — computed once per tick at top of `tick()`. `lastSentNoteLED[128]`/`lastSentButtonLED[128]` — LED dedup cache; `invalidateLEDCache()` resets on view switch, init, reconnect, session overview entry/exit.
+**JS internals**: `effectiveClip(t)` — returns `trackQueuedClip[t]` when `!playing && trackQueuedClip[t] >= 0`, else `trackActiveClip[t]`. Used everywhere in Track View for step display and input so the correct clip shows when stopped with a queued or will_relaunch clip. `cachedSceneAllPlaying[16]`/`cachedSceneAllQueued[16]` — computed once per tick at top of `tick()`. `lastSentNoteLED[128]`/`lastSentButtonLED[128]` — LED dedup cache; `invalidateLEDCache()` resets on view switch, init, reconnect, session overview entry/exit.
 
 ## Upcoming tasks
 
