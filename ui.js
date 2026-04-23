@@ -1047,9 +1047,9 @@ function drawSessionOverview() {
         for (let s = 0; s < NUM_CLIPS; s++) {
             const y      = s * 4 + 1;
             const color  = (s >= sceneRow && s < sceneRow + 4) ? 1 : 0;
-            const isActive         = (s === ac);
-            const isActiveOnActive = (isActive && t === activeTrack);
-            if (isActiveOnActive) {
+            const isActive   = (s === ac);
+            const isPlaying  = (isActive && trackClipPlaying[t]);
+            if (isPlaying) {
                 if (blinkOn) fill_rect(x + 1, y + 1, 13, 1, color);
             } else if (isActive) {
                 fill_rect(x + 1, y + 1, 13, 1, color);
