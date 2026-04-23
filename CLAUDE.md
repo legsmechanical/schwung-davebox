@@ -2,13 +2,22 @@
 
 **Working rule:** Before acting on any assumed or suggested cause/fix, read the relevant code and verify the assumption is correct first.
 
+## Session workflow
+
+- **Validate before acting** — read or grep the actual code to confirm any suspected cause before making changes. Never act on assumptions.
+- **Commit after each logical change** — work directly on master, one commit per change.
+- **Deploy and verify on device before reporting done** — always build+install and confirm behavior on Move.
+- **Reboot after every deploy** — Shift+Back does NOT reload JS from disk; JS and DSP changes only take effect after a full device reboot.
+- **JS-only deploy**: `cp ui.js dist/seq8/ui.js && ./scripts/install.sh` then reboot. `build.sh` is required only for DSP changes (it also copies JS to dist, so running it is always safe).
+- **CLAUDE.md**: update at session end or after a major phase completes — not after routine task work.
+
 SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move — a standalone 8-track MIDI sequencer. No audio output. Written in C (DSP) + JavaScript (UI). Appears in the **Tools menu**; `component_type: "tool"` enables background running via tool reconnect.
 
 ## Current build phase
 
 **Phase 5 — 8 tracks, 256 steps, arpeggiator, Track View.** All subphases complete through 5r:
 
-5a live pad input · 5b poll throttling · 5c clip length · 5d Track View banks + beat stretch + clock shift + octave shift · 5e per-step gate time · 5f polyphonic step notes (4 per step) · 5g melodic step entry UI · 5h tap vs hold step buttons · 5i phantom notes + sparse state fix (state v=2) · 5j Delete key combos · 5k atomic step/clip clear DSP params · 5l playback head indicator + chord-to-step input · 5m Session Overview overlay · 5n real-time recording + count-in · 5o recording fixes (toggle, count-in redesign, silent notes race fix) · 5q global menu via platform framework + jog click CC 3 fix + BPM editable (real-time, linear jog) + count-in duration fix · 5r clip deactivation (stop-at-end) + Session View jog row scroll · 5s clip-launch-rework: 5-state clip model, bar-boundary launch, page-stop, scene queuing, Shift+Play=deactivate_all, Delete+Play=panic, will_relaunch persistence (state v=3) · 5t stopped-transport fixes: effectiveClip helper, LED blink corrections, scene cache + LED dedup, Shift+Play deactivates all clips when stopped · 5u launch quantization: Now/1/16/1/8/1/4/1/2/1-bar, DSP QUANT_STEPS table, pending_page_stop anchored to global_tick%16
+5a live pad input · 5b poll throttling · 5c clip length · 5d Track View banks + beat stretch + clock shift + octave shift · 5e per-step gate time · 5f polyphonic step notes (4 per step) · 5g melodic step entry UI · 5h tap vs hold step buttons · 5i phantom notes + sparse state fix (state v=2) · 5j Delete key combos · 5k atomic step/clip clear DSP params · 5l playback head indicator + chord-to-step input · 5m Session Overview overlay · 5n real-time recording + count-in · 5o recording fixes (toggle, count-in redesign, silent notes race fix) · 5q global menu via platform framework + jog click CC 3 fix + BPM editable (real-time, linear jog) + count-in duration fix · 5r clip deactivation (stop-at-end) + Session View jog row scroll · 5s clip-launch-rework: 5-state clip model, bar-boundary launch, page-stop, scene queuing, Shift+Play=deactivate_all, Delete+Play=panic, will_relaunch persistence (state v=3) · 5t stopped-transport fixes: effectiveClip helper, LED blink corrections, scene cache + LED dedup, Shift+Play deactivates all clips when stopped · 5u launch quantization: Now/1/16/1/8/1/4/1/2/1-bar, DSP QUANT_STEPS table, pending_page_stop anchored to global_tick%16 · 5v per-set state: state saved/loaded per Move set UUID, DSP `state_load` takes UUID from JS, `state_uuid`/`instance_nonce` get_params, fresh launch defaults to Session View
 
 Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play effects → clip model/Session View/background running.
 
