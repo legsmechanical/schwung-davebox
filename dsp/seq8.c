@@ -1967,11 +1967,9 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         return NUM_TRACKS;
     }
     /* snap_N: "m0..m7 s0..s7" (17 chars) if valid, else "" */
-    if (key[0] == 's' && key[1] == 'n' && key[2] >= '0' && key[2] <= '9') {
-        int n = 0, t, pos = 0;
-        const char *p = key + 2;
-        while (*p >= '0' && *p <= '9') n = n * 10 + (*p++ - '0');
-        if (*p == '\0' && n >= 0 && n < 16) {
+    if (!strncmp(key, "snap_", 5)) {
+        int n = my_atoi(key + 5), t, pos = 0;
+        if (n >= 0 && n < 16) {
             if (!inst->snap_valid[n]) { out[0] = '\0'; return 0; }
             for (t = 0; t < NUM_TRACKS && pos < out_len - 1; t++)
                 out[pos++] = inst->snap_mute[n][t] ? '1' : '0';
