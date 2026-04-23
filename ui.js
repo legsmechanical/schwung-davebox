@@ -822,9 +822,9 @@ function sceneNonEmpty(sceneIdx) {
 function sceneAllPlaying(sceneIdx) {
     let hasAny = false;
     for (let t = 0; t < NUM_TRACKS; t++) {
-        if (!clipNonEmpty[t][sceneIdx]) continue;
+        if (!trackClipPlaying[t]) continue;
+        if (trackActiveClip[t] !== sceneIdx) return false;
         hasAny = true;
-        if (!trackClipPlaying[t] || trackActiveClip[t] !== sceneIdx) return false;
     }
     return hasAny;
 }
