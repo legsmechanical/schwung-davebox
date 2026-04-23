@@ -154,8 +154,8 @@ typedef struct {
 typedef struct {
     uint8_t   channel;              /* MIDI channel 0-3 */
     clip_t    clips[NUM_CLIPS];
-    uint8_t   active_clip;          /* clip currently playing */
-    int8_t    queued_clip;          /* next clip (-1 = none) */
+    uint8_t   active_clip;          /* clip currently active */
+    int8_t    queued_clip;          /* next clip to launch at bar boundary (-1 = none) */
     uint16_t  current_step;
     uint8_t   note_active;
     uint8_t   pending_notes[4];     /* notes fired at note-on; matched at note-off */
@@ -165,8 +165,10 @@ typedef struct {
     uint8_t   pad_mode;             /* PAD_MODE_MELODIC_SCALE = 0 */
     uint8_t   stretch_blocked;      /* 1 if last compress was blocked by collision */
     uint8_t   recording;            /* 1 = actively recording (overdub) into active clip */
-    uint8_t   pending_stop;         /* 1 = silence track at start of next loop */
-    uint8_t   clip_stopped;         /* 1 = track silenced; cleared on launch */
+    uint8_t   clip_playing;         /* 1 = clip is actively running */
+    uint8_t   will_relaunch;        /* 1 = was playing; restarts when transport plays */
+    uint8_t   pending_page_stop;    /* 1 = stop at next 16-step page boundary (current_step%16==0) */
+    uint8_t   record_armed;         /* 1 = set recording=1 atomically when queued clip launches */
 } seq8_track_t;
 
 typedef struct {
@@ -183,6 +185,7 @@ typedef struct {
     uint32_t tick_threshold;        /* sample_rate * 60 */
     uint32_t tick_delta;            /* MOVE_FRAMES_PER_BLOCK * BPM * PPQN */
     uint32_t tick_in_step;
+    uint32_t global_tick;             /* steps elapsed since transport play; bar boundary = global_tick % 16 == 0 */
 
     /* DSP-side count-in: counts down in DSP ticks; fires transport+recording when done */
     int32_t  count_in_ticks;        /* remaining ticks; 0 = inactive */
@@ -264,9 +267,11 @@ static void seq8_save_state(seq8_instance_t *inst) {
     FILE *fp = fopen(SEQ8_STATE_PATH, "w");
     if (!fp) return;
     int t, c, s;
-    fprintf(fp, "{\"v\":2,\"playing\":%d", inst->playing);
+    fprintf(fp, "{\"v\":3,\"playing\":%d", inst->playing);
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
+    for (t = 0; t < NUM_TRACKS; t++)
+        fprintf(fp, ",\"t%d_wr\":%d", t, inst->tracks[t].will_relaunch);
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ch\":%d,\"t%d_rt\":%d",
                 t, (int)inst->tracks[t].channel,
@@ -320,8 +325,8 @@ static void seq8_load_state(seq8_instance_t *inst) {
     if (!n) { free(buf); remove(SEQ8_STATE_PATH); return; }
     buf[n] = '\0';
 
-    /* Version gate: delete and ignore any state file that isn't v=2. */
-    if (json_get_int(buf, "v", -1) != 2) {
+    /* Version gate: delete and ignore any state file that isn't v=3. */
+    if (json_get_int(buf, "v", -1) != 3) {
         free(buf);
         remove(SEQ8_STATE_PATH);
         seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
@@ -334,6 +339,10 @@ static void seq8_load_state(seq8_instance_t *inst) {
         snprintf(key, sizeof(key), "t%d_ac", t);
         inst->tracks[t].active_clip = (uint8_t)clamp_i(
             json_get_int(buf, key, 0), 0, NUM_CLIPS - 1);
+
+        snprintf(key, sizeof(key), "t%d_wr", t);
+        inst->tracks[t].will_relaunch = (uint8_t)clamp_i(
+            json_get_int(buf, key, 0), 0, 1);
 
         snprintf(key, sizeof(key), "t%d_ch", t);
         inst->tracks[t].channel = (uint8_t)clamp_i(
@@ -925,14 +934,20 @@ static void set_param(void *instance, const char *key, const char *val) {
         if (!strcmp(val, "play")) {
             if (!inst->playing) {
                 int t;
-                for (t = 0; t < NUM_TRACKS; t++) {
-                    inst->tracks[t].current_step = 0;
-                    inst->tracks[t].note_active   = 0;
-                    inst->tracks[t].pfx.sample_counter = 0;
-                }
-                inst->playing      = 1;
+                inst->global_tick  = 0;
                 inst->tick_accum   = 0;
                 inst->tick_in_step = 0;
+                for (t = 0; t < NUM_TRACKS; t++) {
+                    inst->tracks[t].current_step      = 0;
+                    inst->tracks[t].note_active        = 0;
+                    inst->tracks[t].pfx.sample_counter = 0;
+                    if (inst->tracks[t].will_relaunch) {
+                        inst->tracks[t].clip_playing      = 1;
+                        inst->tracks[t].will_relaunch     = 0;
+                        inst->tracks[t].pending_page_stop = 0;
+                    }
+                }
+                inst->playing = 1;
             }
         } else if (!strcmp(val, "stop")) {
             if (inst->playing) {
@@ -940,14 +955,18 @@ static void set_param(void *instance, const char *key, const char *val) {
                 for (t = 0; t < NUM_TRACKS; t++) {
                     inst->tracks[t].note_active         = 0;
                     inst->tracks[t].pending_note_count  = 0;
-                    inst->tracks[t].queued_clip         = -1;
                     inst->tracks[t].pfx.event_count     = 0;
                     memset(inst->tracks[t].pfx.active_notes, 0,
                            sizeof(inst->tracks[t].pfx.active_notes));
                     inst->tracks[t].clips[inst->tracks[t].active_clip].clock_shift_pos = 0;
-                    inst->tracks[t].recording           = 0;
-                    inst->tracks[t].pending_stop        = 0;
-                    inst->tracks[t].clip_stopped        = 0;
+                    if (inst->tracks[t].clip_playing) {
+                        inst->tracks[t].will_relaunch = 1;
+                        inst->tracks[t].clip_playing  = 0;
+                    }
+                    inst->tracks[t].pending_page_stop = 0;
+                    inst->tracks[t].record_armed      = 0;
+                    inst->tracks[t].recording         = 0;
+                    inst->tracks[t].queued_clip       = -1;
                 }
                 inst->playing        = 0;
                 inst->count_in_ticks = 0;
@@ -960,20 +979,31 @@ static void set_param(void *instance, const char *key, const char *val) {
             for (t = 0; t < NUM_TRACKS; t++) {
                 inst->tracks[t].note_active         = 0;
                 inst->tracks[t].pending_note_count  = 0;
-                inst->tracks[t].queued_clip         = -1;
                 inst->tracks[t].pfx.event_count     = 0;
                 memset(inst->tracks[t].pfx.active_notes, 0,
                        sizeof(inst->tracks[t].pfx.active_notes));
                 inst->tracks[t].clips[inst->tracks[t].active_clip].clock_shift_pos = 0;
-                inst->tracks[t].recording           = 0;
-                inst->tracks[t].pending_stop        = 0;
-                inst->tracks[t].clip_stopped        = 0;
+                inst->tracks[t].clip_playing      = 0;
+                inst->tracks[t].will_relaunch     = 0;
+                inst->tracks[t].pending_page_stop = 0;
+                inst->tracks[t].record_armed      = 0;
+                inst->tracks[t].recording         = 0;
+                inst->tracks[t].queued_clip       = -1;
             }
             inst->playing        = 0;
             inst->count_in_ticks = 0;
             send_panic(inst);
             seq8_ilog(inst, "SEQ8 transport: panic");
             seq8_save_state(inst);
+        } else if (!strcmp(val, "deactivate_all")) {
+            int t;
+            for (t = 0; t < NUM_TRACKS; t++) {
+                if (inst->tracks[t].clip_playing)
+                    inst->tracks[t].pending_page_stop = 1;
+                inst->tracks[t].queued_clip  = -1;
+                inst->tracks[t].record_armed = 0;
+            }
+            seq8_ilog(inst, "SEQ8 transport: deactivate_all");
         }
         return;
     }
@@ -1020,18 +1050,17 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
 
-    /* --- Scene launch (global): switch all tracks to clip M immediately --- */
+    /* --- Scene launch (global): queue all tracks to clip M at next bar/page boundary --- */
     if (!strcmp(key, "launch_scene")) {
         int cidx = clamp_i(my_atoi(val), 0, NUM_CLIPS - 1);
         int t;
         for (t = 0; t < NUM_TRACKS; t++) {
-            uint16_t newlen = inst->tracks[t].clips[cidx].length;
-            inst->tracks[t].current_step = (uint16_t)(inst->tracks[t].current_step % newlen);
-            inst->tracks[t].active_clip  = (uint8_t)cidx;
-            inst->tracks[t].queued_clip  = -1;
+            if (inst->tracks[t].clip_playing)
+                inst->tracks[t].pending_page_stop = 1;
+            inst->tracks[t].queued_clip   = (int8_t)cidx;
+            inst->tracks[t].will_relaunch = 0;
         }
         seq8_ilog(inst, "SEQ8 launch_scene");
-        seq8_save_state(inst);
         return;
     }
 
@@ -1041,22 +1070,36 @@ static void set_param(void *instance, const char *key, const char *val) {
         const char *sub = key + 3;
         seq8_track_t *tr = &inst->tracks[tidx];
 
-        /* tN_launch_clip: switch to clip immediately, inheriting playback position */
+        /* tN_launch_clip: legato if playing, else queue at next bar boundary */
         if (!strcmp(sub, "launch_clip")) {
-            int new_cidx      = clamp_i(my_atoi(val), 0, NUM_CLIPS - 1);
-            uint16_t newlen   = tr->clips[new_cidx].length;
-            tr->current_step  = (uint16_t)(tr->current_step % newlen);
-            tr->active_clip  = (uint8_t)new_cidx;
-            tr->queued_clip  = -1;
-            tr->pending_stop = 0;
-            tr->clip_stopped = 0;
-            seq8_save_state(inst);
+            int new_cidx = clamp_i(my_atoi(val), 0, NUM_CLIPS - 1);
+            if (tr->clip_playing) {
+                uint16_t newlen      = tr->clips[new_cidx].length;
+                tr->current_step     = (uint16_t)(tr->current_step % newlen);
+                tr->active_clip      = (uint8_t)new_cidx;
+                tr->queued_clip      = -1;
+                tr->pending_page_stop = 0;
+                seq8_save_state(inst);
+            } else {
+                tr->queued_clip   = (int8_t)new_cidx;
+                tr->will_relaunch = 0;
+            }
             return;
         }
 
-        /* tN_stop_at_end: arm track to silence at start of next loop */
+        /* tN_stop_at_end: arm track to stop at next 16-step page boundary */
         if (!strcmp(sub, "stop_at_end")) {
-            tr->pending_stop = 1;
+            tr->pending_page_stop = 1;
+            return;
+        }
+
+        /* tN_deactivate: cancel all pending/playing state immediately */
+        if (!strcmp(sub, "deactivate")) {
+            tr->clip_playing      = 0;
+            tr->will_relaunch     = 0;
+            tr->queued_clip       = -1;
+            tr->pending_page_stop = 0;
+            tr->record_armed      = 0;
             return;
         }
 
@@ -1220,10 +1263,20 @@ static void set_param(void *instance, const char *key, const char *val) {
         }
 
         if (!strcmp(sub, "recording")) {
-            int v = my_atoi(val);
-            tr->recording = (uint8_t)(v ? 1 : 0);
-            if (!tr->recording)
+            int rv = my_atoi(val);
+            if (rv) {
+                if (tr->clip_playing) {
+                    tr->recording = 1;
+                } else if (tr->queued_clip >= 0) {
+                    tr->record_armed = 1;
+                } else {
+                    tr->recording = 1;
+                }
+            } else {
+                tr->recording    = 0;
+                tr->record_armed = 0;
                 seq8_save_state(inst); /* flush deferred writes on disarm */
+            }
             return;
         }
 
@@ -1487,10 +1540,12 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
     }
 
     /* state_snapshot: single call returning all poll-loop values.
-     * Format: "playing cs0 cs1..cs7 ac0 ac1..ac7 qc0 qc1..qc7" (25 ints)
-     * Replaces 25 individual get_param calls in pollDSP(). */
+     * Format: "playing cs0..cs7 ac0..ac7 qc0..qc7 count_in cp0..cp7 wr0..wr7 ps0..ps7 flash_eighth flash_sixteenth"
+     * 52 values total. Replaces individual get_param calls in pollDSP(). */
     if (!strcmp(key, "state_snapshot")) {
-        if (!inst) return snprintf(out, out_len, "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -1 -1 -1 -1 -1 -1 -1 -1");
+        if (!inst) return snprintf(out, out_len,
+            "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -1 -1 -1 -1 -1 -1 -1 -1 0"
+            " 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0");
         int t;
         int pos = 0;
         pos += snprintf(out + pos, (size_t)(out_len - pos), "%d", (int)inst->playing);
@@ -1502,6 +1557,14 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
             pos += snprintf(out + pos, (size_t)(out_len - pos), " %d", (int)inst->tracks[t].queued_clip);
         pos += snprintf(out + pos, (size_t)(out_len - pos), " %d",
                         (int)(inst->count_in_ticks > 0 ? 1 : 0));
+        for (t = 0; t < NUM_TRACKS; t++)
+            pos += snprintf(out + pos, (size_t)(out_len - pos), " %d", (int)inst->tracks[t].clip_playing);
+        for (t = 0; t < NUM_TRACKS; t++)
+            pos += snprintf(out + pos, (size_t)(out_len - pos), " %d", (int)inst->tracks[t].will_relaunch);
+        for (t = 0; t < NUM_TRACKS; t++)
+            pos += snprintf(out + pos, (size_t)(out_len - pos), " %d", (int)inst->tracks[t].pending_page_stop);
+        pos += snprintf(out + pos, (size_t)(out_len - pos), " %d", (int)((inst->global_tick / 2) % 2));
+        pos += snprintf(out + pos, (size_t)(out_len - pos), " %d", (int)(inst->global_tick % 2));
         return pos;
     }
 
@@ -1536,8 +1599,6 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
             return snprintf(out, out_len, "%d", (int)tr->stretch_blocked);
         if (!strcmp(sub, "recording"))
             return snprintf(out, out_len, "%d", (int)tr->recording);
-        if (!strcmp(sub, "clip_stopped"))
-            return snprintf(out, out_len, "%d", (int)tr->clip_stopped);
         if (!strcmp(sub, "clip_length"))
             return snprintf(out, out_len, "%d",
                             (int)tr->clips[tr->active_clip].length);
@@ -1636,13 +1697,20 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
             if (inst->count_in_ticks == 0) {
                 inst->tick_accum   = 0;
                 inst->tick_in_step = 0;
+                inst->global_tick  = 0;
                 for (t = 0; t < NUM_TRACKS; t++) {
-                    inst->tracks[t].current_step        = 0;
-                    inst->tracks[t].note_active          = 0;
-                    inst->tracks[t].pfx.sample_counter   = 0;
+                    inst->tracks[t].current_step      = 0;
+                    inst->tracks[t].note_active        = 0;
+                    inst->tracks[t].pfx.sample_counter = 0;
+                    if (inst->tracks[t].will_relaunch) {
+                        inst->tracks[t].clip_playing      = 1;
+                        inst->tracks[t].will_relaunch     = 0;
+                        inst->tracks[t].pending_page_stop = 0;
+                    }
                 }
                 inst->playing = 1;
-                inst->tracks[inst->count_in_track].recording = 1;
+                inst->tracks[inst->count_in_track].recording   = 1;
+                inst->tracks[inst->count_in_track].clip_playing = 1;
             }
         }
         return; /* skip main sequencer while counting in (or this block after fire) */
@@ -1658,26 +1726,66 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
             seq8_track_t *tr = &inst->tracks[t];
             clip_t *cl = &tr->clips[tr->active_clip];
 
-            if (inst->tick_in_step == 0 && tr->current_step == 0 && tr->pending_stop) {
-                tr->pending_stop = 0;
-                tr->clip_stopped = 1;
-                if (tr->note_active) {
+            if (inst->tick_in_step == 0) {
+                /* Bar boundary: launch queued clip (only if not waiting for page stop) */
+                if (tr->queued_clip >= 0 && !tr->pending_page_stop &&
+                    inst->global_tick % 16 == 0) {
+                    if (tr->note_active) {
+                        int n;
+                        for (n = 0; n < (int)tr->pending_note_count; n++)
+                            pfx_note_off(inst, tr, tr->pending_notes[n]);
+                        tr->note_active = 0;
+                        tr->pending_note_count = 0;
+                    }
+                    tr->active_clip  = (uint8_t)tr->queued_clip;
+                    tr->queued_clip  = -1;
+                    tr->current_step = 0;
+                    tr->clip_playing = 1;
+                    if (tr->record_armed) {
+                        tr->recording    = 1;
+                        tr->record_armed = 0;
+                    }
+                    cl = &tr->clips[tr->active_clip];
+                }
+
+                /* Page stop: silence at next 16-step boundary; simultaneously launch queued */
+                if (tr->pending_page_stop && tr->current_step % 16 == 0) {
+                    tr->pending_page_stop = 0;
+                    tr->clip_playing = 0;
+                    if (tr->note_active) {
+                        int n;
+                        for (n = 0; n < (int)tr->pending_note_count; n++)
+                            pfx_note_off(inst, tr, tr->pending_notes[n]);
+                        tr->note_active = 0;
+                        tr->pending_note_count = 0;
+                    }
+                    if (tr->queued_clip >= 0) {
+                        tr->active_clip  = (uint8_t)tr->queued_clip;
+                        tr->queued_clip  = -1;
+                        tr->current_step = 0;
+                        tr->clip_playing = 1;
+                        if (tr->record_armed) {
+                            tr->recording    = 1;
+                            tr->record_armed = 0;
+                        }
+                        cl = &tr->clips[tr->active_clip];
+                    }
+                }
+
+                /* Note on */
+                if (tr->clip_playing && cl->steps[tr->current_step]) {
                     int n;
-                    for (n = 0; n < (int)tr->pending_note_count; n++)
-                        pfx_note_off(inst, tr, tr->pending_notes[n]);
-                    tr->note_active = 0;
-                    tr->pending_note_count = 0;
+                    tr->pending_note_count = cl->step_note_count[tr->current_step];
+                    for (n = 0; n < (int)tr->pending_note_count; n++) {
+                        tr->pending_notes[n] = cl->step_notes[tr->current_step][n];
+                        pfx_note_on(inst, tr, tr->pending_notes[n],
+                                    cl->step_vel[tr->current_step]);
+                    }
+                    tr->note_active = 1;
                 }
             }
-            if (inst->tick_in_step == 0 && cl->steps[tr->current_step] && !tr->clip_stopped) {
-                int n;
-                tr->pending_note_count = cl->step_note_count[tr->current_step];
-                for (n = 0; n < (int)tr->pending_note_count; n++) {
-                    tr->pending_notes[n] = cl->step_notes[tr->current_step][n];
-                    pfx_note_on(inst, tr, tr->pending_notes[n], cl->step_vel[tr->current_step]);
-                }
-                tr->note_active = 1;
-            }
+
+            /* Note off */
             if (inst->tick_in_step == cl->step_gate[tr->current_step] && tr->note_active) {
                 int n;
                 for (n = 0; n < (int)tr->pending_note_count; n++)
@@ -1693,9 +1801,10 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
             for (t = 0; t < NUM_TRACKS; t++) {
                 seq8_track_t *tr = &inst->tracks[t];
                 clip_t *cl = &tr->clips[tr->active_clip];
-                if (!tr->clip_stopped)
-                    tr->current_step = (uint8_t)((tr->current_step + 1) % cl->length);
+                if (tr->clip_playing)
+                    tr->current_step = (uint16_t)((tr->current_step + 1) % cl->length);
             }
+            inst->global_tick++;
         }
     }
 }

@@ -70,7 +70,8 @@ const LED_STEP_CURSOR = 127;
 const LEDS_PER_FRAME  = 8;
 const NUM_TRACKS      = 8;
 const NUM_CLIPS       = 16;
-const PULSE_PERIOD    = 12;   /* ticks per dim→bright→dim cycle (halved for 8-track LED load) */
+
+
 
 /* shim ui_flags bits that must be masked while SEQ8 owns the display.
  * JUMP_TO_TOOLS (0x80) and JUMP_TO_OVERTAKE (0x04) both bypass our normal
@@ -338,15 +339,16 @@ let trackCurrentStep = new Array(NUM_TRACKS).fill(-1);
 let trackCurrentPage = new Array(NUM_TRACKS).fill(0);
 let trackActiveClip  = new Array(NUM_TRACKS).fill(0);
 let trackQueuedClip  = new Array(NUM_TRACKS).fill(-1);
-let trackPendingStop = new Array(NUM_TRACKS).fill(false);
-let trackClipStopped = new Array(NUM_TRACKS).fill(false);
-let playing          = false;
+let trackClipPlaying     = new Array(NUM_TRACKS).fill(false);
+let trackWillRelaunch    = new Array(NUM_TRACKS).fill(false);
+let trackPendingPageStop = new Array(NUM_TRACKS).fill(false);
+let playing              = false;
 let activeTrack      = 0;
 let sessionView      = false;
 let sceneRow         = 0;
-let pulseStep        = 0;
-let pulseUseBright   = false;
-let tickCount        = 0;
+let flashEighth          = false;
+let flashSixteenth       = false;
+let tickCount            = 0;
 const POLL_INTERVAL  = 4;
 
 /* ------------------------------------------------------------------ */
@@ -612,14 +614,21 @@ function pollDSP() {
     const snap = host_module_get_param('state_snapshot');
     if (!snap) return;
     const v = snap.split(' ');
-    if (v.length < 26) return;
+    if (v.length < 52) return;
     playing = (v[0] === '1');
     for (let t = 0; t < NUM_TRACKS; t++) {
-        trackCurrentStep[t] = parseInt(v[1 + t], 10) | 0;
-        trackActiveClip[t]  = parseInt(v[9 + t], 10) | 0;
-        trackQueuedClip[t]  = parseInt(v[17 + t], 10) | 0;
+        trackCurrentStep[t]      = parseInt(v[1 + t], 10) | 0;
+        trackActiveClip[t]       = parseInt(v[9 + t], 10) | 0;
+        trackQueuedClip[t]       = parseInt(v[17 + t], 10) | 0;
     }
     const countInDspActive = (v[25] === '1');
+    for (let t = 0; t < NUM_TRACKS; t++) {
+        trackClipPlaying[t]     = (v[26 + t] === '1');
+        trackWillRelaunch[t]    = (v[34 + t] === '1');
+        trackPendingPageStop[t] = (v[42 + t] === '1');
+    }
+    flashEighth    = (v[50] === '1');
+    flashSixteenth = (v[51] === '1');
 
     /* Count-in end: DSP fired transport+recording — sync JS state */
     if (countInDspPrev && !countInDspActive && playing) {
@@ -632,24 +641,8 @@ function pollDSP() {
     /* Stop transition: transport just stopped — clear recording state */
     if (playingPrev && !playing) {
         disarmRecord();
-        trackPendingStop.fill(false);
-        trackClipStopped.fill(false);
     }
     playingPrev = playing;
-
-    /* Detect when a pending stop has fired in the DSP */
-    if (playing) {
-        for (let _t = 0; _t < NUM_TRACKS; _t++) {
-            if (trackPendingStop[_t]) {
-                const cs = host_module_get_param('t' + _t + '_clip_stopped');
-                if (cs === '1') {
-                    trackClipStopped[_t] = true;
-                    trackPendingStop[_t] = false;
-                    forceRedraw();
-                }
-            }
-        }
-    }
 
     /* Track sequencer notes for active track pad highlighting */
     const t  = activeTrack;
@@ -807,19 +800,42 @@ function groupHasContent(group) {
     return false;
 }
 
-function sceneAllPlaying(sceneIdx) {
-    if (!playing) return false;
+function sceneNonEmpty(sceneIdx) {
     for (let t = 0; t < NUM_TRACKS; t++)
-        if (trackActiveClip[t] !== sceneIdx) return false;
-    return true;
+        if (clipHasContent(t, sceneIdx)) return true;
+    return false;
+}
+
+function sceneAllPlaying(sceneIdx) {
+    let hasAny = false;
+    for (let t = 0; t < NUM_TRACKS; t++) {
+        if (!clipHasContent(t, sceneIdx)) continue;
+        hasAny = true;
+        if (!trackClipPlaying[t] || trackActiveClip[t] !== sceneIdx) return false;
+    }
+    return hasAny;
+}
+
+function sceneAllQueued(sceneIdx) {
+    let hasAny = false;
+    for (let t = 0; t < NUM_TRACKS; t++) {
+        if (!clipHasContent(t, sceneIdx)) continue;
+        hasAny = true;
+        const isQueued = (trackQueuedClip[t] === sceneIdx) ||
+                         (trackPendingPageStop[t] && trackActiveClip[t] === sceneIdx);
+        if (!isQueued) return false;
+    }
+    return hasAny;
 }
 
 function updateSceneMapLEDs() {
     if (!ledInitComplete) return;
     for (let i = 0; i < 16; i++) {
         let color;
-        if (sceneAllPlaying(i)) {
-            color = pulseUseBright ? White : LED_OFF;
+        if (sceneNonEmpty(i) && sceneAllPlaying(i)) {
+            color = White;
+        } else if (sceneNonEmpty(i) && sceneAllQueued(i)) {
+            color = flashSixteenth ? White : LED_OFF;
         } else {
             const group = Math.floor(i / 4);
             color = (i >= sceneRow && i < sceneRow + 4) ? LED_STEP_CURSOR
@@ -837,19 +853,25 @@ function updateSessionLEDs() {
         for (let t = 0; t < 8; t++) {
             const note = 92 - row * 8 + t;
             if (t >= NUM_TRACKS) { setLED(note, LED_OFF); continue; }
-            const hasContent = clipHasContent(t, sceneIdx);
-            const isActive   = trackActiveClip[t] === sceneIdx && !trackClipStopped[t];
-            const isPlaying  = isActive && playing && hasContent;
-            const isQueued   = hasContent && trackQueuedClip[t] === sceneIdx;
+            const hasContent    = clipHasContent(t, sceneIdx);
+            const isActiveClip  = trackActiveClip[t] === sceneIdx;
+            const isPlaying     = trackClipPlaying[t] && isActiveClip;
+            const isPendingStop = trackPendingPageStop[t] && isActiveClip;
+            const isQueued      = trackQueuedClip[t] === sceneIdx;
+            const isWillRelaunch = trackWillRelaunch[t] && isActiveClip;
             let color;
-            if (isPlaying || isQueued) {
-                color = pulseUseBright ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
-            } else if (isActive && hasContent) {
-                color = TRACK_COLORS[t];
-            } else if (hasContent) {
-                color = TRACK_DIM_COLORS[t];
-            } else {
+            if (!hasContent) {
                 color = DarkGrey;
+            } else if (isPlaying && isPendingStop) {
+                color = flashSixteenth ? TRACK_COLORS[t] : LED_OFF;
+            } else if (isPlaying) {
+                color = TRACK_COLORS[t];
+            } else if (isQueued) {
+                color = flashSixteenth ? TRACK_COLORS[t] : LED_OFF;
+            } else if (isWillRelaunch) {
+                color = TRACK_COLORS[t];
+            } else {
+                color = TRACK_DIM_COLORS[t];
             }
             setLED(note, color);
         }
@@ -877,17 +899,31 @@ function updateTrackLEDs() {
         const sceneIdx = sceneRow + row;
         let color;
         if (sessionView) {
-            color = sceneAllPlaying(sceneIdx) ? White : LED_OFF;
+            if (!sceneNonEmpty(sceneIdx)) {
+                color = LED_OFF;
+            } else if (sceneAllPlaying(sceneIdx)) {
+                color = White;
+            } else if (sceneAllQueued(sceneIdx)) {
+                color = flashSixteenth ? White : LED_OFF;
+            } else {
+                color = LED_OFF;
+            }
         } else {
-            const t          = activeTrack;
-            const hasContent = clipHasContent(t, sceneIdx);
-            const isActive   = trackActiveClip[t] === sceneIdx && !trackClipStopped[t];
-            const isPlaying  = isActive && playing && hasContent;
-            const isQueued   = hasContent && trackQueuedClip[t] === sceneIdx;
-            if (isActive) {
+            const t             = activeTrack;
+            const hasContent    = clipHasContent(t, sceneIdx);
+            const isActiveClip  = trackActiveClip[t] === sceneIdx;
+            const isPlaying     = trackClipPlaying[t] && isActiveClip;
+            const isPendingStop = trackPendingPageStop[t] && isActiveClip;
+            const isQueued      = trackQueuedClip[t] === sceneIdx;
+            const isWillRelaunch = trackWillRelaunch[t] && isActiveClip;
+            if (isPlaying && isPendingStop) {
+                color = flashSixteenth ? TRACK_COLORS[t] : LED_OFF;
+            } else if (isPlaying) {
                 color = TRACK_COLORS[t];
-            } else if (isPlaying || isQueued) {
-                color = pulseUseBright ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
+            } else if (isQueued) {
+                color = flashSixteenth ? TRACK_COLORS[t] : LED_OFF;
+            } else if (isWillRelaunch) {
+                color = TRACK_COLORS[t];
             } else if (hasContent) {
                 color = TRACK_DIM_COLORS[t];
             } else {
@@ -1185,10 +1221,6 @@ globalThis.tick = function () {
         }
     }
 
-    pulseStep = (pulseStep + 1) % PULSE_PERIOD;
-    const phase = Math.floor(pulseStep * 4 / PULSE_PERIOD);
-    pulseUseBright = (phase === 1 || phase === 2);
-
     if (!ledInitComplete) {
         drainLedInit();
     } else {
@@ -1466,11 +1498,14 @@ globalThis.onMidiMessageInternal = function (data) {
             }
         }
 
-        /* Play: toggle transport; Shift+Play = panic */
+        /* Play: toggle transport; Shift+Play = deactivate_all; Delete+Play = panic */
         if (d1 === MovePlay && d2 === 127) {
-            if (shiftHeld) {
+            if (deleteHeld) {
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('transport', 'panic');
+            } else if (shiftHeld) {
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('transport', 'deactivate_all');
             } else {
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('transport', playing ? 'stop' : 'play');
@@ -1544,27 +1579,29 @@ globalThis.onMidiMessageInternal = function (data) {
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('launch_scene', String(sceneRow + (3 - idx)));
             } else {
-                const t       = activeTrack;
-                const clipIdx = sceneRow + (3 - idx);
-                if (trackActiveClip[t] === clipIdx) {
-                    if (trackClipStopped[t] || trackPendingStop[t]) {
-                        trackClipStopped[t] = false;
-                        trackPendingStop[t] = false;
+                const t          = activeTrack;
+                const clipIdx    = sceneRow + (3 - idx);
+                const isActiveClip = trackActiveClip[t] === clipIdx;
+                if (trackClipPlaying[t] && isActiveClip) {
+                    if (trackPendingPageStop[t]) {
+                        /* Pending stop → cancel by re-launching legato */
                         if (typeof host_module_set_param === 'function')
                             host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
-                    } else if (playing) {
-                        trackPendingStop[t] = true;
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + t + '_stop_at_end', '1');
                     } else {
-                        trackClipStopped[t] = true;
+                        /* Playing → arm stop at next page boundary */
                         if (typeof host_module_set_param === 'function')
                             host_module_set_param('t' + t + '_stop_at_end', '1');
-                        forceRedraw();
                     }
+                } else if (trackWillRelaunch[t] && isActiveClip) {
+                    /* Transport stopped, clip primed to restart → cancel */
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_deactivate', '1');
+                } else if (trackQueuedClip[t] === clipIdx) {
+                    /* Queued to launch → cancel */
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_deactivate', '1');
                 } else {
-                    trackClipStopped[t] = false;
-                    trackPendingStop[t] = false;
+                    /* Launch: legato if playing, queued if not */
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
                 }
@@ -1710,30 +1747,28 @@ globalThis.onMidiMessageInternal = function (data) {
                         clearClip(t, clipIdx);
                         forceRedraw();
                     } else {
-                        const clipIdx = sceneRow + row;
-                        if (trackActiveClip[t] === clipIdx) {
-                            if (trackClipStopped[t] || trackPendingStop[t]) {
-                                /* Re-launch: clip is stopped or pending stop — cancel and restart */
-                                trackClipStopped[t] = false;
-                                trackPendingStop[t] = false;
-                                activeTrack = t;
+                        const clipIdx    = sceneRow + row;
+                        const isActiveClip = trackActiveClip[t] === clipIdx;
+                        if (trackClipPlaying[t] && isActiveClip) {
+                            if (trackPendingPageStop[t]) {
+                                /* Pending stop → cancel by re-launching */
                                 if (typeof host_module_set_param === 'function')
                                     host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
-                            } else if (playing) {
-                                /* Arm stop at end of current loop */
-                                trackPendingStop[t] = true;
-                                if (typeof host_module_set_param === 'function')
-                                    host_module_set_param('t' + t + '_stop_at_end', '1');
                             } else {
-                                /* Transport stopped: deactivate immediately */
-                                trackClipStopped[t] = true;
+                                /* Playing → arm stop at next page boundary */
                                 if (typeof host_module_set_param === 'function')
                                     host_module_set_param('t' + t + '_stop_at_end', '1');
-                                forceRedraw();
                             }
+                        } else if (trackWillRelaunch[t] && isActiveClip) {
+                            /* Transport stopped, clip primed to restart → cancel */
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_deactivate', '1');
+                        } else if (trackQueuedClip[t] === clipIdx) {
+                            /* Queued to launch → cancel */
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_deactivate', '1');
                         } else {
-                            trackClipStopped[t] = false;
-                            trackPendingStop[t] = false;
+                            /* Launch clip for this track */
                             activeTrack = t;
                             if (typeof host_module_set_param === 'function')
                                 host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
