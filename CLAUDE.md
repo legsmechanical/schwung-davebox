@@ -229,4 +229,4 @@ cp ui.js dist/seq8/ui.js && ./scripts/install.sh
 ssh ableton@move.local "tail -f /data/UserData/schwung/seq8.log"
 ```
 
-`~/schwung-notetwist` — NoteTwist reference (port source, key file `src/notetwist.c`). `SEQ8_SPEC.md` — full design spec; consult specific sections as needed, do not read in full at session start.
+`~/schwung-notetwist` — NoteTwist reference (port source, key file `src/notetwist.c`). `SEQ8_SPEC_CC.md` — full design spec; consult specific sections as needed, do not read in full at session start.
