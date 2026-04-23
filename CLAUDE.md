@@ -74,7 +74,7 @@ State saves and loads per native Move set. File: `/data/UserData/schwung/set_sta
 
 **How it works**:
 - `create_instance`: reads `active_set.txt`, sets `inst->state_path`, calls `seq8_load_state`. Cold boot always loads correct set.
-- `state_load` set_param: DSP re-reads `active_set.txt` itself (no path strings over the bridge — Schwung silently drops long set_param values), resets internal state without MIDI panic, loads from new path.
+- `state_load` set_param: value is the UUID (36 chars) from JS. DSP constructs `set_state/<UUID>/seq8-state.json`, resets internal state without MIDI panic, loads. Falls back to `SEQ8_STATE_PATH_FALLBACK` if value empty.
 - `state_uuid` get_param: extracts UUID from `inst->state_path` for JS comparison.
 - `instance_nonce` get_param: `time(NULL) ^ (ptr >> 3)` — changes on DSP hot-reload.
 - JS `init()`: reads `active_set.txt` UUID, compares with `state_uuid` from DSP. If different → `pendingSetLoad=true`. Also sets `pendingSetLoad=true` if state file absent for current UUID (covers wipe-while-running edge case). `pendingSetLoad` fires `state_load='1'` as the sole set_param in the next tick (Schwung delivers only the LAST set_param per JS tick — `state_load` must be last or only).
