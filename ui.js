@@ -1500,7 +1500,7 @@ globalThis.tick = function () {
             const _muted      = trackMuted[activeTrack];
             const _soloed     = trackSoloed[activeTrack];
             const _muteBlink  = Math.floor(tickCount / 24) % 2;
-            setButtonLED(MoveMute, _soloed ? 124 : (_muted ? (_muteBlink ? 124 : 0) : 16));
+            setButtonLED(MoveMute, _muted ? 124 : (_soloed ? (_muteBlink ? 124 : 0) : 16));
         }
 
         if (sessionView) {
