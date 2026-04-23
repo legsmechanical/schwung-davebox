@@ -218,6 +218,11 @@ typedef struct {
     /* Mute/solo per track: 0=off, 1=on */
     uint8_t mute[NUM_TRACKS];
     uint8_t solo[NUM_TRACKS];
+
+    /* Mute/solo snapshots: 16 slots */
+    uint8_t snap_mute[16][NUM_TRACKS];
+    uint8_t snap_solo[16][NUM_TRACKS];
+    uint8_t snap_valid[16];
 } seq8_instance_t;
 
 static const host_api_v1_t *g_host = NULL;
@@ -1258,6 +1263,40 @@ static void set_param(void *instance, const char *key, const char *val) {
             inst->mute[t] = 0;
             inst->solo[t] = 0;
         }
+        return;
+    }
+
+    if (!strcmp(key, "snap_save")) {
+        /* Format: "N m0..m7 s0..s7" (space-separated 0/1 values) */
+        const char *p = val;
+        int n = 0, t, v;
+        while (*p == ' ') p++;
+        while (*p >= '0' && *p <= '9') n = n * 10 + (*p++ - '0');
+        if (n < 0 || n >= 16) return;
+        for (t = 0; t < NUM_TRACKS; t++) {
+            while (*p == ' ') p++;
+            v = 0;
+            while (*p >= '0' && *p <= '9') v = v * 10 + (*p++ - '0');
+            inst->snap_mute[n][t] = v ? 1 : 0;
+        }
+        for (t = 0; t < NUM_TRACKS; t++) {
+            while (*p == ' ') p++;
+            v = 0;
+            while (*p >= '0' && *p <= '9') v = v * 10 + (*p++ - '0');
+            inst->snap_solo[n][t] = v ? 1 : 0;
+        }
+        inst->snap_valid[n] = 1;
+        return;
+    }
+
+    if (!strcmp(key, "snap_load")) {
+        int n = my_atoi(val), t;
+        if (n < 0 || n >= 16 || !inst->snap_valid[n]) return;
+        for (t = 0; t < NUM_TRACKS; t++) {
+            inst->mute[t] = inst->snap_mute[n][t];
+            inst->solo[t] = inst->snap_solo[n][t];
+        }
+        silence_muted_tracks(inst);
         return;
     }
 

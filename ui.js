@@ -444,6 +444,7 @@ let lastSoloBlink      = null;  /* last blink state for solo dirty detection */
 /* Per-track mute/solo state (JS mirrors DSP) */
 let trackMuted         = new Array(NUM_TRACKS).fill(false);
 let trackSoloed        = new Array(NUM_TRACKS).fill(false);
+let snapshots          = new Array(16).fill(null); /* null=empty, else {mute:[8], solo:[8]} */
 
 /* Global menu state (Phase 5q) */
 let globalMenuOpen  = false;
@@ -972,19 +973,23 @@ function invalidateLEDCache() {
 function updateSceneMapLEDs() {
     if (!ledInitComplete) return;
     for (let i = 0; i < 16; i++) {
-        const inView     = i >= sceneRow && i < sceneRow + 4;
-        const anyPlaying = cachedSceneAnyPlaying[i];
         let color;
-        if (inView && anyPlaying) {
-            color = flashEighth ? LED_STEP_CURSOR : LED_OFF;
-        } else if (inView) {
-            color = LED_STEP_CURSOR;
-        } else if (anyPlaying) {
-            color = flashEighth ? White : LED_OFF;
-        } else if (sceneNonEmpty(i)) {
-            color = White;
+        if (muteHeld && sessionView) {
+            color = snapshots[i] !== null ? VividYellow : DarkGrey;
         } else {
-            color = LED_OFF;
+            const inView     = i >= sceneRow && i < sceneRow + 4;
+            const anyPlaying = cachedSceneAnyPlaying[i];
+            if (inView && anyPlaying) {
+                color = flashEighth ? LED_STEP_CURSOR : LED_OFF;
+            } else if (inView) {
+                color = LED_STEP_CURSOR;
+            } else if (anyPlaying) {
+                color = flashEighth ? White : LED_OFF;
+            } else if (sceneNonEmpty(i)) {
+                color = White;
+            } else {
+                color = LED_OFF;
+            }
         }
         setLED(16 + i, color);
     }
@@ -1715,6 +1720,7 @@ globalThis.onMidiMessageInternal = function (data) {
 
         if (d1 === MoveMute) {
             muteHeld = d2 === 127;
+            if (sessionView) invalidateLEDCache();
         }
 
         /* Note/Session view toggle: Shift+press = open global menu (Track View only);
@@ -2016,11 +2022,32 @@ globalThis.onMidiMessageInternal = function (data) {
     if ((status & 0xF0) === 0x90 && d1 >= 16 && d1 <= 31 && d2 > 0) {
         const idx = d1 - 16;
         if (sessionView) {
-            if (!deleteHeld && !shiftHeld) {
+            if (muteHeld) {
+                /* All 16 step buttons are snapshot slots 0-15 */
+                if (shiftHeld) {
+                    /* Shift+tap: save/overwrite snapshot */
+                    snapshots[idx] = { mute: trackMuted.slice(), solo: trackSoloed.slice() };
+                    const mStr = trackMuted.map(function(m) { return m ? '1' : '0'; }).join(' ');
+                    const sStr = trackSoloed.map(function(s) { return s ? '1' : '0'; }).join(' ');
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('snap_save', idx + ' ' + mStr + ' ' + sStr);
+                } else if (snapshots[idx] !== null) {
+                    /* Tap occupied: recall snapshot */
+                    const snap = snapshots[idx];
+                    for (let _t = 0; _t < NUM_TRACKS; _t++) {
+                        trackMuted[_t]  = snap.mute[_t];
+                        trackSoloed[_t] = snap.solo[_t];
+                    }
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('snap_load', String(idx));
+                    screenDirty = true;
+                }
+                /* Tap empty: no-op; muteHeld swallows all step buttons in Session View */
+            } else if (!deleteHeld && !shiftHeld) {
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('launch_scene', String(idx));
             }
-            /* deleteHeld/shiftHeld in Session View: swallow step buttons */
+            /* deleteHeld/shiftHeld (non-muteHeld) in Session View: swallow step buttons */
         } else if (loopHeld) {
             const ac      = effectiveClip(activeTrack);
             const newLen  = (idx + 1) * 16;
