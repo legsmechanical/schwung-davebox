@@ -1305,16 +1305,18 @@ static void set_param(void *instance, const char *key, const char *val) {
             return;
         }
 
-        /* tN_mute: set mute state for this track */
+        /* tN_mute: set mute state; setting mute clears solo on same track */
         if (!strcmp(sub, "mute")) {
             inst->mute[tidx] = (val[0] == '1') ? 1 : 0;
+            if (inst->mute[tidx]) inst->solo[tidx] = 0;
             silence_muted_tracks(inst);
             return;
         }
 
-        /* tN_solo: set solo state for this track */
+        /* tN_solo: set solo state; setting solo clears mute on same track */
         if (!strcmp(sub, "solo")) {
             inst->solo[tidx] = (val[0] == '1') ? 1 : 0;
+            if (inst->solo[tidx]) inst->mute[tidx] = 0;
             silence_muted_tracks(inst);
             return;
         }
