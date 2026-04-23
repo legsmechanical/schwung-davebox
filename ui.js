@@ -539,6 +539,12 @@ function clipHasContent(t, c) {
     return false;
 }
 
+/* When stopped with a clip queued, Track View should operate on the queued clip. */
+function effectiveClip(t) {
+    const qc = trackQueuedClip[t];
+    return (!playing && qc >= 0) ? qc : trackActiveClip[t];
+}
+
 function computePadNoteMap() {
     const intervals = SCALE_INTERVALS[padScale] || SCALE_INTERVALS[0];
     const root = padOctave[activeTrack] * 12 + padKey;
@@ -774,8 +780,7 @@ function liveSendNote(t, type, pitch, vel) {
 
 function updateStepLEDs() {
     if (!ledInitComplete) return;
-    const qc = trackQueuedClip[activeTrack];
-    const ac = (!playing && qc >= 0) ? qc : trackActiveClip[activeTrack];
+    const ac = effectiveClip(activeTrack);
 
     if (loopHeld) {
         const pagesInUse = Math.max(1, Math.ceil(clipLength[activeTrack][ac] / 16));
@@ -1078,7 +1083,7 @@ function drawUI() {
         if (tickCount >= octaveOverlayEndTick) {
             octaveOverlayEndTick = -1;
         } else {
-            const ac         = trackActiveClip[activeTrack];
+            const ac         = effectiveClip(activeTrack);
             const page       = trackCurrentPage[activeTrack];
             const totalPages = Math.max(1, Math.ceil(clipLength[activeTrack][ac] / 16));
             const oct        = trackOctave[activeTrack];
@@ -1093,7 +1098,7 @@ function drawUI() {
 
     /* Step edit: show assigned notes and step identity */
     if (heldStep >= 0) {
-        const ac       = trackActiveClip[activeTrack];
+        const ac       = effectiveClip(activeTrack);
         const stepLabel = 'S' + (heldStep + 1);
         const noteStr  = heldStepNotes.length === 0
             ? '(empty)'
@@ -1134,7 +1139,7 @@ function drawUI() {
 
     } else {
         /* State 4: normal Track View */
-        const ac         = trackActiveClip[activeTrack];
+        const ac         = effectiveClip(activeTrack);
         const page       = trackCurrentPage[activeTrack];
         const totalPages = Math.max(1, Math.ceil(clipLength[activeTrack][ac] / 16));
         /* \xb7 = middle dot · */
@@ -1273,7 +1278,7 @@ globalThis.tick = function () {
             for (let _btn = 0; _btn < 16; _btn++) {
                 if (stepBtnPressedTick[_btn] >= 0 &&
                         (tickCount - stepBtnPressedTick[_btn]) >= STEP_HOLD_TICKS) {
-                    const ac_h   = trackActiveClip[activeTrack];
+                    const ac_h   = effectiveClip(activeTrack);
                     const absIdx = trackCurrentPage[activeTrack] * 16 + _btn;
                     heldStepBtn              = _btn;
                     heldStep                 = absIdx;
@@ -1585,7 +1590,7 @@ globalThis.onMidiMessageInternal = function (data) {
 
         /* Left/Right: page nav in Track View */
         if ((d1 === MoveLeft || d1 === MoveRight) && d2 === 127 && !sessionView) {
-            const ac         = trackActiveClip[activeTrack];
+            const ac         = effectiveClip(activeTrack);
             const totalPages = Math.max(1, Math.ceil(clipLength[activeTrack][ac] / 16));
             if (d1 === MoveLeft)
                 trackCurrentPage[activeTrack] = Math.max(0, trackCurrentPage[activeTrack] - 1);
@@ -1760,7 +1765,7 @@ globalThis.onMidiMessageInternal = function (data) {
             }
             /* deleteHeld in Session View: swallow step buttons */
         } else if (loopHeld) {
-            const ac      = trackActiveClip[activeTrack];
+            const ac      = effectiveClip(activeTrack);
             const newLen  = (idx + 1) * 16;
             clipLength[activeTrack][ac] = newLen;
             const maxPage = Math.max(0, Math.ceil(newLen / 16) - 1);
@@ -1771,7 +1776,7 @@ globalThis.onMidiMessageInternal = function (data) {
             forceRedraw();
         } else if (deleteHeld) {
             /* Delete + step button (Track View): clear all notes from that step */
-            const ac     = trackActiveClip[activeTrack];
+            const ac     = effectiveClip(activeTrack);
             const absIdx = trackCurrentPage[activeTrack] * 16 + idx;
             clearStep(activeTrack, ac, absIdx);
             forceRedraw();
@@ -1834,7 +1839,7 @@ globalThis.onMidiMessageInternal = function (data) {
 
                 if (heldStep >= 0 && !shiftHeld) {
                     /* Step edit: tap pad to toggle note assignment for held step */
-                    const ac    = trackActiveClip[activeTrack];
+                    const ac    = effectiveClip(activeTrack);
                     const pitch = Math.max(0, Math.min(127, padNoteMap[padIdx] + trackOctave[activeTrack] * 12));
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + activeTrack + '_c' + ac + '_step_' + heldStep + '_toggle', String(pitch));
@@ -1947,7 +1952,7 @@ globalThis.onMidiMessageInternal = function (data) {
                 forceRedraw();
             } else if (stepBtnPressedTick[btn] >= 0) {
                 /* Tap: released before hold threshold — toggle step on/off */
-                const ac_t   = trackActiveClip[activeTrack];
+                const ac_t   = effectiveClip(activeTrack);
                 const absIdx = trackCurrentPage[activeTrack] * 16 + btn;
                 const wasOn  = clipSteps[activeTrack][ac_t][absIdx] === 1;
                 stepBtnPressedTick[btn] = -1;
