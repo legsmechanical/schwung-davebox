@@ -439,6 +439,7 @@ let seqLastStep        = -1;   /* last step index queried for seqActiveNotes */
 let seqLastClip        = -1;   /* last clip index queried for seqActiveNotes */
 let deleteHeld         = false; /* true while Delete (CC 119) is held */
 let muteHeld           = false; /* true while Mute (CC 88) is held */
+let lastSoloBlink      = null;  /* last blink state for solo dirty detection */
 
 /* Per-track mute/solo state (JS mirrors DSP) */
 let trackMuted         = new Array(NUM_TRACKS).fill(false);
@@ -499,6 +500,7 @@ function setTrackMute(t, on) {
     }
     if (typeof host_module_set_param === 'function')
         host_module_set_param('t' + t + '_mute', on ? '1' : '0');
+    screenDirty = true;
 }
 
 function setTrackSolo(t, on) {
@@ -510,6 +512,7 @@ function setTrackSolo(t, on) {
     }
     if (typeof host_module_set_param === 'function')
         host_module_set_param('t' + t + '_solo', on ? '1' : '0');
+    screenDirty = true;
 }
 
 function clearAllMuteSolo() {
@@ -519,6 +522,7 @@ function clearAllMuteSolo() {
     }
     if (typeof host_module_set_param === 'function')
         host_module_set_param('mute_all_clear', '1');
+    screenDirty = true;
 }
 
 /* Immediately refresh seqActiveNotes for the given step if it is the current
@@ -1124,6 +1128,23 @@ function drawSessionOverview() {
     }
 }
 
+/* Track-number row: muted=inverted, soloed=blink, normal=white.
+ * Each track number is 1 char (6px) at x = 4 + t*12. */
+function drawTrackRow(y) {
+    const soloBlinkOn = Math.floor(tickCount / 24) % 2 === 0;
+    for (let _t = 0; _t < NUM_TRACKS; _t++) {
+        const x = 4 + _t * 12;
+        if (trackMuted[_t]) {
+            fill_rect(x, y - 1, 6, 9, 1);
+            print(x, y, String(_t + 1), 0);
+        } else if (trackSoloed[_t]) {
+            if (soloBlinkOn) print(x, y, String(_t + 1), 1);
+        } else {
+            print(x, y, String(_t + 1), 1);
+        }
+    }
+}
+
 function drawUI() {
     if (sessionOverlayHeld) { drawSessionOverview(); return; }
     if (globalMenuOpen) { drawGlobalMenu(); return; }
@@ -1132,7 +1153,7 @@ function drawUI() {
         const base = sceneRow;
         print(4, 10, 'SESSION  GRP ' + (Math.floor(sceneRow / 4) + 1), 1);
         print(4, 22, SCENE_LETTERS[base] + '-' + SCENE_LETTERS[base + 3], 1);
-        print(4, 34, '1 2 3 4 5 6 7 8', 1);
+        drawTrackRow(34);
         let line4 = '';
         for (let t = 0; t < NUM_TRACKS; t++) {
             line4 += SCENE_LETTERS[trackActiveClip[t]];
@@ -1154,7 +1175,7 @@ function drawUI() {
                      '  PG 1/' + totalPages, 1);
         print(4, 22, 'COUNT-IN', 1);
         print(4, 34, 'REC ARMED', 1);
-        print(4, 46, '1 2 3 4 5 6 7 8', 1);
+        drawTrackRow(46);
         return;
     }
 
@@ -1176,7 +1197,7 @@ function drawUI() {
                      '  PG ' + (page + 1) + '/' + totalPages, 1);
         print(4, 22, 'KNOB: [' + BANKS[activeBank].name + ']', 1);
         print(4, 34, 'Octave: ' + (oct > 0 ? '+' + oct : String(oct)), 1);
-        print(4, 46, '1 2 3 4 5 6 7 8', 1);
+        drawTrackRow(46);
         return;
     }
 
@@ -1191,7 +1212,7 @@ function drawUI() {
                      '  ' + stepLabel, 1);
         print(4, 22, 'STEP EDIT', 1);
         print(4, 34, noteStr, 1);
-        print(4, 46, '1 2 3 4 5 6 7 8', 1);
+        drawTrackRow(46);
         return;
     }
 
@@ -1238,7 +1259,7 @@ function drawUI() {
             print(4, 22, 'LOOP LEN: ' + steps + ' STEPS', 1);
             print(4, 34, pages + ' OF 16 PAGES', 1);
         } else {
-            print(4, 34, '1 2 3 4 5 6 7 8', 1);
+            drawTrackRow(34);
         }
         let line4 = '';
         for (let t = 0; t < NUM_TRACKS; t++) {
@@ -1534,6 +1555,14 @@ globalThis.tick = function () {
             if (blinkOn !== lastBlinkOn) { lastBlinkOn = blinkOn; screenDirty = true; }
         } else {
             lastBlinkOn = null;
+        }
+
+        /* Solo blink: mark dirty when blink toggles and any track is soloed */
+        if (trackSoloed.some(function(s) { return s; })) {
+            const _sb = Math.floor(tickCount / 24) % 2;
+            if (_sb !== lastSoloBlink) { lastSoloBlink = _sb; screenDirty = true; }
+        } else {
+            lastSoloBlink = null;
         }
     }
     if (screenDirty) { screenDirty = false; drawUI(); }
@@ -2022,7 +2051,11 @@ globalThis.onMidiMessageInternal = function (data) {
                 const rowBase = 92 - row * 8;
                 if (d1 >= rowBase && d1 < rowBase + NUM_TRACKS) {
                     const t = d1 - rowBase;
-                    if (deleteHeld) {
+                    if (muteHeld) {
+                        /* Mute-held + pad: toggle mute/solo on that track's column */
+                        if (shiftHeld) setTrackSolo(t, !trackSoloed[t]);
+                        else           setTrackMute(t, !trackMuted[t]);
+                    } else if (deleteHeld) {
                         /* Delete + clip pad (Session View): clear that clip */
                         const clipIdx = sceneRow + row;
                         clearClip(t, clipIdx);
