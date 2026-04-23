@@ -1,5 +1,7 @@
 # SEQ8
 
+**Working rule:** Before acting on any assumed or suggested cause/fix, read the relevant code and verify the assumption is correct first.
+
 SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move — a standalone 8-track MIDI sequencer. No audio output. Written in C (DSP) + JavaScript (UI). Appears in the **Tools menu**; `component_type: "tool"` enables background running via tool reconnect.
 
 ## Current build phase
