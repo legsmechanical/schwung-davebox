@@ -214,11 +214,28 @@ typedef struct {
 
     /* Monotonic nonce: unique per create_instance call; JS polls to detect DSP hot-reload */
     uint32_t instance_nonce;
+
+    /* Mute/solo per track: 0=off, 1=on */
+    uint8_t mute[NUM_TRACKS];
+    uint8_t solo[NUM_TRACKS];
 } seq8_instance_t;
 
 static const host_api_v1_t *g_host = NULL;
 static seq8_instance_t     *g_inst = NULL;
 
+
+/* ------------------------------------------------------------------ */
+/* Mute/solo                                                            */
+/* ------------------------------------------------------------------ */
+
+static int effective_mute(seq8_instance_t *inst, int t) {
+    int i, any_solo = 0;
+    for (i = 0; i < NUM_TRACKS; i++)
+        if (inst->solo[i]) { any_solo = 1; break; }
+    return inst->mute[t] || (any_solo && !inst->solo[t]);
+}
+
+/* silence_muted_tracks defined after pfx_note_off below */
 
 /* ------------------------------------------------------------------ */
 /* Utility                                                              */
@@ -763,6 +780,19 @@ static void pfx_note_off_imm(seq8_instance_t *inst, seq8_track_t *tr,
     (void)now;
 }
 
+static void silence_muted_tracks(seq8_instance_t *inst) {
+    int t, n;
+    for (t = 0; t < NUM_TRACKS; t++) {
+        seq8_track_t *tr = &inst->tracks[t];
+        if (effective_mute(inst, t) && tr->note_active) {
+            for (n = 0; n < (int)tr->pending_note_count; n++)
+                pfx_note_off(inst, tr, tr->pending_notes[n]);
+            tr->note_active = 0;
+            tr->pending_note_count = 0;
+        }
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* Plugin lifecycle                                                     */
 /* ------------------------------------------------------------------ */
@@ -1222,6 +1252,15 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
 
+    if (!strcmp(key, "mute_all_clear")) {
+        int t;
+        for (t = 0; t < NUM_TRACKS; t++) {
+            inst->mute[t] = 0;
+            inst->solo[t] = 0;
+        }
+        return;
+    }
+
     /* --- Track-prefixed params: tN_<subkey> --- */
     if (key[0] == 't' && key[1] >= '0' && key[1] <= '7' && key[2] == '_') {
         int tidx = key[1] - '0';
@@ -1263,6 +1302,20 @@ static void set_param(void *instance, const char *key, const char *val) {
             tr->queued_clip       = -1;
             tr->pending_page_stop = 0;
             tr->record_armed      = 0;
+            return;
+        }
+
+        /* tN_mute: set mute state for this track */
+        if (!strcmp(sub, "mute")) {
+            inst->mute[tidx] = (val[0] == '1') ? 1 : 0;
+            silence_muted_tracks(inst);
+            return;
+        }
+
+        /* tN_solo: set solo state for this track */
+        if (!strcmp(sub, "solo")) {
+            inst->solo[tidx] = (val[0] == '1') ? 1 : 0;
+            silence_muted_tracks(inst);
             return;
         }
 
@@ -1943,7 +1996,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 }
 
                 /* Note on */
-                if (tr->clip_playing && cl->steps[tr->current_step]) {
+                if (tr->clip_playing && cl->steps[tr->current_step] && !effective_mute(inst, t)) {
                     int n;
                     tr->pending_note_count = cl->step_note_count[tr->current_step];
                     for (n = 0; n < (int)tr->pending_note_count; n++) {

@@ -5,7 +5,9 @@ import {
     MoveLeft,
     MoveRight,
     MoveUp,
-    MoveDown
+    MoveDown,
+    MoveMute,
+    MoveDelete
 } from '/data/UserData/schwung/shared/constants.mjs';
 
 /* CC 50 = Note/Session toggle (three-bar button left of track buttons). */
@@ -436,6 +438,11 @@ let seqActiveNotes     = new Set(); /* pitches currently playing from sequencer 
 let seqLastStep        = -1;   /* last step index queried for seqActiveNotes */
 let seqLastClip        = -1;   /* last clip index queried for seqActiveNotes */
 let deleteHeld         = false; /* true while Delete (CC 119) is held */
+let muteHeld           = false; /* true while Mute (CC 88) is held */
+
+/* Per-track mute/solo state (JS mirrors DSP) */
+let trackMuted         = new Array(NUM_TRACKS).fill(false);
+let trackSoloed        = new Array(NUM_TRACKS).fill(false);
 
 /* Global menu state (Phase 5q) */
 let globalMenuOpen  = false;
@@ -476,6 +483,32 @@ let pendingDspSync   = 0;         /* ticks remaining before deferred syncClipsFr
 function midiNoteName(n) {
     const names = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
     return names[n % 12] + (Math.floor(n / 12) - 1);
+}
+
+function effectiveMute(t) {
+    const anySolo = trackSoloed.some(function(s) { return s; });
+    return trackMuted[t] || (anySolo && !trackSoloed[t]);
+}
+
+function setTrackMute(t, on) {
+    trackMuted[t] = on;
+    if (typeof host_module_set_param === 'function')
+        host_module_set_param('t' + t + '_mute', on ? '1' : '0');
+}
+
+function setTrackSolo(t, on) {
+    trackSoloed[t] = on;
+    if (typeof host_module_set_param === 'function')
+        host_module_set_param('t' + t + '_solo', on ? '1' : '0');
+}
+
+function clearAllMuteSolo() {
+    for (let _t = 0; _t < NUM_TRACKS; _t++) {
+        trackMuted[_t]  = false;
+        trackSoloed[_t] = false;
+    }
+    if (typeof host_module_set_param === 'function')
+        host_module_set_param('mute_all_clear', '1');
 }
 
 /* Immediately refresh seqActiveNotes for the given step if it is the current
@@ -1463,6 +1496,12 @@ globalThis.tick = function () {
         /* Transport LEDs */
         setButtonLED(MovePlay, playing ? Green : LED_OFF);
         setButtonLED(MoveRec,  recordArmed ? Red : LED_OFF);
+        {
+            const _anySolo = trackSoloed.some(function(s) { return s; });
+            const _muted   = trackMuted[activeTrack];
+            const _soloed  = trackSoloed[activeTrack];
+            setButtonLED(MoveMute, _anySolo ? (_soloed ? Green : Red) : (_muted ? Red : LED_OFF));
+        }
 
         if (sessionView) {
             updateSessionLEDs();
@@ -1631,8 +1670,12 @@ globalThis.onMidiMessageInternal = function (data) {
             if (!shiftHeld && jogTouched) { jogTouched = false; forceRedraw(); }
         }
 
-        if (d1 === 119) {
+        if (d1 === MoveDelete) {
             deleteHeld = d2 === 127;
+        }
+
+        if (d1 === MoveMute) {
+            muteHeld = d2 === 127;
         }
 
         /* Note/Session view toggle: Shift+press = open global menu (Track View only);
@@ -1750,6 +1793,17 @@ globalThis.onMidiMessageInternal = function (data) {
                 setButtonLED(MoveRec, Red);
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('t' + activeTrack + '_recording', '1');
+            }
+        }
+
+        /* Mute button: toggle mute/solo on active track (Track View only); Delete+Mute = clear all */
+        if (d1 === MoveMute && d2 === 127 && !sessionView) {
+            if (deleteHeld) {
+                clearAllMuteSolo();
+            } else if (shiftHeld) {
+                setTrackSolo(activeTrack, !trackSoloed[activeTrack]);
+            } else {
+                setTrackMute(activeTrack, !trackMuted[activeTrack]);
             }
         }
 
