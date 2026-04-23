@@ -334,6 +334,8 @@ const padPitch = new Array(32).fill(-1);
 /* clipSteps[track][clip][step] — JS-authoritative mirror of DSP step data */
 let clipSteps        = Array.from({length: NUM_TRACKS}, () =>
                            Array.from({length: NUM_CLIPS}, () => new Array(NUM_STEPS).fill(0)));
+/* clipNonEmpty[track][clip] — cached result of clipHasContent; updated on every clipSteps write */
+let clipNonEmpty     = Array.from({length: NUM_TRACKS}, () => new Array(NUM_CLIPS).fill(false));
 let clipLength       = Array.from({length: NUM_TRACKS}, () => new Array(NUM_CLIPS).fill(16));
 let trackCurrentStep = new Array(NUM_TRACKS).fill(-1);
 let trackCurrentPage = new Array(NUM_TRACKS).fill(0);
@@ -462,6 +464,7 @@ function clearStep(t, ac, absIdx) {
     if (typeof host_module_set_param !== 'function') return;
     host_module_set_param('t' + t + '_c' + ac + '_step_' + absIdx + '_clear', '1');
     clipSteps[t][ac][absIdx] = 0;
+    if (clipNonEmpty[t][ac]) clipNonEmpty[t][ac] = clipHasContent(t, ac);
     refreshSeqNotesIfCurrent(t, ac, absIdx);
 }
 
@@ -471,6 +474,7 @@ function clearClip(t, ac) {
     host_module_set_param('t' + t + '_c' + ac + '_clear', '1');
     const len = clipLength[t][ac];
     for (let s = 0; s < len; s++) clipSteps[t][ac][s] = 0;
+    clipNonEmpty[t][ac] = false;
     if (ac === trackActiveClip[t]) { seqActiveNotes.clear(); seqLastStep = -1; }
 }
 
@@ -795,21 +799,21 @@ function groupHasContent(group) {
     for (let row = 0; row < 4; row++) {
         const sceneIdx = group * 4 + row;
         for (let t = 0; t < NUM_TRACKS; t++)
-            if (clipHasContent(t, sceneIdx)) return true;
+            if (clipNonEmpty[t][sceneIdx]) return true;
     }
     return false;
 }
 
 function sceneNonEmpty(sceneIdx) {
     for (let t = 0; t < NUM_TRACKS; t++)
-        if (clipHasContent(t, sceneIdx)) return true;
+        if (clipNonEmpty[t][sceneIdx]) return true;
     return false;
 }
 
 function sceneAllPlaying(sceneIdx) {
     let hasAny = false;
     for (let t = 0; t < NUM_TRACKS; t++) {
-        if (!clipHasContent(t, sceneIdx)) continue;
+        if (!clipNonEmpty[t][sceneIdx]) continue;
         hasAny = true;
         if (!trackClipPlaying[t] || trackActiveClip[t] !== sceneIdx) return false;
     }
@@ -819,7 +823,7 @@ function sceneAllPlaying(sceneIdx) {
 function sceneAllQueued(sceneIdx) {
     let hasAny = false;
     for (let t = 0; t < NUM_TRACKS; t++) {
-        if (!clipHasContent(t, sceneIdx)) continue;
+        if (!clipNonEmpty[t][sceneIdx]) continue;
         hasAny = true;
         const isQueued = (trackQueuedClip[t] === sceneIdx) ||
                          (trackPendingPageStop[t] && trackActiveClip[t] === sceneIdx);
@@ -835,7 +839,7 @@ function updateSceneMapLEDs() {
         if (sceneNonEmpty(i) && sceneAllPlaying(i)) {
             color = White;
         } else if (sceneNonEmpty(i) && sceneAllQueued(i)) {
-            color = flashSixteenth ? White : LED_OFF;
+            color = (!playing || flashSixteenth) ? White : LED_OFF;
         } else {
             const group = Math.floor(i / 4);
             color = (i >= sceneRow && i < sceneRow + 4) ? LED_STEP_CURSOR
@@ -853,7 +857,7 @@ function updateSessionLEDs() {
         for (let t = 0; t < 8; t++) {
             const note = 92 - row * 8 + t;
             if (t >= NUM_TRACKS) { setLED(note, LED_OFF); continue; }
-            const hasContent    = clipHasContent(t, sceneIdx);
+            const hasContent    = clipNonEmpty[t][sceneIdx];
             const isActiveClip  = trackActiveClip[t] === sceneIdx;
             const isPlaying     = trackClipPlaying[t] && isActiveClip;
             const isPendingStop = trackPendingPageStop[t] && isActiveClip;
@@ -863,11 +867,11 @@ function updateSessionLEDs() {
             if (!hasContent) {
                 color = DarkGrey;
             } else if (isPlaying && isPendingStop) {
-                color = flashSixteenth ? TRACK_COLORS[t] : LED_OFF;
+                color = (!playing || flashSixteenth) ? TRACK_COLORS[t] : LED_OFF;
             } else if (isPlaying) {
-                color = TRACK_COLORS[t];
+                color = flashEighth ? TRACK_COLORS[t] : LED_OFF;
             } else if (isQueued) {
-                color = flashSixteenth ? TRACK_COLORS[t] : LED_OFF;
+                color = (!playing || flashSixteenth) ? TRACK_COLORS[t] : LED_OFF;
             } else if (isWillRelaunch) {
                 color = TRACK_COLORS[t];
             } else {
@@ -904,24 +908,24 @@ function updateTrackLEDs() {
             } else if (sceneAllPlaying(sceneIdx)) {
                 color = White;
             } else if (sceneAllQueued(sceneIdx)) {
-                color = flashSixteenth ? White : LED_OFF;
+                color = (!playing || flashSixteenth) ? White : LED_OFF;
             } else {
                 color = LED_OFF;
             }
         } else {
             const t             = activeTrack;
-            const hasContent    = clipHasContent(t, sceneIdx);
+            const hasContent    = clipNonEmpty[t][sceneIdx];
             const isActiveClip  = trackActiveClip[t] === sceneIdx;
             const isPlaying     = trackClipPlaying[t] && isActiveClip;
             const isPendingStop = trackPendingPageStop[t] && isActiveClip;
             const isQueued      = trackQueuedClip[t] === sceneIdx;
             const isWillRelaunch = trackWillRelaunch[t] && isActiveClip;
             if (isPlaying && isPendingStop) {
-                color = flashSixteenth ? TRACK_COLORS[t] : LED_OFF;
+                color = (!playing || flashSixteenth) ? TRACK_COLORS[t] : LED_OFF;
             } else if (isPlaying) {
-                color = TRACK_COLORS[t];
+                color = flashEighth ? TRACK_COLORS[t] : LED_OFF;
             } else if (isQueued) {
-                color = flashSixteenth ? TRACK_COLORS[t] : LED_OFF;
+                color = (!playing || flashSixteenth) ? TRACK_COLORS[t] : LED_OFF;
             } else if (isWillRelaunch) {
                 color = TRACK_COLORS[t];
             } else if (hasContent) {
@@ -1164,6 +1168,7 @@ globalThis.init = function () {
                 if (bulk && bulk.length >= NUM_STEPS) {
                     for (let s = 0; s < NUM_STEPS; s++)
                         clipSteps[t][c][s] = bulk[s] === '1' ? 1 : 0;
+                    clipNonEmpty[t][c] = clipHasContent(t, c);
                 }
                 const len = host_module_get_param('t' + t + '_c' + c + '_length');
                 if (len !== null && len !== undefined)
@@ -1796,6 +1801,11 @@ globalThis.onMidiMessageInternal = function (data) {
                         : [];
                     /* Mirror step active state in JS */
                     clipSteps[activeTrack][ac][heldStep] = heldStepNotes.length > 0 ? 1 : 0;
+                    if (heldStepNotes.length > 0) {
+                        clipNonEmpty[activeTrack][ac] = true;
+                    } else if (clipNonEmpty[activeTrack][ac]) {
+                        clipNonEmpty[activeTrack][ac] = clipHasContent(activeTrack, ac);
+                    }
                     refreshSeqNotesIfCurrent(activeTrack, ac, heldStep);
                     /* Preview note */
                     padPitch[padIdx] = pitch;
@@ -1842,6 +1852,7 @@ globalThis.onMidiMessageInternal = function (data) {
                         const ac_r = trackActiveClip[rt];
                         host_module_set_param('t' + rt + '_c' + ac_r + '_step_0_add', String(pitch));
                         clipSteps[rt][ac_r][0] = 1;
+                        clipNonEmpty[rt][ac_r] = true;
                     }
                     /* Overdub capture: add to current step of armed track.
                      * Pin step index for RECORD_CAPTURE_TICKS so chord notes arriving
@@ -1869,6 +1880,7 @@ globalThis.onMidiMessageInternal = function (data) {
                                 't' + rt + '_c' + ac_r + '_step_' + cs_r + '_add',
                                 String(pitch));
                             clipSteps[rt][ac_r][cs_r] = 1;
+                            clipNonEmpty[rt][ac_r] = true;
                         }
                     }
                 }
@@ -1915,12 +1927,14 @@ globalThis.onMidiMessageInternal = function (data) {
                             host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx, '1');
                     }
                     clipSteps[activeTrack][ac_t][absIdx] = 1;
+                    clipNonEmpty[activeTrack][ac_t] = true;
                     refreshSeqNotesIfCurrent(activeTrack, ac_t, absIdx);
                 } else {
                     /* Deactivating: preserve note data */
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx, '0');
                     clipSteps[activeTrack][ac_t][absIdx] = 0;
+                    if (clipNonEmpty[activeTrack][ac_t]) clipNonEmpty[activeTrack][ac_t] = clipHasContent(activeTrack, ac_t);
                     refreshSeqNotesIfCurrent(activeTrack, ac_t, absIdx);
                 }
                 forceRedraw();
