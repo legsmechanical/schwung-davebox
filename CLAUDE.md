@@ -67,26 +67,23 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 2. **Mute/Solo** — Per-track, likely Shift + track-select pads.
 3. **Drum + Chromatic pad modes** — `pad_mode` wired in TRACK K3; DSP/JS logic not yet done.
 4. **Global menu stubs** — Wire Swing/Vel/Quant to DSP when those features land.
-5. **Per-set state** — Tie SEQ8 state to native Move sets (see below).
 
-## Per-set state (planned)
+## Per-set state (built)
 
-**Goal**: SEQ8 state should save and load per native Move set, the same way Song Mode does.
+State saves and loads per native Move set. File: `/data/UserData/schwung/set_state/<UUID>/seq8-state.json`. UUID from `active_set.txt` line 1.
 
-**How Schwung exposes per-set state** (researched from `charlesvestal/schwung`):
-- `/data/UserData/schwung/active_set.txt` — written by `shadow_ui.js` on every set change. Line 1: UUID, Line 2: set name.
-- `/data/UserData/schwung/set_state/<UUID>/` — directory created by Schwung core during set-change handling. Song Mode writes `song_mode.json` here.
-- `host_read_file`, `host_write_file`, `host_ensure_dir`, `host_file_exists` — all explicitly exposed to tool module JS context by `loadOvertakeModule()` in `shadow_ui.js`.
-- **No push event exists** for set changes. A background tool must poll `active_set.txt` in `tick()` and compare against the last-seen UUID to detect a set switch.
+**How it works**:
+- `create_instance`: reads `active_set.txt`, sets `inst->state_path`, calls `seq8_load_state`. Cold boot always loads correct set.
+- `state_load` set_param: DSP re-reads `active_set.txt` itself (no path strings over the bridge — Schwung silently drops long set_param values), resets internal state without MIDI panic, loads from new path.
+- `state_uuid` get_param: extracts UUID from `inst->state_path` for JS comparison.
+- `instance_nonce` get_param: `time(NULL) ^ (ptr >> 3)` — changes on DSP hot-reload.
+- JS `init()`: reads `active_set.txt` UUID, compares with `state_uuid` from DSP. If different → `pendingSetLoad=true`. Also sets `pendingSetLoad=true` if state file absent for current UUID (covers wipe-while-running edge case). `pendingSetLoad` fires `state_load='1'` as the sole set_param in the next tick (Schwung delivers only the LAST set_param per JS tick — `state_load` must be last or only).
+- `pendingDspSync`: 5-tick countdown after `state_load` before `syncClipsFromDsp()` runs, giving DSP time to process on the audio thread.
 
-**Why SEQ8 is different from Song Mode**: Song Mode is not background-running — it exits on dismiss, so each launch calls `init()` fresh and reads the UUID once. SEQ8 stays alive while hidden, so it must poll for UUID changes during `tick()`.
-
-**Planned implementation (approach A — DSP path configurable)**:
-1. **DSP**: Add `state_path` `set_param` key. When set, subsequent `seq8_save_state()` and `seq8_load_state()` calls use that path instead of the hardcoded `SEQ8_STATE_PATH`. Keep `SEQ8_STATE_PATH` as the default/fallback.
-2. **JS init**: Read `active_set.txt`, extract UUID. If UUID found, call `set_param("state_path", "/data/UserData/schwung/set_state/<UUID>/seq8-state.json")` before the existing state load. Ensure directory exists via `host_ensure_dir`.
-3. **JS tick polling**: Every ~300 ticks (~1.5s at 196Hz), re-read `active_set.txt` and compare UUID. On change: (a) send `set_param("transport", "stop")` if needed, (b) update `state_path` to old UUID path and trigger a save, (c) update `state_path` to new UUID path and trigger a load.
-4. **Target file path**: `/data/UserData/schwung/set_state/<UUID>/seq8-state.json`
-5. **State file version**: bump `v` when implementing (currently v=3).
+**Key constraints learned**:
+- Schwung set_param coalescing: only the LAST param per JS tick is delivered to DSP. Never send `state_load` then another param in the same tick.
+- No MIDI panic before state_load: `send_panic` sends 8×128 note-offs; this floods the MIDI buffer and causes subsequent set_params to be dropped. Reset state fields directly instead.
+- Shift+Back does NOT reload JS from disk — `init()` re-runs in the same runtime. JS changes require a full device reboot to take effect.
 
 ## Parameter Bank Reference
 
@@ -212,8 +209,14 @@ Beat Stretch compress: dry-run with `uint8_t seen[SEQ_STEPS]`. Any two active st
 ## Build / deploy / debug
 
 ```sh
-nm -D dist/seq8/dsp.so | grep GLIBC   # run after every build
+# DSP change: full build + install + reboot
 ./scripts/build.sh && ./scripts/install.sh
+nm -D dist/seq8/dsp.so | grep GLIBC   # verify after every build
+
+# JS-only change: copy to dist, install, reboot
+cp ui.js dist/seq8/ui.js && ./scripts/install.sh
+
+# Reboot is required after every deploy — Shift+Back does NOT reload JS from disk
 ssh ableton@move.local "tail -f /data/UserData/schwung/seq8.log"
 ```
 
