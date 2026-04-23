@@ -15,9 +15,9 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 
 ## Current build phase
 
-**Phase 5 — 8 tracks, 256 steps, arpeggiator, Track View.** All subphases complete through 5x:
+**Phase 5 — 8 tracks, 256 steps, arpeggiator, Track View.** All subphases complete through 5y:
 
-5a live pad input · 5b poll throttling · 5c clip length · 5d Track View banks + beat stretch + clock shift + octave shift · 5e per-step gate time · 5f polyphonic step notes (4 per step) · 5g melodic step entry UI · 5h tap vs hold step buttons · 5i phantom notes + sparse state fix (state v=2) · 5j Delete key combos · 5k atomic step/clip clear DSP params · 5l playback head indicator + chord-to-step input · 5m Session Overview overlay · 5n real-time recording + count-in · 5o recording fixes (toggle, count-in redesign, silent notes race fix) · 5q global menu via platform framework + jog click CC 3 fix + BPM editable (real-time, linear jog) + count-in duration fix · 5r clip deactivation (stop-at-end) + Session View jog row scroll · 5s clip-launch-rework: 5-state clip model, bar-boundary launch, page-stop, scene queuing, Shift+Play=deactivate_all, Delete+Play=panic, will_relaunch persistence (state v=3) · 5t stopped-transport fixes: effectiveClip helper, LED blink corrections, scene cache + LED dedup, Shift+Play deactivates all clips when stopped · 5u launch quantization: Now/1/16/1/8/1/4/1/2/1-bar, DSP QUANT_STEPS table, pending_page_stop anchored to global_tick%16 · 5v per-set state: state saved/loaded per Move set UUID, DSP `state_load` takes UUID from JS, `state_uuid`/`instance_nonce` get_params, fresh launch defaults to Session View · 5w active bank global: single integer replaces per-track array, bank selection persists across track switches · 5x live recording follows track switch: switching active track mid-recording hands off DSP recording flag to new track immediately
+5a live pad input · 5b poll throttling · 5c clip length · 5d Track View banks + beat stretch + clock shift + octave shift · 5e per-step gate time · 5f polyphonic step notes (4 per step) · 5g melodic step entry UI · 5h tap vs hold step buttons · 5i phantom notes + sparse state fix (state v=2) · 5j Delete key combos · 5k atomic step/clip clear DSP params · 5l playback head indicator + chord-to-step input · 5m Session Overview overlay · 5n real-time recording + count-in · 5o recording fixes (toggle, count-in redesign, silent notes race fix) · 5q global menu via platform framework + jog click CC 3 fix + BPM editable (real-time, linear jog) + count-in duration fix · 5r clip deactivation (stop-at-end) + Session View jog row scroll · 5s clip-launch-rework: 5-state clip model, bar-boundary launch, page-stop, scene queuing, Shift+Play=deactivate_all, Delete+Play=panic, will_relaunch persistence (state v=3) · 5t stopped-transport fixes: effectiveClip helper, LED blink corrections, scene cache + LED dedup, Shift+Play deactivates all clips when stopped · 5u launch quantization: Now/1/16/1/8/1/4/1/2/1-bar, DSP QUANT_STEPS table, pending_page_stop anchored to global_tick%16 · 5v per-set state: state saved/loaded per Move set UUID, DSP `state_load` takes UUID from JS, `state_uuid`/`instance_nonce` get_params, fresh launch defaults to Session View · 5w active bank global: single integer replaces per-track array, bank selection persists across track switches · 5x live recording follows track switch: switching active track mid-recording hands off DSP recording flag to new track immediately · 5y mute/solo + snapshots: per-track mute/solo with effective_mute gating, Mute button LED, OLED track-row indicators, 16-slot DSP-side snapshots, state v=4
 
 Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play effects → clip model/Session View/background running.
 
@@ -66,16 +66,17 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 
 **Background running**: Shift+Back hides SEQ8. Re-entry from Tools menu reconnects instantly. Cold boot recovery via `seq8-state.json`.
 
-**State persistence**: Written to `/data/UserData/schwung/seq8-state.json` on step change, transport, launch, destroy.
+**Mute/Solo** (5y): Per-track `mute[8]`/`solo[8]` in DSP. `effective_mute(inst, t)` = `mute[t] || (any_solo && !solo[t])`; gates render-path note-on and calls `silence_muted_tracks()` on state change. Mutual exclusion enforced at DSP level. Gestures: Mute button (CC 88) = toggle mute on active track; Shift+Mute = toggle solo; Delete+Mute = clear all. In Session View, Mute-held + pad = toggle mute/solo on that track column. Mute button LED: solid=muted, flash=soloed, dim=neither (brightness-only, no color). OLED track row: muted=inverted (black on white), soloed=blink at `tickCount/24%2` (transport-agnostic). **Snapshots**: 16 DSP-side slots (`snap_mute[16][8]`, `snap_solo[16][8]`, `snap_valid[16]`). In Session View with Mute held: all 16 step buttons show DarkGrey (empty) / VividYellow (occupied). Shift+tap=save (`snap_save "N m0..m7 s0..s7"`), tap-occupied=recall (`snap_load "N"`), tap-empty=no-op. JS mirror `snapshots[16]` synced via `syncMuteSoloFromDsp()` on init, set-change, and hot-reload. State v=4 persists mute/solo/snapshots.
+
+**State persistence**: Written on Shift+Back (JS sends `set_param("save")`) and at `destroy_instance` (device shutdown). Not written on individual step/transport/launch events.
 
 **JS internals**: `effectiveClip(t)` — returns `trackQueuedClip[t]` when `!playing && trackQueuedClip[t] >= 0`, else `trackActiveClip[t]`. Used everywhere in Track View for step display and input so the correct clip shows when stopped with a queued or will_relaunch clip. `cachedSceneAllPlaying[16]`/`cachedSceneAllQueued[16]` — computed once per tick at top of `tick()`. `lastSentNoteLED[128]`/`lastSentButtonLED[128]` — LED dedup cache; `invalidateLEDCache()` resets on view switch, init, reconnect, session overview entry/exit.
 
 ## Upcoming tasks
 
 1. **Arpeggiator** — Port from NoteTwist. New DSP build required.
-2. **Mute/Solo** — Per-track, likely Shift + track-select pads.
-3. **Drum + Chromatic pad modes** — `pad_mode` wired in TRACK K3; DSP/JS logic not yet done.
-4. **Global menu stubs** — Wire Swing/Vel/Quant to DSP when those features land.
+2. **Drum + Chromatic pad modes** — `pad_mode` wired in TRACK K3; DSP/JS logic not yet done.
+3. **Global menu stubs** — Wire Swing/Vel/Quant to DSP when those features land.
 
 ## Per-set state (built)
 
