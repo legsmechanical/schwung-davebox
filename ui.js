@@ -1295,14 +1295,14 @@ globalThis.init = function () {
 globalThis.tick = function () {
     tickCount++;
 
-    /* Set change detected in init(): DSP re-reads active_set.txt and loads new set state. */
+    /* Set change detected in init(): send UUID so DSP constructs path and loads. */
     if (pendingSetLoad && typeof host_module_set_param === 'function') {
         pendingSetLoad = false;
         disarmRecord();
         heldStep = -1; heldStepBtn = -1; heldStepNotes = [];
         seqActiveNotes.clear(); seqLastStep = -1; seqLastClip = -1;
         pendingDspSync = 5;
-        host_module_set_param('state_load', '1');
+        host_module_set_param('state_load', currentSetUuid || '');
     }
 
     /* Poll every 100 ticks (~0.5s): detect DSP hot-reload via instance nonce. */

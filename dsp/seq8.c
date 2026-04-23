@@ -1156,25 +1156,13 @@ static void set_param(void *instance, const char *key, const char *val) {
     }
 
     if (!strcmp(key, "state_load")) {
-        /* Re-read active_set.txt so path is always current when JS triggers a set switch. */
-        {
-            char uuid[128] = {0};
-            FILE *uf = fopen("/data/UserData/schwung/active_set.txt", "r");
-            if (uf) {
-                if (fgets(uuid, sizeof(uuid), uf)) {
-                    int i2 = (int)strlen(uuid) - 1;
-                    while (i2 >= 0 && (uuid[i2] == '\n' || uuid[i2] == '\r' || uuid[i2] == ' '))
-                        uuid[i2--] = '\0';
-                }
-                fclose(uf);
-            }
-            if (uuid[0])
-                snprintf(inst->state_path, sizeof(inst->state_path),
-                         "/data/UserData/schwung/set_state/%s/seq8-state.json", uuid);
-            else
-                strncpy(inst->state_path, SEQ8_STATE_PATH_FALLBACK,
-                        sizeof(inst->state_path) - 1);
-        }
+        /* val is the UUID from JS (36 chars); construct path from it. Fallback if empty. */
+        if (val && val[0])
+            snprintf(inst->state_path, sizeof(inst->state_path),
+                     "/data/UserData/schwung/set_state/%s/seq8-state.json", val);
+        else
+            strncpy(inst->state_path, SEQ8_STATE_PATH_FALLBACK,
+                    sizeof(inst->state_path) - 1);
         seq8_ilog(inst, inst->state_path);
         /* Reset internal state without MIDI panic to avoid flooding the MIDI buffer. */
         {
