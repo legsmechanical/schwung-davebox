@@ -867,11 +867,11 @@ function updateSessionLEDs() {
             if (!hasContent) {
                 color = DarkGrey;
             } else if (isPlaying && isPendingStop) {
-                color = (!playing || flashSixteenth) ? TRACK_COLORS[t] : LED_OFF;
+                color = (!playing || flashSixteenth) ? TRACK_DIM_COLORS[t] : LED_OFF;
             } else if (isPlaying) {
-                color = flashEighth ? TRACK_COLORS[t] : LED_OFF;
+                color = flashEighth ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
             } else if (isQueued) {
-                color = (!playing || flashSixteenth) ? TRACK_COLORS[t] : LED_OFF;
+                color = (!playing || flashSixteenth) ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
             } else if (isWillRelaunch) {
                 color = TRACK_COLORS[t];
             } else {
@@ -921,11 +921,11 @@ function updateTrackLEDs() {
             const isQueued      = trackQueuedClip[t] === sceneIdx;
             const isWillRelaunch = trackWillRelaunch[t] && isActiveClip;
             if (isPlaying && isPendingStop) {
-                color = (!playing || flashSixteenth) ? TRACK_COLORS[t] : LED_OFF;
+                color = (!playing || flashSixteenth) ? TRACK_DIM_COLORS[t] : LED_OFF;
             } else if (isPlaying) {
-                color = flashEighth ? TRACK_COLORS[t] : LED_OFF;
+                color = flashEighth ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
             } else if (isQueued) {
-                color = (!playing || flashSixteenth) ? TRACK_COLORS[t] : LED_OFF;
+                color = (!playing || flashSixteenth) ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
             } else if (isWillRelaunch) {
                 color = TRACK_COLORS[t];
             } else if (hasContent) {
