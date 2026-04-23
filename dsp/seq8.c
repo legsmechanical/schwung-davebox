@@ -27,8 +27,8 @@
 /* Build constants                                                      */
 /* ------------------------------------------------------------------ */
 
-#define SEQ8_LOG_PATH      "/data/UserData/schwung/seq8.log"
-#define SEQ8_STATE_PATH    "/data/UserData/schwung/seq8-state.json"
+#define SEQ8_LOG_PATH           "/data/UserData/schwung/seq8.log"
+#define SEQ8_STATE_PATH_FALLBACK "/data/UserData/schwung/seq8-state.json"
 
 #define NUM_TRACKS          8
 #define NUM_CLIPS           16
@@ -206,6 +206,9 @@ typedef struct {
     ext_msg_t ext_queue[EXT_QUEUE_SIZE];
     int       ext_head;             /* next write index */
     int       ext_tail;             /* next read index */
+
+    /* State file path — set by JS via set_param("state_path") before first load/save */
+    char state_path[256];
 } seq8_instance_t;
 
 static const host_api_v1_t *g_host = NULL;
@@ -268,7 +271,7 @@ static void json_get_steps(const char *buf, const char *key,
 }
 
 static void seq8_save_state(seq8_instance_t *inst) {
-    FILE *fp = fopen(SEQ8_STATE_PATH, "w");
+    FILE *fp = fopen(inst->state_path, "w");
     if (!fp) return;
     int t, c, s;
     fprintf(fp, "{\"v\":3,\"playing\":%d", inst->playing);
@@ -316,23 +319,23 @@ static void seq8_save_state(seq8_instance_t *inst) {
 }
 
 static void seq8_load_state(seq8_instance_t *inst) {
-    FILE *fp = fopen(SEQ8_STATE_PATH, "r");
+    FILE *fp = fopen(inst->state_path, "r");
     if (!fp) return;
     fseek(fp, 0, SEEK_END);
     long fsz = ftell(fp);
     fseek(fp, 0, SEEK_SET);
-    if (fsz <= 0) { fclose(fp); remove(SEQ8_STATE_PATH); return; }
+    if (fsz <= 0) { fclose(fp); remove(inst->state_path); return; }
     char *buf = (char *)malloc((size_t)fsz + 1);
     if (!buf) { fclose(fp); return; }
     size_t n = fread(buf, 1, (size_t)fsz, fp);
     fclose(fp);
-    if (!n) { free(buf); remove(SEQ8_STATE_PATH); return; }
+    if (!n) { free(buf); remove(inst->state_path); return; }
     buf[n] = '\0';
 
     /* Version gate: delete and ignore any state file that isn't v=3. */
     if (json_get_int(buf, "v", -1) != 3) {
         free(buf);
-        remove(SEQ8_STATE_PATH);
+        remove(inst->state_path);
         seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
         return;
     }
@@ -785,6 +788,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     inst->pad_key      = 9;   /* A */
     inst->pad_scale    = 0;   /* minor */
     inst->launch_quant = 0;   /* Now */
+    strncpy(inst->state_path, SEQ8_STATE_PATH_FALLBACK, sizeof(inst->state_path) - 1);
 
     int t, c;
     for (t = 0; t < NUM_TRACKS; t++) {
@@ -807,7 +811,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
         inst->tick_delta = (uint32_t)((double)MOVE_FRAMES_PER_BLOCK * init_bpm * (double)PPQN);
     }
 
-    seq8_load_state(inst);  /* Option C: restore clips/active_clip from file if present */
+    /* State is loaded by JS after it sends state_path via set_param("state_path") + set_param("state_load") */
 
     {
         char szlog[128];
@@ -1078,6 +1082,17 @@ static void set_param(void *instance, const char *key, const char *val) {
 
     if (!strcmp(key, "save")) {
         seq8_save_state(inst);
+        return;
+    }
+
+    if (!strcmp(key, "state_path")) {
+        strncpy(inst->state_path, val, sizeof(inst->state_path) - 1);
+        inst->state_path[sizeof(inst->state_path) - 1] = '\0';
+        return;
+    }
+
+    if (!strcmp(key, "state_load")) {
+        seq8_load_state(inst);
         return;
     }
 

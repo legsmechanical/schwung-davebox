@@ -1194,6 +1194,27 @@ function fmtHex(b) {
 /* Lifecycle                                                            */
 /* ------------------------------------------------------------------ */
 
+function resolveStatePath() {
+    const FALLBACK = '/data/UserData/schwung/seq8-state.json';
+    try {
+        const raw = (typeof host_read_file === 'function')
+            ? host_read_file('/data/UserData/schwung/active_set.txt') : null;
+        if (!raw) {
+            console.log('SEQ8: active_set.txt unreadable, using fallback state path');
+            return FALLBACK;
+        }
+        const uuid = raw.split('\n')[0].trim();
+        if (!uuid) {
+            console.log('SEQ8: active_set.txt missing UUID, using fallback state path');
+            return FALLBACK;
+        }
+        return '/data/UserData/schwung/set_state/' + uuid + '/seq8-state.json';
+    } catch (e) {
+        console.log('SEQ8: resolveStatePath error: ' + e + ', using fallback');
+        return FALLBACK;
+    }
+}
+
 globalThis.init = function () {
     installConsoleOverride('SEQ8');
 
@@ -1202,6 +1223,13 @@ globalThis.init = function () {
     const dspSurvived = (p !== null && p !== undefined);
 
     console.log('SEQ8 init: ' + (p === '1' ? 'RESUMED playing' : 'FRESH/stopped'));
+
+    /* Set per-set state path; trigger load only on fresh DSP start (not reconnect) */
+    if (typeof host_module_set_param === 'function') {
+        const statePath = resolveStatePath();
+        host_module_set_param('state_path', statePath);
+        if (!dspSurvived) host_module_set_param('state_load', '1');
+    }
 
     if (typeof host_module_get_param === 'function') {
         playing = dspSurvived;
