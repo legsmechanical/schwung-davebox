@@ -784,7 +784,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
 
     inst->pad_key      = 9;   /* A */
     inst->pad_scale    = 0;   /* minor */
-    inst->launch_quant = 5;   /* 1-bar */
+    inst->launch_quant = 0;   /* Now */
 
     int t, c;
     for (t = 0; t < NUM_TRACKS; t++) {

@@ -250,8 +250,8 @@ let stubSwingRes = 0;
 let stubInputVel = 0;
 let stubInpQuant = false;
 
-/* Launch quantization: 0=Now, 1=1/16, 2=1/8, 3=1/4, 4=1/2, 5=1-bar; default 5 */
-let launchQuant = 5;
+/* Launch quantization: 0=Now, 1=1/16, 2=1/8, 3=1/4, 4=1/2, 5=1-bar; default 0 */
+let launchQuant = 0;
 
 function buildGlobalMenuItems() {
     return [
