@@ -1497,10 +1497,10 @@ globalThis.tick = function () {
         setButtonLED(MovePlay, playing ? Green : LED_OFF);
         setButtonLED(MoveRec,  recordArmed ? Red : LED_OFF);
         {
-            const _anySolo = trackSoloed.some(function(s) { return s; });
-            const _muted   = trackMuted[activeTrack];
-            const _soloed  = trackSoloed[activeTrack];
-            setButtonLED(MoveMute, _anySolo ? (_soloed ? Green : Red) : (_muted ? Red : LED_OFF));
+            const _muted      = trackMuted[activeTrack];
+            const _soloed     = trackSoloed[activeTrack];
+            const _muteBlink  = Math.floor(tickCount / 24) % 2;
+            setButtonLED(MoveMute, _soloed ? 124 : (_muted ? (_muteBlink ? 124 : 0) : 16));
         }
 
         if (sessionView) {
