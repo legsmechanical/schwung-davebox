@@ -463,6 +463,8 @@ let recordCaptureClip   = -1;    /* clip index pinned for chord capture */
 let recordCaptureEndTick = -1;   /* tickCount when capture window expires */
 const RECORD_CAPTURE_TICKS = 8;  /* ~40ms at 196Hz: chord notes within this window land on same step */
 
+let currentSetUuid = '';         /* UUID of the active Move set; polled in tick() for change detection */
+
 /* ------------------------------------------------------------------ */
 /* Utility                                                              */
 /* ------------------------------------------------------------------ */
@@ -1194,25 +1196,45 @@ function fmtHex(b) {
 /* Lifecycle                                                            */
 /* ------------------------------------------------------------------ */
 
-function resolveStatePath() {
-    const FALLBACK = '/data/UserData/schwung/seq8-state.json';
+function readActiveSetUuid() {
     try {
         const raw = (typeof host_read_file === 'function')
             ? host_read_file('/data/UserData/schwung/active_set.txt') : null;
-        if (!raw) {
-            console.log('SEQ8: active_set.txt unreadable, using fallback state path');
-            return FALLBACK;
-        }
-        const uuid = raw.split('\n')[0].trim();
-        if (!uuid) {
-            console.log('SEQ8: active_set.txt missing UUID, using fallback state path');
-            return FALLBACK;
-        }
-        return '/data/UserData/schwung/set_state/' + uuid + '/seq8-state.json';
+        if (!raw) return '';
+        return raw.split('\n')[0].trim();
     } catch (e) {
-        console.log('SEQ8: resolveStatePath error: ' + e + ', using fallback');
-        return FALLBACK;
+        return '';
     }
+}
+
+function uuidToStatePath(uuid) {
+    return uuid
+        ? '/data/UserData/schwung/set_state/' + uuid + '/seq8-state.json'
+        : '/data/UserData/schwung/seq8-state.json';
+}
+
+function syncClipsFromDsp() {
+    if (typeof host_module_get_param !== 'function') return;
+    for (let t = 0; t < NUM_TRACKS; t++) {
+        for (let c = 0; c < NUM_CLIPS; c++) {
+            const bulk = host_module_get_param('t' + t + '_c' + c + '_steps');
+            if (bulk && bulk.length >= NUM_STEPS) {
+                for (let s = 0; s < NUM_STEPS; s++)
+                    clipSteps[t][c][s] = bulk[s] === '1' ? 1 : 0;
+                clipNonEmpty[t][c] = clipHasContent(t, c);
+            }
+            const len = host_module_get_param('t' + t + '_c' + c + '_length');
+            if (len !== null && len !== undefined)
+                clipLength[t][c] = parseInt(len, 10) || 16;
+        }
+        const po = host_module_get_param('t' + t + '_pad_octave');
+        if (po !== null && po !== undefined) padOctave[t] = parseInt(po, 10) | 0;
+        readBankParams(t, 0);
+    }
+    const kp = host_module_get_param('key');
+    if (kp !== null && kp !== undefined) padKey   = parseInt(kp, 10) | 0;
+    const sp = host_module_get_param('scale');
+    if (sp !== null && sp !== undefined) padScale = parseInt(sp, 10) | 0;
 }
 
 globalThis.init = function () {
@@ -1226,8 +1248,10 @@ globalThis.init = function () {
 
     /* Set per-set state path; trigger load only on fresh DSP start (not reconnect) */
     if (typeof host_module_set_param === 'function') {
-        const statePath = resolveStatePath();
-        host_module_set_param('state_path', statePath);
+        const uuid = readActiveSetUuid();
+        if (!uuid) console.log('SEQ8: active_set.txt unreadable or missing UUID, using fallback state path');
+        currentSetUuid = uuid;
+        host_module_set_param('state_path', uuidToStatePath(uuid));
         if (!dspSurvived) host_module_set_param('state_load', '1');
     }
 
@@ -1243,30 +1267,9 @@ globalThis.init = function () {
             trackCurrentPage[t] = csVal >= 0 ? Math.floor(csVal / 16) : 0;
             const qc = host_module_get_param('t' + t + '_queued_clip');
             trackQueuedClip[t] = (qc !== null && qc !== undefined) ? (parseInt(qc, 10) | 0) : -1;
-
-            for (let c = 0; c < NUM_CLIPS; c++) {
-                const bulk = host_module_get_param('t' + t + '_c' + c + '_steps');
-                if (bulk && bulk.length >= NUM_STEPS) {
-                    for (let s = 0; s < NUM_STEPS; s++)
-                        clipSteps[t][c][s] = bulk[s] === '1' ? 1 : 0;
-                    clipNonEmpty[t][c] = clipHasContent(t, c);
-                }
-                const len = host_module_get_param('t' + t + '_c' + c + '_length');
-                if (len !== null && len !== undefined)
-                    clipLength[t][c] = parseInt(len, 10) || 16;
-            }
-
-            const po = host_module_get_param('t' + t + '_pad_octave');
-            if (po !== null && po !== undefined) padOctave[t] = parseInt(po, 10) | 0;
         }
 
-        const kp = host_module_get_param('key');
-        if (kp !== null && kp !== undefined) padKey   = parseInt(kp, 10) | 0;
-        const sp = host_module_get_param('scale');
-        if (sp !== null && sp !== undefined) padScale = parseInt(sp, 10) | 0;
-
-        /* Populate TRACK bank (index 0) params for all tracks — active by default. */
-        for (let t = 0; t < NUM_TRACKS; t++) readBankParams(t, 0);
+        syncClipsFromDsp();
     }
 
     computePadNoteMap();
@@ -1281,6 +1284,30 @@ globalThis.init = function () {
 
 globalThis.tick = function () {
     tickCount++;
+
+    /* Set change detection: poll active_set.txt every 100 ticks (~0.5s).
+     * On UUID change: save old state, load new set's state, resync JS mirrors. */
+    if ((tickCount % 100) === 0 && typeof host_read_file === 'function' &&
+            typeof host_module_set_param === 'function') {
+        const newUuid = readActiveSetUuid();
+        if (newUuid && newUuid !== currentSetUuid) {
+            console.log('SEQ8: set changed to ' + newUuid + ', saving old state and loading new');
+            host_module_set_param('save', '1');
+            currentSetUuid = newUuid;
+            host_module_set_param('state_path', uuidToStatePath(newUuid));
+            host_module_set_param('state_load', '1');
+            disarmRecord();
+            pollDSP();
+            for (let _t = 0; _t < NUM_TRACKS; _t++)
+                trackCurrentPage[_t] = Math.max(0, Math.floor(trackCurrentStep[_t] / 16));
+            syncClipsFromDsp();
+            computePadNoteMap();
+            heldStep = -1; heldStepBtn = -1; heldStepNotes = [];
+            seqActiveNotes.clear(); seqLastStep = -1; seqLastClip = -1;
+            invalidateLEDCache();
+            forceRedraw();
+        }
+    }
 
     /* Real-time preview while editing any global menu parameter.
      * Only send set_param when the edit value actually changes — avoids flooding
