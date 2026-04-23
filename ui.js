@@ -384,8 +384,8 @@ const lastSentButtonLED   = new Array(128).fill(-1);
 /* Parameter bank state                                                 */
 /* ------------------------------------------------------------------ */
 
-/* activeBank[track]: index 0-7 (pad 92-99). TRACK bank (0) is default; never -1. */
-let activeBank     = new Array(NUM_TRACKS).fill(0);
+/* activeBank: index 0-7 (pad 92-99). Global — independent of track. TRACK bank (0) is default; never -1. */
+let activeBank     = 0;
 
 /* knobTouched: 0-7 (MoveKnob1Touch-8Touch note numbers), or -1 = none */
 let knobTouched    = -1;
@@ -1086,7 +1086,7 @@ function drawUI() {
     }
 
     /* Track View — priority display state machine */
-    const bank      = activeBank[activeTrack];
+    const bank      = activeBank;
     const inTimeout = bankSelectTick >= 0 || jogTouched;
 
     /* Count-in overlay: highest priority while waiting for bar to elapse */
@@ -1117,7 +1117,7 @@ function drawUI() {
         const oct        = trackOctave[activeTrack];
         print(4, 10, 'TR' + (activeTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac] +
                      '  PG ' + (page + 1) + '/' + totalPages, 1);
-        print(4, 22, 'KNOB: [' + BANKS[activeBank[activeTrack]].name + ']', 1);
+        print(4, 22, 'KNOB: [' + BANKS[activeBank].name + ']', 1);
         print(4, 34, 'Octave: ' + (oct > 0 ? '+' + oct : String(oct)), 1);
         print(4, 46, '1 2 3 4 5 6 7 8', 1);
         return;
@@ -1174,7 +1174,7 @@ function drawUI() {
                      '  PG ' + (page + 1) + '/' + totalPages, 1);
         const recTag = (recordArmed && !recordCountingIn && recordArmedTrack === activeTrack)
             ? ' REC' : '';
-        print(4, 22, 'KNOB: [' + BANKS[activeBank[activeTrack]].name + ']' + recTag, 1);
+        print(4, 22, 'KNOB: [' + BANKS[activeBank].name + ']' + recTag, 1);
         if (loopHeld) {
             const steps = clipLength[activeTrack][ac];
             const pages = Math.max(1, Math.ceil(steps / 16));
@@ -1500,7 +1500,7 @@ globalThis.onMidiMessageInternal = function (data) {
     if (d1 >= 0 && d1 <= 9) {
         if ((status & 0xF0) === 0x90) {
             if (d2 === 127) {
-                if (d1 <= 7 && activeBank[activeTrack] >= 0) { knobTouched = d1; screenDirty = true; }
+                if (d1 <= 7 && activeBank >= 0) { knobTouched = d1; screenDirty = true; }
                 if (d1 === MoveMainTouch && !globalMenuOpen && !shiftHeld) { jogTouched = true; forceRedraw(); }
             } else if (d2 < 64) {
                 if (d1 <= 7) {
@@ -1597,10 +1597,10 @@ globalThis.onMidiMessageInternal = function (data) {
                         }
                     } else {
                         /* Track View: step active bank 0–6, clamp at ends (bank 7 reserved) */
-                        const cur  = activeBank[activeTrack];
+                        const cur  = activeBank;
                         const next = Math.min(6, Math.max(0, cur + delta));
                         if (next !== cur) {
-                            activeBank[activeTrack] = next;
+                            activeBank = next;
                             readBankParams(activeTrack, next);
                             bankSelectTick = tickCount;
                             forceRedraw();
@@ -1820,7 +1820,7 @@ globalThis.onMidiMessageInternal = function (data) {
          * pm.lock = true: fire once then block until touch release (knobLocked). */
         if (d1 >= 71 && d1 <= 78) {
             const knobIdx = d1 - 71;
-            const bank    = activeBank[activeTrack];
+            const bank    = activeBank;
             const pm      = BANKS[bank].knobs[knobIdx];
             if (pm && pm.abbrev && pm.scope !== 'stub' && !knobLocked[knobIdx]) {
                 const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
@@ -2035,12 +2035,12 @@ globalThis.onMidiMessageInternal = function (data) {
                      * Pad 99 (bankIdx 7) = reserved — ignore. */
                     const bankIdx = padIdx - 24;
                     if (bankIdx < 7) {
-                        if (activeBank[activeTrack] === bankIdx) {
+                        if (activeBank === bankIdx) {
                             /* Same bank pressed again: return to TRACK bank (0) */
-                            activeBank[activeTrack] = 0;
+                            activeBank = 0;
                             bankSelectTick = -1;
                         } else {
-                            activeBank[activeTrack] = bankIdx;
+                            activeBank = bankIdx;
                             readBankParams(activeTrack, bankIdx);
                             bankSelectTick = tickCount;
                         }
