@@ -140,8 +140,8 @@ typedef struct {
     uint8_t  step_notes[SEQ_STEPS][4];    /* up to 4 notes per step */
     uint8_t  step_note_count[SEQ_STEPS];  /* 0..4 */
     uint8_t  step_vel[SEQ_STEPS];
-    uint8_t  step_gate[SEQ_STEPS];        /* gate ticks; note-off fires here */
-    uint8_t  step_gate_orig[SEQ_STEPS];   /* original before noteFX_gate scaling */
+    uint16_t step_gate[SEQ_STEPS];        /* raw gate ticks; scaled by noteFX_gate at render */
+    int8_t   step_tick_offset[SEQ_STEPS]; /* ±23 within-step offset (0=quantized); ±24=silent edge */
     uint16_t length;                      /* 1..256 */
     uint8_t  active;
     uint16_t clock_shift_pos;             /* Persisted. */
@@ -149,15 +149,16 @@ typedef struct {
 } clip_t;
 
 typedef struct {
-    uint8_t pending_notes[4];      /* notes at last note-on, for note-off matching */
-    uint8_t pending_note_count;
-    uint8_t stretch_blocked;       /* 1 = last compress blocked by step collision */
-    uint8_t recording;             /* 1 = overdub active; cleared on stop/panic */
-    uint8_t clip_playing;
-    uint8_t will_relaunch;         /* relaunch on next play. Persisted. */
-    uint8_t pending_page_stop;     /* stop at next 16-step boundary */
-    uint8_t record_armed;          /* enable recording=1 when queued clip launches */
-    int8_t  queued_clip;           /* >=0 = waiting for bar-boundary launch; -1 = none */
+    uint8_t  pending_notes[4];     /* notes at last note-on, for note-off matching */
+    uint8_t  pending_note_count;
+    uint16_t pending_gate;         /* effective gate stored at note-on (step_gate * gate_time/100) */
+    uint8_t  stretch_blocked;      /* 1 = last compress blocked by step collision */
+    uint8_t  recording;            /* 1 = overdub active; cleared on stop/panic */
+    uint8_t  clip_playing;
+    uint8_t  will_relaunch;        /* relaunch on next play. Persisted. */
+    uint8_t  pending_page_stop;    /* stop at next 16-step boundary */
+    uint8_t  record_armed;         /* enable recording=1 when queued clip launches */
+    int8_t   queued_clip;          /* >=0 = waiting for bar-boundary launch; -1 = none */
 } seq8_track_t;
 
 typedef struct {
@@ -175,13 +176,22 @@ typedef struct {
 
 **state_snapshot** (52 values): `playing cs0..7 ac0..7 qc0..7 count_in cp0..7 wr0..7 ps0..7 flash_eighth flash_sixteenth`. `flash_sixteenth = global_tick%2`; `flash_eighth = (global_tick/2)%2`.
 
+## Recording architecture (JS-side)
+
+Live pad note capture for overdub recording is done in JS (not DSP). The alternatives were investigated:
+
+- **DSP-side (tick-accurate)**: `on_midi` in seq8.c is empty — it receives nothing. `shadow_send_midi_to_dsp` routes MIDI directly to the active Schwung audio chain, bypassing the SEQ8 module's `on_midi` entirely. Achieving DSP-side capture would require intercepting pads before they reach the chain, rerouting audio delivery, or a separate inter-module IPC mechanism — none of which are available in the current Schwung API without a major architectural refactor.
+- **JS-side (chosen)**: JS captures `tickCount` at note-on/note-off and maps to step index via polled `trackCurrentStep`. Jitter source: `POLL_INTERVAL = 4` JS ticks (~20ms). Within-step timing for `step_tick_offset` is approximated from `tickCount` delta. Note duration converted via `dsp_ticks = js_ticks * bpm / 122.5`.
+
+To revisit DSP-side capture: check if a future Schwung API version exposes a pre-chain MIDI hook, or whether `on_midi` can be wired to receive pad input through a different signal path.
+
 ## Known limitations
 
 - **Transport stop saves will_relaunch; panic does not.**
 - **Do not load SEQ8 from within SEQ8** — LED corruption (Tools menu sets `FLAG_JUMP_TO_TOOLS` 0x80; no MIDI event to intercept). Workaround: Shift+Back first.
 - **Live pad latency floor: ~3–7ms** — structural. JS ticks ~196Hz.
 - **All 8 tracks route to the same Schwung chain.**
-- **`step_vel`, `step_gate`/`step_gate_orig` not persisted** — reset to defaults on load.
+- **`step_vel`, `step_gate`, `step_tick_offset` not persisted** — reset to defaults on load (Phase F will add persistence).
 - **State file v=6** — wrong/missing version → file deleted, clean start. Sparse step-notes: `"tNcC_sn":"S:n1,n2;S2:n3;"`. Per-clip `t%dc%d_se`/`t%dc%d_cs` (stretch_exp/clock_shift_pos, omitted if zero).
 
 ## Hardware reference
