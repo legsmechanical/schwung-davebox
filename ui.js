@@ -1106,11 +1106,11 @@ function updateSessionLEDs() {
             } else {
                 color = TRACK_DIM_COLORS[t];
             }
-            /* Copy source blink: override with white blink if this pad is the copy source */
+            /* Copy source blink: JS-side timer (transport-independent) */
             if (copySrc) {
                 const isSrcClip = copySrc.kind === 'clip' && copySrc.track === t && copySrc.clip === sceneIdx;
                 const isSrcRow  = copySrc.kind === 'row'  && copySrc.row === sceneIdx;
-                if (isSrcClip || isSrcRow) color = flashEighth ? White : LED_OFF;
+                if (isSrcClip || isSrcRow) color = (Math.floor(tickCount / 24) % 2) ? White : LED_OFF;
             }
             cachedSetLED(note, color);
         }
@@ -1155,11 +1155,11 @@ function updateTrackLEDs() {
                 color = LED_OFF;
             }
         }
-        /* Copy source blink: override scene row button if this row/clip is the copy source */
+        /* Copy source blink: JS-side timer (transport-independent) */
         if (copySrc) {
             const isSrcRow  = copySrc.kind === 'row'  && copySrc.row === sceneIdx;
             const isSrcClip = copySrc.kind === 'clip' && copySrc.track === activeTrack && copySrc.clip === sceneIdx;
-            if (isSrcRow || isSrcClip) color = flashEighth ? White : LED_OFF;
+            if (isSrcRow || isSrcClip) color = (Math.floor(tickCount / 24) % 2) ? White : LED_OFF;
         }
         cachedSetButtonLED(40 + idx, color);
     }
