@@ -685,17 +685,16 @@ static void pfx_sched_delay_ons(seq8_instance_t *inst, int scale_aware,
         }
 
         {
-            int delta = fx->fb_note_random ? pfx_rand(fx, -12, 12) : fx->fb_note;
-            if (scale_aware) {
-                cumul_deg += delta;
-                if (fx->fb_note_random) {
+            if (fx->fb_note_random) {
+                if (scale_aware) {
                     int lim = (int)SCALE_SIZES[inst->pad_scale < 14 ? inst->pad_scale : 0];
-                    cumul_deg = clamp_i(cumul_deg, -lim, lim);
+                    cumul_deg = pfx_rand(fx, -lim, lim);
+                } else {
+                    cumul_pitch = pfx_rand(fx, -12, 12);
                 }
             } else {
-                cumul_pitch += delta;
-                if (fx->fb_note_random)
-                    cumul_pitch = clamp_i(cumul_pitch, -12, 12);
+                if (scale_aware) cumul_deg   += fx->fb_note;
+                else             cumul_pitch += fx->fb_note;
             }
         }
         {
