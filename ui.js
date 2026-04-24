@@ -806,6 +806,22 @@ function pollDSP() {
 
 }
 
+/* Reset NOTE FX, HARMZ, and MIDI DLY banks to DSP defaults for track t. */
+function resetFxBanks(t) {
+    if (typeof host_module_set_param !== 'function') return;
+    const targets = [2, 3, 5]; /* NOTE FX, HARMZ, MIDI DLY */
+    for (let bi = 0; bi < targets.length; bi++) {
+        const b = targets[bi];
+        for (let k = 0; k < 8; k++) {
+            const pm = BANKS[b].knobs[k];
+            if (!pm) continue;
+            applyBankParam(t, b, k, pm.def);
+            bankParams[t][b][k] = pm.def;
+        }
+    }
+    screenDirty = true;
+}
+
 /* ------------------------------------------------------------------ */
 /* Parameter bank: read from DSP and write to DSP                      */
 /* ------------------------------------------------------------------ */
@@ -1696,6 +1712,10 @@ globalThis.onMidiMessageInternal = function (data) {
                 shiftHeld: shiftHeld
             });
             screenDirty = true;
+            return;
+        }
+        if (d1 === 3 && d2 === 127 && deleteHeld && !sessionView) {
+            resetFxBanks(activeTrack);
             return;
         }
 
