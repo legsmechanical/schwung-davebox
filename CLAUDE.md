@@ -191,7 +191,7 @@ To revisit DSP-side capture: check if a future Schwung API version exposes a pre
 - **Do not load SEQ8 from within SEQ8** — LED corruption (Tools menu sets `FLAG_JUMP_TO_TOOLS` 0x80; no MIDI event to intercept). Workaround: Shift+Back first.
 - **Live pad latency floor: ~3–7ms** — structural. JS ticks ~196Hz.
 - **All 8 tracks route to the same Schwung chain.**
-- **State file v=7** — wrong/missing version → file deleted, clean start. Sparse step-notes: `"tNcC_sn":"S:n1,n2;S2:n3;"`. Per-clip `t%dc%d_se`/`t%dc%d_cs` (stretch_exp/clock_shift_pos, omitted if zero). Per-clip sparse `t%dc%d_sv` (step_vel ≠ 100), `t%dc%d_sg` (step_gate ≠ 12), `t%dc%d_to` (step_tick_offset ≠ 0); active steps only; format `"S:V;"` (V signed for _to).
+- **State file v=8** — wrong/missing version → file deleted, clean start. Sparse step-notes: `"tNcC_sn":"S:n1,n2;S2:n3;"`. Per-clip `t%dc%d_se`/`t%dc%d_cs` (stretch_exp/clock_shift_pos, omitted if zero). Per-clip sparse `t%dc%d_sv` (step_vel ≠ 100), `t%dc%d_sg` (step_gate ≠ 12), `t%dc%d_to` (step_tick_offset ≠ 0); active steps only; format `"S:V;"` (V signed for _to).
 
 ## Hardware reference
 

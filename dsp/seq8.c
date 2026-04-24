@@ -366,7 +366,7 @@ static void seq8_save_state(seq8_instance_t *inst) {
     FILE *fp = fopen(inst->state_path, "w");
     if (!fp) return;
     int t, c, s;
-    fprintf(fp, "{\"v\":7,\"playing\":%d", inst->playing);
+    fprintf(fp, "{\"v\":8,\"playing\":%d", inst->playing);
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
     for (t = 0; t < NUM_TRACKS; t++)
@@ -510,8 +510,8 @@ static void seq8_load_state(seq8_instance_t *inst) {
     if (!n) { free(buf); remove(inst->state_path); return; }
     buf[n] = '\0';
 
-    /* Version gate: delete and ignore any state file that isn't v=7. */
-    if (json_get_int(buf, "v", -1) != 7) {
+    /* Version gate: delete and ignore any state file that isn't v=8. */
+    if (json_get_int(buf, "v", -1) != 8) {
         free(buf);
         remove(inst->state_path);
         seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
@@ -594,17 +594,6 @@ static void seq8_load_state(seq8_instance_t *inst) {
                         if (*p == ';') p++;
                     }
                 }
-            }
-            /* Enforce step invariant: clear any step that has no note data */
-            {
-                clip_t *cl = &inst->tracks[t].clips[c];
-                int s2, any2 = 0;
-                for (s2 = 0; s2 < SEQ_STEPS; s2++) {
-                    if (cl->steps[s2] && cl->step_note_count[s2] == 0)
-                        cl->steps[s2] = 0;
-                    if (cl->steps[s2]) any2 = 1;
-                }
-                cl->active = (uint8_t)any2;
             }
             /* sparse step vel */
             {
