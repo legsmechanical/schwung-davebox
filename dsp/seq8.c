@@ -1827,20 +1827,36 @@ static void set_param(void *instance, const char *key, const char *val) {
                 }
 
                 if (!strcmp(q, "_add")) {
-                    /* tN_cC_step_S_add val=<note 0-127>
+                    /* tN_cC_step_S_add val="pitch [offset [-23..23] [velocity [0..127]]]"
                      * Add-only: no-op if note already present or step has 4 notes.
-                     * Used for overdub recording — never removes existing notes. */
-                    int note = clamp_i(my_atoi(val), 0, 127);
+                     * On first note: sets step_tick_offset and step_vel from optional fields. */
+                    const char *p = val;
+                    int note = clamp_i(my_atoi(p), 0, 127);
+                    while (*p && *p != ' ') p++;
+                    int has_offset = (*p == ' ');
+                    int offset_val = 0, vel_val = SEQ_VEL, has_vel = 0;
+                    if (has_offset) {
+                        p++;
+                        offset_val = clamp_i(my_atoi(p), -23, 23);
+                        while (*p && *p != ' ') p++;
+                        has_vel = (*p == ' ');
+                        if (has_vel) { p++; vel_val = clamp_i(my_atoi(p), 0, 127); }
+                    }
                     int n, found = 0;
                     for (n = 0; n < (int)cl->step_note_count[sidx]; n++) {
                         if (cl->step_notes[sidx][n] == (uint8_t)note) { found = 1; break; }
                     }
                     if (!found && cl->step_note_count[sidx] < 4) {
+                        int was_empty = (cl->step_note_count[sidx] == 0);
                         /* write note+count BEFORE activating step to avoid render-thread race */
                         cl->step_notes[sidx][cl->step_note_count[sidx]] = (uint8_t)note;
                         cl->step_note_count[sidx]++;
                         if (cl->step_note_count[sidx] == 1)
                             cl->steps[sidx] = 1;
+                        if (was_empty) {
+                            if (has_offset) cl->step_tick_offset[sidx] = (int8_t)offset_val;
+                            if (has_vel)    cl->step_vel[sidx]         = (uint8_t)vel_val;
+                        }
                         {
                             int i, any = 0;
                             for (i = 0; i < SEQ_STEPS; i++) if (cl->steps[i]) { any = 1; break; }

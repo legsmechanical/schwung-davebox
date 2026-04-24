@@ -521,6 +521,9 @@ let recordCaptureStep   = -1;    /* step index pinned for chord capture; -1 = no
 let recordCaptureClip   = -1;    /* clip index pinned for chord capture */
 let recordCaptureEndTick = -1;   /* tickCount when capture window expires */
 const RECORD_CAPTURE_TICKS = 8;  /* ~40ms at 196Hz: chord notes within this window land on same step */
+let stepBoundaryTick = new Array(NUM_TRACKS).fill(-1); /* JS tickCount when step last changed (for tick offset calc) */
+let noteOnTick       = new Map();  /* pitch → {tick, cs_r, ac_r, rt}: pending note-offs for gate capture */
+let recordBpm        = 120;        /* BPM cached at record arm time */
 
 let currentSetUuid   = '';        /* UUID of the active Move set; polled in tick() for change detection */
 let lastDspInstanceId = '';       /* DSP instance_nonce from last poll; change = hot-reload detected */
@@ -658,6 +661,7 @@ function disarmRecord() {
     recordCaptureStep   = -1;
     recordCaptureClip    = -1;
     recordCaptureEndTick = -1;
+    noteOnTick.clear();
     if (typeof host_module_set_param === 'function') {
         host_module_set_param('record_count_in_cancel', '1');
         if (t >= 0) host_module_set_param('t' + t + '_recording', '0');
@@ -672,11 +676,64 @@ function handoffRecordingToTrack(newTrack) {
     recordCaptureStep    = -1;
     recordCaptureClip    = -1;
     recordCaptureEndTick = -1;
+    noteOnTick.clear();
     recordArmedTrack     = newTrack;
     if (typeof host_module_set_param === 'function') {
         if (old >= 0) host_module_set_param('t' + old + '_recording', '0');
         host_module_set_param('t' + newTrack + '_recording', '1');
     }
+}
+
+/* Capture a note-on during overdub: computes tick_offset, sends _add "pitch offset vel". */
+function recordNoteOn(pitch, velocity, rt) {
+    if (typeof host_module_set_param !== 'function') return;
+    const ac_r = trackActiveClip[rt];
+    let cs_r;
+    if (recordCaptureStep >= 0 && recordCaptureClip === ac_r) {
+        cs_r = recordCaptureStep;
+    } else {
+        cs_r = trackCurrentStep[rt];
+        if (cs_r < 0) return;
+        recordCaptureStep    = cs_r;
+        recordCaptureClip    = ac_r;
+        recordCaptureEndTick = tickCount + RECORD_CAPTURE_TICKS;
+    }
+
+    /* Compute tick offset relative to step boundary */
+    const boundary = stepBoundaryTick[rt];
+    let offset = 0;
+    if (boundary >= 0 && recordBpm > 0) {
+        offset = Math.round((tickCount - boundary) * recordBpm / 122.5);
+        /* Nearest-grid: if note is closer to the NEXT step, assign there with negative offset */
+        const clipLen = clipLength[rt][ac_r];
+        if (offset > 12 && clipLen > 0) {
+            offset -= 24;
+            cs_r = (cs_r + 1) % clipLen;
+            recordCaptureStep = cs_r; /* update pin to actual step */
+        }
+        offset = Math.max(-23, Math.min(23, offset));
+    }
+    if (stubInpQuant) offset = 0;
+
+    host_module_set_param(
+        't' + rt + '_c' + ac_r + '_step_' + cs_r + '_add',
+        pitch + ' ' + offset + ' ' + velocity);
+    clipSteps[rt][ac_r][cs_r] = 1;
+    clipNonEmpty[rt][ac_r] = true;
+    noteOnTick.set(pitch, { tick: tickCount, cs_r: cs_r, ac_r: ac_r, rt: rt });
+}
+
+/* Capture a note-off during overdub: computes gate duration, sends _gate. */
+function recordNoteOff(pitch) {
+    const entry = noteOnTick.get(pitch);
+    if (!entry) return;
+    noteOnTick.delete(pitch);
+    const { rt, ac_r, cs_r, tick } = entry;
+    if (!clipSteps[rt][ac_r][cs_r]) return;
+    if (typeof host_module_set_param !== 'function') return;
+    const jsTicks = tickCount - tick;
+    const gateDsp = Math.max(1, Math.min(6144, Math.round(jsTicks * recordBpm / 122.5)));
+    host_module_set_param('t' + rt + '_c' + ac_r + '_step_' + cs_r + '_gate', String(gateDsp));
 }
 
 function openGlobalMenu() {
@@ -827,7 +884,10 @@ function pollDSP() {
     if (v.length < 52) return;
     playing = (v[0] === '1');
     for (let t = 0; t < NUM_TRACKS; t++) {
-        trackCurrentStep[t]      = parseInt(v[1 + t], 10) | 0;
+        const newStep = parseInt(v[1 + t], 10) | 0;
+        if (newStep !== trackCurrentStep[t] && newStep >= 0)
+            stepBoundaryTick[t] = tickCount - 2; /* bias-correct for poll lag */
+        trackCurrentStep[t]      = newStep;
         trackActiveClip[t]       = parseInt(v[9 + t], 10) | 0;
         trackQueuedClip[t]       = parseInt(v[17 + t], 10) | 0;
     }
@@ -2004,6 +2064,7 @@ globalThis.onMidiMessageInternal = function (data) {
                 recordArmed         = true;
                 recordCountingIn    = true;
                 recordArmedTrack    = activeTrack;
+                recordBpm           = bpm;
                 countInStartTick    = tickCount;
                 countInQuarterTicks = Math.round(196 * 60 / bpm);
                 if (typeof host_module_set_param === 'function')
@@ -2011,9 +2072,12 @@ globalThis.onMidiMessageInternal = function (data) {
                 setButtonLED(MoveRec, Red);
             } else {
                 /* Playing → arm immediately with no count-in */
+                const rawBpmLive = typeof host_module_get_param === 'function'
+                    ? parseFloat(host_module_get_param('bpm')) : 120;
                 recordArmed      = true;
                 recordCountingIn = false;
                 recordArmedTrack = activeTrack;
+                recordBpm        = (rawBpmLive > 0 && isFinite(rawBpmLive)) ? rawBpmLive : 120;
                 setButtonLED(MoveRec, Red);
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('t' + activeTrack + '_recording', '1');
@@ -2518,39 +2582,13 @@ globalThis.onMidiMessageInternal = function (data) {
                             typeof host_module_set_param === 'function') {
                         const rt   = recordArmedTrack;
                         const ac_r = trackActiveClip[rt];
-                        host_module_set_param('t' + rt + '_c' + ac_r + '_step_0_add', String(pitch));
+                        host_module_set_param('t' + rt + '_c' + ac_r + '_step_0_add', pitch + ' 0 ' + Math.max(80, d2));
                         clipSteps[rt][ac_r][0] = 1;
                         clipNonEmpty[rt][ac_r] = true;
                     }
-                    /* Overdub capture: add to current step of armed track.
-                     * Pin step index for RECORD_CAPTURE_TICKS so chord notes arriving
-                     * across poll boundaries all land on the same step. */
-                    if (recordArmed && !recordCountingIn &&
-                            activeTrack === recordArmedTrack &&
-                            typeof host_module_set_param === 'function') {
-                        const rt   = recordArmedTrack;
-                        const ac_r = trackActiveClip[rt];
-                        let   cs_r;
-                        if (recordCaptureStep >= 0 && recordCaptureClip === ac_r) {
-                            /* Reuse pinned step for chord */
-                            cs_r = recordCaptureStep;
-                        } else {
-                            /* First note of a new chord — pin current step */
-                            cs_r = trackCurrentStep[rt];
-                            if (cs_r >= 0) {
-                                recordCaptureStep    = cs_r;
-                                recordCaptureClip    = ac_r;
-                                recordCaptureEndTick = tickCount + RECORD_CAPTURE_TICKS;
-                            }
-                        }
-                        if (cs_r >= 0) {
-                            host_module_set_param(
-                                't' + rt + '_c' + ac_r + '_step_' + cs_r + '_add',
-                                String(pitch));
-                            clipSteps[rt][ac_r][cs_r] = 1;
-                            clipNonEmpty[rt][ac_r] = true;
-                        }
-                    }
+                    /* Overdub capture: add to current step of armed track with tick offset + velocity */
+                    if (recordArmed && !recordCountingIn && activeTrack === recordArmedTrack)
+                        recordNoteOn(pitch, Math.max(80, d2), recordArmedTrack);
                 }
             }
         }
@@ -2608,6 +2646,7 @@ globalThis.onMidiMessageInternal = function (data) {
             liveActiveNotes.delete(pitch);
             padPitch[padIdx] = -1;
             if (!sessionView) liveSendNote(activeTrack, 0x80, pitch, 0);
+            if (recordArmed && !recordCountingIn) recordNoteOff(pitch);
         }
     }
 };
