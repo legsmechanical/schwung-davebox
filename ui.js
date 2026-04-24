@@ -475,7 +475,7 @@ let bankParams = Array.from({length: NUM_TRACKS}, () =>
  * first button's release to exit step edit prematurely. */
 let heldStepBtn   = -1;
 let heldStep      = -1;   /* absolute step index (page*16 + btn) of the held step */
-let heldStepNotes = [];   /* MIDI note numbers currently assigned to heldStep (up to 4) */
+let heldStepNotes = [];   /* MIDI note numbers currently assigned to heldStep (up to 8) */
 let stepWasEmpty  = false; /* true if step was empty when pressed; tap release should not deactivate */
 let stepEditVel   = 100;  /* step edit overlay: current step velocity */
 let stepEditGate  = 12;   /* step edit overlay: current step gate ticks */
