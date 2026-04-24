@@ -46,6 +46,25 @@ typedef struct { uint8_t s; uint8_t d1; uint8_t d2; } ext_msg_t;
 /* Pad input modes */
 #define PAD_MODE_MELODIC_SCALE  0   /* isomorphic 4ths diatonic layout */
 
+/* Scale-aware play effects: interval tables matching JS SCALE_INTERVALS order */
+static const uint8_t SCALE_IVLS[14][8] = {
+    {0, 2, 4, 5, 7, 9,11, 0},  /* 0  Major           */
+    {0, 2, 3, 5, 7, 8,10, 0},  /* 1  Minor           */
+    {0, 2, 3, 5, 7, 9,10, 0},  /* 2  Dorian          */
+    {0, 1, 3, 5, 7, 8,10, 0},  /* 3  Phrygian        */
+    {0, 2, 4, 6, 7, 9,11, 0},  /* 4  Lydian          */
+    {0, 2, 4, 5, 7, 9,10, 0},  /* 5  Mixolydian      */
+    {0, 1, 3, 5, 6, 8,10, 0},  /* 6  Locrian         */
+    {0, 2, 3, 5, 7, 8,11, 0},  /* 7  Harmonic Minor  */
+    {0, 2, 3, 5, 7, 9,11, 0},  /* 8  Melodic Minor   */
+    {0, 2, 4, 7, 9, 0, 0, 0},  /* 9  Pent Major      */
+    {0, 3, 5, 7,10, 0, 0, 0},  /* 10 Pent Minor      */
+    {0, 3, 5, 6, 7,10, 0, 0},  /* 11 Blues           */
+    {0, 2, 4, 6, 8,10, 0, 0},  /* 12 Whole Tone      */
+    {0, 2, 3, 5, 6, 8, 9,11},  /* 13 Diminished      */
+};
+static const uint8_t SCALE_SIZES[14] = {7,7,7,7,7,7,7,7,7,5,5,6,6,8};
+
 /* Sequencer engine */
 #define BPM_DEFAULT         140
 #define PPQN                96
@@ -201,7 +220,7 @@ typedef struct {
 
     /* Live pad input: global key/scale stored for state persistence */
     uint8_t  pad_key;               /* root key 0-11, default 9 (A) */
-    uint8_t  pad_scale;             /* 0=minor, 1=major */
+    uint8_t  pad_scale;             /* 0=Major (matches JS SCALE_NAMES index) */
     uint8_t  launch_quant;          /* 0=Now,1=1/16,2=1/8,3=1/4,4=1/2,5=1-bar; default 5 */
 
     /* External MIDI queue: ROUTE_MOVE note events buffered here; JS drains each tick */
@@ -223,6 +242,9 @@ typedef struct {
     uint8_t snap_mute[16][NUM_TRACKS];
     uint8_t snap_solo[16][NUM_TRACKS];
     uint8_t snap_valid[16];
+
+    /* Scale-aware play effects: interpret Ofs/Hrm/delay-pitch in scale degrees */
+    uint8_t scale_aware;
 } seq8_instance_t;
 
 static const host_api_v1_t *g_host = NULL;
@@ -315,7 +337,7 @@ static void seq8_save_state(seq8_instance_t *inst) {
     FILE *fp = fopen(inst->state_path, "w");
     if (!fp) return;
     int t, c, s;
-    fprintf(fp, "{\"v\":4,\"playing\":%d", inst->playing);
+    fprintf(fp, "{\"v\":5,\"playing\":%d", inst->playing);
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
     for (t = 0; t < NUM_TRACKS; t++)
@@ -375,6 +397,7 @@ static void seq8_save_state(seq8_instance_t *inst) {
             fputc('"', fp);
         }
     }
+    fprintf(fp, ",\"saw\":%d", (int)inst->scale_aware);
     fprintf(fp, "}");
     fclose(fp);
 }
@@ -393,8 +416,8 @@ static void seq8_load_state(seq8_instance_t *inst) {
     if (!n) { free(buf); remove(inst->state_path); return; }
     buf[n] = '\0';
 
-    /* Version gate: delete and ignore any state file that isn't v=4. */
-    if (json_get_int(buf, "v", -1) != 4) {
+    /* Version gate: delete and ignore any state file that isn't v=5. */
+    if (json_get_int(buf, "v", -1) != 5) {
         free(buf);
         remove(inst->state_path);
         seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
@@ -488,6 +511,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
             inst->snap_valid[n] = 1;
         }
     }
+    inst->scale_aware = (uint8_t)(json_get_int(buf, "saw", 0) != 0);
     free(buf);
     seq8_ilog(inst, "SEQ8 state restored from file");
 }
@@ -588,12 +612,29 @@ static void pfx_q_fire(play_fx_t *fx, uint64_t now) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Scale-degree to semitone conversion                                  */
+/* ------------------------------------------------------------------ */
+
+static int deg_to_semitones(seq8_instance_t *inst, int deg) {
+    int s = (int)inst->pad_scale;
+    if (s < 0 || s >= 14) s = 0;
+    int n = (int)SCALE_SIZES[s];
+    const uint8_t *ivals = SCALE_IVLS[s];
+    int quot = deg / n;
+    int rem  = deg % n;
+    if (rem < 0) { rem += n; quot--; }
+    return quot * 12 + (int)ivals[rem];
+}
+
+/* ------------------------------------------------------------------ */
 /* Generated-note list (direct port from NoteTwist)                    */
 /* ------------------------------------------------------------------ */
 
-static int pfx_build_gen_notes(play_fx_t *fx, int orig_note, uint8_t *out) {
+static int pfx_build_gen_notes(seq8_instance_t *inst, int scale_aware,
+                               play_fx_t *fx, int orig_note, uint8_t *out) {
     int cnt = 0;
-    int n = orig_note + fx->octave_shift * 12 + fx->note_offset;
+    int offset = scale_aware ? deg_to_semitones(inst, fx->note_offset) : fx->note_offset;
+    int n = orig_note + fx->octave_shift * 12 + offset;
     n = clamp_i(n, 0, 127);
     out[cnt++] = (uint8_t)n;
 
@@ -602,11 +643,13 @@ static int pfx_build_gen_notes(play_fx_t *fx, int orig_note, uint8_t *out) {
         if (o >= 0 && o <= 127 && cnt < MAX_GEN_NOTES) out[cnt++] = (uint8_t)o;
     }
     if (fx->harmonize_1 != 0) {
-        int h = n + fx->harmonize_1;
+        int h1 = scale_aware ? deg_to_semitones(inst, fx->harmonize_1) : fx->harmonize_1;
+        int h = n + h1;
         if (h >= 0 && h <= 127 && cnt < MAX_GEN_NOTES) out[cnt++] = (uint8_t)h;
     }
     if (fx->harmonize_2 != 0) {
-        int h = n + fx->harmonize_2;
+        int h2 = scale_aware ? deg_to_semitones(inst, fx->harmonize_2) : fx->harmonize_2;
+        int h = n + h2;
         if (h >= 0 && h <= 127 && cnt < MAX_GEN_NOTES) out[cnt++] = (uint8_t)h;
     }
     return cnt;
@@ -616,7 +659,8 @@ static int pfx_build_gen_notes(play_fx_t *fx, int orig_note, uint8_t *out) {
 /* Delay repeat scheduling (direct port from NoteTwist)                */
 /* ------------------------------------------------------------------ */
 
-static void pfx_sched_delay_ons(play_fx_t *fx, pfx_active_t *an,
+static void pfx_sched_delay_ons(seq8_instance_t *inst, int scale_aware,
+                                play_fx_t *fx, pfx_active_t *an,
                                 uint64_t base_time, double sp) {
     if (fx->repeat_times == 0 || fx->delay_level == 0) return;
     int dclk = CLOCK_VALUES[fx->delay_time_idx];
@@ -629,6 +673,7 @@ static void pfx_sched_delay_ons(play_fx_t *fx, pfx_active_t *an,
     double cumul     = 0.0;
     double cur_delay = (double)dclk * sp;
     int    cumul_pitch = 0;
+    int    cumul_deg   = 0;
     int    rep_vel   = (int)an->orig_velocity * fx->delay_level / 127;
 
     int i;
@@ -639,11 +684,15 @@ static void pfx_sched_delay_ons(play_fx_t *fx, pfx_active_t *an,
             break;
         }
 
-        if (fx->fb_note_random)
-            cumul_pitch += pfx_rand(fx, -12, 12);
-        else
-            cumul_pitch += fx->fb_note;
-        an->reps[i].pitch_offset = (int8_t)clamp_i(cumul_pitch, -127, 127);
+        {
+            int delta = fx->fb_note_random ? pfx_rand(fx, -12, 12) : fx->fb_note;
+            if (scale_aware) cumul_deg   += delta;
+            else             cumul_pitch += delta;
+        }
+        {
+            int pitch = scale_aware ? deg_to_semitones(inst, cumul_deg) : cumul_pitch;
+            an->reps[i].pitch_offset = (int8_t)clamp_i(pitch, -127, 127);
+        }
 
         if (i > 0) rep_vel += fx->fb_velocity;
         rep_vel = clamp_i(rep_vel, 1, 127);
@@ -725,8 +774,9 @@ static void pfx_note_on(seq8_instance_t *inst, seq8_track_t *tr,
 
     int v = clamp_i((int)vel + fx->velocity_offset, 1, 127);
 
+    int is_scale_aware = inst->scale_aware && (tr->pad_mode == PAD_MODE_MELODIC_SCALE);
     uint8_t gen[MAX_GEN_NOTES];
-    int gc = pfx_build_gen_notes(fx, (int)orig_note, gen);
+    int gc = pfx_build_gen_notes(inst, is_scale_aware, fx, (int)orig_note, gen);
 
     /* Retrigger guard: if this note is already active, clean up first. */
     if (an->active) {
@@ -763,7 +813,7 @@ static void pfx_note_on(seq8_instance_t *inst, seq8_track_t *tr,
     }
 
     /* Delay repeats (note-ons only; note-offs scheduled at note-off time). */
-    pfx_sched_delay_ons(fx, an, now, sp);
+    pfx_sched_delay_ons(inst, is_scale_aware, fx, an, now, sp);
 
     /* Print mode: capture primary output note and velocity into active clip. */
     if (inst->printing) {
@@ -901,7 +951,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     inst->log_fp         = fopen(SEQ8_LOG_PATH, "a");
 
     inst->pad_key      = 9;   /* A */
-    inst->pad_scale    = 0;   /* minor */
+    inst->pad_scale    = 0;   /* Major */
     inst->launch_quant = 0;   /* Now */
     strncpy(inst->state_path, SEQ8_STATE_PATH_FALLBACK, sizeof(inst->state_path) - 1);
 
@@ -1184,7 +1234,11 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
     if (!strcmp(key, "scale")) {
-        inst->pad_scale = (uint8_t)clamp_i(my_atoi(val), 0, 1);
+        inst->pad_scale = (uint8_t)clamp_i(my_atoi(val), 0, 13);
+        return;
+    }
+    if (!strcmp(key, "scale_aware")) {
+        inst->scale_aware = my_atoi(val) ? 1 : 0;
         return;
     }
     if (!strcmp(key, "launch_quant")) {
@@ -1791,8 +1845,10 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         return snprintf(out, out_len, "%d", inst ? (int)inst->pad_key : 9);
     if (!strcmp(key, "scale"))
         return snprintf(out, out_len, "%d", inst ? (int)inst->pad_scale : 0);
+    if (!strcmp(key, "scale_aware"))
+        return snprintf(out, out_len, "%d", inst ? (int)inst->scale_aware : 0);
     if (!strcmp(key, "version"))
-        return snprintf(out, out_len, "4");
+        return snprintf(out, out_len, "5");
     if (!strcmp(key, "instance_id"))
         return snprintf(out, out_len, "%u", inst ? inst->instance_nonce : 0);
     if (!strcmp(key, "state_uuid")) {

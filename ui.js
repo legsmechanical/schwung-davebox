@@ -108,7 +108,11 @@ const TOP_PAD_BASE   = 92;   /* top row — Shift+top-row = bank select */
 /* ------------------------------------------------------------------ */
 
 const NOTE_KEYS = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
-const SCALE_NAMES = ['Minor', 'Major'];
+const SCALE_NAMES = [
+    'Major', 'Minor', 'Dorian', 'Phrygian', 'Lydian', 'Mixolydian',
+    'Locrian', 'Harmonic Minor', 'Melodic Minor',
+    'Pentatonic Major', 'Pentatonic Minor', 'Blues', 'Whole Tone', 'Diminished'
+];
 const DELAY_LABELS = ['---','1/64','1/32','16T','1/16','8T','1/8','4T','1/4','1/2','1/1'];
 
 function fmtSign(v)    { return (v >= 0 ? '+' : '') + v; }
@@ -254,6 +258,7 @@ let stubInpQuant = false;
 
 /* Launch quantization: 0=Now, 1=1/16, 2=1/8, 3=1/4, 4=1/2, 5=1-bar; default 0 */
 let launchQuant = 0;
+let scaleAware  = 0;
 
 function buildGlobalMenuItems() {
     return [
@@ -285,8 +290,17 @@ function buildGlobalMenuItems() {
                     host_module_set_param('scale', String(v));
                 computePadNoteMap();
             },
-            options: [0, 1],
-            format: function(v) { return SCALE_NAMES[v] || 'Minor'; }
+            options: [0,1,2,3,4,5,6,7,8,9,10,11,12,13],
+            format: function(v) { return SCALE_NAMES[v] || 'Major'; }
+        }),
+        createToggle('Scale Aware', {
+            get: function() { return scaleAware !== 0; },
+            set: function(v) {
+                scaleAware = v ? 1 : 0;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('scale_aware', scaleAware ? '1' : '0');
+            },
+            onLabel: 'On', offLabel: 'Off'
         }),
         createEnum('Launch', {
             get: function() { return launchQuant; },
@@ -338,8 +352,20 @@ let loopHeld        = false;
 
 /* Live pad note input — isomorphic 4ths diatonic layout. */
 const SCALE_INTERVALS = [
-    [0, 2, 3, 5, 7, 8, 10],   /* 0 = natural minor */
-    [0, 2, 4, 5, 7, 9, 11],   /* 1 = major          */
+    [0, 2, 4, 5, 7, 9, 11],        /*  0 Major           */
+    [0, 2, 3, 5, 7, 8, 10],        /*  1 Minor           */
+    [0, 2, 3, 5, 7, 9, 10],        /*  2 Dorian          */
+    [0, 1, 3, 5, 7, 8, 10],        /*  3 Phrygian        */
+    [0, 2, 4, 6, 7, 9, 11],        /*  4 Lydian          */
+    [0, 2, 4, 5, 7, 9, 10],        /*  5 Mixolydian      */
+    [0, 1, 3, 5, 6, 8, 10],        /*  6 Locrian         */
+    [0, 2, 3, 5, 7, 8, 11],        /*  7 Harmonic Minor  */
+    [0, 2, 3, 5, 7, 9, 11],        /*  8 Melodic Minor   */
+    [0, 2, 4, 7, 9],               /*  9 Pentatonic Major*/
+    [0, 3, 5, 7, 10],              /* 10 Pentatonic Minor*/
+    [0, 3, 5, 6, 7, 10],           /* 11 Blues           */
+    [0, 2, 4, 6, 8, 10],           /* 12 Whole Tone      */
+    [0, 2, 3, 5, 6, 8, 9, 11],     /* 13 Diminished      */
 ];
 let padKey    = 9;
 let padScale  = 0;
@@ -638,13 +664,14 @@ function effectiveClip(t) {
 
 function computePadNoteMap() {
     const intervals = SCALE_INTERVALS[padScale] || SCALE_INTERVALS[0];
+    const n = intervals.length;
     const root = padOctave[activeTrack] * 12 + padKey;
     for (let i = 0; i < 32; i++) {
         const col = i % 8;
         const row = Math.floor(i / 8);
         const deg = col + row * 3;
-        const oct = Math.floor(deg / 7);
-        const semitone = oct * 12 + intervals[deg % 7];
+        const oct = Math.floor(deg / n);
+        const semitone = oct * 12 + intervals[deg % n];
         padNoteMap[i] = Math.max(0, Math.min(127, root + semitone));
     }
 }
@@ -1341,6 +1368,8 @@ function syncMuteSoloFromDsp() {
             snapshots[_n] = null;
         }
     }
+    const saRaw = host_module_get_param('scale_aware');
+    if (saRaw !== null && saRaw !== undefined) scaleAware = saRaw === '1' ? 1 : 0;
     screenDirty = true;
 }
 
