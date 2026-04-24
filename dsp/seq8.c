@@ -127,8 +127,10 @@ typedef struct {
     /* Note FX (stages 1+3 from NoteTwist: octave + note page) */
     int octave_shift;       /* -4..+4 */
     int note_offset;        /* -24..+24 */
-    int gate_time;          /* 0..200 percent */
+    int gate_time;          /* 0..400 percent */
     int velocity_offset;    /* -127..+127 */
+    /* Input quantize: 100=fully quantized (tick_offset ignored), 0=raw */
+    int quantize;           /* 0..100 */
     /* Harmonize (stage 2 from NoteTwist) */
     int unison;             /* 0=off, 1=x2, 2=x3 */
     int octaver;            /* -4..+4, 0=off */
@@ -417,6 +419,7 @@ static void seq8_save_state(seq8_instance_t *inst) {
                 t, fx->delay_time_idx, t, fx->delay_level, t, fx->repeat_times, t, fx->fb_velocity);
         fprintf(fp, ",\"t%d_dpf\":%d,\"t%d_dgf\":%d,\"t%d_dcf\":%d,\"t%d_dpr\":%d",
                 t, fx->fb_note, t, fx->fb_gate_time, t, fx->fb_clock, t, fx->fb_note_random);
+        fprintf(fp, ",\"t%d_qnt\":%d", t, fx->quantize);
     }
     /* Global settings */
     fprintf(fp, ",\"key\":%d,\"scale\":%d,\"lq\":%d",
@@ -583,6 +586,8 @@ static void seq8_load_state(seq8_instance_t *inst) {
         fx->fb_clock       = clamp_i(json_get_int(buf, key, 0),  -100, 100);
         snprintf(key, sizeof(key), "t%d_dpr", t);
         fx->fb_note_random = json_get_int(buf, key, 0) ? 1 : 0;
+        snprintf(key, sizeof(key), "t%d_qnt", t);
+        fx->quantize       = clamp_i(json_get_int(buf, key, 100), 0, 100);
     }
     /* Global settings */
     inst->pad_key      = (uint8_t)clamp_i(json_get_int(buf, "key",   9), 0, 11);
@@ -855,6 +860,7 @@ static void pfx_reset(play_fx_t *fx) {
     fx->fb_note_random  = 0;
     fx->fb_gate_time    = 0;
     fx->fb_clock        = 0;
+    fx->quantize        = 100;
 }
 
 /* Process a note-on through the chain. Sends immediate output via
@@ -1187,6 +1193,11 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
         { fx->fb_gate_time   = clamp_i(my_atoi(val), -100, 100); return; }
     if (!strcmp(key, "delay_clock_fb"))
         { fx->fb_clock       = clamp_i(my_atoi(val), -100, 100); return; }
+
+    if (!strcmp(key, "quantize")) {
+        fx->quantize = clamp_i(my_atoi(val), 0, 100);
+        return;
+    }
 
     if (!strcmp(key, "pfx_reset")) {
         pfx_reset(fx);
@@ -1984,6 +1995,7 @@ static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
     if (!strcmp(key, "noteFX_offset"))    return snprintf(out, out_len, "%d", fx->note_offset);
     if (!strcmp(key, "noteFX_gate"))      return snprintf(out, out_len, "%d", fx->gate_time);
     if (!strcmp(key, "noteFX_velocity"))  return snprintf(out, out_len, "%d", fx->velocity_offset);
+    if (!strcmp(key, "quantize"))         return snprintf(out, out_len, "%d", fx->quantize);
 
     if (!strcmp(key, "harm_unison")) {
         static const char *ul[3] = { "OFF", "x2", "x3" };
@@ -2232,6 +2244,15 @@ static int get_error(void *instance, char *out, int out_len) {
 /* render_block helpers                                                 */
 /* ------------------------------------------------------------------ */
 
+/* Apply per-track quantize to a raw tick_offset.
+ * quantize=100 → always 0 (fully snapped); quantize=0 → raw offset unchanged. */
+static int effective_tick_offset(clip_t *cl, seq8_track_t *tr, uint16_t s) {
+    int raw = (int)cl->step_tick_offset[s];
+    if (raw == 0 || tr->pfx.quantize >= 100) return 0;
+    if (tr->pfx.quantize <= 0) return raw;
+    return raw * (100 - tr->pfx.quantize) / 100;
+}
+
 /* Fire note-on for step `s`. Pre-emptively cuts off any note still ringing
  * from a long gate. Sets pending_gate and gate_ticks_remaining for note-off. */
 static void fire_note_on_step(seq8_instance_t *inst, seq8_track_t *tr,
@@ -2387,7 +2408,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 /* Note on: fire immediately (offset==0), defer (offset>0),
                  * or skip if already fired early by the previous step's lookahead. */
                 if (tr->clip_playing && cl->steps[tr->current_step] && !effective_mute(inst, t)) {
-                    int off = (int)cl->step_tick_offset[tr->current_step];
+                    int off = effective_tick_offset(cl, tr, tr->current_step);
                     if (tr->note_fired_early) {
                         tr->note_fired_early = 0; /* note already sounding — skip */
                     } else if (off > 0) {
@@ -2414,7 +2435,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
              * offset=-N fires at tick_in_step == TICKS_PER_STEP - N. */
             if (tr->clip_playing && !effective_mute(inst, t) && inst->tick_in_step > 0) {
                 uint16_t ns = (uint16_t)((tr->current_step + 1) % cl->length);
-                int off = (int)cl->step_tick_offset[ns];
+                int off = effective_tick_offset(cl, tr, ns);
                 if (cl->steps[ns] && off < 0 && off > -TICKS_PER_STEP) {
                     int fire_tick = TICKS_PER_STEP + off;
                     if ((int)inst->tick_in_step == fire_tick) {
