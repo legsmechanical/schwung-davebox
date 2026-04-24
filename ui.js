@@ -472,6 +472,7 @@ let bankParams = Array.from({length: NUM_TRACKS}, () =>
 let heldStepBtn   = -1;
 let heldStep      = -1;   /* absolute step index (page*16 + btn) of the held step */
 let heldStepNotes = [];   /* MIDI note numbers currently assigned to heldStep (up to 4) */
+let stepWasEmpty  = false; /* true if step was empty when pressed; tap release should not deactivate */
 let stepEditVel   = 100;  /* step edit overlay: current step velocity */
 let stepEditGate  = 12;   /* step edit overlay: current step gate ticks */
 let stepEditNudge = 0;    /* step edit overlay: current step tick offset */
@@ -1543,7 +1544,7 @@ globalThis.tick = function () {
     if (pendingSetLoad && typeof host_module_set_param === 'function') {
         pendingSetLoad = false;
         disarmRecord();
-        heldStep = -1; heldStepBtn = -1; heldStepNotes = [];
+        heldStep = -1; heldStepBtn = -1; heldStepNotes = []; stepWasEmpty = false;
         seqActiveNotes.clear(); seqLastStep = -1; seqLastClip = -1;
         pendingDspSync = 5;
         host_module_set_param('state_load', currentSetUuid || '');
@@ -1902,6 +1903,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     heldStepBtn        = -1;
                     heldStep           = -1;
                     heldStepNotes      = [];
+                    stepWasEmpty       = false;
                     stepBtnPressedTick.fill(-1);
                     if (sessionView) {
                         for (let i = 0; i < 16; i++) setLED(16 + i, LED_OFF);
@@ -1923,6 +1925,7 @@ globalThis.onMidiMessageInternal = function (data) {
                 heldStepBtn        = -1;
                 heldStep           = -1;
                 heldStepNotes      = [];
+                stepWasEmpty       = false;
                 stepBtnPressedTick.fill(-1);
             }
             forceRedraw();
@@ -2313,15 +2316,27 @@ globalThis.onMidiMessageInternal = function (data) {
                 heldStepNotes = (raw_p && raw_p.trim().length > 0)
                     ? raw_p.trim().split(' ').map(Number).filter(function(n) { return n >= 0 && n <= 127; })
                     : [];
-                if (heldStepNotes.length > 0 && typeof host_module_get_param === 'function') {
-                    const rv = host_module_get_param(pref_p + '_vel');
-                    const rg = host_module_get_param(pref_p + '_gate');
-                    const rn = host_module_get_param(pref_p + '_nudge');
+                if (heldStepNotes.length === 0) {
+                    /* Empty step: auto-assign lastPlayedNote so knobs work immediately */
+                    stepWasEmpty = true;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + activeTrack + '_c' + ac_p + '_step_' + absP + '_toggle', String(lastPlayedNote));
+                    const raw_aa = typeof host_module_get_param === 'function'
+                        ? host_module_get_param(pref_p + '_notes') : null;
+                    heldStepNotes = (raw_aa && raw_aa.trim().length > 0)
+                        ? raw_aa.trim().split(' ').map(Number).filter(function(n) { return n >= 0 && n <= 127; })
+                        : [];
+                    clipSteps[activeTrack][ac_p][absP] = heldStepNotes.length > 0 ? 1 : 0;
+                    if (heldStepNotes.length > 0) clipNonEmpty[activeTrack][ac_p] = true;
+                    stepEditVel = 100; stepEditGate = 12; stepEditNudge = 0;
+                } else {
+                    stepWasEmpty = false;
+                    const rv = typeof host_module_get_param === 'function' ? host_module_get_param(pref_p + '_vel') : null;
+                    const rg = typeof host_module_get_param === 'function' ? host_module_get_param(pref_p + '_gate') : null;
+                    const rn = typeof host_module_get_param === 'function' ? host_module_get_param(pref_p + '_nudge') : null;
                     stepEditVel   = rv !== null ? parseInt(rv, 10) : 100;
                     stepEditGate  = rg !== null ? parseInt(rg, 10) : 12;
                     stepEditNudge = rn !== null ? parseInt(rn, 10) : 0;
-                } else {
-                    stepEditVel = 100; stepEditGate = 12; stepEditNudge = 0;
                 }
                 forceRedraw();
             }
@@ -2530,34 +2545,38 @@ globalThis.onMidiMessageInternal = function (data) {
                     /* Quick release within threshold — commit as tap toggle */
                     const ac_t   = effectiveClip(activeTrack);
                     const absIdx = heldStep;
-                    const wasOn  = clipSteps[activeTrack][ac_t][absIdx] === 1;
                     stepBtnPressedTick[btn] = -1;
-                    if (!wasOn) {
-                        if (heldStepNotes.length === 0) {
-                            /* No notes: assign lastPlayedNote */
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx + '_toggle', String(lastPlayedNote));
-                        } else {
-                            /* Has notes: reactivate as-is */
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx, '1');
-                        }
-                        clipSteps[activeTrack][ac_t][absIdx] = 1;
-                        clipNonEmpty[activeTrack][ac_t] = true;
-                        refreshSeqNotesIfCurrent(activeTrack, ac_t, absIdx);
+                    if (stepWasEmpty) {
+                        /* Step was empty and auto-assigned on press: step is already on.
+                         * Tap confirms the assignment — nothing more to do. */
                     } else {
-                        /* Deactivating: preserve note data */
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx, '0');
-                        clipSteps[activeTrack][ac_t][absIdx] = 0;
-                        if (clipNonEmpty[activeTrack][ac_t]) clipNonEmpty[activeTrack][ac_t] = clipHasContent(activeTrack, ac_t);
-                        refreshSeqNotesIfCurrent(activeTrack, ac_t, absIdx);
+                        const wasOn = clipSteps[activeTrack][ac_t][absIdx] === 1;
+                        if (!wasOn) {
+                            if (heldStepNotes.length === 0) {
+                                if (typeof host_module_set_param === 'function')
+                                    host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx + '_toggle', String(lastPlayedNote));
+                            } else {
+                                if (typeof host_module_set_param === 'function')
+                                    host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx, '1');
+                            }
+                            clipSteps[activeTrack][ac_t][absIdx] = 1;
+                            clipNonEmpty[activeTrack][ac_t] = true;
+                            refreshSeqNotesIfCurrent(activeTrack, ac_t, absIdx);
+                        } else {
+                            /* Deactivating: preserve note data */
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx, '0');
+                            clipSteps[activeTrack][ac_t][absIdx] = 0;
+                            if (clipNonEmpty[activeTrack][ac_t]) clipNonEmpty[activeTrack][ac_t] = clipHasContent(activeTrack, ac_t);
+                            refreshSeqNotesIfCurrent(activeTrack, ac_t, absIdx);
+                        }
                     }
                 }
                 /* Always exit step edit on release of the held button */
                 heldStepBtn   = -1;
                 heldStep      = -1;
                 heldStepNotes = [];
+                stepWasEmpty  = false;
                 forceRedraw();
             }
         }
