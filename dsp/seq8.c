@@ -1794,10 +1794,15 @@ static void set_param(void *instance, const char *key, const char *val) {
                 }
 
                 if (!strcmp(q, "_toggle")) {
-                    /* tN_cC_step_S_toggle val=<note 0-127>
+                    /* tN_cC_step_S_toggle val="note [velocity [0..127]]"
                      * If note present: remove it. If absent and room: add it.
-                     * Activates/deactivates step as count crosses 0. */
-                    int note = clamp_i(my_atoi(val), 0, 127);
+                     * Activates/deactivates step as count crosses 0.
+                     * On first note added to empty step: sets step_vel from optional field. */
+                    const char *tp = val;
+                    int note = clamp_i(my_atoi(tp), 0, 127);
+                    while (*tp && *tp != ' ') tp++;
+                    int tvel = (*tp == ' ') ? clamp_i(my_atoi(tp + 1), 0, 127) : SEQ_VEL;
+                    int has_tvel = (*tp == ' ');
                     int n, found = -1;
                     for (n = 0; n < (int)cl->step_note_count[sidx]; n++) {
                         if (cl->step_notes[sidx][n] == (uint8_t)note) { found = n; break; }
@@ -1811,11 +1816,14 @@ static void set_param(void *instance, const char *key, const char *val) {
                         if (cl->step_note_count[sidx] == 0)
                             cl->steps[sidx] = 0;
                     } else if (cl->step_note_count[sidx] < 4) {
+                        int was_empty = (cl->step_note_count[sidx] == 0);
                         /* add: write note+count BEFORE activating step to avoid render-thread race */
                         cl->step_notes[sidx][cl->step_note_count[sidx]] = (uint8_t)note;
                         cl->step_note_count[sidx]++;
                         if (cl->step_note_count[sidx] == 1)
                             cl->steps[sidx] = 1;
+                        if (was_empty && has_tvel)
+                            cl->step_vel[sidx] = (uint8_t)tvel;
                     }
                     /* else: 4-note limit reached — silent no-op */
                     {

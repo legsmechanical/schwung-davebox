@@ -480,6 +480,7 @@ let stepEditNudge = 0;    /* step edit overlay: current step tick offset */
 const STEP_HOLD_TICKS  = 40;   /* ~200ms at 196Hz: below = tap, at/above = hold */
 let stepBtnPressedTick = new Array(16).fill(-1); /* tickCount per button when press is pending; -1 = none */
 let lastPlayedNote     = -1;   /* MIDI note of last live pad press; -1 = none yet */
+let lastPadVelocity    = 100;  /* velocity of last live pad press, for step input */
 let liveActiveNotes    = new Set(); /* pitches currently held via live pad input */
 let seqActiveNotes     = new Set(); /* pitches currently playing from sequencer (active track) */
 let seqLastStep        = -1;   /* last step index queried for seqActiveNotes */
@@ -2409,8 +2410,9 @@ globalThis.onMidiMessageInternal = function (data) {
                     /* Empty step: auto-assign on press so knobs work immediately */
                     stepWasEmpty = true;
                     const assignNote = lastPlayedNote >= 0 ? lastPlayedNote : defaultStepNote();
+                    const assignVel  = effectiveVelocity(lastPadVelocity);
                     if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + activeTrack + '_c' + ac_p + '_step_' + absP + '_toggle', String(assignNote));
+                        host_module_set_param('t' + activeTrack + '_c' + ac_p + '_step_' + absP + '_toggle', assignNote + ' ' + assignVel);
                     const raw_aa = typeof host_module_get_param === 'function'
                         ? host_module_get_param(pref_p + '_notes') : null;
                     heldStepNotes = (raw_aa && raw_aa.trim().length > 0)
@@ -2418,7 +2420,7 @@ globalThis.onMidiMessageInternal = function (data) {
                         : [];
                     clipSteps[activeTrack][ac_p][absP] = heldStepNotes.length > 0 ? 1 : 0;
                     if (heldStepNotes.length > 0) clipNonEmpty[activeTrack][ac_p] = true;
-                    stepEditVel = 100; stepEditGate = 12; stepEditNudge = 0;
+                    stepEditVel = assignVel; stepEditGate = 12; stepEditNudge = 0;
                 } else {
                     stepWasEmpty = false;
                     const rv = typeof host_module_get_param === 'function' ? host_module_get_param(pref_p + '_vel') : null;
@@ -2525,7 +2527,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     const ac    = effectiveClip(activeTrack);
                     const pitch = Math.max(0, Math.min(127, padNoteMap[padIdx] + trackOctave[activeTrack] * 12));
                     if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + activeTrack + '_c' + ac + '_step_' + heldStep + '_toggle', String(pitch));
+                        host_module_set_param('t' + activeTrack + '_c' + ac + '_step_' + heldStep + '_toggle', pitch + ' ' + effectiveVelocity(d2));
                     /* Read back authoritative note list */
                     const raw = typeof host_module_get_param === 'function'
                         ? host_module_get_param('t' + activeTrack + '_c' + ac + '_step_' + heldStep + '_notes')
@@ -2576,7 +2578,8 @@ globalThis.onMidiMessageInternal = function (data) {
                     const basePitch = padNoteMap[padIdx];
                     const pitch = Math.max(0, Math.min(127, basePitch + trackOctave[activeTrack] * 12));
                     padPitch[padIdx] = pitch;
-                    lastPlayedNote = pitch;
+                    lastPlayedNote  = pitch;
+                    lastPadVelocity = effectiveVelocity(d2);
                     liveActiveNotes.add(pitch);
                     liveSendNote(activeTrack, 0x90, pitch, effectiveVelocity(d2));
                     /* Pre-roll capture: note in last 1/16th of count-in → step 0 */
@@ -2619,7 +2622,7 @@ globalThis.onMidiMessageInternal = function (data) {
                             if (heldStepNotes.length === 0) {
                                 const assignNote2 = lastPlayedNote >= 0 ? lastPlayedNote : defaultStepNote();
                                 if (typeof host_module_set_param === 'function')
-                                    host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx + '_toggle', String(assignNote2));
+                                    host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx + '_toggle', assignNote2 + ' ' + effectiveVelocity(lastPadVelocity));
                             } else {
                                 if (typeof host_module_set_param === 'function')
                                     host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx, '1');
