@@ -15,9 +15,9 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 
 ## Current build phase
 
-**Phase 5 — 8 tracks, 256 steps, arpeggiator, Track View.** All subphases complete through unquantized-recording Phase F:
+**Phase 5 — 8 tracks, 256 steps, arpeggiator, Track View.** Current branch: `unquantized-recording`. Phase H in progress (2 items remaining).
 
-5a live pad input · 5b poll throttling · 5c clip length · 5d Track View banks + beat stretch + clock shift + octave shift · 5e per-step gate time · 5f polyphonic step notes (4 per step) · 5g melodic step entry UI · 5h tap vs hold step buttons · 5i phantom notes + sparse state fix (state v=2) · 5j Delete key combos · 5k atomic step/clip clear DSP params · 5l playback head indicator + chord-to-step input · 5m Session Overview overlay · 5n real-time recording + count-in · 5o recording fixes (toggle, count-in redesign, silent notes race fix) · 5q global menu via platform framework + jog click CC 3 fix + BPM editable (real-time, linear jog) + count-in duration fix · 5r clip deactivation (stop-at-end) + Session View jog row scroll · 5s clip-launch-rework: 5-state clip model, bar-boundary launch, page-stop, scene queuing, Shift+Play=deactivate_all, Delete+Play=panic, will_relaunch persistence (state v=3) · 5t stopped-transport fixes: effectiveClip helper, LED blink corrections, scene cache + LED dedup, Shift+Play deactivates all clips when stopped · 5u launch quantization: Now/1/16/1/8/1/4/1/2/1-bar, DSP QUANT_STEPS table, pending_page_stop anchored to global_tick%16 · 5v per-set state: state saved/loaded per Move set UUID, DSP `state_load` takes UUID from JS, `state_uuid`/`instance_nonce` get_params, fresh launch defaults to Session View · 5w active bank global: single integer replaces per-track array, bank selection persists across track switches · 5x live recording follows track switch: switching active track mid-recording hands off DSP recording flag to new track immediately · 5y mute/solo + snapshots: per-track mute/solo with effective_mute gating, Mute button LED, OLED track-row indicators, 16-slot DSP-side snapshots, state v=4 · 5z-a 14-scale selector in global menu (Major/Minor/Dorian/Phrygian/Lydian/Mixolydian/Locrian/Harmonic Minor/Melodic Minor/Pentatonic Major/Pentatonic Minor/Blues/Whole Tone/Diminished); `computePadNoteMap` uses `intervals.length` · 5z-b scale-aware play effects: global Scale Aware toggle in menu, DSP `deg_to_semitones()`, affects Note FX Offset + Harmonize intervals + MIDI Delay pitch feedback; drum tracks bypass · 5z-c full parameter persistence audit: all play effect banks, pad_mode, stretch_exp, clock_shift_pos, key/scale/launch_quant/bpm/scale_aware persisted; state v=6; all banks synced at init · 5z-d Delete+jog click resets NOTE FX/HARMZ/MIDI DLY banks via single `tN_pfx_reset` DSP command (coalescing-safe) · unquantized-recording Phase A–F: nondestructive noteFX_gate, multi-step gate countdown, positive/negative tick_offset render, TIMING K3 quantize knob, step_vel/step_gate/step_tick_offset persisted (state v=7)
+5a live pad input · 5b poll throttling · 5c clip length · 5d Track View banks + beat stretch + clock shift + octave shift · 5e per-step gate time · 5f polyphonic step notes (4 per step) · 5g melodic step entry UI · 5h tap vs hold step buttons · 5i phantom notes + sparse state fix (state v=2) · 5j Delete key combos · 5k atomic step/clip clear DSP params · 5l playback head indicator + chord-to-step input · 5m Session Overview overlay · 5n real-time recording + count-in · 5o recording fixes (toggle, count-in redesign, silent notes race fix) · 5q global menu via platform framework + jog click CC 3 fix + BPM editable (real-time, linear jog) + count-in duration fix · 5r clip deactivation (stop-at-end) + Session View jog row scroll · 5s clip-launch-rework: 5-state clip model, bar-boundary launch, page-stop, scene queuing, Shift+Play=deactivate_all, Delete+Play=panic, will_relaunch persistence (state v=3) · 5t stopped-transport fixes: effectiveClip helper, LED blink corrections, scene cache + LED dedup, Shift+Play deactivates all clips when stopped · 5u launch quantization: Now/1/16/1/8/1/4/1/2/1-bar, DSP QUANT_STEPS table, pending_page_stop anchored to global_tick%16 · 5v per-set state: state saved/loaded per Move set UUID, DSP `state_load` takes UUID from JS, `state_uuid`/`instance_nonce` get_params, fresh launch defaults to Session View · 5w active bank global: single integer replaces per-track array, bank selection persists across track switches · 5x live recording follows track switch: switching active track mid-recording hands off DSP recording flag to new track immediately · 5y mute/solo + snapshots: per-track mute/solo with effective_mute gating, Mute button LED, OLED track-row indicators, 16-slot DSP-side snapshots, state v=4 · 5z-a 14-scale selector in global menu; `computePadNoteMap` uses `intervals.length` · 5z-b scale-aware play effects: global Scale Aware toggle in menu, DSP `scale_transpose()`, affects Note FX Offset + Harmonize intervals + MIDI Delay pitch feedback; drum tracks bypass · 5z-c full parameter persistence audit: all play effect banks, pad_mode, stretch_exp, clock_shift_pos, key/scale/launch_quant/bpm/scale_aware persisted; state v=6; all banks synced at init · 5z-d Delete+jog click resets NOTE FX/HARMZ/MIDI DLY banks via single `tN_pfx_reset` DSP command (coalescing-safe) · 5z-e clip copy (CC 60, Session View): clip-to-clip and scene-row-to-row; Delete+scene row clear · unquantized-recording Phase A: nondestructive noteFX_gate, uint16 step_gate, step_tick_offset field · Phase B: multi-step gate countdown · Phase C/D: positive/negative tick_offset deferred/lookahead note-on · Phase E: TIMING K3 quantize knob (0–100%, per-track, render-time, `effective_tick_offset()`) · Phase F: step_vel/step_gate/step_tick_offset persisted sparse (state v=7) · Phase G: beat stretch scales tick_offset proportionally (×2/÷2, clamped ±23) · Phase H (partial): step edit param overlay — K1–K5 knobs (Oct/Pitch/Dur/Vel/Nudge); 5-column OLED grid; instant activation on press; auto-assign default note on empty step; state v=8 wipes old files; default key=A minor
 
 Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play effects → clip model/Session View/background running.
 
@@ -40,7 +40,9 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 
 **Session Overview** (hold CC 50 ≥200ms): 8×16 OLED grid (8 cols=tracks, 16 rows=scenes, 16×4px cells). All input swallowed while held.
 
-**Step entry / recording**: Hold step → step edit; tap pads to toggle notes (`tN_cC_step_S_toggle`); Up/Down shifts octave; tap step (<200ms) = toggle on/off. Chord-to-step: if pads held when step pressed, all held pitches assigned additively. Real-time recording: CC 86 stopped → 1-bar count-in (steps flash Red) → transport+recording start. CC 86 playing → arm immediately. Overdub-only via `tN_cC_step_S_add`. CC 86 again = disarm.
+**Step entry / recording**: Tap step (<200ms) = toggle on/off. Hold step → step edit immediately (no delay). Tap pads to toggle notes (`tN_cC_step_S_toggle`); Up/Down shifts octave. Pressing an empty step auto-assigns `lastPlayedNote` (or `defaultStepNote()` — scale root nearest octave 4 — if no pad has been played). Chord-to-step: if pads held when step pressed, all held pitches assigned additively. Real-time recording: CC 86 stopped → 1-bar count-in (steps flash Red) → transport+recording start. CC 86 playing → arm immediately. Overdub-only via `tN_cC_step_S_add`. CC 86 again = disarm. **Note: live recording does not yet capture tick_offset or actual gate duration** — those are stored at defaults.
+
+**Step edit overlay** (held step, Track View): 5-column OLED grid: Oct · Pit (merged note value) · Dur · Vel · Ndg. Touched knob column highlights. K1 Oct: ±octave (sens=12); K2 Pitch: scale-aware chromatic nudge via `scaleNudgeNote()` (sens=6); K3 Dur: ±6 ticks/detent, stored as raw gate ticks; K4 Vel: ±1, range 0–127; K5 Nudge: ±1 tick, range ±23. All edits destructive via `tN_cC_step_S_vel/gate/nudge/set_notes`. Delete+step clears vel/gate/nudge to defaults. **Remaining**: nudge blink at 0 (tactile feedback), multi-note range indicator.
 
 **Delete combos**: CC 119 held. Delete+step = clear step; Delete+track button = clear clip; Delete+clip pad (Session View) = clear clip; Delete+Mute = clear all mute/solo; Delete+jog click (Track View) = reset play effect banks (NOTE FX/HARMZ/MIDI DLY) via `tN_pfx_reset`; Delete+Play = panic. Session View swallows step/track buttons while Delete held.
 
@@ -48,7 +50,7 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 
 **Live recording track switch**: While `recording=1`, switching active track sends `tOLD_recording=0` then `tNEW_recording=1` with a clean note-off on the previous track first.
 
-**Beat Stretch** (TIMING K1, sens=16, lock): CW doubles, CCW halves. Compress blocked on step collision → "COMPRESS LIMIT" overlay ~1.5s. Dry-run with `uint8_t seen[SEQ_STEPS]`; atomic, no partial writes. **Clock Shift** (TIMING K2, sens=8): rotates all steps one position CW/CCW. **Octave shift**: Up/Down in Track View, ±4 oct, "Octave: N" overlay 1s.
+**Beat Stretch** (TIMING K1, sens=16, lock): CW doubles, CCW halves. Compress blocked on step collision → "COMPRESS LIMIT" overlay ~1.5s. Dry-run with `uint8_t seen[SEQ_STEPS]`; atomic, no partial writes. tick_offset and gate scaled proportionally (×2/÷2, clamped ±23). **Clock Shift** (TIMING K2, sens=8): rotates all steps one position CW/CCW. **Quantize** (TIMING K3, 0–100%, per-track): render-time only — `effective_tick_offset = raw * (100 - quantize) / 100`. Does not modify stored tick_offset. **Octave shift**: Up/Down in Track View, ±4 oct, "Octave: N" overlay 1s.
 
 **Global menu** (Shift + CC 50): `drawHierarchicalMenu`; jog rotate = navigate; jog click = CC 3 (0xB0 d1=3) = edit via `handleMenuInput`; Back = exit. Items: **BPM** (40–250, real-time jog, linear ±1/detent, CC 14 intercepted in `onMidiMessageInternal`), **Key** (wired), **Scale** (wired), **Scale Aware** (on/off, default on), **Launch** (`set_param("launch_quant", "0"–"5")` = Now/1/16/1/8/1/4/1/2/1-bar), **Save+Unload**, Swing Amt/Res/Input Vel/Inp Quant (stub, session-local).
 
@@ -58,7 +60,7 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 
 **Scale definitions**: 14 scales, `SCALE_IVLS[14][8]` + `SCALE_SIZES[14]`. Index matches JS `SCALE_NAMES` exactly: Major(7)·Minor(7)·Dorian(7)·Phrygian(7)·Lydian(7)·Mixolydian(7)·Locrian(7)·Harmonic Minor(7)·Melodic Minor(7)·Pent Major(5)·Pent Minor(5)·Blues(6)·Whole Tone(6)·Diminished(8). `computePadNoteMap` uses `intervals.length`.
 
-**Scale awareness**: Global toggle (menu, default on). When on: noteFX_offset, harm_interval1/2, delay_pitch_fb, delay_pitch_random treated as scale degrees → semitones via `deg_to_semitones()` at render time. Drum tracks (pad_mode ≠ PAD_MODE_MELODIC_SCALE) always bypass. `deg_to_semitones()`: `quot=deg/n; rem=deg%n; if(rem<0){rem+=n;quot--;} return quot*12+ivals[rem];`
+**Scale awareness**: Global toggle (menu, default on). When on: noteFX_offset, harm_interval1/2, delay_pitch_fb, delay_pitch_random applied via `scale_transpose(inst, note, deg_offset)` at render time — anchors to the note's own scale degree, then shifts by deg_offset scale degrees. Drum tracks (pad_mode ≠ PAD_MODE_MELODIC_SCALE) always bypass. `deg_to_semitones()` still exists for non-note interval lookups.
 
 **State persistence**: Saved at Shift+Back (`set_param("save")`) and `destroy_instance`. Persists: all step data, clip lengths, will_relaunch, all play effect params per track, global settings (key/scale/bpm/launch_quant/scale_aware), mute/solo state, 16 snapshot slots, step_vel/step_gate/step_tick_offset (sparse, active steps only).
 
@@ -66,14 +68,19 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 
 ## Upcoming tasks
 
-1. **Clip copy/delete** — clip-level operations in Session View.
-2. **Step edit param overlay** — per-step gate/vel/note panel in step edit mode.
-3. **Undo/Redo** — step-level history.
-4. **Drum mode** — pad_mode=drum, per-lane MIDI effects. DSP + JS build.
-5. **Bank param snapshots** — 16-slot play effect bank snapshots (Session View, after drum mode).
-6. **Arpeggiator** — Seq ARP + Live ARP, port from NoteTwist, one DSP phase.
-7. **Swing** — wire global menu stub to DSP.
-8. **MIDI clock sync** — external clock follow.
+### Completing unquantized-recording branch
+1. **Phase H remaining** — nudge blink at 0 (tactile feedback on K5); multi-note range indicator on OLED.
+2. **Live recording capture** — capture actual tick_offset (note timing vs. nearest grid step) and actual gate duration (note-on to note-off) during overdub. Wire global menu Input Quantize stub: ON=snap to grid (current behavior), OFF=unquantized capture.
+3. **Step copy** (Track View, CC 60) — hold Copy, press source step (blinks white), press dest step → copy all step data (notes, gate, vel, tick_offset). Same clip only. Release Copy before dest = discard.
+4. **Real-time scale quantize** — at render time, snap each step note to nearest degree in current key/scale. Non-destructive DSP change in `fire_note_on_step`. Makes global menu Key/Scale changes affect existing sequences.
+
+### After unquantized-recording branch merges
+5. **Undo/Redo** — step-level history.
+6. **Drum mode** — pad_mode=drum, per-lane MIDI effects. DSP + JS build.
+7. **Bank param snapshots** — 16-slot play effect bank snapshots (Session View, after drum mode).
+8. **Arpeggiator** — Seq ARP + Live ARP, port from NoteTwist, one DSP phase.
+9. **Swing** — wire global menu stub to DSP.
+10. **MIDI clock sync** — external clock follow.
 
 ## Per-set state (built)
 
@@ -98,7 +105,7 @@ Banks via **Shift + top-row pad** (92–99). Same bank again → return to TRACK
 | Bank | Pad | K1 | K2 | K3 | K4 | K5 | K6 | K7 | K8 |
 |------|-----|----|----|----|----|----|----|----|----|
 | 0 TRACK | 92 | Ch (stub) | Rte (route, track) | Mode (pad_mode, track) | Res (stub) | Len (clip_length, track, sens=4) | — | — | — |
-| 1 TIMING | 93 | Stch (beat_stretch, action, sens=16, lock) | Shft (clock_shift, action, sens=8) | — | — | — | — | — | — |
+| 1 TIMING | 93 | Stch (beat_stretch, action, sens=16, lock) | Shft (clock_shift, action, sens=8) | Qnt (quantize, track, 0–100) | — | — | — | — | — |
 | 2 NOTE FX | 94 | Oct (noteFX_octave, track, sens=6) | Ofs (noteFX_offset, track, sens=4) | Gate (noteFX_gate, track, sens=2) | Vel (noteFX_velocity, track) | — | — | — | — |
 | 3 HARMZ | 95 | Unis (harm_unison, track, sens=4) | Oct (harm_octaver, track, sens=4) | Hrm1 (harm_interval1, track, sens=4) | Hrm2 (harm_interval2, track, sens=4) | — | — | — | — |
 | 4 SEQ ARP | 96 | On (stub) | Type (stub) | Sort (stub) | Hold (stub) | OctR (stub) | Spd (stub) | — | — |
@@ -124,8 +131,13 @@ All `tN_` keys: N = 0..7.
 | `tN_deactivate` | set | any | Clear clip_playing, will_relaunch, queued_clip, pending_page_stop, record_armed. |
 | `tN_cC_step_S_notes` | get | space-sep note numbers or `""` | Notes on step S of clip C. |
 | `tN_cC_step_S_toggle` | set | MIDI note string | Toggle note in/out of step. Saves state. |
-| `tN_cC_step_S_clear` | set | any | Atomic zero + deactivate step. Saves state. |
+| `tN_cC_step_S_clear` | set | any | Atomic zero + deactivate step; resets vel/gate/nudge. Saves state. |
 | `tN_cC_step_S_add` | set | MIDI note string | Add-only overdub. Defers save while recording. |
+| `tN_cC_step_S_vel` | set/get | `"0"`–`"127"` | Step velocity. No-op if step inactive. Saves state. |
+| `tN_cC_step_S_gate` | set/get | `"1"`–`"6144"` | Step gate ticks. No-op if step inactive. Saves state. |
+| `tN_cC_step_S_nudge` | set/get | `"-23"`–`"23"` | Step tick offset. No-op if step inactive. Saves state. |
+| `tN_cC_step_S_pitch` | set | signed delta string | Shift all notes in step by N semitones. No-op if step inactive. Saves state. |
+| `tN_cC_step_S_set_notes` | set | space-sep note numbers | Replace all notes in step. No-op if step inactive. Saves state. |
 | `tN_cC_clear` | set | any | Atomic wipe all steps in clip C. Saves state. |
 | `tN_recording` | set/get | `"0"` or `"1"` | 1 = overdub active (defers save). 0 = disarm + flush. |
 | `tN_pfx_reset` | set | any | Atomically reset NOTE FX + HARMZ + MIDI DLY to init defaults. |
@@ -181,7 +193,7 @@ typedef struct {
 Live pad note capture for overdub recording is done in JS (not DSP). The alternatives were investigated:
 
 - **DSP-side (tick-accurate)**: `on_midi` in seq8.c is empty — it receives nothing. `shadow_send_midi_to_dsp` routes MIDI directly to the active Schwung audio chain, bypassing the SEQ8 module's `on_midi` entirely. Achieving DSP-side capture would require intercepting pads before they reach the chain, rerouting audio delivery, or a separate inter-module IPC mechanism — none of which are available in the current Schwung API without a major architectural refactor.
-- **JS-side (chosen)**: JS captures `tickCount` at note-on/note-off and maps to step index via polled `trackCurrentStep`. Jitter source: `POLL_INTERVAL = 4` JS ticks (~20ms). Within-step timing for `step_tick_offset` is approximated from `tickCount` delta. Note duration converted via `dsp_ticks = js_ticks * bpm / 122.5`.
+- **JS-side (chosen)**: JS captures `tickCount` at note-on/note-off and maps to step index via polled `trackCurrentStep`. Jitter source: `POLL_INTERVAL = 4` JS ticks (~20ms). Within-step timing for `step_tick_offset` is approximated from `tickCount` delta. Note duration converted via `dsp_ticks = js_ticks * bpm / 122.5`. **Currently only pitch is captured** — tick_offset and gate duration capture during recording are not yet implemented (upcoming task).
 
 To revisit DSP-side capture: check if a future Schwung API version exposes a pre-chain MIDI hook, or whether `on_midi` can be wired to receive pad input through a different signal path.
 
