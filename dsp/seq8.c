@@ -1486,6 +1486,71 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
 
+    if (!strcmp(key, "clip_copy")) {
+        const char *p = val;
+        int nums[4], i;
+        for (i = 0; i < 4; i++) {
+            while (*p == ' ') p++;
+            nums[i] = 0;
+            while (*p >= '0' && *p <= '9') nums[i] = nums[i]*10 + (*p++ - '0');
+        }
+        {
+            int srcT = clamp_i(nums[0], 0, NUM_TRACKS-1);
+            int srcC = clamp_i(nums[1], 0, NUM_CLIPS-1);
+            int dstT = clamp_i(nums[2], 0, NUM_TRACKS-1);
+            int dstC = clamp_i(nums[3], 0, NUM_CLIPS-1);
+            clip_t *src = &inst->tracks[srcT].clips[srcC];
+            clip_t *dst = &inst->tracks[dstT].clips[dstC];
+            if (srcT == dstT && srcC == dstC) return;
+            dst->length = src->length;
+            memcpy(dst->steps, src->steps, SEQ_STEPS);
+            memcpy(dst->step_notes, src->step_notes, SEQ_STEPS * 4);
+            memcpy(dst->step_note_count, src->step_note_count, SEQ_STEPS);
+            dst->active = src->active;
+        }
+        return;
+    }
+
+    if (!strcmp(key, "row_copy")) {
+        const char *p = val;
+        int srcRow = 0, dstRow = 0, t;
+        while (*p == ' ') p++;
+        while (*p >= '0' && *p <= '9') srcRow = srcRow*10 + (*p++ - '0');
+        while (*p == ' ') p++;
+        while (*p >= '0' && *p <= '9') dstRow = dstRow*10 + (*p++ - '0');
+        srcRow = clamp_i(srcRow, 0, NUM_CLIPS-1);
+        dstRow = clamp_i(dstRow, 0, NUM_CLIPS-1);
+        if (srcRow == dstRow) return;
+        for (t = 0; t < NUM_TRACKS; t++) {
+            clip_t *src = &inst->tracks[t].clips[srcRow];
+            clip_t *dst = &inst->tracks[t].clips[dstRow];
+            dst->length = src->length;
+            memcpy(dst->steps, src->steps, SEQ_STEPS);
+            memcpy(dst->step_notes, src->step_notes, SEQ_STEPS * 4);
+            memcpy(dst->step_note_count, src->step_note_count, SEQ_STEPS);
+            dst->active = src->active;
+        }
+        return;
+    }
+
+    if (!strcmp(key, "row_clear")) {
+        int rowIdx = clamp_i(my_atoi(val), 0, NUM_CLIPS-1);
+        int t, i;
+        for (t = 0; t < NUM_TRACKS; t++) {
+            clip_t *cl = &inst->tracks[t].clips[rowIdx];
+            for (i = 0; i < SEQ_STEPS; i++) {
+                cl->steps[i] = 0;
+                cl->step_notes[i][0] = 0;
+                cl->step_notes[i][1] = 0;
+                cl->step_notes[i][2] = 0;
+                cl->step_notes[i][3] = 0;
+                cl->step_note_count[i] = 0;
+            }
+            cl->active = 0;
+        }
+        return;
+    }
+
     /* --- Track-prefixed params: tN_<subkey> --- */
     if (key[0] == 't' && key[1] >= '0' && key[1] <= '7' && key[2] == '_') {
         int tidx = key[1] - '0';
