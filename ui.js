@@ -1326,28 +1326,29 @@ function drawUI() {
         const ac        = effectiveClip(activeTrack);
         const stepLabel = 'S' + (heldStep + 1);
         const header    = 'TR' + (activeTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac] + '  ' + stepLabel;
-        if (heldStepNotes.length > 0 && knobTouched >= 0 && knobTouched <= 4) {
-            const STEP_PARAM_NAMES = ['Oct', 'Pitch', 'Dur', 'Vel', 'Nudge'];
-            let valStr;
-            if (knobTouched === 0 || knobTouched === 1) {
-                valStr = heldStepNotes.map(midiNoteName).join(' ');
-            } else if (knobTouched === 2) {
-                valStr = Math.round(stepEditGate * 100 / 24) + '%';
-            } else if (knobTouched === 3) {
-                valStr = String(stepEditVel);
-            } else {
-                valStr = (stepEditNudge > 0 ? '+' : '') + String(stepEditNudge);
+        print(4, 10, header, 1);
+        if (heldStepNotes.length > 0) {
+            /* 5-column param grid: Oct Pit Dur Vel Ndg */
+            const root   = heldStepNotes[0];
+            const LABELS = ['Oct', 'Pit', 'Dur', 'Vel', 'Ndg'];
+            const VALS   = [
+                midiNoteName(root),
+                midiNoteName(root),
+                Math.round(stepEditGate * 100 / 24) + '%',
+                String(stepEditVel),
+                (stepEditNudge >= 0 ? '+' : '') + String(stepEditNudge)
+            ];
+            const COL_X  = [2, 27, 52, 77, 102];
+            const COL_W  = 23;
+            for (let i = 0; i < 5; i++) {
+                const hi = (knobTouched === i);
+                if (hi) fill_rect(COL_X[i], 20, COL_W, 24, 1);
+                print(COL_X[i], 22, LABELS[i], hi ? 0 : 1);
+                print(COL_X[i], 34, VALS[i],   hi ? 0 : 1);
             }
-            print(4, 10, header, 1);
-            print(4, 22, STEP_PARAM_NAMES[knobTouched], 1);
-            print(4, 34, valStr, 1);
         } else {
-            const noteStr = heldStepNotes.length === 0
-                ? '(empty)'
-                : heldStepNotes.map(midiNoteName).join(' ');
-            print(4, 10, header, 1);
             print(4, 22, 'STEP EDIT', 1);
-            print(4, 34, noteStr, 1);
+            print(4, 34, '(empty)', 1);
         }
         drawTrackRow(46);
         return;
