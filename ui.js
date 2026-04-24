@@ -479,7 +479,7 @@ let stepEditNudge = 0;    /* step edit overlay: current step tick offset */
 
 const STEP_HOLD_TICKS  = 40;   /* ~200ms at 196Hz: below = tap, at/above = hold */
 let stepBtnPressedTick = new Array(16).fill(-1); /* tickCount per button when press is pending; -1 = none */
-let lastPlayedNote     = 60;   /* MIDI note of last live pad press; fallback for empty step activation */
+let lastPlayedNote     = -1;   /* MIDI note of last live pad press; -1 = none yet */
 let liveActiveNotes    = new Set(); /* pitches currently held via live pad input */
 let seqActiveNotes     = new Set(); /* pitches currently playing from sequencer (active track) */
 let seqLastStep        = -1;   /* last step index queried for seqActiveNotes */
@@ -733,6 +733,20 @@ function computePadNoteMap() {
         const semitone = oct * 12 + intervals[deg % n];
         padNoteMap[i] = Math.max(0, Math.min(127, root + semitone));
     }
+}
+
+/* Root note in pad layout closest to octave 4 — guaranteed in-scale and on a pad. */
+function defaultStepNote() {
+    const target = padKey + 60;  /* root pitch class in MIDI octave 4 */
+    let best = -1, bestDist = 999;
+    for (let i = 0; i < 32; i++) {
+        const p = padNoteMap[i] + trackOctave[activeTrack] * 12;
+        if (p < 0 || p > 127) continue;
+        if (padNoteMap[i] % 12 !== padKey) continue;  /* root notes only */
+        const d = Math.abs(p - target);
+        if (d < bestDist) { bestDist = d; best = p; }
+    }
+    return best >= 0 ? best : Math.max(0, Math.min(127, padNoteMap[0] + trackOctave[activeTrack] * 12));
 }
 
 /* Synchronously zero every LED that SEQ8 owns — call before host_hide_module(). */
@@ -2320,10 +2334,11 @@ globalThis.onMidiMessageInternal = function (data) {
                     ? raw_p.trim().split(' ').map(Number).filter(function(n) { return n >= 0 && n <= 127; })
                     : [];
                 if (heldStepNotes.length === 0) {
-                    /* Empty step: auto-assign lastPlayedNote so knobs work immediately */
+                    /* Empty step: auto-assign on press so knobs work immediately */
                     stepWasEmpty = true;
+                    const assignNote = lastPlayedNote >= 0 ? lastPlayedNote : defaultStepNote();
                     if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + activeTrack + '_c' + ac_p + '_step_' + absP + '_toggle', String(lastPlayedNote));
+                        host_module_set_param('t' + activeTrack + '_c' + ac_p + '_step_' + absP + '_toggle', String(assignNote));
                     const raw_aa = typeof host_module_get_param === 'function'
                         ? host_module_get_param(pref_p + '_notes') : null;
                     heldStepNotes = (raw_aa && raw_aa.trim().length > 0)
@@ -2556,8 +2571,9 @@ globalThis.onMidiMessageInternal = function (data) {
                         const wasOn = clipSteps[activeTrack][ac_t][absIdx] === 1;
                         if (!wasOn) {
                             if (heldStepNotes.length === 0) {
+                                const assignNote2 = lastPlayedNote >= 0 ? lastPlayedNote : defaultStepNote();
                                 if (typeof host_module_set_param === 'function')
-                                    host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx + '_toggle', String(lastPlayedNote));
+                                    host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx + '_toggle', String(assignNote2));
                             } else {
                                 if (typeof host_module_set_param === 'function')
                                     host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx, '1');
