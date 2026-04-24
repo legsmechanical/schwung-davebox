@@ -332,7 +332,7 @@ function buildGlobalMenuItems() {
             get: function() { return stubInputVel; },
             set: function(v) { stubInputVel = v; },
             min: 0, max: 127,
-            format: function(v) { return v === 0 ? 'Off' : String(v); }
+            format: function(v) { return v === 0 ? 'Live' : String(v); }
         }),
         createToggle('Inp Quant', {
             get: function() { return stubInpQuant; },
@@ -682,6 +682,11 @@ function handoffRecordingToTrack(newTrack) {
         if (old >= 0) host_module_set_param('t' + old + '_recording', '0');
         host_module_set_param('t' + newTrack + '_recording', '1');
     }
+}
+
+/* Returns the velocity to use for a pad hit: stubInputVel=0 → live, else fixed. */
+function effectiveVelocity(rawVel) {
+    return stubInputVel > 0 ? stubInputVel : rawVel;
 }
 
 /* Capture a note-on during overdub: computes tick_offset, sends _add "pitch offset vel". */
@@ -2539,7 +2544,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     /* Preview note */
                     padPitch[padIdx] = pitch;
                     liveActiveNotes.add(pitch);
-                    liveSendNote(activeTrack, 0x90, pitch, Math.max(80, d2));
+                    liveSendNote(activeTrack, 0x90, pitch, effectiveVelocity(d2));
                     forceRedraw();
                 } else if (shiftHeld && padIdx >= 24 && padIdx <= 31) {
                     /* Shift + top-row pad (notes 92-99): select bank.
@@ -2573,7 +2578,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     padPitch[padIdx] = pitch;
                     lastPlayedNote = pitch;
                     liveActiveNotes.add(pitch);
-                    liveSendNote(activeTrack, 0x90, pitch, Math.max(80, d2));
+                    liveSendNote(activeTrack, 0x90, pitch, effectiveVelocity(d2));
                     /* Pre-roll capture: note in last 1/16th of count-in → step 0 */
                     if (recordArmed && recordCountingIn &&
                             activeTrack === recordArmedTrack &&
@@ -2582,13 +2587,13 @@ globalThis.onMidiMessageInternal = function (data) {
                             typeof host_module_set_param === 'function') {
                         const rt   = recordArmedTrack;
                         const ac_r = trackActiveClip[rt];
-                        host_module_set_param('t' + rt + '_c' + ac_r + '_step_0_add', pitch + ' 0 ' + Math.max(80, d2));
+                        host_module_set_param('t' + rt + '_c' + ac_r + '_step_0_add', pitch + ' 0 ' + effectiveVelocity(d2));
                         clipSteps[rt][ac_r][0] = 1;
                         clipNonEmpty[rt][ac_r] = true;
                     }
                     /* Overdub capture: add to current step of armed track with tick offset + velocity */
                     if (recordArmed && !recordCountingIn && activeTrack === recordArmedTrack)
-                        recordNoteOn(pitch, Math.max(80, d2), recordArmedTrack);
+                        recordNoteOn(pitch, effectiveVelocity(d2), recordArmedTrack);
                 }
             }
         }
