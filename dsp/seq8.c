@@ -595,6 +595,17 @@ static void seq8_load_state(seq8_instance_t *inst) {
                     }
                 }
             }
+            /* Enforce step invariant: clear any step that has no note data */
+            {
+                clip_t *cl = &inst->tracks[t].clips[c];
+                int s2, any2 = 0;
+                for (s2 = 0; s2 < SEQ_STEPS; s2++) {
+                    if (cl->steps[s2] && cl->step_note_count[s2] == 0)
+                        cl->steps[s2] = 0;
+                    if (cl->steps[s2]) any2 = 1;
+                }
+                cl->active = (uint8_t)any2;
+            }
             /* sparse step vel */
             {
                 clip_t *cl = &inst->tracks[t].clips[c];

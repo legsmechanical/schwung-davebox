@@ -1329,23 +1329,26 @@ function drawUI() {
         const header    = 'TR' + (activeTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac] + '  ' + stepLabel;
         print(4, 10, header, 1);
         if (heldStepNotes.length > 0) {
-            /* 5-column param grid: Oct Pit Dur Vel Ndg */
-            const root   = heldStepNotes[0];
-            const LABELS = ['Oct', 'Pit', 'Dur', 'Vel', 'Ndg'];
-            const VALS   = [
-                midiNoteName(root),
-                midiNoteName(root),
-                (stepEditGate / 24).toFixed(2) + 's',
+            /* Oct+Pit share a merged block; one note value centered under both labels */
+            const root = heldStepNotes[0];
+            const hiP  = (knobTouched === 0 || knobTouched === 1);
+            if (hiP) fill_rect(2, 20, 46, 24, 1);
+            print(2,  22, 'Oct', hiP ? 0 : 1);
+            print(27, 22, 'Pit', hiP ? 0 : 1);
+            print(16, 34, midiNoteName(root), hiP ? 0 : 1);
+            /* Dur / Vel / Ndg */
+            const RHS_LABELS = ['Dur', 'Vel', 'Ndg'];
+            const RHS_VALS   = [
+                (stepEditGate / 24).toFixed(2),
                 String(stepEditVel),
                 (stepEditNudge >= 0 ? '+' : '') + String(stepEditNudge)
             ];
-            const COL_X  = [2, 27, 52, 77, 102];
-            const COL_W  = 23;
-            for (let i = 0; i < 5; i++) {
-                const hi = (knobTouched === i);
-                if (hi) fill_rect(COL_X[i], 20, COL_W, 24, 1);
-                print(COL_X[i], 22, LABELS[i], hi ? 0 : 1);
-                print(COL_X[i], 34, VALS[i],   hi ? 0 : 1);
+            const RHS_X = [52, 77, 102];
+            for (let i = 0; i < 3; i++) {
+                const hi = (knobTouched === i + 2);
+                if (hi) fill_rect(RHS_X[i], 20, 23, 24, 1);
+                print(RHS_X[i], 22, RHS_LABELS[i], hi ? 0 : 1);
+                print(RHS_X[i], 34, RHS_VALS[i],   hi ? 0 : 1);
             }
         } else {
             print(4, 22, 'STEP EDIT', 1);
