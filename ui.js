@@ -1349,7 +1349,10 @@ function drawUI() {
             if (hiP) fill_rect(2, 20, 46, 24, 1);
             print(2,  22, 'Oct', hiP ? 0 : 1);
             print(27, 22, 'Pit', hiP ? 0 : 1);
-            print(16, 34, midiNoteName(root), hiP ? 0 : 1);
+            const noteLabel = heldStepNotes.length > 1
+                ? midiNoteName(root) + ' +' + (heldStepNotes.length - 1)
+                : midiNoteName(root);
+            print(16, 34, noteLabel, hiP ? 0 : 1);
             /* Dur / Vel / Ndg */
             const RHS_LABELS = ['Dur', 'Vel', 'Ndg'];
             const RHS_VALS   = [
