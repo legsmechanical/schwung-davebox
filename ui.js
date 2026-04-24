@@ -225,7 +225,7 @@ const BANKS = [
     { name: 'MIDI DLY', knobs: [
         p('Dly',  'Delay Time',     'delay_time',         'track', 0,    10,  0, fmtDly  ),
         p('Lvl',  'Delay Level',    'delay_level',        'track', 0,    127, 0, fmtPlain),
-        p('Rep',  'Repeats',        'delay_repeats',      'track', 0,    64,  0, fmtPlain),
+        p('Rep',  'Repeats',        'delay_repeats',      'track', 0,    16,  0, fmtPlain),
         p('Vfb',  'Vel Feedback',   'delay_vel_fb',       'track', -127, 127, 0, fmtSign ),
         p('Pfb',  'Pitch Feedback', 'delay_pitch_fb',     'track', -24,  24,  0, fmtSign ),
         p('Gfb',  'Gate Feedback',  'delay_gate_fb',      'track', -100, 100, 0, fmtSign ),

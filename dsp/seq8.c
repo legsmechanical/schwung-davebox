@@ -137,7 +137,7 @@ typedef struct {
     /* MIDI Delay (stage 5 from NoteTwist) */
     int delay_time_idx;     /* 0..10, index into CLOCK_VALUES */
     int delay_level;        /* 0..127 */
-    int repeat_times;       /* 0..64 */
+    int repeat_times;       /* 0..16 */
     int fb_velocity;        /* -127..+127 */
     int fb_note;            /* -24..+24 */
     int fb_note_random;     /* 0 or 1 */
@@ -1096,7 +1096,7 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
     if (!strcmp(key, "delay_level"))
         { fx->delay_level    = clamp_i(my_atoi(val), 0, 127);    return; }
     if (!strcmp(key, "delay_repeats"))
-        { fx->repeat_times   = clamp_i(my_atoi(val), 0, 64);     return; }
+        { fx->repeat_times   = clamp_i(my_atoi(val), 0, MAX_REPEATS); return; }
     if (!strcmp(key, "delay_vel_fb"))
         { fx->fb_velocity    = clamp_i(my_atoi(val), -127, 127); return; }
     if (!strcmp(key, "delay_pitch_fb"))
