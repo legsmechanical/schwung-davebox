@@ -183,6 +183,7 @@ typedef struct {
     uint16_t  current_step;
     uint8_t   note_active;
     uint16_t  pending_gate;         /* effective gate (raw * gate_time/100) stored at note-on */
+    uint16_t  gate_ticks_remaining; /* countdown to note-off; decrements every tick */
     uint8_t   pending_notes[4];     /* notes fired at note-on; matched at note-off */
     uint8_t   pending_note_count;   /* how many entries in pending_notes are valid */
     play_fx_t pfx;
@@ -2278,6 +2279,21 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
             seq8_track_t *tr = &inst->tracks[t];
             clip_t *cl = &tr->clips[tr->active_clip];
 
+            /* Gate countdown: decrement each tick; fire note-off when it reaches 0.
+             * Runs before note-on so a gate expiring at step boundary clears note_active
+             * before the new step's note-on check, avoiding double note-off. */
+            if (tr->note_active) {
+                if (tr->gate_ticks_remaining > 0)
+                    tr->gate_ticks_remaining--;
+                if (tr->gate_ticks_remaining == 0) {
+                    int n;
+                    for (n = 0; n < (int)tr->pending_note_count; n++)
+                        pfx_note_off(inst, tr, tr->pending_notes[n]);
+                    tr->note_active = 0;
+                    tr->pending_note_count = 0;
+                }
+            }
+
             if (inst->tick_in_step == 0) {
                 /* Quantized boundary: launch queued clip (only if not waiting for page stop) */
                 if (tr->queued_clip >= 0 && !tr->pending_page_stop &&
@@ -2329,10 +2345,18 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 /* Note on */
                 if (tr->clip_playing && cl->steps[tr->current_step] && !effective_mute(inst, t)) {
                     int n, eff;
+                    /* Cut off any note still held from a long gate on the previous step */
+                    if (tr->note_active) {
+                        for (n = 0; n < (int)tr->pending_note_count; n++)
+                            pfx_note_off(inst, tr, tr->pending_notes[n]);
+                        tr->note_active = 0;
+                        tr->pending_note_count = 0;
+                    }
                     eff = (int)cl->step_gate[tr->current_step] * tr->pfx.gate_time / 100;
                     if (eff < 1) eff = 1;
-                    tr->pending_gate = (uint16_t)eff;
-                    tr->pending_note_count = cl->step_note_count[tr->current_step];
+                    tr->pending_gate         = (uint16_t)eff;
+                    tr->gate_ticks_remaining = tr->pending_gate;
+                    tr->pending_note_count   = cl->step_note_count[tr->current_step];
                     for (n = 0; n < (int)tr->pending_note_count; n++) {
                         tr->pending_notes[n] = cl->step_notes[tr->current_step][n];
                         pfx_note_on(inst, tr, tr->pending_notes[n],
@@ -2340,15 +2364,6 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                     }
                     tr->note_active = 1;
                 }
-            }
-
-            /* Note off */
-            if (inst->tick_in_step == (uint32_t)tr->pending_gate && tr->note_active) {
-                int n;
-                for (n = 0; n < (int)tr->pending_note_count; n++)
-                    pfx_note_off(inst, tr, tr->pending_notes[n]);
-                tr->note_active = 0;
-                tr->pending_note_count = 0;
             }
         }
 
