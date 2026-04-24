@@ -4,14 +4,14 @@
 
 ## Session workflow
 
-- **Validate before acting** — read or grep the actual code to confirm any suspected cause before making changes. Never act on assumptions.
+- **Validate before acting** — read or grep the actual code first. Never act on assumptions.
 - **Commit after each logical change** — work directly on master, one commit per change.
-- **Deploy and verify on device before reporting done** — always build+install and confirm behavior on Move.
-- **Reboot after every deploy** — Shift+Back does NOT reload JS from disk; JS and DSP changes only take effect after a full device reboot.
-- **JS-only deploy**: `cp ui.js dist/seq8/ui.js && ./scripts/install.sh` then reboot. `build.sh` is required only for DSP changes (it also copies JS to dist, so running it is always safe).
-- **CLAUDE.md**: update at session end or after a major phase completes — not after routine task work.
+- **Deploy and verify on device before reporting done** — always build+install and confirm on Move.
+- **Reboot after every deploy** — Shift+Back does NOT reload JS from disk.
+- **JS-only deploy**: `cp ui.js dist/seq8/ui.js && ./scripts/install.sh` then reboot. `build.sh` required for DSP changes (also copies JS, so always safe to run).
+- **CLAUDE.md**: update at session end or after a major phase — not after routine task work.
 
-SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move — a standalone 8-track MIDI sequencer. No audio output. Written in C (DSP) + JavaScript (UI). Appears in the **Tools menu**; `component_type: "tool"` enables background running via tool reconnect.
+SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move — standalone 8-track MIDI sequencer. No audio. C (DSP) + JavaScript (UI). Background running via tool reconnect.
 
 ## Current build phase
 
@@ -23,94 +23,73 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 
 ## What's Built
 
-**Transport**: Play/Stop. Shift+Play: if playing → `deactivate_all` (arms page-stop on all playing clips, cancels queued); if stopped → `panic` (atomically clears will_relaunch + all clip state for all 8 tracks — single DSP command avoids per-track async queue races). Delete+Play = panic (full stop, clear all state). Note: per-track `tN_deactivate` calls are NOT reliable for bulk will_relaunch clearing — DSP processes them one per audio callback and pollDSP restores stale state in between. BPM is SEQ8-owned: read from `g_host->get_bpm()` once at init as a starting default, then controlled via the global menu. DSP `set_param("bpm")` updates `tick_delta` and `cached_bpm` for all tracks. No ongoing polling — BPM does not auto-follow Move after init.
+**Transport**: Play/Stop. Shift+Play: playing → `deactivate_all` (page-stop all playing clips, cancel queued); stopped → `panic` (single DSP command atomically clears all clip state + will_relaunch for all 8 tracks). Delete+Play = panic. **Do not use per-track `tN_deactivate` for bulk clearing** — DSP processes one per audio callback; pollDSP restores stale state between calls. BPM: read from `g_host->get_bpm()` once at init; thereafter SEQ8-owned via global menu. `set_param("bpm")` updates `tick_delta` + `cached_bpm` for all tracks.
 
-**8 tracks, 16 clips, 256 steps per clip**: All tracks play simultaneously. Clip launch per-track or as scenes.
+**Views**: Track View (default) — 16 step buttons = active clip page; pads = isomorphic 4ths diatonic; Shift+bottom-row = track select; steps ≥ clip length = White (OOB); playback head = White. Session View (tap CC 50) — 4×8 pad grid = scene clips; jog scrolls 1 row (clamped 0–12); Up/Down CC 54/55 jump by group (4 rows); Shift+step = launch scene; side buttons CC 40–43 = launch scene; White scene indicator follows `effectiveClip(t)`.
 
-**Track View** (default): 16 step buttons = current page of active clip. Pads = live notes (isomorphic 4ths diatonic). Left/Right pages. Shift + bottom pad row = track select. Step buttons ≥ clip length light White (out-of-bounds). Playback head step always White.
+**Clip state model** (5 states): Empty · Inactive · Will-relaunch · Queued · Playing.
+- Launch: playing → legato (position mod new length); stopped → Queued.
+- Page-stop (`tN_stop_at_end`): `pending_page_stop=1`; stops at next 16-step boundary; queued clip can fire simultaneously.
+- Quantized launch: `queued_clip >= 0 && !pending_page_stop && global_tick % QUANT_STEPS[launch_quant] == 0` at tick_in_step=0. global_tick=0 → queued fires immediately. Now mode fires immediately in set_param.
+- Transport stop: playing → `will_relaunch=1`; queued/record_armed/recording cleared.
+- Transport play: will_relaunch → playing immediately.
+- `tN_deactivate`: clears clip_playing, will_relaunch, queued_clip, pending_page_stop, record_armed.
+- `deactivate_all`: page-stop all playing, cancel queued.
 
-**Session View** (tap CC 50): 4×8 pad grid = clips for visible scene group. Jog rotates one row at a time (clamped 0–12). Up/Down (CC 54/55) jump by group (4 rows). Shift+step = launch scene. Side buttons (CC 40–43) = launch scene. White scene indicator: when playing, all playing clips on that row; when stopped, all will_relaunch/queued clips map to that row via `effectiveClip(t)`.
+**Clip deactivation** (side buttons CC 40–43, Track View): playing+active → stop-at-end; playing+pending_page_stop → cancel; will_relaunch+active → deactivate; queued===clipIdx → deactivate; else → launch. Session View side buttons always launch scene. Session View clip pads: same logic as Track View side buttons for active track.
 
-**Clip state model** (5 states): Empty · Inactive-with-data · Will-relaunch (was playing when transport stopped; auto-relaunches on next play) · Queued (waiting for bar boundary) · Playing. Transitions:
-- Launch → if playing: legato (inherits position mod new length); if stopped: Queued.
-- Page-stop (`tN_stop_at_end`): arms `pending_page_stop`; clip stops at next 16-step boundary (step 0 for short clips). Queued clip can fire simultaneously at that boundary.
-- Quantized launch: `queued_clip >= 0 && !pending_page_stop && global_tick % QUANT_STEPS[launch_quant] == 0` at tick_in_step=0. At transport play (global_tick=0), queued clips fire immediately (any quant). Now mode fires immediately in set_param (no queuing).
-- Transport stop: playing clips set `will_relaunch=1`; queued/record_armed/recording cleared. `will_relaunch` is persisted.
-- Transport play: `will_relaunch` clips become playing immediately.
-- Deactivate (`tN_deactivate`): clears all clip state (clip_playing, will_relaunch, queued_clip, pending_page_stop, record_armed).
-- `deactivate_all` (transport command): arms page-stop for all playing clips, cancels queued.
+**Session Overview** (hold CC 50 ≥200ms): 8×16 OLED grid (8 cols=tracks, 16 rows=scenes, 16×4px cells). All input swallowed while held.
 
-**Clip deactivation** (side buttons CC 40–43 in Track View): playing+active → stop-at-end; playing+active+pending_page_stop → cancel (re-launch); will_relaunch+active → deactivate; queued_clip===clipIdx → deactivate; else → launch. Session View side buttons always launch scene. Session View clip pads: same logic as Track View side buttons for the active track.
+**Step entry / recording**: Hold step → step edit; tap pads to toggle notes (`tN_cC_step_S_toggle`); Up/Down shifts octave; tap step (<200ms) = toggle on/off. Chord-to-step: if pads held when step pressed, all held pitches assigned additively. Real-time recording: CC 86 stopped → 1-bar count-in (steps flash Red) → transport+recording start. CC 86 playing → arm immediately. Overdub-only via `tN_cC_step_S_add`. CC 86 again = disarm.
 
-**Session Overview** (hold CC 50 ≥200ms): Graphical 8×16 grid on OLED (8 cols=tracks, 16 rows=scenes, 16×4px cells). Release to exit. All input swallowed while held.
+**Delete combos**: CC 119 held. Delete+step = clear step; Delete+track button = clear clip; Delete+clip pad (Session View) = clear clip; Delete+Mute = clear all mute/solo; Delete+jog click (Track View) = reset play effect banks (NOTE FX/HARMZ/MIDI DLY) via `tN_pfx_reset`; Delete+Play = panic. Session View swallows step/track buttons while Delete held.
 
-**Live pad input**: `shadow_send_midi_to_dsp` from JS. Velocity floor 80. Per-track octave shift (Up/Down in Track View, ±4 oct, "Octave: N" overlay for 1s).
+**Active bank**: Single global `activeBank` — not per-track. Persists across track switches. Shift + top-row pad (92–98) selects; same bank again → TRACK (0). Display priority: count-in → COMPRESS LIMIT → octave → step edit → knob → jog/bank-select → header (+ ` REC`).
 
-**Melodic step entry**: Hold step button → step edit mode; tap pads to toggle note assignment (`tN_cC_step_S_toggle`). Assigned pads White. Display: track/clip/step header + note names. Release to exit. Up/Down shifts octave while held. Shift combos blocked during hold. Pad taps preview note. Tap step (< 200ms) toggles on/off preserving notes; multi-step tap simultaneous.
+**Live recording track switch**: While `recording=1`, switching active track sends `tOLD_recording=0` then `tNEW_recording=1` with a clean note-off on the previous track first.
 
-**Chord to step**: If pads held (`liveActiveNotes.size > 0`) when step button pressed, all held pitches assigned additively and step activated — fires immediately on press, no hold ambiguity.
+**Beat Stretch** (TIMING K1, sens=16, lock): CW doubles, CCW halves. Compress blocked on step collision → "COMPRESS LIMIT" overlay ~1.5s. Dry-run with `uint8_t seen[SEQ_STEPS]`; atomic, no partial writes. **Clock Shift** (TIMING K2, sens=8): rotates all steps one position CW/CCW. **Octave shift**: Up/Down in Track View, ±4 oct, "Octave: N" overlay 1s.
 
-**Real-time recording**: Record (CC 86) while stopped → 1-bar JS count-in (step buttons flash Red, transport silent) → transport + recording start simultaneously. Record while playing → arm immediately. Overdub-only via `tN_cC_step_S_add`. Press Record again to disarm. Stop/panic also disarms. Play LED green, Record LED red while armed.
+**Global menu** (Shift + CC 50): `drawHierarchicalMenu`; jog rotate = navigate; jog click = CC 3 (0xB0 d1=3) = edit via `handleMenuInput`; Back = exit. Items: **BPM** (40–250, real-time jog, linear ±1/detent, CC 14 intercepted in `onMidiMessageInternal`), **Key** (wired), **Scale** (wired), **Scale Aware** (on/off, default on), **Launch** (`set_param("launch_quant", "0"–"5")` = Now/1/16/1/8/1/4/1/2/1-bar), **Save+Unload**, Swing Amt/Res/Input Vel/Inp Quant (stub, session-local).
 
-**Delete combos**: Delete (CC 119) held modifier. Delete + step = clear step. Delete + track button = clear clip at that scene position on active track. Delete + clip pad (Session View) = clear clip. Delete in Session View swallows step/track buttons.
+**Play effects chain**: Note FX (octave, offset, gate, velocity) → Harmonize (unison, octaver, 2×interval) → MIDI Delay (time, level, repeats max=16, vel_fb, pitch_fb, gate_fb, clock_fb, pitch_random). Exposed via parameter banks. `tN_pfx_reset` resets all three to init defaults atomically.
 
-**Track View parameter banks**: Shift + top-row pad (92–98) selects bank. See Parameter Bank Reference. Display priority: count-in overlay → COMPRESS LIMIT → octave overlay → step edit → knob touched → jog/bank-select → normal header (+ ` REC` while recording).
+**Mute/Solo**: `effective_mute(inst, t)` = `mute[t] || (any_solo && !solo[t])`; gates render-path note-on; calls `silence_muted_tracks()` on change. Track View — Mute (CC 88): toggle mute focused; Shift+Mute: toggle solo focused. Session View — Mute+pad: toggle mute column; Shift+Mute+pad: toggle solo column. Delete+Mute: clear all. Mute LED (Track View only, focused track): blink 1/8 note = muted; solid = soloed; off = neither. OLED row: muted = inverted; soloed = blink at `tickCount/24%2`. **Snapshots** (Session View, Mute held): 16 step buttons — light purple (empty) / bright blue (saved). Shift+Mute+step = save (`snap_save "N m0..m7 s0..s7"`); Mute+step (saved) = recall (`snap_load "N"`); Mute+step (empty) = no-op. `snapshots[16]` JS mirror synced via `syncMuteSoloFromDsp()` at init/set-change/hot-reload.
 
-**Active bank**: Single global `activeBank` integer — not per-track. Bank selection persists when switching tracks; the same bank stays selected for all tracks.
+**Scale definitions**: 14 scales, `SCALE_IVLS[14][8]` + `SCALE_SIZES[14]`. Index matches JS `SCALE_NAMES` exactly: Major(7)·Minor(7)·Dorian(7)·Phrygian(7)·Lydian(7)·Mixolydian(7)·Locrian(7)·Harmonic Minor(7)·Melodic Minor(7)·Pent Major(5)·Pent Minor(5)·Blues(6)·Whole Tone(6)·Diminished(8). `computePadNoteMap` uses `intervals.length`.
 
-**Live recording track switch**: Switching the active track while recording (`recording=1`) immediately hands off the DSP `recording` flag from the previous track to the new track (`set_param("tOLD_recording", "0")` then `set_param("tNEW_recording", "1")`). Previous track receives a clean note-off before handoff.
+**Scale awareness**: Global toggle (menu, default on). When on: noteFX_offset, harm_interval1/2, delay_pitch_fb, delay_pitch_random treated as scale degrees → semitones via `deg_to_semitones()` at render time. Drum tracks (pad_mode ≠ PAD_MODE_MELODIC_SCALE) always bypass. `deg_to_semitones()`: `quot=deg/n; rem=deg%n; if(rem<0){rem+=n;quot--;} return quot*12+ivals[rem];`
 
-**Beat Stretch** (TIMING K1, sens=16, lock): CW doubles, CCW halves clip length. Compress blocked on step collision; "COMPRESS LIMIT" overlay ~1.5s.
+**State persistence**: Saved at Shift+Back (`set_param("save")`) and `destroy_instance`. Persists: all step data, clip lengths, will_relaunch, all play effect params per track, global settings (key/scale/bpm/launch_quant/scale_aware), mute/solo state, 16 snapshot slots. Does not persist: step_vel, step_gate/step_gate_orig.
 
-**Clock Shift** (TIMING K2, sens=8): Rotates all steps one position CW/CCW.
-
-**Global menu** (Shift + CC 50, any view): Platform framework (`drawHierarchicalMenu`). Jog rotate = navigate; **jog click = CC 3** (0xB0 d1=3, NOT Note 3) = edit mode via `handleMenuInput`; Back = exit. Items: BPM (editable 40–250, real-time jog, linear ±1/detent — acceleration bypassed), Key (wired), Scale (wired), **Scale Aware** (on/off toggle, default on — see Scale Awareness below), **Launch** (wired — Now/1/16/1/8/1/4/1/2/1-bar; sends `set_param("launch_quant", "0"–"5")`), **Save+Unload** (saves state then unloads), Swing Amt/Res/Input Vel/Inp Quant (stub, session-local). BPM jog intercept: CC 14 handled directly in `onMidiMessageInternal` when BPM selected+editing, writing to `globalMenuState.editValue` and sending `set_param("bpm")` each tick.
-
-**Play effects chain**: Note FX (octave, offset, gate, velocity), Harmonize (unison, octaver, 2×interval), MIDI Delay (time, level, repeats, feedback). Exposed via parameter banks.
-
-**Background running**: Shift+Back hides SEQ8. Re-entry from Tools menu reconnects instantly. Cold boot recovery via `seq8-state.json`.
-
-**Mute/Solo**: Per-track `mute[8]`/`solo[8]` in DSP. `effective_mute(inst, t)` = `mute[t] || (any_solo && !solo[t])`; gates render-path note-on and calls `silence_muted_tracks()` on state change. Track View: Mute button (CC 88) = toggle mute on focused track; Shift+Mute = toggle solo on focused track; Delete+Mute = clear all mute/solo. Session View: Mute+pad = toggle mute on that track column; Shift+Mute+pad = toggle solo on that track column; Delete+Mute = clear all. Mute button LED (Track View only, reflects focused track): blink 1/8 note = muted, solid = soloed, off = neither. No persistent Mute LED in Session View. OLED track row: muted=inverted (black on white), soloed=blink at `tickCount/24%2` (transport-agnostic). **Mute snapshots**: 16 DSP-side slots (`snap_mute[16][8]`, `snap_solo[16][8]`, `snap_valid[16]`). In Session View with Mute held: all 16 step buttons light up — light purple (empty slot) / bright blue (saved slot). Shift+Mute+step=save current state to that slot (`snap_save "N m0..m7 s0..s7"`), Mute+step on a saved slot=recall (`snap_load "N"`), Mute+step on empty=no-op. JS mirror `snapshots[16]` synced via `syncMuteSoloFromDsp()` on init, set-change, and hot-reload. Persisted in state.
-
-**Scale definitions**: 14 scales in DSP (`SCALE_IVLS[14][8]`, `SCALE_SIZES[14]`): Major · Minor · Dorian · Phrygian · Lydian · Mixolydian · Locrian · Harmonic Minor · Melodic Minor · Pentatonic Major · Pentatonic Minor · Blues · Whole Tone · Diminished. Sizes: 7 (diatonic modes), 5 (pentatonic), 6 (blues/whole tone), 8 (diminished). Index order matches JS `SCALE_NAMES` exactly. `computePadNoteMap` uses `intervals.length` for correct isomorphic layout per scale.
-
-**Scale awareness**: Global on/off setting in the global menu (default on). When on, the following play effect parameters are treated as scale degrees and converted to semitones by DSP `deg_to_semitones()` at render time: noteFX_offset, harm_interval1, harm_interval2, delay_pitch_fb, delay_pitch_random. Drum tracks (pad_mode ≠ PAD_MODE_MELODIC_SCALE) always bypass scale awareness. Modular arithmetic handles negative degrees correctly. Scale awareness is persisted. `deg_to_semitones()`: `quot = deg/n; rem = deg%n; if (rem < 0) { rem += n; quot--; } return quot*12 + ivals[rem];`
-
-**Parameter persistence**: All bank params persisted per-track: pad_mode, stretch_exp, clock_shift_pos, all NOTE FX params (octave/offset/gate/velocity), all HARMZ params (unison/octaver/interval1/interval2), all MIDI DLY params (time/level/repeats/vel_fb/pitch_fb/gate_fb/clock_fb/pitch_random). Global settings persisted: key, scale, launch_quant, bpm, scale_aware. JS syncs all 8 banks at init (`for (let b = 0; b < 8; b++) readBankParams(t, b)`). State file v=6.
-
-**Delete + jog click** (Track View only): While Delete is held, jog click (CC 3) sends a single `tN_pfx_reset` DSP command that atomically resets NOTE FX, HARMZ, and MIDI DLY banks to DSP init defaults for the active track. JS mirrors `bankParams` reset for the same banks. Uses a single atomic param to avoid Schwung coalescing (which would drop all but the last param in a tick).
-
-**State persistence**: Written on Shift+Back (JS sends `set_param("save")`) and at `destroy_instance` (device shutdown). Not written on individual step/transport/launch events. Persists: all step data, clip lengths, will_relaunch, all play effect params per track, global settings (key/scale/bpm/launch_quant/scale_aware), mute/solo state, 16 mute snapshot slots. Does not persist: step_vel, step_gate/step_gate_orig (reset to defaults on load).
-
-**JS internals**: `effectiveClip(t)` — returns `trackQueuedClip[t]` when `!playing && trackQueuedClip[t] >= 0`, else `trackActiveClip[t]`. Used everywhere in Track View for step display and input so the correct clip shows when stopped with a queued or will_relaunch clip. `cachedSceneAllPlaying[16]`/`cachedSceneAllQueued[16]` — computed once per tick at top of `tick()`. `lastSentNoteLED[128]`/`lastSentButtonLED[128]` — LED dedup cache; `invalidateLEDCache()` resets on view switch, init, reconnect, session overview entry/exit.
+**JS internals**: `effectiveClip(t)` → `trackQueuedClip[t]` if `!playing && queued>=0`, else `trackActiveClip[t]`. `cachedSceneAllPlaying[16]`/`cachedSceneAllQueued[16]` computed once per tick. `lastSentNoteLED[128]`/`lastSentButtonLED[128]` LED dedup cache; `invalidateLEDCache()` on view switch, init, reconnect, overview entry/exit.
 
 ## Upcoming tasks
 
 1. **Clip copy/delete** — clip-level operations in Session View.
-2. **Step edit param overlay** — show per-step gate/vel/note in a dedicated OLED panel while in step edit mode.
+2. **Step edit param overlay** — per-step gate/vel/note panel in step edit mode.
 3. **Undo/Redo** — step-level history.
-4. **Drum mode** — pad_mode=drum with per-lane MIDI effects. DSP + JS build required.
-5. **Bank param snapshots** — 16-slot snapshot system for play effect banks (Session View, after drum mode).
-6. **Arpeggiator** — Seq ARP + Live ARP, port from NoteTwist, build together as one DSP phase.
-7. **Swing** — wire global menu stub to DSP when Swing lands.
+4. **Drum mode** — pad_mode=drum, per-lane MIDI effects. DSP + JS build.
+5. **Bank param snapshots** — 16-slot play effect bank snapshots (Session View, after drum mode).
+6. **Arpeggiator** — Seq ARP + Live ARP, port from NoteTwist, one DSP phase.
+7. **Swing** — wire global menu stub to DSP.
 8. **MIDI clock sync** — external clock follow.
 
 ## Per-set state (built)
 
-State saves and loads per native Move set. File: `/data/UserData/schwung/set_state/<UUID>/seq8-state.json`. UUID from `active_set.txt` line 1.
+File: `/data/UserData/schwung/set_state/<UUID>/seq8-state.json`. UUID from `active_set.txt` line 1.
 
-**How it works**:
-- `create_instance`: reads `active_set.txt`, sets `inst->state_path`, calls `seq8_load_state`. Cold boot always loads correct set.
-- `state_load` set_param: value is the UUID (36 chars) from JS. DSP constructs `set_state/<UUID>/seq8-state.json`, resets internal state without MIDI panic, loads. Falls back to `SEQ8_STATE_PATH_FALLBACK` if value empty.
-- `state_uuid` get_param: extracts UUID from `inst->state_path` for JS comparison.
+- `create_instance`: reads `active_set.txt` → `inst->state_path` → `seq8_load_state`.
+- `state_load` set_param: UUID value (36 chars) → DSP constructs path, resets state (no MIDI panic), loads. Empty value → fallback path.
+- `state_uuid` get_param: extracts UUID from `inst->state_path`.
 - `instance_nonce` get_param: `time(NULL) ^ (ptr >> 3)` — changes on DSP hot-reload.
-- JS `init()`: reads `active_set.txt` UUID, compares with `state_uuid` from DSP. If different → `pendingSetLoad=true`. Also sets `pendingSetLoad=true` if state file absent for current UUID (covers wipe-while-running edge case). `pendingSetLoad` fires `state_load='1'` as the sole set_param in the next tick (Schwung delivers only the LAST set_param per JS tick — `state_load` must be last or only).
-- `pendingDspSync`: 5-tick countdown after `state_load` before `syncClipsFromDsp()` runs, giving DSP time to process on the audio thread.
+- JS `init()`: reads UUID, compares with `state_uuid`. Mismatch or missing file → `pendingSetLoad=true` → fires `state_load=UUID` as sole set_param next tick.
+- `pendingDspSync`: 5-tick countdown post-`state_load` before `syncClipsFromDsp()`.
 
-**Key constraints learned**:
-- Schwung set_param coalescing: only the LAST param per JS tick is delivered to DSP. Never send `state_load` then another param in the same tick.
-- No MIDI panic before state_load: `send_panic` sends 8×128 note-offs; this floods the MIDI buffer and causes subsequent set_params to be dropped. Reset state fields directly instead.
-- Shift+Back does NOT reload JS from disk — `init()` re-runs in the same runtime. JS changes require a full device reboot to take effect.
+**Critical constraints**:
+- **Coalescing**: only the LAST `host_module_set_param` per JS tick reaches DSP. `state_load` must be the only param that tick. Any multi-param operation requires a single atomic DSP command.
+- **No MIDI panic before state_load** — `send_panic` (8×128 note-offs) floods MIDI buffer, drops subsequent set_params. Reset fields directly.
+- **Shift+Back does not reload JS** — `init()` re-runs in same runtime. JS changes need full reboot.
 
 ## Parameter Bank Reference
 
@@ -127,31 +106,31 @@ Banks via **Shift + top-row pad** (92–99). Same bank again → return to TRACK
 | 6 LIVE ARP | 98 | On (stub) | Type (stub) | Sort (stub) | Hold (stub) | OctR (stub) | Spd (stub) | — | — |
 | 7 RESERVED | 99 | — | — | — | — | — | — | — | — |
 
-`track` = key as `tN_<dspKey>`; `action` = one-shot DSP trigger; `stub` = JS-only. Default sens=1; explicit `sens=N` where listed. Beat Stretch: lock = fires once per touch.
+`track` = key as `tN_<dspKey>`; `action` = one-shot DSP trigger; `stub` = JS-only. Default sens=1. Beat Stretch: lock = fires once per touch.
 
 ## DSP Parameter Key Reference
 
-All `tN_` keys: N = 0..7 (track index).
+All `tN_` keys: N = 0..7.
 
 | Key | Dir | Format | Notes |
 |-----|-----|--------|-------|
 | `tN_beat_stretch` | set | `"1"` or `"-1"` | Expand/compress active clip. |
 | `tN_beat_stretch_factor` | get | `"1x"`, `"x2"`, `"/2"`, … | Current stretch exponent. |
-| `tN_beat_stretch_blocked` | get | `"0"` or `"1"` | 1 if last compress was blocked. |
+| `tN_beat_stretch_blocked` | get | `"0"` or `"1"` | 1 if last compress blocked. |
 | `tN_clock_shift` | set | `"1"` or `"-1"` | Rotate all steps right/left by one. |
 | `tN_clock_shift_pos` | get | integer string | Current shift position. |
 | `tN_clip_length` | set/get | `"1"`..`"256"` | Active clip length. Saves state. |
-| `tN_stop_at_end` | set | any | Arm page-stop: clip stops at next 16-step boundary. Sets `pending_page_stop=1`. |
-| `tN_deactivate` | set | any | Immediately clear all clip state: clip_playing, will_relaunch, queued_clip, pending_page_stop, record_armed. |
-| `tN_cC_step_S_notes` | get | space-sep MIDI note numbers or `""` | Notes on step S. |
+| `tN_stop_at_end` | set | any | Arm page-stop (next 16-step boundary). |
+| `tN_deactivate` | set | any | Clear clip_playing, will_relaunch, queued_clip, pending_page_stop, record_armed. |
+| `tN_cC_step_S_notes` | get | space-sep note numbers or `""` | Notes on step S of clip C. |
 | `tN_cC_step_S_toggle` | set | MIDI note string | Toggle note in/out of step. Saves state. |
 | `tN_cC_step_S_clear` | set | any | Atomic zero + deactivate step. Saves state. |
-| `tN_cC_step_S_add` | set | MIDI note string | Add-only overdub. Defers save while `recording=1`. |
+| `tN_cC_step_S_add` | set | MIDI note string | Add-only overdub. Defers save while recording. |
 | `tN_cC_clear` | set | any | Atomic wipe all steps in clip C. Saves state. |
-| `tN_recording` | set/get | `"0"` or `"1"` | 1 = recording (defers save). 0 = disarm + flush. DSP clears on stop/panic. |
-| `tN_pfx_reset` | set | any | Atomically reset all play effects (NOTE FX, HARMZ, MIDI DLY) to init defaults for track N. |
+| `tN_recording` | set/get | `"0"` or `"1"` | 1 = overdub active (defers save). 0 = disarm + flush. |
+| `tN_pfx_reset` | set | any | Atomically reset NOTE FX + HARMZ + MIDI DLY to init defaults. |
 
-Other keys: `tN_active_clip`, `tN_current_step`, `tN_queued_clip`, `tN_cC_steps`, `tN_cC_length`, `tN_cC_step_S`, `tN_launch_clip`, `launch_scene`, `transport` (set: `"play"`, `"stop"`, `"panic"`, `"deactivate_all"`), `playing`, `state_snapshot`, `tN_route`, `tN_pad_mode`, `tN_pad_octave`, `key`, `scale`, `scale_aware` (set/get — `"0"` or `"1"`; when 1, noteFX_offset/harm_interval1/2/delay_pitch_fb/delay_pitch_random treated as scale degrees), `bpm` (set/get — integer string, 40–250; updates `tick_delta` + all `cached_bpm`), `launch_quant` (set/get — `"0"`–`"5"` = Now/1/16/1/8/1/4/1/2/1-bar), `noteFX_octave/offset/gate/velocity`, `harm_unison/octaver/interval1/interval2`, `delay_time/level/repeats/vel_fb/pitch_fb/gate_fb/clock_fb/pitch_random`.
+Other keys: `tN_active_clip`, `tN_current_step`, `tN_queued_clip`, `tN_cC_steps`, `tN_cC_length`, `tN_cC_step_S`, `tN_launch_clip`, `launch_scene`, `transport` (set: `"play"`, `"stop"`, `"panic"`, `"deactivate_all"`), `playing`, `state_snapshot`, `tN_route`, `tN_pad_mode`, `tN_pad_octave`, `key`, `scale`, `scale_aware` (set/get `"0"`/`"1"`), `bpm` (set/get integer 40–250), `launch_quant` (set/get `"0"`–`"5"`), `noteFX_octave/offset/gate/velocity`, `harm_unison/octaver/interval1/interval2`, `delay_time/level/repeats/vel_fb/pitch_fb/gate_fb/clock_fb/pitch_random`.
 
 ## DSP Struct Reference
 
@@ -159,7 +138,7 @@ Other keys: `tN_active_clip`, `tN_current_step`, `tN_queued_clip`, `tN_cC_steps`
 typedef struct {
     uint8_t  steps[SEQ_STEPS];            /* 256; invariant: steps[s]==1 iff step_note_count[s]>=1 */
     uint8_t  step_notes[SEQ_STEPS][4];    /* up to 4 notes per step */
-    uint8_t  step_note_count[SEQ_STEPS];  /* 0..4; init=0 */
+    uint8_t  step_note_count[SEQ_STEPS];  /* 0..4 */
     uint8_t  step_vel[SEQ_STEPS];
     uint8_t  step_gate[SEQ_STEPS];        /* gate ticks; note-off fires here */
     uint8_t  step_gate_orig[SEQ_STEPS];   /* original before noteFX_gate scaling */
@@ -170,80 +149,71 @@ typedef struct {
 } clip_t;
 
 typedef struct {
-    /* ... */
     uint8_t pending_notes[4];      /* notes at last note-on, for note-off matching */
     uint8_t pending_note_count;
     uint8_t stretch_blocked;       /* 1 = last compress blocked by step collision */
     uint8_t recording;             /* 1 = overdub active; cleared on stop/panic */
-    uint8_t clip_playing;          /* 1 = clip actively sequencing */
-    uint8_t will_relaunch;         /* 1 = was playing when transport stopped; relaunch on next play. Persisted. */
-    uint8_t pending_page_stop;     /* 1 = stop at next 16-step boundary */
-    uint8_t record_armed;          /* 1 = enable recording=1 when queued clip launches */
-    int8_t  queued_clip;           /* >=0 = clip waiting for bar boundary launch; -1 = none */
+    uint8_t clip_playing;
+    uint8_t will_relaunch;         /* relaunch on next play. Persisted. */
+    uint8_t pending_page_stop;     /* stop at next 16-step boundary */
+    uint8_t record_armed;          /* enable recording=1 when queued clip launches */
+    int8_t  queued_clip;           /* >=0 = waiting for bar-boundary launch; -1 = none */
 } seq8_track_t;
 
 typedef struct {
-    /* ... */
-    uint32_t global_tick;          /* step counter; bar boundary = global_tick % 16 == 0; reset on transport play */
-    uint8_t  scale_aware;          /* 1 = play effects use scale degrees; 0 = raw semitones. Persisted. */
+    uint32_t global_tick;          /* bar boundary = global_tick % 16 == 0; reset on transport play */
+    uint8_t  scale_aware;          /* 1 = play effects use scale degrees. Persisted. */
 } seq8_instance_t;
 ```
 
-Beat Stretch compress: dry-run with `uint8_t seen[SEQ_STEPS]`. Any two active steps mapping to the same `i/2` → `stretch_blocked=1`, abort. Atomic — no partial rewrites.
-
 **Render logic** (per-tick at `tick_in_step==0`):
-1. Bar-boundary launch: `queued_clip >= 0 && !pending_page_stop && global_tick % 16 == 0` → silence old note, set active_clip, current_step=0, clip_playing=1, fire record_armed.
-2. Page-stop: `pending_page_stop && current_step % 16 == 0` → pending_page_stop=0, clip_playing=0, silence note. If queued_clip set, launch simultaneously (same as bar-boundary).
-3. Note-on: `clip_playing && steps[current_step]` → send MIDI, note_active=1.
+1. Bar-boundary launch: `queued_clip >= 0 && !pending_page_stop && global_tick % 16 == 0` → set active_clip, current_step=0, clip_playing=1, fire record_armed.
+2. Page-stop: `pending_page_stop && current_step % 16 == 0` → clip_playing=0. If queued_clip set, launch simultaneously.
+3. Note-on: `clip_playing && steps[current_step]` → MIDI send.
 
-`global_tick` increments after all tracks advance `current_step` (at end of each step). Resets to 0 on transport play and count-in fire. At global_tick=0, bar-boundary condition is always true → queued clips fire immediately on play.
+`global_tick` increments after all tracks advance. Resets to 0 on transport play / count-in fire. At global_tick=0, bar-boundary always true.
 
-**state_snapshot** (52 values): `playing cs0..7 ac0..7 qc0..7 count_in cp0..7 wr0..7 ps0..7 flash_eighth flash_sixteenth`. `flash_sixteenth = global_tick % 2`; `flash_eighth = (global_tick/2) % 2`.
+**state_snapshot** (52 values): `playing cs0..7 ac0..7 qc0..7 count_in cp0..7 wr0..7 ps0..7 flash_eighth flash_sixteenth`. `flash_sixteenth = global_tick%2`; `flash_eighth = (global_tick/2)%2`.
 
 ## Known limitations
 
-- **Transport stop saves will_relaunch; panic does not** — stopping transport transitions playing clips to `will_relaunch=1` (persisted); they auto-relaunch on next play. Panic clears all state including will_relaunch.
-- **Do not load SEQ8 from within SEQ8** — causes LED corruption (Tools menu sets `FLAG_JUMP_TO_TOOLS` 0x80 via ui_flags; no MIDI event fires so it can't be intercepted). Workaround: Shift+Back first, then re-enter from Tools menu.
-- **Live pad latency floor: ~3–7ms** — structural. JS ticks at ~196Hz.
-- **All 8 tracks route to the same Schwung chain** — no multi-chain path. Exhaustively tested.
-- **`step_vel`, `step_gate`/`step_gate_orig` not persisted** — reset to defaults on cold boot.
-- **State file v=6** — wrong/missing version → file deleted, start clean. Bump `v` on format changes. Sparse step-notes key format: `"tNcC_sn":"S:n1,n2;S2:n3;"` per clip (steps with count=0 omitted). Per-clip `t%dc%d_se`/`t%dc%d_cs` (stretch_exp/clock_shift_pos, sparse — only written if non-zero). Per-track play effects and global settings also saved.
+- **Transport stop saves will_relaunch; panic does not.**
+- **Do not load SEQ8 from within SEQ8** — LED corruption (Tools menu sets `FLAG_JUMP_TO_TOOLS` 0x80; no MIDI event to intercept). Workaround: Shift+Back first.
+- **Live pad latency floor: ~3–7ms** — structural. JS ticks ~196Hz.
+- **All 8 tracks route to the same Schwung chain.**
+- **`step_vel`, `step_gate`/`step_gate_orig` not persisted** — reset to defaults on load.
+- **State file v=6** — wrong/missing version → file deleted, clean start. Sparse step-notes: `"tNcC_sn":"S:n1,n2;S2:n3;"`. Per-clip `t%dc%d_se`/`t%dc%d_cs` (stretch_exp/clock_shift_pos, omitted if zero).
 
 ## Hardware reference
 
 **Pad rows** (bottom-to-top): 68–75 · 76–83 · 84–91 · 92–99
 
-**Encoders**: `MoveMainKnob = 14` (CC) | `MoveMainButton = 3` (**CC**, 0xB0 d1=3 — jog click, NOT note) | `MoveMainTouch = 9` (note — jog capacitive touch)
+**Encoders**: `MoveMainKnob = 14` (CC) | `MoveMainButton = 3` (**CC** 0xB0 d1=3 — jog click, NOT note) | `MoveMainTouch = 9` (note)
 
-**Step buttons**: notes 16–31, `0x90` note-on (d2 > 0 = press, d2 = 0 = release).
+**Step buttons**: notes 16–31, `0x90` (d2>0 = press, d2=0 = release).
 
 **LED palette**: Fixed 128-entry index. Dim pairs: Red(127)→DeepRed(65) · Blue(125)→DarkBlue(95) · VividYellow(7)→Mustard(29) · Green(126)→DeepGreen(32).
 
 ## MIDI routing
 
-**DSP**: `host->midi_send_internal` → active Schwung chain (MIDI channel does not route to different chains). `host->midi_send_external` → USB-A via SPI — **never call from render path** (blocking, can deadlock).
+**DSP**: `host->midi_send_internal` → Schwung chain. `host->midi_send_external` → USB-A via SPI — **never from render path** (blocking, can deadlock).
 
-**JS**: `shadow_send_midi_to_dsp([s,d1,d2])` → chain (live pads only). `move_midi_internal_send` → hardware LEDs/buttons. `move_midi_inject_to_move` → simulates pad 68–99. `move_midi_external_send` → USB-A (deferred, safe from tick).
+**JS**: `shadow_send_midi_to_dsp([s,d1,d2])` → chain (live pads). `move_midi_internal_send` → hardware LEDs/buttons. `move_midi_inject_to_move` → simulates pads 68–99. `move_midi_external_send` → USB-A (deferred, safe from tick).
 
 ## Key constraints
 
 - GLIBC ≤ 2.35. No complex static initializers.
-- **Schwung core on device: v0.9.7** (Apr 14 2026; no version file — confirmed from binary timestamps).
-- **`g_host->get_clock_status` is NULL in v0.9.7** — DSP cannot poll Move transport state. Background transport follow not possible at DSP level; needs host update. Ableton Link also not viable (port conflict with Move's native Link instance).
-- **`g_host->get_bpm` is non-null** — used once at init only. Returns `sampler_get_bpm()` fallback chain (live MIDI clock → set tempo → settings → 120). Does not reliably track BPM changes made in Move's UI while stopped, so SEQ8 owns its own BPM after init.
+- **Schwung core: v0.9.7** (Apr 14 2026; confirmed from binary timestamps).
+- **`g_host->get_clock_status` is NULL** — DSP cannot poll transport state. Background transport follow not possible; Ableton Link not viable (port conflict).
+- **`g_host->get_bpm` is non-null** — used once at init. Returns `sampler_get_bpm()` chain. Does not track Move BPM changes while stopped.
 
 ## Build / deploy / debug
 
 ```sh
-# DSP change: full build + install + reboot
-./scripts/build.sh && ./scripts/install.sh
-nm -D dist/seq8/dsp.so | grep GLIBC   # verify after every build
-
-# JS-only change: copy to dist, install, reboot
-cp ui.js dist/seq8/ui.js && ./scripts/install.sh
-
-# Reboot is required after every deploy — Shift+Back does NOT reload JS from disk
+./scripts/build.sh && ./scripts/install.sh   # DSP change (also copies JS)
+cp ui.js dist/seq8/ui.js && ./scripts/install.sh  # JS-only
+nm -D dist/seq8/dsp.so | grep GLIBC         # verify after every build
 ssh ableton@move.local "tail -f /data/UserData/schwung/seq8.log"
 ```
 
-`~/schwung-notetwist` — NoteTwist reference (port source, key file `src/notetwist.c`). `SEQ8_SPEC_CC.md` — full design spec; consult specific sections as needed, do not read in full at session start.
+`~/schwung-notetwist` — NoteTwist reference (port source, key file `src/notetwist.c`). `SEQ8_SPEC_CC.md` — full design spec; consult specific sections as needed.
