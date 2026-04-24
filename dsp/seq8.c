@@ -686,7 +686,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
     }
     /* Global settings */
     inst->pad_key      = (uint8_t)clamp_i(json_get_int(buf, "key",   9), 0, 11);
-    inst->pad_scale    = (uint8_t)clamp_i(json_get_int(buf, "scale", 0), 0, 13);
+    inst->pad_scale    = (uint8_t)clamp_i(json_get_int(buf, "scale", 1), 0, 13);
     inst->launch_quant = (uint8_t)clamp_i(json_get_int(buf, "lq",    0), 0,  5);
     {
         int saved_bpm = json_get_int(buf, "bpm", BPM_DEFAULT);
@@ -1181,7 +1181,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     inst->log_fp         = fopen(SEQ8_LOG_PATH, "a");
 
     inst->pad_key      = 9;   /* A */
-    inst->pad_scale    = 0;   /* Major */
+    inst->pad_scale    = 1;   /* Minor */
     inst->launch_quant = 0;   /* Now */
     strncpy(inst->state_path, SEQ8_STATE_PATH_FALLBACK, sizeof(inst->state_path) - 1);
 

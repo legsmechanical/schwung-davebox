@@ -385,7 +385,7 @@ function scaleNudgeNote(note, dir, key, scale) {
 }
 
 let padKey    = 9;
-let padScale  = 0;
+let padScale  = 1;   /* Minor */
 let padOctave = new Array(NUM_TRACKS).fill(3);
 let padNoteMap = new Array(32).fill(60);
 
