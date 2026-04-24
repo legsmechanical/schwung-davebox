@@ -194,7 +194,7 @@ const BANKS = [
     { name: 'TIMING', knobs: [
         p('Stch', 'Beat Stretch',    'beat_stretch', 'action', 0, 0,   0,   fmtStretch, 16, '_factor', true),
         p('Shft', 'Clock Shift',     'clock_shift',  'action', 0, 0,   0,   fmtPlain,   8),
-        p('Qnt',  'Input Quantize',  'quantize',     'track',  0, 100, 100, fmtPct),
+        p('Qnt',  'Input Quantize',  'quantize',     'track',  0, 100, 0,   fmtPct),
         _X, _X, _X, _X, _X,
     ]},
     /* 2 — NOTE FX (pad 94) — fully wired; Oct/Ofs slowed */

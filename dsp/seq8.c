@@ -587,7 +587,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
         snprintf(key, sizeof(key), "t%d_dpr", t);
         fx->fb_note_random = json_get_int(buf, key, 0) ? 1 : 0;
         snprintf(key, sizeof(key), "t%d_qnt", t);
-        fx->quantize       = clamp_i(json_get_int(buf, key, 100), 0, 100);
+        fx->quantize       = clamp_i(json_get_int(buf, key, 0), 0, 100);
     }
     /* Global settings */
     inst->pad_key      = (uint8_t)clamp_i(json_get_int(buf, "key",   9), 0, 11);
@@ -860,7 +860,7 @@ static void pfx_reset(play_fx_t *fx) {
     fx->fb_note_random  = 0;
     fx->fb_gate_time    = 0;
     fx->fb_clock        = 0;
-    fx->quantize        = 100;
+    fx->quantize        = 0;
 }
 
 /* Process a note-on through the chain. Sends immediate output via
