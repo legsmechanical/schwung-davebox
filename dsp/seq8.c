@@ -325,6 +325,29 @@ static void json_get_steps(const char *buf, const char *key,
         steps[i] = (*p == '1') ? 1 : 0;
 }
 
+/* Parse "key":"S:V;S2:V2;..." (V may be signed) into int[count].
+ * Entries not present in the sparse string are left unchanged. */
+static void json_get_sparse_int(const char *buf, const char *key,
+                                int *out, int count) {
+    char search[64];
+    snprintf(search, sizeof(search), "\"%s\":\"", key);
+    const char *p = strstr(buf, search);
+    if (!p) return;
+    p += strlen(search);
+    while (*p && *p != '"') {
+        int sidx = 0;
+        while (*p >= '0' && *p <= '9') sidx = sidx * 10 + (*p++ - '0');
+        if (*p != ':') break;
+        p++;
+        int sign = 1;
+        if (*p == '-') { sign = -1; p++; }
+        int val = 0;
+        while (*p >= '0' && *p <= '9') val = val * 10 + (*p++ - '0');
+        if (sidx >= 0 && sidx < count) out[sidx] = val * sign;
+        if (*p == ';') p++;
+    }
+}
+
 static void ensure_parent_dir(const char *path) {
     char tmp[256];
     char *p;
@@ -343,7 +366,7 @@ static void seq8_save_state(seq8_instance_t *inst) {
     FILE *fp = fopen(inst->state_path, "w");
     if (!fp) return;
     int t, c, s;
-    fprintf(fp, "{\"v\":6,\"playing\":%d", inst->playing);
+    fprintf(fp, "{\"v\":7,\"playing\":%d", inst->playing);
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
     for (t = 0; t < NUM_TRACKS; t++)
@@ -384,6 +407,48 @@ static void seq8_save_state(seq8_instance_t *inst) {
                     fputc(';', fp);
                 }
                 fputc('"', fp);
+            }
+            /* sparse step vel — active steps only, omit if all default (SEQ_VEL) */
+            {
+                int has_sv = 0;
+                for (s = 0; s < SEQ_STEPS; s++)
+                    if (cl->steps[s] && (int)cl->step_vel[s] != SEQ_VEL) { has_sv = 1; break; }
+                if (has_sv) {
+                    fprintf(fp, ",\"t%dc%d_sv\":\"", t, c);
+                    for (s = 0; s < SEQ_STEPS; s++) {
+                        if (!cl->steps[s] || (int)cl->step_vel[s] == SEQ_VEL) continue;
+                        fprintf(fp, "%d:%d;", s, (int)cl->step_vel[s]);
+                    }
+                    fputc('"', fp);
+                }
+            }
+            /* sparse step gate — active steps only, omit if all default (GATE_TICKS) */
+            {
+                int has_sg = 0;
+                for (s = 0; s < SEQ_STEPS; s++)
+                    if (cl->steps[s] && (int)cl->step_gate[s] != GATE_TICKS) { has_sg = 1; break; }
+                if (has_sg) {
+                    fprintf(fp, ",\"t%dc%d_sg\":\"", t, c);
+                    for (s = 0; s < SEQ_STEPS; s++) {
+                        if (!cl->steps[s] || (int)cl->step_gate[s] == GATE_TICKS) continue;
+                        fprintf(fp, "%d:%d;", s, (int)cl->step_gate[s]);
+                    }
+                    fputc('"', fp);
+                }
+            }
+            /* sparse step tick_offset — active steps only, omit if all zero */
+            {
+                int has_to = 0;
+                for (s = 0; s < SEQ_STEPS; s++)
+                    if (cl->steps[s] && cl->step_tick_offset[s] != 0) { has_to = 1; break; }
+                if (has_to) {
+                    fprintf(fp, ",\"t%dc%d_to\":\"", t, c);
+                    for (s = 0; s < SEQ_STEPS; s++) {
+                        if (!cl->steps[s] || cl->step_tick_offset[s] == 0) continue;
+                        fprintf(fp, "%d:%d;", s, (int)cl->step_tick_offset[s]);
+                    }
+                    fputc('"', fp);
+                }
             }
         }
     }
@@ -445,8 +510,8 @@ static void seq8_load_state(seq8_instance_t *inst) {
     if (!n) { free(buf); remove(inst->state_path); return; }
     buf[n] = '\0';
 
-    /* Version gate: delete and ignore any state file that isn't v=6. */
-    if (json_get_int(buf, "v", -1) != 6) {
+    /* Version gate: delete and ignore any state file that isn't v=7. */
+    if (json_get_int(buf, "v", -1) != 7) {
         free(buf);
         remove(inst->state_path);
         seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
@@ -529,6 +594,36 @@ static void seq8_load_state(seq8_instance_t *inst) {
                         if (*p == ';') p++;
                     }
                 }
+            }
+            /* sparse step vel */
+            {
+                clip_t *cl = &inst->tracks[t].clips[c];
+                int tmp[SEQ_STEPS], s2;
+                for (s2 = 0; s2 < SEQ_STEPS; s2++) tmp[s2] = SEQ_VEL;
+                snprintf(key, sizeof(key), "t%dc%d_sv", t, c);
+                json_get_sparse_int(buf, key, tmp, SEQ_STEPS);
+                for (s2 = 0; s2 < SEQ_STEPS; s2++)
+                    cl->step_vel[s2] = (uint8_t)clamp_i(tmp[s2], 0, 127);
+            }
+            /* sparse step gate */
+            {
+                clip_t *cl = &inst->tracks[t].clips[c];
+                int tmp[SEQ_STEPS], s2;
+                for (s2 = 0; s2 < SEQ_STEPS; s2++) tmp[s2] = GATE_TICKS;
+                snprintf(key, sizeof(key), "t%dc%d_sg", t, c);
+                json_get_sparse_int(buf, key, tmp, SEQ_STEPS);
+                for (s2 = 0; s2 < SEQ_STEPS; s2++)
+                    cl->step_gate[s2] = (uint16_t)clamp_i(tmp[s2], 1, SEQ_STEPS * TICKS_PER_STEP);
+            }
+            /* sparse step tick_offset */
+            {
+                clip_t *cl = &inst->tracks[t].clips[c];
+                int tmp[SEQ_STEPS], s2;
+                for (s2 = 0; s2 < SEQ_STEPS; s2++) tmp[s2] = 0;
+                snprintf(key, sizeof(key), "t%dc%d_to", t, c);
+                json_get_sparse_int(buf, key, tmp, SEQ_STEPS);
+                for (s2 = 0; s2 < SEQ_STEPS; s2++)
+                    cl->step_tick_offset[s2] = (int8_t)clamp_i(tmp[s2], -23, 23);
             }
         }
     }
