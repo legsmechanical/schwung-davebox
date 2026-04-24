@@ -806,16 +806,18 @@ function pollDSP() {
 
 }
 
-/* Reset NOTE FX, HARMZ, and MIDI DLY banks to DSP defaults for track t. */
+/* Reset NOTE FX, HARMZ, and MIDI DLY banks to DSP defaults for track t.
+ * Sends a single tN_pfx_reset command (Schwung only delivers the last
+ * set_param per tick — individual per-param sends would be coalesced). */
 function resetFxBanks(t) {
     if (typeof host_module_set_param !== 'function') return;
+    host_module_set_param('t' + t + '_pfx_reset', '1');
     const targets = [2, 3, 5]; /* NOTE FX, HARMZ, MIDI DLY */
     for (let bi = 0; bi < targets.length; bi++) {
         const b = targets[bi];
         for (let k = 0; k < 8; k++) {
             const pm = BANKS[b].knobs[k];
             if (!pm) continue;
-            applyBankParam(t, b, k, pm.def);
             bankParams[t][b][k] = pm.def;
         }
     }

@@ -1192,6 +1192,11 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
     if (!strcmp(key, "delay_clock_fb"))
         { fx->fb_clock       = clamp_i(my_atoi(val), -100, 100); return; }
 
+    if (!strcmp(key, "pfx_reset")) {
+        pfx_reset(fx);
+        return;
+    }
+
     if (!strcmp(key, "print")) {
         if (!strcmp(val, "1") && !inst->printing) {
             inst->printing = 1;
