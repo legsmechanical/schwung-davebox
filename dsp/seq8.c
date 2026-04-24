@@ -261,6 +261,8 @@ typedef struct {
     uint8_t scale_aware;
     /* Input velocity: 0=live (pass-through), 1-127=fixed */
     uint8_t input_vel;
+    /* Input quantize: 1=snap live recording to step grid (zero offset), 0=unquantized */
+    uint8_t inp_quant;
 } seq8_instance_t;
 
 static const host_api_v1_t *g_host = NULL;
@@ -517,6 +519,7 @@ static void seq8_save_state(seq8_instance_t *inst) {
             ? inst->tracks[0].pfx.cached_bpm : (double)BPM_DEFAULT);
     fprintf(fp, ",\"saw\":%d", (int)inst->scale_aware);
     fprintf(fp, ",\"iv\":%d",  (int)inst->input_vel);
+    fprintf(fp, ",\"iq\":%d",  (int)inst->inp_quant);
     fprintf(fp, "}");
     fclose(fp);
 }
@@ -750,6 +753,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
     }
     inst->scale_aware = (uint8_t)(json_get_int(buf, "saw", 0) != 0);
     inst->input_vel   = (uint8_t)clamp_i(json_get_int(buf, "iv", 0), 0, 127);
+    inst->inp_quant   = (uint8_t)(json_get_int(buf, "iq", 0) != 0);
     free(buf);
     seq8_ilog(inst, "SEQ8 state restored from file");
 }
@@ -1517,6 +1521,10 @@ static void set_param(void *instance, const char *key, const char *val) {
         inst->scale_aware = my_atoi(val) ? 1 : 0;
         return;
     }
+    if (!strcmp(key, "inp_quant")) {
+        inst->inp_quant = my_atoi(val) ? 1 : 0;
+        return;
+    }
     if (!strcmp(key, "input_vel")) {
         inst->input_vel = (uint8_t)clamp_i(my_atoi(val), 0, 127);
         return;
@@ -1893,47 +1901,48 @@ static void set_param(void *instance, const char *key, const char *val) {
                 }
 
                 if (!strcmp(q, "_add")) {
-                    /* tN_cC_step_S_add val="pitch [offset [-23..23] [velocity [0..127]]]"
-                     * Add-only: no-op if note already present or step has 8 notes.
-                     * Per-note offset written for every note added (not just first). */
+                    /* tN_cC_step_S_add val="p1 o1 v1 [p2 o2 v2 ...]"
+                     * One or more space-separated note triplets (pitch offset velocity).
+                     * Add-only per note; vel on first note of empty step sets step_vel. */
                     const char *p = val;
-                    int note = clamp_i(my_atoi(p), 0, 127);
-                    while (*p && *p != ' ') p++;
-                    int has_offset = (*p == ' ');
-                    int offset_val = 0, vel_val = SEQ_VEL, has_vel = 0;
-                    if (has_offset) {
-                        p++;
-                        offset_val = clamp_i(my_atoi(p), -(TICKS_PER_STEP-1), (TICKS_PER_STEP-1));
+                    int any_added = 0;
+                    while (*p) {
+                        while (*p == ' ') p++;
+                        if (!*p) break;
+                        int note = clamp_i(my_atoi(p), 0, 127);
                         while (*p && *p != ' ') p++;
-                        has_vel = (*p == ' ');
-                        if (has_vel) { p++; vel_val = clamp_i(my_atoi(p), 0, 127); }
-                    }
-                    int n, found = 0;
-                    for (n = 0; n < (int)cl->step_note_count[sidx]; n++) {
-                        if (cl->step_notes[sidx][n] == (uint8_t)note) { found = 1; break; }
-                    }
-                    if (!found && cl->step_note_count[sidx] < 8) {
-                        int ni2 = (int)cl->step_note_count[sidx];
-                        int was_empty = (ni2 == 0);
-                        /* write note+count BEFORE activating step to avoid render-thread race */
-                        cl->step_notes[sidx][ni2] = (uint8_t)note;
-                        if (has_offset)
-                            cl->note_tick_offset[sidx][ni2] = (int16_t)offset_val;
-                        else
-                            cl->note_tick_offset[sidx][ni2] = 0;
-                        cl->step_note_count[sidx]++;
-                        if (cl->step_note_count[sidx] == 1)
-                            cl->steps[sidx] = 1;
-                        if (was_empty && has_vel)
-                            cl->step_vel[sidx] = (uint8_t)vel_val;
-                        /* Mark step as recorded this pass — suppress sequencer playback
-                         * until the clip loops back (next pass). */
-                        if (tr->recording) LRS_SET(tr, sidx);
-                        {
-                            int i, any = 0;
-                            for (i = 0; i < SEQ_STEPS; i++) if (cl->steps[i]) { any = 1; break; }
-                            cl->active = (uint8_t)any;
+                        int offset_val = 0, vel_val = SEQ_VEL, has_vel = 0;
+                        if (*p == ' ') {
+                            p++;
+                            offset_val = clamp_i(my_atoi(p), -(TICKS_PER_STEP-1), (TICKS_PER_STEP-1));
+                            while (*p && *p != ' ') p++;
+                            if (*p == ' ') {
+                                p++;
+                                vel_val = clamp_i(my_atoi(p), 0, 127);
+                                has_vel = 1;
+                                while (*p && *p != ' ') p++;
+                            }
                         }
+                        int n, found = 0;
+                        for (n = 0; n < (int)cl->step_note_count[sidx]; n++) {
+                            if (cl->step_notes[sidx][n] == (uint8_t)note) { found = 1; break; }
+                        }
+                        if (!found && cl->step_note_count[sidx] < 8) {
+                            int ni2 = (int)cl->step_note_count[sidx];
+                            int was_empty = (ni2 == 0);
+                            cl->step_notes[sidx][ni2] = (uint8_t)note;
+                            cl->note_tick_offset[sidx][ni2] = (int16_t)offset_val;
+                            cl->step_note_count[sidx]++;
+                            if (cl->step_note_count[sidx] == 1) cl->steps[sidx] = 1;
+                            if (was_empty && has_vel) cl->step_vel[sidx] = (uint8_t)vel_val;
+                            any_added = 1;
+                        }
+                    }
+                    if (any_added) {
+                        int i, any = 0;
+                        for (i = 0; i < SEQ_STEPS; i++) if (cl->steps[i]) { any = 1; break; }
+                        cl->active = (uint8_t)any;
+                        if (tr->recording) LRS_SET(tr, sidx);
                     }
                     return;
                 }
@@ -2311,6 +2320,8 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         return snprintf(out, out_len, "%d", inst ? (int)inst->pad_scale : 0);
     if (!strcmp(key, "scale_aware"))
         return snprintf(out, out_len, "%d", inst ? (int)inst->scale_aware : 0);
+    if (!strcmp(key, "inp_quant"))
+        return snprintf(out, out_len, "%d", inst ? (int)inst->inp_quant : 0);
     if (!strcmp(key, "input_vel"))
         return snprintf(out, out_len, "%d", inst ? (int)inst->input_vel : 0);
     if (!strcmp(key, "launch_quant"))
