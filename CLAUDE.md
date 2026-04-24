@@ -141,7 +141,7 @@ typedef struct {
     uint8_t  step_note_count[SEQ_STEPS];  /* 0..4 */
     uint8_t  step_vel[SEQ_STEPS];
     uint16_t step_gate[SEQ_STEPS];        /* raw gate ticks; scaled by noteFX_gate at render */
-    int8_t   step_tick_offset[SEQ_STEPS]; /* ±23 within-step offset (0=quantized); ±24=silent edge */
+    int8_t   step_tick_offset[SEQ_STEPS]; /* ±23 within-step offset; 0=quantized; clamped, note stays on its step */
     uint16_t length;                      /* 1..256 */
     uint8_t  active;
     uint16_t clock_shift_pos;             /* Persisted. */
