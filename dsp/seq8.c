@@ -1830,6 +1830,53 @@ static void set_param(void *instance, const char *key, const char *val) {
                     }
                     return;
                 }
+                if (!strcmp(q, "_vel")) {
+                    if (!cl->steps[sidx]) return;
+                    cl->step_vel[sidx] = (uint8_t)clamp_i(my_atoi(val), 0, 127);
+                    if (!tr->recording) seq8_save_state(inst);
+                    return;
+                }
+                if (!strcmp(q, "_gate")) {
+                    if (!cl->steps[sidx]) return;
+                    cl->step_gate[sidx] = (uint16_t)clamp_i(my_atoi(val), 1, SEQ_STEPS * TICKS_PER_STEP);
+                    if (!tr->recording) seq8_save_state(inst);
+                    return;
+                }
+                if (!strcmp(q, "_nudge")) {
+                    if (!cl->steps[sidx]) return;
+                    cl->step_tick_offset[sidx] = (int8_t)clamp_i(my_atoi(val), -23, 23);
+                    if (!tr->recording) seq8_save_state(inst);
+                    return;
+                }
+                if (!strcmp(q, "_pitch")) {
+                    if (!cl->steps[sidx]) return;
+                    int delta = my_atoi(val), n;
+                    for (n = 0; n < (int)cl->step_note_count[sidx]; n++)
+                        cl->step_notes[sidx][n] = (uint8_t)clamp_i(
+                            (int)cl->step_notes[sidx][n] + delta, 0, 127);
+                    if (!tr->recording) seq8_save_state(inst);
+                    return;
+                }
+                if (!strcmp(q, "_set_notes")) {
+                    if (!cl->steps[sidx]) return;
+                    int notes[4], cnt = 0;
+                    const char *np = val;
+                    while (*np && cnt < 4) {
+                        while (*np == ' ') np++;
+                        if (!*np) break;
+                        int note = 0;
+                        while (*np >= '0' && *np <= '9') note = note * 10 + (*np++ - '0');
+                        notes[cnt++] = clamp_i(note, 0, 127);
+                    }
+                    if (cnt > 0) {
+                        int i;
+                        cl->step_note_count[sidx] = (uint8_t)cnt;
+                        for (i = 0; i < cnt; i++) cl->step_notes[sidx][i] = (uint8_t)notes[i];
+                        for (i = cnt; i < 4; i++) cl->step_notes[sidx][i] = 0;
+                        if (!tr->recording) seq8_save_state(inst);
+                    }
+                    return;
+                }
                 return;
             }
             if (!strncmp(p, "_length", 7)) {
@@ -2273,6 +2320,12 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                     }
                     return pos;
                 }
+                if (!strcmp(q, "_vel"))
+                    return snprintf(out, out_len, "%d", (int)cl->step_vel[sidx]);
+                if (!strcmp(q, "_gate"))
+                    return snprintf(out, out_len, "%d", (int)cl->step_gate[sidx]);
+                if (!strcmp(q, "_nudge"))
+                    return snprintf(out, out_len, "%d", (int)cl->step_tick_offset[sidx]);
                 return -1;
             }
             if (!strncmp(p, "_steps", 6) && p[6] == '\0') {

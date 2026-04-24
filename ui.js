@@ -369,6 +369,21 @@ const SCALE_INTERVALS = [
     [0, 2, 4, 6, 8, 10],           /* 12 Whole Tone      */
     [0, 2, 3, 5, 6, 8, 9, 11],     /* 13 Diminished      */
 ];
+
+/* Step-edit pitch nudge: move note up/down to next in-scale pitch.
+ * When scale-aware is off, shifts by exactly 1 semitone per dir. */
+function scaleNudgeNote(note, dir, key, scale) {
+    if (!scaleAware) return Math.max(0, Math.min(127, note + dir));
+    const ivls = SCALE_INTERVALS[scale];
+    let candidate = note + dir;
+    while (candidate >= 0 && candidate <= 127) {
+        const pc = ((candidate - key) % 12 + 12) % 12;
+        if (ivls.indexOf(pc) >= 0) return candidate;
+        candidate += dir;
+    }
+    return Math.max(0, Math.min(127, note + dir));
+}
+
 let padKey    = 9;
 let padScale  = 0;
 let padOctave = new Array(NUM_TRACKS).fill(3);
@@ -457,6 +472,9 @@ let bankParams = Array.from({length: NUM_TRACKS}, () =>
 let heldStepBtn   = -1;
 let heldStep      = -1;   /* absolute step index (page*16 + btn) of the held step */
 let heldStepNotes = [];   /* MIDI note numbers currently assigned to heldStep (up to 4) */
+let stepEditVel   = 100;  /* step edit overlay: current step velocity */
+let stepEditGate  = 12;   /* step edit overlay: current step gate ticks */
+let stepEditNudge = 0;    /* step edit overlay: current step tick offset */
 
 const STEP_HOLD_TICKS  = 40;   /* ~200ms at 196Hz: below = tap, at/above = hold */
 let stepBtnPressedTick = new Array(16).fill(-1); /* tickCount per button when press is pending; -1 = none */
@@ -1305,15 +1323,32 @@ function drawUI() {
 
     /* Step edit: show assigned notes and step identity */
     if (heldStep >= 0) {
-        const ac       = effectiveClip(activeTrack);
+        const ac        = effectiveClip(activeTrack);
         const stepLabel = 'S' + (heldStep + 1);
-        const noteStr  = heldStepNotes.length === 0
-            ? '(empty)'
-            : heldStepNotes.map(midiNoteName).join(' ');
-        print(4, 10, 'TR' + (activeTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac] +
-                     '  ' + stepLabel, 1);
-        print(4, 22, 'STEP EDIT', 1);
-        print(4, 34, noteStr, 1);
+        const header    = 'TR' + (activeTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac] + '  ' + stepLabel;
+        if (heldStepNotes.length > 0 && knobTouched >= 0 && knobTouched <= 4) {
+            const STEP_PARAM_NAMES = ['Oct', 'Pitch', 'Dur', 'Vel', 'Nudge'];
+            let valStr;
+            if (knobTouched === 0 || knobTouched === 1) {
+                valStr = heldStepNotes.map(midiNoteName).join(' ');
+            } else if (knobTouched === 2) {
+                valStr = Math.round(stepEditGate * 100 / 24) + '%';
+            } else if (knobTouched === 3) {
+                valStr = String(stepEditVel);
+            } else {
+                valStr = (stepEditNudge > 0 ? '+' : '') + String(stepEditNudge);
+            }
+            print(4, 10, header, 1);
+            print(4, 22, STEP_PARAM_NAMES[knobTouched], 1);
+            print(4, 34, valStr, 1);
+        } else {
+            const noteStr = heldStepNotes.length === 0
+                ? '(empty)'
+                : heldStepNotes.map(midiNoteName).join(' ');
+            print(4, 10, header, 1);
+            print(4, 22, 'STEP EDIT', 1);
+            print(4, 34, noteStr, 1);
+        }
         drawTrackRow(46);
         return;
     }
@@ -1613,12 +1648,24 @@ globalThis.tick = function () {
                     heldStepBtn              = _btn;
                     heldStep                 = absIdx;
                     stepBtnPressedTick[_btn] = -1;
+                    const pref_h = 't' + activeTrack + '_c' + ac_h + '_step_' + absIdx;
                     const raw_h = typeof host_module_get_param === 'function'
-                        ? host_module_get_param('t' + activeTrack + '_c' + ac_h + '_step_' + absIdx + '_notes')
+                        ? host_module_get_param(pref_h + '_notes')
                         : null;
                     heldStepNotes = (raw_h && raw_h.trim().length > 0)
                         ? raw_h.trim().split(' ').map(Number).filter(function(n) { return n >= 0 && n <= 127; })
                         : [];
+                    /* Read per-step params for overlay knobs */
+                    if (heldStepNotes.length > 0 && typeof host_module_get_param === 'function') {
+                        const rv = host_module_get_param(pref_h + '_vel');
+                        const rg = host_module_get_param(pref_h + '_gate');
+                        const rn = host_module_get_param(pref_h + '_nudge');
+                        stepEditVel   = rv !== null ? parseInt(rv, 10)   : 100;
+                        stepEditGate  = rg !== null ? parseInt(rg, 10)   : 12;
+                        stepEditNudge = rn !== null ? parseInt(rn, 10)   : 0;
+                    } else {
+                        stepEditVel = 100; stepEditGate = 12; stepEditNudge = 0;
+                    }
                     forceRedraw();
                     break;
                 }
@@ -2088,6 +2135,57 @@ globalThis.onMidiMessageInternal = function (data) {
                         host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
                 }
             }
+        }
+
+        /* Step edit overlay: K1-K5 intercept per-step params while a step is held and active */
+        if (heldStep >= 0 && heldStepNotes.length > 0 && d1 >= 71 && d1 <= 75) {
+            const knobIdx = d1 - 71;
+            const dir     = (d2 >= 1 && d2 <= 63) ? 1 : -1;
+            const t       = activeTrack;
+            const ac      = effectiveClip(t);
+            const pfx     = 't' + t + '_c' + ac + '_step_' + heldStep;
+            screenDirty   = true;
+            if (knobIdx === 0) {
+                /* K1 Oct: shift all notes ±12 semitones, sens=2 */
+                if (dir !== knobLastDir[knobIdx]) { knobAccum[knobIdx] = 0; knobLastDir[knobIdx] = dir; }
+                knobAccum[knobIdx]++;
+                if (knobAccum[knobIdx] >= 2) {
+                    knobAccum[knobIdx] = 0;
+                    heldStepNotes = heldStepNotes.map(function(n) {
+                        return Math.max(0, Math.min(127, n + dir * 12));
+                    });
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param(pfx + '_set_notes', heldStepNotes.join(' '));
+                }
+            } else if (knobIdx === 1) {
+                /* K2 Pitch: shift each note ±1 scale degree (or ±1 semitone if scale-aware off), sens=2 */
+                if (dir !== knobLastDir[knobIdx]) { knobAccum[knobIdx] = 0; knobLastDir[knobIdx] = dir; }
+                knobAccum[knobIdx]++;
+                if (knobAccum[knobIdx] >= 2) {
+                    knobAccum[knobIdx] = 0;
+                    heldStepNotes = heldStepNotes.map(function(n) {
+                        return scaleNudgeNote(n, dir, padKey, padScale);
+                    });
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param(pfx + '_set_notes', heldStepNotes.join(' '));
+                }
+            } else if (knobIdx === 2) {
+                /* K3 Dur: gate in 6-tick steps (±25% of a step per detent) */
+                stepEditGate = Math.max(1, Math.min(6144, stepEditGate + dir * 6));
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param(pfx + '_gate', String(stepEditGate));
+            } else if (knobIdx === 3) {
+                /* K4 Vel: velocity 0-127 */
+                stepEditVel = Math.max(0, Math.min(127, stepEditVel + dir));
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param(pfx + '_vel', String(stepEditVel));
+            } else {
+                /* K5 Nudge: tick offset -23..23 */
+                stepEditNudge = Math.max(-23, Math.min(23, stepEditNudge + dir));
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param(pfx + '_nudge', String(stepEditNudge));
+            }
+            return;
         }
 
         /* Knob CCs 71-78: apply delta to active bank parameter.
