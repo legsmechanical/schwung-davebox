@@ -251,6 +251,8 @@ typedef struct {
 
     /* Scale-aware play effects: interpret Ofs/Hrm/delay-pitch in scale degrees */
     uint8_t scale_aware;
+    /* Input velocity: 0=live (pass-through), 1-127=fixed */
+    uint8_t input_vel;
 } seq8_instance_t;
 
 static const host_api_v1_t *g_host = NULL;
@@ -492,6 +494,7 @@ static void seq8_save_state(seq8_instance_t *inst) {
     fprintf(fp, ",\"bpm\":%.0f", inst->tracks[0].pfx.cached_bpm > 0
             ? inst->tracks[0].pfx.cached_bpm : (double)BPM_DEFAULT);
     fprintf(fp, ",\"saw\":%d", (int)inst->scale_aware);
+    fprintf(fp, ",\"iv\":%d",  (int)inst->input_vel);
     fprintf(fp, "}");
     fclose(fp);
 }
@@ -698,6 +701,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
         }
     }
     inst->scale_aware = (uint8_t)(json_get_int(buf, "saw", 0) != 0);
+    inst->input_vel   = (uint8_t)clamp_i(json_get_int(buf, "iv", 0), 0, 127);
     free(buf);
     seq8_ilog(inst, "SEQ8 state restored from file");
 }
@@ -1466,6 +1470,10 @@ static void set_param(void *instance, const char *key, const char *val) {
     }
     if (!strcmp(key, "scale_aware")) {
         inst->scale_aware = my_atoi(val) ? 1 : 0;
+        return;
+    }
+    if (!strcmp(key, "input_vel")) {
+        inst->input_vel = (uint8_t)clamp_i(my_atoi(val), 0, 127);
         return;
     }
     if (!strcmp(key, "launch_quant")) {
@@ -2240,6 +2248,8 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         return snprintf(out, out_len, "%d", inst ? (int)inst->pad_scale : 0);
     if (!strcmp(key, "scale_aware"))
         return snprintf(out, out_len, "%d", inst ? (int)inst->scale_aware : 0);
+    if (!strcmp(key, "input_vel"))
+        return snprintf(out, out_len, "%d", inst ? (int)inst->input_vel : 0);
     if (!strcmp(key, "launch_quant"))
         return snprintf(out, out_len, "%d", inst ? (int)inst->launch_quant : 0);
     if (!strcmp(key, "version"))

@@ -330,7 +330,11 @@ function buildGlobalMenuItems() {
         }),
         createValue('Input Vel', {
             get: function() { return stubInputVel; },
-            set: function(v) { stubInputVel = v; },
+            set: function(v) {
+                stubInputVel = v;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('input_vel', String(v));
+            },
             min: 0, max: 127,
             format: function(v) { return v === 0 ? 'Live' : String(v); }
         }),
@@ -1544,6 +1548,8 @@ function syncClipsFromDsp() {
     if (sp !== null && sp !== undefined) padScale = parseInt(sp, 10) | 0;
     const lqp = host_module_get_param('launch_quant');
     if (lqp !== null && lqp !== undefined) launchQuant = parseInt(lqp, 10) | 0;
+    const ivp = host_module_get_param('input_vel');
+    if (ivp !== null && ivp !== undefined) stubInputVel = parseInt(ivp, 10) | 0;
 }
 
 function syncMuteSoloFromDsp() {
