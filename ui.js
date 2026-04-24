@@ -1343,12 +1343,14 @@ function syncClipsFromDsp() {
         }
         const po = host_module_get_param('t' + t + '_pad_octave');
         if (po !== null && po !== undefined) padOctave[t] = parseInt(po, 10) | 0;
-        readBankParams(t, 0);
+        for (let b = 0; b < 8; b++) readBankParams(t, b);
     }
     const kp = host_module_get_param('key');
     if (kp !== null && kp !== undefined) padKey   = parseInt(kp, 10) | 0;
     const sp = host_module_get_param('scale');
     if (sp !== null && sp !== undefined) padScale = parseInt(sp, 10) | 0;
+    const lqp = host_module_get_param('launch_quant');
+    if (lqp !== null && lqp !== undefined) launchQuant = parseInt(lqp, 10) | 0;
 }
 
 function syncMuteSoloFromDsp() {

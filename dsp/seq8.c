@@ -337,7 +337,7 @@ static void seq8_save_state(seq8_instance_t *inst) {
     FILE *fp = fopen(inst->state_path, "w");
     if (!fp) return;
     int t, c, s;
-    fprintf(fp, "{\"v\":5,\"playing\":%d", inst->playing);
+    fprintf(fp, "{\"v\":6,\"playing\":%d", inst->playing);
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
     for (t = 0; t < NUM_TRACKS; t++)
@@ -355,6 +355,10 @@ static void seq8_save_state(seq8_instance_t *inst) {
                 fputc(cl->steps[s] ? '1' : '0', fp);
             fputc('"', fp);
             fprintf(fp, ",\"t%dc%d_len\":%d", t, c, (int)cl->length);
+            if (cl->stretch_exp != 0)
+                fprintf(fp, ",\"t%dc%d_se\":%d", t, c, (int)cl->stretch_exp);
+            if (cl->clock_shift_pos != 0)
+                fprintf(fp, ",\"t%dc%d_cs\":%d", t, c, (int)cl->clock_shift_pos);
             /* sparse step notes — emit any step with count > 0 (count=0 is default) */
             int has_nondefault = 0;
             for (s = 0; s < SEQ_STEPS; s++) {
@@ -397,6 +401,24 @@ static void seq8_save_state(seq8_instance_t *inst) {
             fputc('"', fp);
         }
     }
+    /* Per-track play effects and mode */
+    for (t = 0; t < NUM_TRACKS; t++) {
+        play_fx_t *fx = &inst->tracks[t].pfx;
+        fprintf(fp, ",\"t%d_pm\":%d", t, (int)inst->tracks[t].pad_mode);
+        fprintf(fp, ",\"t%d_nfo\":%d,\"t%d_nfof\":%d,\"t%d_nfg\":%d,\"t%d_nfv\":%d",
+                t, fx->octave_shift, t, fx->note_offset, t, fx->gate_time, t, fx->velocity_offset);
+        fprintf(fp, ",\"t%d_hu\":%d,\"t%d_ho\":%d,\"t%d_h1\":%d,\"t%d_h2\":%d",
+                t, fx->unison, t, fx->octaver, t, fx->harmonize_1, t, fx->harmonize_2);
+        fprintf(fp, ",\"t%d_dt\":%d,\"t%d_dl\":%d,\"t%d_dr\":%d,\"t%d_dvf\":%d",
+                t, fx->delay_time_idx, t, fx->delay_level, t, fx->repeat_times, t, fx->fb_velocity);
+        fprintf(fp, ",\"t%d_dpf\":%d,\"t%d_dgf\":%d,\"t%d_dcf\":%d,\"t%d_dpr\":%d",
+                t, fx->fb_note, t, fx->fb_gate_time, t, fx->fb_clock, t, fx->fb_note_random);
+    }
+    /* Global settings */
+    fprintf(fp, ",\"key\":%d,\"scale\":%d,\"lq\":%d",
+            (int)inst->pad_key, (int)inst->pad_scale, (int)inst->launch_quant);
+    fprintf(fp, ",\"bpm\":%.0f", inst->tracks[0].pfx.cached_bpm > 0
+            ? inst->tracks[0].pfx.cached_bpm : (double)BPM_DEFAULT);
     fprintf(fp, ",\"saw\":%d", (int)inst->scale_aware);
     fprintf(fp, "}");
     fclose(fp);
@@ -416,8 +438,8 @@ static void seq8_load_state(seq8_instance_t *inst) {
     if (!n) { free(buf); remove(inst->state_path); return; }
     buf[n] = '\0';
 
-    /* Version gate: delete and ignore any state file that isn't v=5. */
-    if (json_get_int(buf, "v", -1) != 5) {
+    /* Version gate: delete and ignore any state file that isn't v=6. */
+    if (json_get_int(buf, "v", -1) != 6) {
         free(buf);
         remove(inst->state_path);
         seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
@@ -450,6 +472,15 @@ static void seq8_load_state(seq8_instance_t *inst) {
             snprintf(key, sizeof(key), "t%dc%d_len", t, c);
             inst->tracks[t].clips[c].length = (uint16_t)clamp_i(
                 json_get_int(buf, key, SEQ_STEPS_DEFAULT), 1, SEQ_STEPS);
+
+            snprintf(key, sizeof(key), "t%dc%d_se", t, c);
+            inst->tracks[t].clips[c].stretch_exp = (int8_t)clamp_i(
+                json_get_int(buf, key, 0), -8, 8);
+
+            snprintf(key, sizeof(key), "t%dc%d_cs", t, c);
+            inst->tracks[t].clips[c].clock_shift_pos = (uint16_t)clamp_i(
+                json_get_int(buf, key, 0), 0,
+                (int)inst->tracks[t].clips[c].length - 1);
 
             int any = 0;
             for (i = 0; i < SEQ_STEPS; i++)
@@ -509,6 +540,57 @@ static void seq8_load_state(seq8_instance_t *inst) {
             snprintf(skey, sizeof(skey), "sn%d_s", n);
             json_get_steps(buf, skey, inst->snap_solo[n], NUM_TRACKS);
             inst->snap_valid[n] = 1;
+        }
+    }
+    /* Per-track play effects and mode */
+    for (t = 0; t < NUM_TRACKS; t++) {
+        play_fx_t *fx = &inst->tracks[t].pfx;
+        snprintf(key, sizeof(key), "t%d_pm", t);
+        inst->tracks[t].pad_mode = (uint8_t)clamp_i(json_get_int(buf, key, 0), 0, 0);
+        snprintf(key, sizeof(key), "t%d_nfo", t);
+        fx->octave_shift   = clamp_i(json_get_int(buf, key, 0),    -4,  4);
+        snprintf(key, sizeof(key), "t%d_nfof", t);
+        fx->note_offset    = clamp_i(json_get_int(buf, key, 0),   -24, 24);
+        snprintf(key, sizeof(key), "t%d_nfg", t);
+        fx->gate_time      = clamp_i(json_get_int(buf, key, 100),   0, 400);
+        snprintf(key, sizeof(key), "t%d_nfv", t);
+        fx->velocity_offset = clamp_i(json_get_int(buf, key, 0), -127, 127);
+        snprintf(key, sizeof(key), "t%d_hu", t);
+        fx->unison         = clamp_i(json_get_int(buf, key, 0),     0,   2);
+        snprintf(key, sizeof(key), "t%d_ho", t);
+        fx->octaver        = clamp_i(json_get_int(buf, key, 0),    -4,   4);
+        snprintf(key, sizeof(key), "t%d_h1", t);
+        fx->harmonize_1    = clamp_i(json_get_int(buf, key, 0),   -24,  24);
+        snprintf(key, sizeof(key), "t%d_h2", t);
+        fx->harmonize_2    = clamp_i(json_get_int(buf, key, 0),   -24,  24);
+        snprintf(key, sizeof(key), "t%d_dt", t);
+        fx->delay_time_idx = clamp_i(json_get_int(buf, key, 0),     0, NUM_CLOCK_VALUES - 1);
+        snprintf(key, sizeof(key), "t%d_dl", t);
+        fx->delay_level    = clamp_i(json_get_int(buf, key, 0),     0, 127);
+        snprintf(key, sizeof(key), "t%d_dr", t);
+        fx->repeat_times   = clamp_i(json_get_int(buf, key, 0),     0, MAX_REPEATS);
+        snprintf(key, sizeof(key), "t%d_dvf", t);
+        fx->fb_velocity    = clamp_i(json_get_int(buf, key, 0),  -127, 127);
+        snprintf(key, sizeof(key), "t%d_dpf", t);
+        fx->fb_note        = clamp_i(json_get_int(buf, key, 0),   -24,  24);
+        snprintf(key, sizeof(key), "t%d_dgf", t);
+        fx->fb_gate_time   = clamp_i(json_get_int(buf, key, 0),  -100, 100);
+        snprintf(key, sizeof(key), "t%d_dcf", t);
+        fx->fb_clock       = clamp_i(json_get_int(buf, key, 0),  -100, 100);
+        snprintf(key, sizeof(key), "t%d_dpr", t);
+        fx->fb_note_random = json_get_int(buf, key, 0) ? 1 : 0;
+    }
+    /* Global settings */
+    inst->pad_key      = (uint8_t)clamp_i(json_get_int(buf, "key",   9), 0, 11);
+    inst->pad_scale    = (uint8_t)clamp_i(json_get_int(buf, "scale", 0), 0, 13);
+    inst->launch_quant = (uint8_t)clamp_i(json_get_int(buf, "lq",    0), 0,  5);
+    {
+        int saved_bpm = json_get_int(buf, "bpm", BPM_DEFAULT);
+        if (saved_bpm >= 40 && saved_bpm <= 250) {
+            double bpm = (double)saved_bpm;
+            inst->tick_delta = (uint32_t)((double)MOVE_FRAMES_PER_BLOCK * bpm * (double)PPQN);
+            for (t = 0; t < NUM_TRACKS; t++)
+                inst->tracks[t].pfx.cached_bpm = bpm;
         }
     }
     inst->scale_aware = (uint8_t)(json_get_int(buf, "saw", 0) != 0);
@@ -1855,8 +1937,10 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         return snprintf(out, out_len, "%d", inst ? (int)inst->pad_scale : 0);
     if (!strcmp(key, "scale_aware"))
         return snprintf(out, out_len, "%d", inst ? (int)inst->scale_aware : 0);
+    if (!strcmp(key, "launch_quant"))
+        return snprintf(out, out_len, "%d", inst ? (int)inst->launch_quant : 0);
     if (!strcmp(key, "version"))
-        return snprintf(out, out_len, "5");
+        return snprintf(out, out_len, "6");
     if (!strcmp(key, "instance_id"))
         return snprintf(out, out_len, "%u", inst ? inst->instance_nonce : 0);
     if (!strcmp(key, "state_uuid")) {
