@@ -182,6 +182,7 @@ typedef struct {
     int8_t    queued_clip;          /* next clip to launch at bar boundary (-1 = none) */
     uint16_t  current_step;
     uint8_t   note_active;
+    int8_t    note_pending_offset;  /* -1=none; 1-23=fire note-on at this tick_in_step */
     uint16_t  pending_gate;         /* effective gate (raw * gate_time/100) stored at note-on */
     uint16_t  gate_ticks_remaining; /* countdown to note-off; decrements every tick */
     uint8_t   pending_notes[4];     /* notes fired at note-on; matched at note-off */
@@ -968,11 +969,14 @@ static void silence_muted_tracks(seq8_instance_t *inst) {
     int t, n;
     for (t = 0; t < NUM_TRACKS; t++) {
         seq8_track_t *tr = &inst->tracks[t];
-        if (effective_mute(inst, t) && tr->note_active) {
-            for (n = 0; n < (int)tr->pending_note_count; n++)
-                pfx_note_off(inst, tr, tr->pending_notes[n]);
-            tr->note_active = 0;
-            tr->pending_note_count = 0;
+        if (effective_mute(inst, t)) {
+            if (tr->note_active) {
+                for (n = 0; n < (int)tr->pending_note_count; n++)
+                    pfx_note_off(inst, tr, tr->pending_notes[n]);
+                tr->note_active = 0;
+                tr->pending_note_count = 0;
+            }
+            tr->note_pending_offset = -1;
         }
     }
 }
@@ -1026,6 +1030,7 @@ static void seq8_clear_state(seq8_instance_t *inst) {
         tr->queued_clip         = -1;
         tr->active_clip         = 0;
         tr->current_step        = 0;
+        tr->note_pending_offset = -1;
         for (c = 0; c < NUM_CLIPS; c++)
             clip_init(&tr->clips[c]);
     }
@@ -1381,18 +1386,19 @@ static void set_param(void *instance, const char *key, const char *val) {
             inst->count_in_ticks = 0;
             for (t2 = 0; t2 < NUM_TRACKS; t2++) {
                 seq8_track_t *tr2 = &inst->tracks[t2];
-                tr2->note_active        = 0;
-                tr2->pending_note_count = 0;
-                tr2->pfx.event_count    = 0;
+                tr2->note_active         = 0;
+                tr2->pending_note_count  = 0;
+                tr2->pfx.event_count     = 0;
                 memset(tr2->pfx.active_notes, 0, sizeof(tr2->pfx.active_notes));
-                tr2->clip_playing       = 0;
-                tr2->will_relaunch      = 0;
-                tr2->pending_page_stop  = 0;
-                tr2->record_armed       = 0;
-                tr2->recording          = 0;
-                tr2->queued_clip        = -1;
-                tr2->active_clip        = 0;
-                tr2->current_step       = 0;
+                tr2->clip_playing        = 0;
+                tr2->will_relaunch       = 0;
+                tr2->pending_page_stop   = 0;
+                tr2->record_armed        = 0;
+                tr2->recording           = 0;
+                tr2->queued_clip         = -1;
+                tr2->active_clip         = 0;
+                tr2->current_step        = 0;
+                tr2->note_pending_offset = -1;
                 for (c2 = 0; c2 < NUM_CLIPS; c2++)
                     clip_init(&tr2->clips[c2]);
             }
@@ -1576,11 +1582,12 @@ static void set_param(void *instance, const char *key, const char *val) {
 
         /* tN_deactivate: cancel all pending/playing state immediately */
         if (!strcmp(sub, "deactivate")) {
-            tr->clip_playing      = 0;
-            tr->will_relaunch     = 0;
-            tr->queued_clip       = -1;
-            tr->pending_page_stop = 0;
-            tr->record_armed      = 0;
+            tr->clip_playing        = 0;
+            tr->will_relaunch       = 0;
+            tr->queued_clip         = -1;
+            tr->pending_page_stop   = 0;
+            tr->record_armed        = 0;
+            tr->note_pending_offset = -1;
             return;
         }
 
@@ -2218,6 +2225,33 @@ static int get_error(void *instance, char *out, int out_len) {
 }
 
 /* ------------------------------------------------------------------ */
+/* render_block helpers                                                 */
+/* ------------------------------------------------------------------ */
+
+/* Fire note-on for the current step. Pre-emptively cuts off any note
+ * still ringing from a long gate on a previous step. Sets pending_gate
+ * and gate_ticks_remaining so the gate countdown can fire note-off. */
+static void fire_note_on(seq8_instance_t *inst, seq8_track_t *tr, clip_t *cl) {
+    int n, eff;
+    if (tr->note_active) {
+        for (n = 0; n < (int)tr->pending_note_count; n++)
+            pfx_note_off(inst, tr, tr->pending_notes[n]);
+        tr->note_active      = 0;
+        tr->pending_note_count = 0;
+    }
+    eff = (int)cl->step_gate[tr->current_step] * tr->pfx.gate_time / 100;
+    if (eff < 1) eff = 1;
+    tr->pending_gate         = (uint16_t)eff;
+    tr->gate_ticks_remaining = tr->pending_gate;
+    tr->pending_note_count   = cl->step_note_count[tr->current_step];
+    for (n = 0; n < (int)tr->pending_note_count; n++) {
+        tr->pending_notes[n] = cl->step_notes[tr->current_step][n];
+        pfx_note_on(inst, tr, tr->pending_notes[n], cl->step_vel[tr->current_step]);
+    }
+    tr->note_active = 1;
+}
+
+/* ------------------------------------------------------------------ */
 /* render_block                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -2305,6 +2339,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                         tr->note_active = 0;
                         tr->pending_note_count = 0;
                     }
+                    tr->note_pending_offset = -1;
                     tr->active_clip  = (uint8_t)tr->queued_clip;
                     tr->queued_clip  = -1;
                     tr->current_step = 0;
@@ -2322,6 +2357,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 if (tr->pending_page_stop && inst->global_tick % 16 == 0) {
                     tr->pending_page_stop = 0;
                     tr->clip_playing = 0;
+                    tr->note_pending_offset = -1;
                     if (tr->note_active) {
                         int n;
                         for (n = 0; n < (int)tr->pending_note_count; n++)
@@ -2342,28 +2378,24 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                     }
                 }
 
-                /* Note on */
+                /* Note on: fire immediately (offset==0) or defer to offset tick */
                 if (tr->clip_playing && cl->steps[tr->current_step] && !effective_mute(inst, t)) {
-                    int n, eff;
-                    /* Cut off any note still held from a long gate on the previous step */
-                    if (tr->note_active) {
-                        for (n = 0; n < (int)tr->pending_note_count; n++)
-                            pfx_note_off(inst, tr, tr->pending_notes[n]);
-                        tr->note_active = 0;
-                        tr->pending_note_count = 0;
+                    int off = (int)cl->step_tick_offset[tr->current_step];
+                    if (off > 0) {
+                        tr->note_pending_offset = (int8_t)off;
+                    } else {
+                        fire_note_on(inst, tr, cl);
+                        tr->note_pending_offset = -1;
                     }
-                    eff = (int)cl->step_gate[tr->current_step] * tr->pfx.gate_time / 100;
-                    if (eff < 1) eff = 1;
-                    tr->pending_gate         = (uint16_t)eff;
-                    tr->gate_ticks_remaining = tr->pending_gate;
-                    tr->pending_note_count   = cl->step_note_count[tr->current_step];
-                    for (n = 0; n < (int)tr->pending_note_count; n++) {
-                        tr->pending_notes[n] = cl->step_notes[tr->current_step][n];
-                        pfx_note_on(inst, tr, tr->pending_notes[n],
-                                    cl->step_vel[tr->current_step]);
-                    }
-                    tr->note_active = 1;
                 }
+            }
+
+            /* Deferred note-on: positive tick_offset steps fire here */
+            if (tr->note_pending_offset >= 0 &&
+                    inst->tick_in_step == (uint32_t)tr->note_pending_offset) {
+                if (tr->clip_playing && cl->steps[tr->current_step] && !effective_mute(inst, t))
+                    fire_note_on(inst, tr, cl);
+                tr->note_pending_offset = -1;
             }
         }
 
