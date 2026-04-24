@@ -812,6 +812,36 @@ static int deg_to_semitones(seq8_instance_t *inst, int deg) {
     return quot * 12 + (int)ivals[rem];
 }
 
+/* Transpose note by deg_offset scale degrees, anchored to note's own scale position.
+ * Finds the note's nearest scale degree, adds the offset, returns the result.
+ * Correct for any starting note — not just the tonic. */
+static int scale_transpose(seq8_instance_t *inst, int note, int deg_offset) {
+    if (deg_offset == 0) return clamp_i(note, 0, 127);
+    int s = (int)inst->pad_scale;
+    if (s < 0 || s >= 14) s = 0;
+    int n = (int)SCALE_SIZES[s];
+    const uint8_t *ivals = SCALE_IVLS[s];
+    int key = (int)inst->pad_key;
+    /* note's octave and pitch class relative to key */
+    int rel = note - key;
+    int oct = rel / 12;
+    int pc  = rel % 12;
+    if (pc < 0) { pc += 12; oct--; }
+    /* nearest scale degree for this pitch class */
+    int deg = 0, d, best_dist = 13;
+    for (d = 0; d < n; d++) {
+        int dist = (int)ivals[d] - pc;
+        if (dist < 0) dist = -dist;
+        if (dist < best_dist) { best_dist = dist; deg = d; }
+    }
+    /* apply offset in degree space and convert back */
+    int abs_deg = oct * n + deg + deg_offset;
+    int t_oct   = abs_deg / n;
+    int t_rem   = abs_deg % n;
+    if (t_rem < 0) { t_rem += n; t_oct--; }
+    return clamp_i(key + t_oct * 12 + (int)ivals[t_rem], 0, 127);
+}
+
 /* ------------------------------------------------------------------ */
 /* Generated-note list (direct port from NoteTwist)                    */
 /* ------------------------------------------------------------------ */
@@ -819,9 +849,9 @@ static int deg_to_semitones(seq8_instance_t *inst, int deg) {
 static int pfx_build_gen_notes(seq8_instance_t *inst, int scale_aware,
                                play_fx_t *fx, int orig_note, uint8_t *out) {
     int cnt = 0;
-    int offset = scale_aware ? deg_to_semitones(inst, fx->note_offset) : fx->note_offset;
-    int n = orig_note + fx->octave_shift * 12 + offset;
-    n = clamp_i(n, 0, 127);
+    int base = orig_note + fx->octave_shift * 12;
+    int n = scale_aware ? scale_transpose(inst, clamp_i(base, 0, 127), fx->note_offset)
+                        : clamp_i(base + fx->note_offset, 0, 127);
     out[cnt++] = (uint8_t)n;
 
     if (fx->octaver != 0) {
@@ -829,13 +859,11 @@ static int pfx_build_gen_notes(seq8_instance_t *inst, int scale_aware,
         if (o >= 0 && o <= 127 && cnt < MAX_GEN_NOTES) out[cnt++] = (uint8_t)o;
     }
     if (fx->harmonize_1 != 0) {
-        int h1 = scale_aware ? deg_to_semitones(inst, fx->harmonize_1) : fx->harmonize_1;
-        int h = n + h1;
+        int h = scale_aware ? scale_transpose(inst, n, fx->harmonize_1) : n + fx->harmonize_1;
         if (h >= 0 && h <= 127 && cnt < MAX_GEN_NOTES) out[cnt++] = (uint8_t)h;
     }
     if (fx->harmonize_2 != 0) {
-        int h2 = scale_aware ? deg_to_semitones(inst, fx->harmonize_2) : fx->harmonize_2;
-        int h = n + h2;
+        int h = scale_aware ? scale_transpose(inst, n, fx->harmonize_2) : n + fx->harmonize_2;
         if (h >= 0 && h <= 127 && cnt < MAX_GEN_NOTES) out[cnt++] = (uint8_t)h;
     }
     return cnt;
@@ -884,7 +912,9 @@ static void pfx_sched_delay_ons(seq8_instance_t *inst, int scale_aware,
             }
         }
         {
-            int pitch = scale_aware ? deg_to_semitones(inst, cumul_deg) : cumul_pitch;
+            int pitch = (scale_aware && an->gen_count > 0)
+                ? scale_transpose(inst, (int)an->gen_notes[0], cumul_deg) - (int)an->gen_notes[0]
+                : cumul_pitch;
             an->reps[i].pitch_offset = (int8_t)clamp_i(pitch, -127, 127);
         }
 
@@ -1747,14 +1777,19 @@ static void set_param(void *instance, const char *key, const char *val) {
                 if (sidx < 0 || sidx >= SEQ_STEPS) return;
 
                 if (*q == '\0') {
-                    /* tN_cC_step_S — legacy on/off toggle */
-                    cl->steps[sidx] = (val[0] == '1') ? 1 : 0;
-                    if (cl->steps[sidx]) {
-                        cl->step_gate[sidx] = (uint16_t)GATE_TICKS;
+                    /* tN_cC_step_S — legacy on/off: reactivate/deactivate without touching notes.
+                     * Safety: deny activation if step has no notes (prevents invariant violation). */
+                    if (val[0] == '1') {
+                        if (cl->step_note_count[sidx] > 0) cl->steps[sidx] = 1;
+                        /* else: deny — keep steps=0 so invariant holds */
+                    } else {
+                        cl->steps[sidx] = 0;
                     }
-                    int i, any = 0;
-                    for (i = 0; i < SEQ_STEPS; i++) if (cl->steps[i]) { any = 1; break; }
-                    cl->active = (uint8_t)any;
+                    {
+                        int i, any = 0;
+                        for (i = 0; i < SEQ_STEPS; i++) if (cl->steps[i]) { any = 1; break; }
+                        cl->active = (uint8_t)any;
+                    }
                     return;
                 }
 
@@ -1816,13 +1851,16 @@ static void set_param(void *instance, const char *key, const char *val) {
                 }
 
                 if (!strcmp(q, "_clear")) {
-                    /* tN_cC_step_S_clear — atomically deactivate step and wipe all note data */
+                    /* tN_cC_step_S_clear — atomically deactivate step and wipe all step data */
                     cl->steps[sidx] = 0;
                     cl->step_notes[sidx][0] = 0;
                     cl->step_notes[sidx][1] = 0;
                     cl->step_notes[sidx][2] = 0;
                     cl->step_notes[sidx][3] = 0;
                     cl->step_note_count[sidx] = 0;
+                    cl->step_vel[sidx]        = (uint8_t)SEQ_VEL;
+                    cl->step_gate[sidx]       = (uint16_t)GATE_TICKS;
+                    cl->step_tick_offset[sidx] = 0;
                     {
                         int i, any = 0;
                         for (i = 0; i < SEQ_STEPS; i++) if (cl->steps[i]) { any = 1; break; }
@@ -2406,6 +2444,7 @@ static int effective_tick_offset(clip_t *cl, seq8_track_t *tr, uint16_t s) {
 static void fire_note_on_step(seq8_instance_t *inst, seq8_track_t *tr,
                               clip_t *cl, uint16_t s) {
     int n, eff;
+    if (cl->step_note_count[s] == 0) return; /* invariant guard: step active but no notes */
     if (tr->note_active) {
         for (n = 0; n < (int)tr->pending_note_count; n++)
             pfx_note_off(inst, tr, tr->pending_notes[n]);

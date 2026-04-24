@@ -1334,7 +1334,7 @@ function drawUI() {
             const VALS   = [
                 midiNoteName(root),
                 midiNoteName(root),
-                Math.round(stepEditGate * 100 / 24) + '%',
+                (stepEditGate / 24).toFixed(2) + 's',
                 String(stepEditVel),
                 (stepEditNudge >= 0 ? '+' : '') + String(stepEditNudge)
             ];
@@ -1639,38 +1639,10 @@ globalThis.tick = function () {
 
         if ((tickCount % POLL_INTERVAL) === 0) { pollDSP(); screenDirty = true; }
 
-        /* Step hold detection: any pending press crossing threshold → enter step edit (one at a time) */
-        if (heldStep < 0) {
-            for (let _btn = 0; _btn < 16; _btn++) {
-                if (stepBtnPressedTick[_btn] >= 0 &&
-                        (tickCount - stepBtnPressedTick[_btn]) >= STEP_HOLD_TICKS) {
-                    const ac_h   = effectiveClip(activeTrack);
-                    const absIdx = trackCurrentPage[activeTrack] * 16 + _btn;
-                    heldStepBtn              = _btn;
-                    heldStep                 = absIdx;
-                    stepBtnPressedTick[_btn] = -1;
-                    const pref_h = 't' + activeTrack + '_c' + ac_h + '_step_' + absIdx;
-                    const raw_h = typeof host_module_get_param === 'function'
-                        ? host_module_get_param(pref_h + '_notes')
-                        : null;
-                    heldStepNotes = (raw_h && raw_h.trim().length > 0)
-                        ? raw_h.trim().split(' ').map(Number).filter(function(n) { return n >= 0 && n <= 127; })
-                        : [];
-                    /* Read per-step params for overlay knobs */
-                    if (heldStepNotes.length > 0 && typeof host_module_get_param === 'function') {
-                        const rv = host_module_get_param(pref_h + '_vel');
-                        const rg = host_module_get_param(pref_h + '_gate');
-                        const rn = host_module_get_param(pref_h + '_nudge');
-                        stepEditVel   = rv !== null ? parseInt(rv, 10)   : 100;
-                        stepEditGate  = rg !== null ? parseInt(rg, 10)   : 12;
-                        stepEditNudge = rn !== null ? parseInt(rn, 10)   : 0;
-                    } else {
-                        stepEditVel = 100; stepEditGate = 12; stepEditNudge = 0;
-                    }
-                    forceRedraw();
-                    break;
-                }
-            }
+        /* Step hold threshold: once elapsed, close the tap window so release won't toggle */
+        if (heldStep >= 0 && heldStepBtn >= 0 && stepBtnPressedTick[heldStepBtn] >= 0 &&
+                (tickCount - stepBtnPressedTick[heldStepBtn]) >= STEP_HOLD_TICKS) {
+            stepBtnPressedTick[heldStepBtn] = -1;
         }
 
         /* CC 50 hold detection: crossing threshold enters session overview */
@@ -2147,10 +2119,10 @@ globalThis.onMidiMessageInternal = function (data) {
             const pfx     = 't' + t + '_c' + ac + '_step_' + heldStep;
             screenDirty   = true;
             if (knobIdx === 0) {
-                /* K1 Oct: shift all notes ±12 semitones, sens=2 */
-                if (dir !== knobLastDir[knobIdx]) { knobAccum[knobIdx] = 0; knobLastDir[knobIdx] = dir; }
-                knobAccum[knobIdx]++;
-                if (knobAccum[knobIdx] >= 2) {
+                /* K1 Oct: shift all notes ±12 semitones, sens=12 */
+                knobAccum[knobIdx] = (dir === knobLastDir[knobIdx]) ? knobAccum[knobIdx] + 1 : 1;
+                knobLastDir[knobIdx] = dir;
+                if (knobAccum[knobIdx] >= 12) {
                     knobAccum[knobIdx] = 0;
                     heldStepNotes = heldStepNotes.map(function(n) {
                         return Math.max(0, Math.min(127, n + dir * 12));
@@ -2159,10 +2131,10 @@ globalThis.onMidiMessageInternal = function (data) {
                         host_module_set_param(pfx + '_set_notes', heldStepNotes.join(' '));
                 }
             } else if (knobIdx === 1) {
-                /* K2 Pitch: shift each note ±1 scale degree (or ±1 semitone if scale-aware off), sens=2 */
-                if (dir !== knobLastDir[knobIdx]) { knobAccum[knobIdx] = 0; knobLastDir[knobIdx] = dir; }
-                knobAccum[knobIdx]++;
-                if (knobAccum[knobIdx] >= 2) {
+                /* K2 Pitch: shift each note ±1 scale degree (or ±1 semitone if scale-aware off), sens=6 */
+                knobAccum[knobIdx] = (dir === knobLastDir[knobIdx]) ? knobAccum[knobIdx] + 1 : 1;
+                knobLastDir[knobIdx] = dir;
+                if (knobAccum[knobIdx] >= 6) {
                     knobAccum[knobIdx] = 0;
                     heldStepNotes = heldStepNotes.map(function(n) {
                         return scaleNudgeNote(n, dir, padKey, padScale);
@@ -2327,8 +2299,32 @@ globalThis.onMidiMessageInternal = function (data) {
             clearStep(activeTrack, ac, absIdx);
             forceRedraw();
         } else if (!shiftHeld) {
-            /* Record press — tap vs hold decided in tick() or note-off */
+            /* Record press time for tap detection on release.
+             * Enter step edit immediately — tap vs hold decided on release. */
             stepBtnPressedTick[idx] = tickCount;
+            if (heldStep < 0) {
+                const ac_p   = effectiveClip(activeTrack);
+                const absP   = trackCurrentPage[activeTrack] * 16 + idx;
+                heldStepBtn  = idx;
+                heldStep     = absP;
+                const pref_p = 't' + activeTrack + '_c' + ac_p + '_step_' + absP;
+                const raw_p  = typeof host_module_get_param === 'function'
+                    ? host_module_get_param(pref_p + '_notes') : null;
+                heldStepNotes = (raw_p && raw_p.trim().length > 0)
+                    ? raw_p.trim().split(' ').map(Number).filter(function(n) { return n >= 0 && n <= 127; })
+                    : [];
+                if (heldStepNotes.length > 0 && typeof host_module_get_param === 'function') {
+                    const rv = host_module_get_param(pref_p + '_vel');
+                    const rg = host_module_get_param(pref_p + '_gate');
+                    const rn = host_module_get_param(pref_p + '_nudge');
+                    stepEditVel   = rv !== null ? parseInt(rv, 10) : 100;
+                    stepEditGate  = rg !== null ? parseInt(rg, 10) : 12;
+                    stepEditNudge = rn !== null ? parseInt(rn, 10) : 0;
+                } else {
+                    stepEditVel = 100; stepEditGate = 12; stepEditNudge = 0;
+                }
+                forceRedraw();
+            }
         }
     }
 
@@ -2526,53 +2522,42 @@ globalThis.onMidiMessageInternal = function (data) {
 
     /* Pad releases: note-off */
     if ((status & 0xF0) === 0x80 || ((status & 0xF0) === 0x90 && d2 === 0)) {
-        /* Step button release: exit edit or commit tap-toggle */
+        /* Step button release: tap-toggle if within threshold, always exit step edit */
         if (d1 >= 16 && d1 <= 31) {
             const btn = d1 - 16;
             if (btn === heldStepBtn) {
-                /* Exit step edit mode */
+                if (stepBtnPressedTick[btn] >= 0) {
+                    /* Quick release within threshold — commit as tap toggle */
+                    const ac_t   = effectiveClip(activeTrack);
+                    const absIdx = heldStep;
+                    const wasOn  = clipSteps[activeTrack][ac_t][absIdx] === 1;
+                    stepBtnPressedTick[btn] = -1;
+                    if (!wasOn) {
+                        if (heldStepNotes.length === 0) {
+                            /* No notes: assign lastPlayedNote */
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx + '_toggle', String(lastPlayedNote));
+                        } else {
+                            /* Has notes: reactivate as-is */
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx, '1');
+                        }
+                        clipSteps[activeTrack][ac_t][absIdx] = 1;
+                        clipNonEmpty[activeTrack][ac_t] = true;
+                        refreshSeqNotesIfCurrent(activeTrack, ac_t, absIdx);
+                    } else {
+                        /* Deactivating: preserve note data */
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx, '0');
+                        clipSteps[activeTrack][ac_t][absIdx] = 0;
+                        if (clipNonEmpty[activeTrack][ac_t]) clipNonEmpty[activeTrack][ac_t] = clipHasContent(activeTrack, ac_t);
+                        refreshSeqNotesIfCurrent(activeTrack, ac_t, absIdx);
+                    }
+                }
+                /* Always exit step edit on release of the held button */
                 heldStepBtn   = -1;
                 heldStep      = -1;
                 heldStepNotes = [];
-                forceRedraw();
-            } else if (stepBtnPressedTick[btn] >= 0) {
-                /* Tap: released before hold threshold — toggle step on/off */
-                const ac_t   = effectiveClip(activeTrack);
-                const absIdx = trackCurrentPage[activeTrack] * 16 + btn;
-                const wasOn  = clipSteps[activeTrack][ac_t][absIdx] === 1;
-                stepBtnPressedTick[btn] = -1;
-                if (!wasOn) {
-                    /* Activating: assign lastPlayedNote if step has default note */
-                    const raw_t = typeof host_module_get_param === 'function'
-                        ? host_module_get_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx + '_notes')
-                        : null;
-                    const norm = raw_t ? raw_t.trim() : '';
-                    if (!norm) {
-                        /* count=0: assign lastPlayedNote via toggle */
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx + '_toggle', String(lastPlayedNote));
-                    } else if (norm === '60' && lastPlayedNote !== 60) {
-                        /* Default C4 and player last played something else: swap */
-                        if (typeof host_module_set_param === 'function') {
-                            host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx + '_toggle', '60');
-                            host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx + '_toggle', String(lastPlayedNote));
-                        }
-                    } else {
-                        /* Has explicit notes or C4 is lastPlayedNote: reactivate as-is */
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx, '1');
-                    }
-                    clipSteps[activeTrack][ac_t][absIdx] = 1;
-                    clipNonEmpty[activeTrack][ac_t] = true;
-                    refreshSeqNotesIfCurrent(activeTrack, ac_t, absIdx);
-                } else {
-                    /* Deactivating: preserve note data */
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx, '0');
-                    clipSteps[activeTrack][ac_t][absIdx] = 0;
-                    if (clipNonEmpty[activeTrack][ac_t]) clipNonEmpty[activeTrack][ac_t] = clipHasContent(activeTrack, ac_t);
-                    refreshSeqNotesIfCurrent(activeTrack, ac_t, absIdx);
-                }
                 forceRedraw();
             }
         }
