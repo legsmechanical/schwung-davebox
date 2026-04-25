@@ -1068,6 +1068,25 @@ function updateStepLEDs() {
         }
         setLED(16 + i, color);
     }
+
+    /* Gate overlay: K3 (Dur) touched while in step edit — visualize gate length on step buttons.
+     * Full steps covered by gate → White; partial step at end → DarkGrey.
+     * Only overlays in-bounds steps; steps beyond gate keep their normal color. */
+    if (heldStep >= 0 && knobTouched === 2 && heldStepNotes.length > 0) {
+        const fullSteps    = Math.floor(stepEditGate / 24);
+        const partialTicks = stepEditGate % 24;
+        for (let i = 0; i < 16; i++) {
+            const absStep = base + i;
+            if (absStep >= len) continue;
+            const offset = absStep - heldStep;
+            if (offset < 0) continue;
+            if (offset < fullSteps) {
+                setLED(16 + i, White);
+            } else if (offset === fullSteps && partialTicks > 0) {
+                setLED(16 + i, DarkGrey);
+            }
+        }
+    }
 }
 
 function groupHasContent(group) {
