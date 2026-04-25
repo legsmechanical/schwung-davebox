@@ -1713,10 +1713,31 @@ globalThis.tick = function () {
 
         if ((tickCount % POLL_INTERVAL) === 0) { pollDSP(); screenDirty = true; }
 
-        /* Step hold threshold: once elapsed, close the tap window so release won't toggle */
+        /* Step hold threshold: once elapsed, close the tap window so release won't toggle.
+         * Also auto-assign empty step now so knobs work immediately in step edit. */
         if (heldStep >= 0 && heldStepBtn >= 0 && stepBtnPressedTick[heldStepBtn] >= 0 &&
                 (tickCount - stepBtnPressedTick[heldStepBtn]) >= STEP_HOLD_TICKS) {
             stepBtnPressedTick[heldStepBtn] = -1;
+            if (stepWasEmpty && heldStepNotes.length === 0 && typeof host_module_set_param === 'function') {
+                const ac_h = effectiveClip(activeTrack);
+                const assignNote = lastPlayedNote >= 0 ? lastPlayedNote : defaultStepNote();
+                const assignVel  = effectiveVelocity(lastPadVelocity);
+                host_module_set_param('t' + activeTrack + '_c' + ac_h + '_step_' + heldStep + '_toggle', assignNote + ' ' + assignVel);
+                const raw_h = typeof host_module_get_param === 'function'
+                    ? host_module_get_param('t' + activeTrack + '_c' + ac_h + '_step_' + heldStep + '_notes') : null;
+                heldStepNotes = (raw_h && raw_h.trim().length > 0)
+                    ? raw_h.trim().split(' ').map(Number).filter(function(n) { return n >= 0 && n <= 127; })
+                    : [];
+                clipSteps[activeTrack][ac_h][heldStep] = heldStepNotes.length > 0 ? 1 : 0;
+                if (heldStepNotes.length > 0) clipNonEmpty[activeTrack][ac_h] = true;
+                const rv = host_module_get_param('t' + activeTrack + '_c' + ac_h + '_step_' + heldStep + '_vel');
+                const rg = host_module_get_param('t' + activeTrack + '_c' + ac_h + '_step_' + heldStep + '_gate');
+                const rn = host_module_get_param('t' + activeTrack + '_c' + ac_h + '_step_' + heldStep + '_nudge');
+                stepEditVel   = rv !== null ? parseInt(rv, 10) : 100;
+                stepEditGate  = rg !== null ? parseInt(rg, 10) : 12;
+                stepEditNudge = rn !== null ? parseInt(rn, 10) : 0;
+                screenDirty = true;
+            }
         }
 
         /* CC 50 hold detection: crossing threshold enters session overview */
@@ -2387,20 +2408,12 @@ globalThis.onMidiMessageInternal = function (data) {
                     ? raw_p.trim().split(' ').map(Number).filter(function(n) { return n >= 0 && n <= 127; })
                     : [];
                 if (heldStepNotes.length === 0) {
-                    /* Empty step: auto-assign on press so knobs work immediately */
-                    stepWasEmpty = true;
-                    const assignNote = lastPlayedNote >= 0 ? lastPlayedNote : defaultStepNote();
-                    const assignVel  = effectiveVelocity(lastPadVelocity);
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + activeTrack + '_c' + ac_p + '_step_' + absP + '_toggle', assignNote + ' ' + assignVel);
-                    const raw_aa = typeof host_module_get_param === 'function'
-                        ? host_module_get_param(pref_p + '_notes') : null;
-                    heldStepNotes = (raw_aa && raw_aa.trim().length > 0)
-                        ? raw_aa.trim().split(' ').map(Number).filter(function(n) { return n >= 0 && n <= 127; })
-                        : [];
-                    clipSteps[activeTrack][ac_p][absP] = heldStepNotes.length > 0 ? 1 : 0;
-                    if (heldStepNotes.length > 0) clipNonEmpty[activeTrack][ac_p] = true;
-                    stepEditVel = assignVel; stepEditGate = 12; stepEditNudge = 0;
+                    /* Empty step: defer auto-assign to release (tap) or hold threshold (hold+edit).
+                     * Knobs stay inactive until assignment happens at hold threshold. */
+                    stepWasEmpty  = true;
+                    stepEditVel   = effectiveVelocity(lastPadVelocity);
+                    stepEditGate  = 12;
+                    stepEditNudge = 0;
                 } else {
                     stepWasEmpty = false;
                     const rv = typeof host_module_get_param === 'function' ? host_module_get_param(pref_p + '_vel') : null;
@@ -2594,8 +2607,17 @@ globalThis.onMidiMessageInternal = function (data) {
                     const absIdx = heldStep;
                     stepBtnPressedTick[btn] = -1;
                     if (stepWasEmpty) {
-                        /* Step was empty and auto-assigned on press: step is already on.
-                         * Tap confirms the assignment — nothing more to do. */
+                        /* Step was empty: assign now on tap release */
+                        if (heldStepNotes.length === 0) {
+                            const assignNote = lastPlayedNote >= 0 ? lastPlayedNote : defaultStepNote();
+                            const assignVel  = effectiveVelocity(lastPadVelocity);
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx + '_toggle', assignNote + ' ' + assignVel);
+                            clipSteps[activeTrack][ac_t][absIdx] = 1;
+                            clipNonEmpty[activeTrack][ac_t] = true;
+                            refreshSeqNotesIfCurrent(activeTrack, ac_t, absIdx);
+                        }
+                        /* heldStepNotes.length > 0: pads were pressed while held, already assigned */
                     } else {
                         const wasOn = clipSteps[activeTrack][ac_t][absIdx] === 1;
                         if (!wasOn) {
