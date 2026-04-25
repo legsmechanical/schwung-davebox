@@ -666,14 +666,7 @@ function disarmRecord() {
     recordArmedTrack     = -1;
     countInStartTick    = -1;
     countInQuarterTicks = 0;
-    flushChordBatch();
-    recordCaptureStep     = -1;
-    recordCaptureClip     = -1;
-    recordCaptureEndTick  = -1;
-    recordCaptureRt       = -1;
-    recordCaptureBoundary = -1;
-    recordCaptureBatch    = [];
-    noteOnTick.clear();
+    _recordingNoteTrack.clear();
     if (typeof host_module_set_param === 'function') {
         host_module_set_param('record_count_in_cancel', '1');
         if (t >= 0) host_module_set_param('t' + t + '_recording', '0');
@@ -685,14 +678,7 @@ function disarmRecord() {
 function handoffRecordingToTrack(newTrack) {
     if (!recordArmed || recordCountingIn || newTrack === recordArmedTrack) return;
     const old = recordArmedTrack;
-    flushChordBatch();
-    recordCaptureStep     = -1;
-    recordCaptureClip     = -1;
-    recordCaptureEndTick  = -1;
-    recordCaptureRt       = -1;
-    recordCaptureBoundary = -1;
-    recordCaptureBatch    = [];
-    noteOnTick.clear();
+    _recordingNoteTrack.clear();
     recordArmedTrack      = newTrack;
     if (typeof host_module_set_param === 'function') {
         if (old >= 0) host_module_set_param('t' + old + '_recording', '0');
@@ -705,74 +691,25 @@ function effectiveVelocity(rawVel) {
     return stubInputVel > 0 ? stubInputVel : rawVel;
 }
 
-/* Capture a note-on during overdub: computes tick_offset, sends _add "pitch offset vel". */
-function flushChordBatch() {
-    if (recordCaptureBatch.length === 0 || recordCaptureRt < 0) return;
-    if (typeof host_module_set_param !== 'function') return;
-    const val = recordCaptureBatch.map(n => n.pitch + ' ' + n.offset + ' ' + n.velocity).join(' ');
-    host_module_set_param(
-        't' + recordCaptureRt + '_c' + recordCaptureClip + '_step_' + recordCaptureStep + '_add',
-        val);
-    recordCaptureBatch = [];
-}
+/* [legacy no-op] Chord batch flushing replaced by DSP-owns-timing recording. */
+function flushChordBatch() {}
+
+/* DSP-side recording: send pitch+velocity to DSP; DSP reads current_clip_tick
+ * directly in the set_param handler (≤2.9ms accuracy, no JS timing computation). */
+const _recordingNoteTrack = new Map(); /* pitch → track index, for matching note-offs */
 
 function recordNoteOn(pitch, velocity, rt) {
     if (typeof host_module_set_param !== 'function') return;
-    const ac_r = trackActiveClip[rt];
-    let cs_r;
-
-    if (recordCaptureStep >= 0 && recordCaptureClip === ac_r && recordCaptureRt === rt) {
-        /* Continuing an open chord window — use the pinned step and boundary snapshot */
-        cs_r = recordCaptureStep;
-    } else {
-        /* New chord window: snapshot the step boundary now so all chord notes share it */
-        cs_r = trackCurrentStep[rt];
-        if (cs_r < 0) return;
-        flushChordBatch(); /* flush any previous window that hadn't expired yet */
-        recordCaptureStep     = cs_r;
-        recordCaptureClip     = ac_r;
-        recordCaptureRt       = rt;
-        recordCaptureBoundary = stepBoundaryTick[rt];
-        recordCaptureEndTick  = tickCount + RECORD_CAPTURE_TICKS;
-        recordCaptureBatch    = [];
-    }
-
-    /* Compute offset using the window's boundary snapshot — consistent across all chord notes */
-    const boundary = recordCaptureBoundary;
-    let offset = 0;
-    if (boundary >= 0 && recordBpm > 0) {
-        offset = Math.round((tickCount - boundary) * recordBpm / 122.5);
-        /* Nearest-grid: if note is closer to the NEXT step, assign there with negative offset */
-        const clipLen = clipLength[rt][ac_r];
-        if (offset > 12 && clipLen > 0 && recordCaptureBatch.length === 0) {
-            /* Only let the first note in the window trigger nearest-grid reassignment */
-            offset -= 24;
-            cs_r = (cs_r + 1) % clipLen;
-            recordCaptureStep = cs_r;
-        }
-        offset = Math.max(-23, Math.min(23, offset));
-    }
-    if (inpQuant) offset = 0;
-
-    /* Subsequent notes in the chord share the first note's offset so the chord fires together */
-    const batchOffset = recordCaptureBatch.length > 0 ? recordCaptureBatch[0].offset : offset;
-    recordCaptureBatch.push({ pitch: pitch, offset: batchOffset, velocity: velocity });
-    clipSteps[rt][ac_r][cs_r] = 1;
-    clipNonEmpty[rt][ac_r] = true;
-    noteOnTick.set(pitch, { tick: tickCount, cs_r: cs_r, ac_r: ac_r, rt: rt });
+    _recordingNoteTrack.set(pitch, rt);
+    host_module_set_param('t' + rt + '_record_note_on', pitch + ' ' + velocity);
 }
 
-/* Capture a note-off during overdub: computes gate duration, sends _gate. */
 function recordNoteOff(pitch) {
-    const entry = noteOnTick.get(pitch);
-    if (!entry) return;
-    noteOnTick.delete(pitch);
-    const { rt, ac_r, cs_r, tick } = entry;
-    if (!clipSteps[rt][ac_r][cs_r]) return;
+    const rt = _recordingNoteTrack.get(pitch);
+    if (rt === undefined) return;
+    _recordingNoteTrack.delete(pitch);
     if (typeof host_module_set_param !== 'function') return;
-    const jsTicks = tickCount - tick;
-    const gateDsp = Math.max(1, Math.min(6144, Math.round(jsTicks * recordBpm / 122.5)));
-    host_module_set_param('t' + rt + '_c' + ac_r + '_step_' + cs_r + '_gate', String(gateDsp));
+    host_module_set_param('t' + rt + '_record_note_off', String(pitch));
 }
 
 function openGlobalMenu() {
@@ -1781,16 +1718,6 @@ globalThis.tick = function () {
                     return clipHasContent(t, c);
                 });
             });
-        }
-
-        /* Chord capture window expiry: flush all buffered notes as one _add call */
-        if (recordCaptureStep >= 0 && tickCount >= recordCaptureEndTick) {
-            flushChordBatch();
-            recordCaptureStep     = -1;
-            recordCaptureClip     = -1;
-            recordCaptureEndTick  = -1;
-            recordCaptureRt       = -1;
-            recordCaptureBoundary = -1;
         }
 
         /* Refresh scene state cache for O(1) lookups in LED update functions */
