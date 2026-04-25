@@ -1954,7 +1954,6 @@ static void set_param(void *instance, const char *key, const char *val) {
                      * Safety: deny activation if step has no notes (prevents invariant violation). */
                     if (val[0] == '1') {
                         if (cl->step_note_count[sidx] > 0) cl->steps[sidx] = 1;
-                        /* else: deny — keep steps=0 so invariant holds */
                     } else {
                         cl->steps[sidx] = 0;
                     }
@@ -1963,6 +1962,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                         for (i = 0; i < SEQ_STEPS; i++) if (cl->steps[i]) { any = 1; break; }
                         cl->active = (uint8_t)any;
                     }
+                    clip_migrate_to_notes(cl);
                     return;
                 }
 
@@ -1993,7 +1993,6 @@ static void set_param(void *instance, const char *key, const char *val) {
                             cl->steps[sidx] = 0;
                     } else if (cl->step_note_count[sidx] < 8) {
                         int was_empty = (cl->step_note_count[sidx] == 0);
-                        /* add: write note+count BEFORE activating step to avoid render-thread race */
                         int ni2 = (int)cl->step_note_count[sidx];
                         cl->step_notes[sidx][ni2] = (uint8_t)note;
                         cl->note_tick_offset[sidx][ni2] = 0;
@@ -2009,6 +2008,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                         for (i = 0; i < SEQ_STEPS; i++) if (cl->steps[i]) { any = 1; break; }
                         cl->active = (uint8_t)any;
                     }
+                    clip_migrate_to_notes(cl);
                     return;
                 }
 
@@ -2055,6 +2055,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                         for (i = 0; i < SEQ_STEPS; i++) if (cl->steps[i]) { any = 1; break; }
                         cl->active = (uint8_t)any;
                         if (tr->recording) LRS_SET(tr, sidx);
+                        clip_migrate_to_notes(cl);
                     }
                     return;
                 }
@@ -2072,23 +2073,25 @@ static void set_param(void *instance, const char *key, const char *val) {
                         for (i = 0; i < SEQ_STEPS; i++) if (cl->steps[i]) { any = 1; break; }
                         cl->active = (uint8_t)any;
                     }
+                    clip_migrate_to_notes(cl);
                     return;
                 }
                 if (!strcmp(q, "_vel")) {
                     if (!cl->steps[sidx]) return;
                     cl->step_vel[sidx] = (uint8_t)clamp_i(my_atoi(val), 0, 127);
+                    clip_migrate_to_notes(cl);
                     if (!tr->recording) seq8_save_state(inst);
                     return;
                 }
                 if (!strcmp(q, "_gate")) {
                     if (!cl->steps[sidx]) return;
                     cl->step_gate[sidx] = (uint16_t)clamp_i(my_atoi(val), 1, SEQ_STEPS * TICKS_PER_STEP);
+                    clip_migrate_to_notes(cl);
                     if (!tr->recording) seq8_save_state(inst);
                     return;
                 }
                 if (!strcmp(q, "_nudge")) {
                     if (!cl->steps[sidx] || cl->step_note_count[sidx] == 0) return;
-                    /* Anchor to note[0]; apply delta to all notes in step to preserve relative timing. */
                     int new_val = clamp_i(my_atoi(val), -(TICKS_PER_STEP-1), (TICKS_PER_STEP-1));
                     int delta = new_val - (int)cl->note_tick_offset[sidx][0];
                     int ni;
@@ -2096,6 +2099,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                         int o = (int)cl->note_tick_offset[sidx][ni] + delta;
                         cl->note_tick_offset[sidx][ni] = (int16_t)clamp_i(o, -(TICKS_PER_STEP-1), (TICKS_PER_STEP-1));
                     }
+                    clip_migrate_to_notes(cl);
                     if (!tr->recording) seq8_save_state(inst);
                     return;
                 }
@@ -2105,6 +2109,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                     for (n = 0; n < (int)cl->step_note_count[sidx]; n++)
                         cl->step_notes[sidx][n] = (uint8_t)clamp_i(
                             (int)cl->step_notes[sidx][n] + delta, 0, 127);
+                    clip_migrate_to_notes(cl);
                     if (!tr->recording) seq8_save_state(inst);
                     return;
                 }
@@ -2127,6 +2132,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                             cl->step_notes[sidx][i] = 0;
                             cl->note_tick_offset[sidx][i] = 0;
                         }
+                        clip_migrate_to_notes(cl);
                         if (!tr->recording) seq8_save_state(inst);
                     }
                     return;
@@ -2135,6 +2141,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             }
             if (!strncmp(p, "_length", 7)) {
                 cl->length = (uint16_t)clamp_i(my_atoi(val), 1, SEQ_STEPS);
+                clip_migrate_to_notes(cl);
                 return;
             }
             if (!strncmp(p, "_clear", 6) && p[6] == '\0') {
@@ -2147,6 +2154,9 @@ static void set_param(void *instance, const char *key, const char *val) {
                     memset(cl->note_tick_offset[i], 0, 8 * sizeof(int16_t));
                 }
                 cl->active = 0;
+                cl->note_count = 0;
+                memset(cl->notes, 0, sizeof(cl->notes));
+                cl->occ_dirty = 1;
                 return;
             }
             return;
@@ -2241,6 +2251,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             int i, any = 0;
             for (i = 0; i < len; i++) if (cl->steps[i]) { any = 1; break; }
             cl->active = (uint8_t)any;
+            clip_migrate_to_notes(cl);
             return;
         }
 
@@ -2363,6 +2374,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             for (i = 0; i < (int)cl->length; i++)
                 if (cl->steps[i]) { any = 1; break; }
             cl->active = (uint8_t)any;
+            clip_migrate_to_notes(cl);
 
             return;
         }
