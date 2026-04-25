@@ -312,7 +312,9 @@ static int effective_mute(seq8_instance_t *inst, int t) {
 /* silence_muted_tracks defined after pfx_note_off below */
 
 /* Forward declarations for note-centric helpers (defined after clip_init) */
+static int  clip_insert_note(clip_t *cl, uint32_t tick, uint16_t gate, uint8_t pitch, uint8_t vel);
 static void clip_migrate_to_notes(clip_t *cl);
+static void clip_build_steps_from_notes(clip_t *cl);
 static void silence_track_notes_v2(seq8_instance_t *inst, seq8_track_t *tr);
 
 /* ------------------------------------------------------------------ */
@@ -410,8 +412,8 @@ static void seq8_save_state(seq8_instance_t *inst) {
     ensure_parent_dir(inst->state_path);
     FILE *fp = fopen(inst->state_path, "w");
     if (!fp) return;
-    int t, c, s;
-    fprintf(fp, "{\"v\":9,\"playing\":%d", inst->playing);
+    int t, c;
+    fprintf(fp, "{\"v\":10,\"playing\":%d", inst->playing);
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
     for (t = 0; t < NUM_TRACKS; t++)
@@ -423,91 +425,27 @@ static void seq8_save_state(seq8_instance_t *inst) {
     for (t = 0; t < NUM_TRACKS; t++) {
         for (c = 0; c < NUM_CLIPS; c++) {
             clip_t *cl = &inst->tracks[t].clips[c];
-            /* steps[] on/off string */
-            fprintf(fp, ",\"t%dc%d\":\"", t, c);
-            for (s = 0; s < SEQ_STEPS; s++)
-                fputc(cl->steps[s] ? '1' : '0', fp);
-            fputc('"', fp);
             fprintf(fp, ",\"t%dc%d_len\":%d", t, c, (int)cl->length);
             if (cl->stretch_exp != 0)
                 fprintf(fp, ",\"t%dc%d_se\":%d", t, c, (int)cl->stretch_exp);
             if (cl->clock_shift_pos != 0)
                 fprintf(fp, ",\"t%dc%d_cs\":%d", t, c, (int)cl->clock_shift_pos);
-            /* sparse step notes — emit any step with count > 0 (count=0 is default) */
-            int has_nondefault = 0;
-            for (s = 0; s < SEQ_STEPS; s++) {
-                if (cl->step_note_count[s] != 0) { has_nondefault = 1; break; }
-            }
-            if (has_nondefault) {
-                int n;
-                fprintf(fp, ",\"t%dc%d_sn\":\"", t, c);
-                for (s = 0; s < SEQ_STEPS; s++) {
-                    if (cl->step_note_count[s] == 0)
-                        continue;
-                    fprintf(fp, "%d:", s);
-                    for (n = 0; n < (int)cl->step_note_count[s]; n++) {
-                        if (n > 0) fputc(',', fp);
-                        fprintf(fp, "%d", (int)cl->step_notes[s][n]);
+            /* note list: "tick:pitch:vel:gate;" for each active note */
+            if (cl->note_count > 0) {
+                uint16_t ni;
+                int wrote = 0;
+                for (ni = 0; ni < cl->note_count; ni++) {
+                    note_t *n = &cl->notes[ni];
+                    if (!n->active) continue;
+                    if (!wrote) {
+                        fprintf(fp, ",\"t%dc%d_n\":\"", t, c);
+                        wrote = 1;
                     }
-                    fputc(';', fp);
+                    fprintf(fp, "%u:%d:%d:%d;",
+                            (unsigned)n->tick, (int)n->pitch,
+                            (int)n->vel, (int)n->gate);
                 }
-                fputc('"', fp);
-            }
-            /* sparse step vel — active steps only, omit if all default (SEQ_VEL) */
-            {
-                int has_sv = 0;
-                for (s = 0; s < SEQ_STEPS; s++)
-                    if (cl->steps[s] && (int)cl->step_vel[s] != SEQ_VEL) { has_sv = 1; break; }
-                if (has_sv) {
-                    fprintf(fp, ",\"t%dc%d_sv\":\"", t, c);
-                    for (s = 0; s < SEQ_STEPS; s++) {
-                        if (!cl->steps[s] || (int)cl->step_vel[s] == SEQ_VEL) continue;
-                        fprintf(fp, "%d:%d;", s, (int)cl->step_vel[s]);
-                    }
-                    fputc('"', fp);
-                }
-            }
-            /* sparse step gate — active steps only, omit if all default (GATE_TICKS) */
-            {
-                int has_sg = 0;
-                for (s = 0; s < SEQ_STEPS; s++)
-                    if (cl->steps[s] && (int)cl->step_gate[s] != GATE_TICKS) { has_sg = 1; break; }
-                if (has_sg) {
-                    fprintf(fp, ",\"t%dc%d_sg\":\"", t, c);
-                    for (s = 0; s < SEQ_STEPS; s++) {
-                        if (!cl->steps[s] || (int)cl->step_gate[s] == GATE_TICKS) continue;
-                        fprintf(fp, "%d:%d;", s, (int)cl->step_gate[s]);
-                    }
-                    fputc('"', fp);
-                }
-            }
-            /* sparse per-note tick_offset — active steps only, emit when any note non-zero */
-            {
-                int has_to = 0;
-                for (s = 0; s < SEQ_STEPS && !has_to; s++) {
-                    if (!cl->steps[s]) continue;
-                    int ni;
-                    for (ni = 0; ni < (int)cl->step_note_count[s]; ni++)
-                        if (cl->note_tick_offset[s][ni] != 0) { has_to = 1; break; }
-                }
-                if (has_to) {
-                    int ni;
-                    fprintf(fp, ",\"t%dc%d_to\":\"", t, c);
-                    for (s = 0; s < SEQ_STEPS; s++) {
-                        if (!cl->steps[s] || cl->step_note_count[s] == 0) continue;
-                        int any_nz = 0;
-                        for (ni = 0; ni < (int)cl->step_note_count[s]; ni++)
-                            if (cl->note_tick_offset[s][ni] != 0) { any_nz = 1; break; }
-                        if (!any_nz) continue;
-                        fprintf(fp, "%d:", s);
-                        for (ni = 0; ni < (int)cl->step_note_count[s]; ni++) {
-                            if (ni > 0) fputc(',', fp);
-                            fprintf(fp, "%d", (int)cl->note_tick_offset[s][ni]);
-                        }
-                        fputc(';', fp);
-                    }
-                    fputc('"', fp);
-                }
+                if (wrote) fputc('"', fp);
             }
         }
     }
@@ -571,15 +509,15 @@ static void seq8_load_state(seq8_instance_t *inst) {
     if (!n) { free(buf); remove(inst->state_path); return; }
     buf[n] = '\0';
 
-    /* Version gate: delete and ignore any state file that isn't v=9. */
-    if (json_get_int(buf, "v", -1) != 9) {
+    /* Version gate: delete and ignore any state file that isn't v=10. */
+    if (json_get_int(buf, "v", -1) != 10) {
         free(buf);
         remove(inst->state_path);
         seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
         return;
     }
 
-    int t, c, i;
+    int t, c;
     char key[32];
     for (t = 0; t < NUM_TRACKS; t++) {
         snprintf(key, sizeof(key), "t%d_ac", t);
@@ -599,116 +537,49 @@ static void seq8_load_state(seq8_instance_t *inst) {
             json_get_int(buf, key, ROUTE_SCHWUNG), ROUTE_SCHWUNG, ROUTE_MOVE);
 
         for (c = 0; c < NUM_CLIPS; c++) {
-            snprintf(key, sizeof(key), "t%dc%d", t, c);
-            json_get_steps(buf, key, inst->tracks[t].clips[c].steps, SEQ_STEPS);
+            clip_t *cl = &inst->tracks[t].clips[c];
 
             snprintf(key, sizeof(key), "t%dc%d_len", t, c);
-            inst->tracks[t].clips[c].length = (uint16_t)clamp_i(
+            cl->length = (uint16_t)clamp_i(
                 json_get_int(buf, key, SEQ_STEPS_DEFAULT), 1, SEQ_STEPS);
 
             snprintf(key, sizeof(key), "t%dc%d_se", t, c);
-            inst->tracks[t].clips[c].stretch_exp = (int8_t)clamp_i(
-                json_get_int(buf, key, 0), -8, 8);
+            cl->stretch_exp = (int8_t)clamp_i(json_get_int(buf, key, 0), -8, 8);
 
             snprintf(key, sizeof(key), "t%dc%d_cs", t, c);
-            inst->tracks[t].clips[c].clock_shift_pos = (uint16_t)clamp_i(
-                json_get_int(buf, key, 0), 0,
-                (int)inst->tracks[t].clips[c].length - 1);
+            cl->clock_shift_pos = (uint16_t)clamp_i(
+                json_get_int(buf, key, 0), 0, (int)cl->length - 1);
 
-            int any = 0;
-            for (i = 0; i < SEQ_STEPS; i++)
-                if (inst->tracks[t].clips[c].steps[i]) { any = 1; break; }
-            inst->tracks[t].clips[c].active = (uint8_t)any;
-
-            /* sparse step notes — absent key means all steps use clip_init defaults */
+            /* note list: "tick:pitch:vel:gate;" */
             {
                 char search[40];
-                snprintf(search, sizeof(search), "\"t%dc%d_sn\":\"", t, c);
+                snprintf(search, sizeof(search), "\"t%dc%d_n\":\"", t, c);
                 const char *p = strstr(buf, search);
                 if (p) {
                     p += strlen(search);
-                    clip_t *cl = &inst->tracks[t].clips[c];
+                    uint32_t max_tick = (uint32_t)cl->length * TICKS_PER_STEP;
                     while (*p && *p != '"') {
-                        int sidx = 0;
+                        unsigned long tick_val = 0;
                         while (*p >= '0' && *p <= '9')
-                            sidx = sidx * 10 + (*p++ - '0');
-                        if (*p != ':') break;
+                            tick_val = tick_val * 10 + (unsigned long)(*p++ - '0');
+                        if (*p != ':') { while (*p && *p != ';' && *p != '"') p++; if (*p==';') p++; continue; }
                         p++;
-                        if (sidx < 0 || sidx >= SEQ_STEPS) {
-                            while (*p && *p != ';' && *p != '"') p++;
-                            if (*p == ';') p++;
-                            continue;
-                        }
-                        int cnt = 0;
-                        while (*p && *p != ';' && *p != '"') {
-                            int note = 0;
-                            while (*p >= '0' && *p <= '9')
-                                note = note * 10 + (*p++ - '0');
-                            if (cnt < 8)
-                                cl->step_notes[sidx][cnt++] =
-                                    (uint8_t)clamp_i(note, 0, 127);
-                            if (*p == ',') p++;
-                        }
-                        cl->step_note_count[sidx] = (uint8_t)cnt;
-                        for (i = cnt; i < 8; i++)
-                            cl->step_notes[sidx][i] = 0;
-                        if (*p == ';') p++;
-                    }
-                }
-            }
-            /* sparse step vel */
-            {
-                clip_t *cl = &inst->tracks[t].clips[c];
-                int tmp[SEQ_STEPS], s2;
-                for (s2 = 0; s2 < SEQ_STEPS; s2++) tmp[s2] = SEQ_VEL;
-                snprintf(key, sizeof(key), "t%dc%d_sv", t, c);
-                json_get_sparse_int(buf, key, tmp, SEQ_STEPS);
-                for (s2 = 0; s2 < SEQ_STEPS; s2++)
-                    cl->step_vel[s2] = (uint8_t)clamp_i(tmp[s2], 0, 127);
-            }
-            /* sparse step gate */
-            {
-                clip_t *cl = &inst->tracks[t].clips[c];
-                int tmp[SEQ_STEPS], s2;
-                for (s2 = 0; s2 < SEQ_STEPS; s2++) tmp[s2] = GATE_TICKS;
-                snprintf(key, sizeof(key), "t%dc%d_sg", t, c);
-                json_get_sparse_int(buf, key, tmp, SEQ_STEPS);
-                for (s2 = 0; s2 < SEQ_STEPS; s2++)
-                    cl->step_gate[s2] = (uint16_t)clamp_i(tmp[s2], 1, SEQ_STEPS * TICKS_PER_STEP);
-            }
-            /* sparse per-note tick_offset: format "S:o0,o1,...;" */
-            {
-                char search[40];
-                snprintf(search, sizeof(search), "\"t%dc%d_to\":\"", t, c);
-                const char *p = strstr(buf, search);
-                if (p) {
-                    p += strlen(search);
-                    clip_t *cl = &inst->tracks[t].clips[c];
-                    while (*p && *p != '"') {
-                        int sidx = 0;
-                        while (*p >= '0' && *p <= '9')
-                            sidx = sidx * 10 + (*p++ - '0');
-                        if (*p != ':') break;
+                        int pitch_val = 0;
+                        while (*p >= '0' && *p <= '9') pitch_val = pitch_val*10 + (*p++ - '0');
+                        if (*p != ':') { while (*p && *p != ';' && *p != '"') p++; if (*p==';') p++; continue; }
                         p++;
-                        if (sidx < 0 || sidx >= SEQ_STEPS) {
-                            while (*p && *p != ';' && *p != '"') p++;
-                            if (*p == ';') p++;
-                            continue;
-                        }
-                        int ni = 0;
-                        while (*p && *p != ';' && *p != '"') {
-                            int neg = 0;
-                            if (*p == '-') { neg = 1; p++; }
-                            int val = 0;
-                            while (*p >= '0' && *p <= '9')
-                                val = val * 10 + (*p++ - '0');
-                            if (neg) val = -val;
-                            if (ni < 8)
-                                cl->note_tick_offset[sidx][ni++] =
-                                    (int16_t)clamp_i(val, -(TICKS_PER_STEP-1), (TICKS_PER_STEP-1));
-                            if (*p == ',') p++;
-                        }
+                        int vel_val = 0;
+                        while (*p >= '0' && *p <= '9') vel_val = vel_val*10 + (*p++ - '0');
+                        if (*p != ':') { while (*p && *p != ';' && *p != '"') p++; if (*p==';') p++; continue; }
+                        p++;
+                        int gate_val = 0;
+                        while (*p >= '0' && *p <= '9') gate_val = gate_val*10 + (*p++ - '0');
                         if (*p == ';') p++;
+                        if ((uint32_t)tick_val < max_tick)
+                            clip_insert_note(cl, (uint32_t)tick_val,
+                                             (uint16_t)clamp_i(gate_val, 1, SEQ_STEPS * TICKS_PER_STEP),
+                                             (uint8_t)clamp_i(pitch_val, 0, 127),
+                                             (uint8_t)clamp_i(vel_val, 0, 127));
                     }
                 }
             }
@@ -788,10 +659,10 @@ static void seq8_load_state(seq8_instance_t *inst) {
     inst->input_vel   = (uint8_t)clamp_i(json_get_int(buf, "iv", 0), 0, 127);
     inst->inp_quant   = (uint8_t)(json_get_int(buf, "iq", 0) != 0);
     free(buf);
-    /* Build note-centric representation from loaded step arrays */
+    /* Build step arrays from loaded notes[] for display/edit compat */
     for (t = 0; t < NUM_TRACKS; t++)
         for (c = 0; c < NUM_CLIPS; c++)
-            clip_migrate_to_notes(&inst->tracks[t].clips[c]);
+            clip_build_steps_from_notes(&inst->tracks[t].clips[c]);
     seq8_ilog(inst, "SEQ8 state restored from file");
 }
 
@@ -1282,6 +1153,39 @@ static int clip_insert_note(clip_t *cl, uint32_t tick, uint16_t gate,
     cl->note_count++;
     cl->occ_dirty = 1;
     return idx;
+}
+
+/* Rebuild step arrays from notes[] — used after v=10 state load. */
+static void clip_build_steps_from_notes(clip_t *cl) {
+    int s;
+    for (s = 0; s < SEQ_STEPS; s++) {
+        cl->steps[s] = 0;
+        memset(cl->step_notes[s], 0, 8);
+        cl->step_note_count[s] = 0;
+        cl->step_vel[s]  = (uint8_t)SEQ_VEL;
+        cl->step_gate[s] = (uint16_t)GATE_TICKS;
+        memset(cl->note_tick_offset[s], 0, 8 * sizeof(int16_t));
+    }
+    cl->active = 0;
+    cl->occ_dirty = 1;
+    uint16_t ni;
+    for (ni = 0; ni < cl->note_count; ni++) {
+        note_t *n = &cl->notes[ni];
+        if (!n->active) continue;
+        uint16_t sidx = note_step(n->tick, cl->length);
+        if (sidx >= SEQ_STEPS || cl->step_note_count[sidx] >= 8) continue;
+        int idx = (int)cl->step_note_count[sidx];
+        if (idx == 0) {
+            cl->step_vel[sidx]  = n->vel;
+            cl->step_gate[sidx] = n->gate;
+        }
+        cl->step_notes[sidx][idx] = n->pitch;
+        cl->note_tick_offset[sidx][idx] =
+            (int16_t)((int32_t)n->tick - (int32_t)sidx * TICKS_PER_STEP);
+        cl->step_note_count[sidx]++;
+        cl->steps[sidx] = 1;
+        cl->active = 1;
+    }
 }
 
 /* Derive notes[] from step arrays. Called after state load so both representations exist. */
