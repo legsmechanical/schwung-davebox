@@ -455,6 +455,8 @@ let jogTouched     = false;       /* true while jog wheel is physically held */
 const BANK_DISPLAY_TICKS = 392;  /* ~2000ms at 196Hz tick rate */
 let stretchBlockedEndTick = -1;  /* tickCount deadline for COMPRESS LIMIT display; -1 = inactive */
 const STRETCH_BLOCKED_TICKS = 294;  /* ~1500ms at 196Hz */
+let noNoteFlashEndTick = -1;         /* tickCount deadline for NO NOTE flash; -1 = inactive */
+const NO_NOTE_FLASH_TICKS = 118;     /* ~600ms at 196Hz */
 let trackOctave = new Array(NUM_TRACKS).fill(0);  /* per-track live pad octave shift, -4..+4 */
 let octaveOverlayEndTick = -1;                    /* tickCount deadline for octave overlay; -1 = inactive */
 const OCTAVE_OVERLAY_TICKS = 196;                 /* ~1000ms at 196Hz */
@@ -1371,6 +1373,13 @@ function drawUI() {
         return;
     }
 
+    /* No-note flash: ~600ms after pressing an empty step with no prior pad */
+    if (noNoteFlashEndTick >= 0) {
+        print(4, 22, 'NO NOTE', 1);
+        print(4, 34, 'Play a pad first', 1);
+        return;
+    }
+
     /* Octave overlay: ~1000ms after Up/Down octave shift */
     if (octaveOverlayEndTick >= 0) {
         const ac         = effectiveClip(activeTrack);
@@ -1703,6 +1712,10 @@ globalThis.tick = function () {
         }
         if (octaveOverlayEndTick >= 0 && tickCount >= octaveOverlayEndTick) {
             octaveOverlayEndTick = -1;
+            screenDirty = true;
+        }
+        if (noNoteFlashEndTick >= 0 && tickCount >= noNoteFlashEndTick) {
+            noNoteFlashEndTick = -1;
             screenDirty = true;
         }
 
@@ -2424,10 +2437,12 @@ globalThis.onMidiMessageInternal = function (data) {
                         if (heldStepNotes.length > 0) clipNonEmpty[activeTrack][ac_p] = true;
                         stepEditVel = assignVel; stepEditGate = 12; stepEditNudge = 0;
                     } else {
-                        /* No note played yet: defer — add default root4 on release only */
-                        stepEditVel   = effectiveVelocity(lastPadVelocity);
-                        stepEditGate  = 12;
-                        stepEditNudge = 0;
+                        /* No note played yet: flash message, don't enter step edit */
+                        heldStep    = -1;
+                        heldStepBtn = -1;
+                        stepWasEmpty = false;
+                        noNoteFlashEndTick = tickCount + NO_NOTE_FLASH_TICKS;
+                        screenDirty = true;
                     }
                 } else {
                     stepWasEmpty = false;
@@ -2622,17 +2637,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     const absIdx = heldStep;
                     stepBtnPressedTick[btn] = -1;
                     if (stepWasEmpty) {
-                        /* Step was empty: assign now on tap release */
-                        if (heldStepNotes.length === 0) {
-                            const assignNote = lastPlayedNote >= 0 ? lastPlayedNote : defaultStepNote();
-                            const assignVel  = effectiveVelocity(lastPadVelocity);
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx + '_toggle', assignNote + ' ' + assignVel);
-                            clipSteps[activeTrack][ac_t][absIdx] = 1;
-                            clipNonEmpty[activeTrack][ac_t] = true;
-                            refreshSeqNotesIfCurrent(activeTrack, ac_t, absIdx);
-                        }
-                        /* heldStepNotes.length > 0: pads were pressed while held, already assigned */
+                        /* Note was assigned on press — tap confirms, nothing more to do */
                     } else {
                         const wasOn = clipSteps[activeTrack][ac_t][absIdx] === 1;
                         if (!wasOn) {
