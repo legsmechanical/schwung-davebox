@@ -157,6 +157,22 @@ typedef struct {
 } play_fx_t;
 
 /* ------------------------------------------------------------------ */
+/* Note-centric model (v10+)                                           */
+/* ------------------------------------------------------------------ */
+
+#define MAX_NOTES_PER_CLIP  512
+
+typedef struct {
+    uint32_t tick;               /* absolute clip tick 0..clip_len*TPS-1 */
+    uint16_t gate;               /* gate duration in ticks */
+    uint8_t  pitch;              /* MIDI note 0..127 */
+    uint8_t  vel;                /* velocity 0..127 */
+    uint8_t  active;             /* 1=in use, 0=tombstoned */
+    uint8_t  suppress_until_wrap; /* 1=skip playback until clip wraps (recording suppressor) */
+    uint8_t  pad[2];
+} note_t; /* 12 bytes */
+
+/* ------------------------------------------------------------------ */
 /* Clip and track structs                                               */
 /* ------------------------------------------------------------------ */
 
@@ -175,6 +191,11 @@ typedef struct {
     uint16_t clock_shift_pos;
     /* Stretch exponent: 0=1x, +1=x2, +2=x4, -1=/2, -2=/4. Not persisted. */
     int8_t   stretch_exp;
+    /* Note-centric model (Stage B+): note list derived from step arrays at init */
+    note_t   notes[MAX_NOTES_PER_CLIP];
+    uint16_t note_count;         /* slots used (active+tombstoned); updated by set_param, not render */
+    uint8_t  occ_cache[32];      /* 256-bit occupancy: bit S=1 if any active note in step S */
+    uint8_t  occ_dirty;          /* 1 = occ_cache needs recomputation */
 } clip_t;
 
 typedef struct {
@@ -205,6 +226,14 @@ typedef struct {
     /* Steps recorded in the current recording pass; cleared on clip wrap so they play
      * back starting from the next loop (not the pass they were recorded on). */
     uint8_t   live_recorded_steps[32]; /* 256-bit mask: 1 bit per step */
+    /* Note-centric recording: in-flight note-ons awaiting note-off for gate capture */
+    struct { uint8_t pitch; uint32_t tick_at_on; } rec_pending[10];
+    uint8_t  rec_pending_count;
+    /* Note-centric playback: per-note gate countdown (render state, not persisted) */
+    struct { uint8_t pitch; uint16_t ticks_remaining; } play_pending[32];
+    uint8_t  play_pending_count;
+    /* Atomic render-state snapshot for set_param timing reads */
+    uint32_t current_clip_tick;     /* current_step * TPS + tick_in_step; written each render tick */
 } seq8_track_t;
 #define LRS_SET(tr, s)  ((tr)->live_recorded_steps[(s)>>3] |=  (uint8_t)(1u<<((s)&7)))
 #define LRS_TEST(tr, s) ((tr)->live_recorded_steps[(s)>>3] &   (1u<<((s)&7)))
@@ -281,6 +310,9 @@ static int effective_mute(seq8_instance_t *inst, int t) {
 }
 
 /* silence_muted_tracks defined after pfx_note_off below */
+
+/* Forward declarations for note-centric helpers (defined after clip_init) */
+static void clip_migrate_to_notes(clip_t *cl);
 
 /* ------------------------------------------------------------------ */
 /* Utility                                                              */
@@ -755,6 +787,10 @@ static void seq8_load_state(seq8_instance_t *inst) {
     inst->input_vel   = (uint8_t)clamp_i(json_get_int(buf, "iv", 0), 0, 127);
     inst->inp_quant   = (uint8_t)(json_get_int(buf, "iq", 0) != 0);
     free(buf);
+    /* Build note-centric representation from loaded step arrays */
+    for (t = 0; t < NUM_TRACKS; t++)
+        for (c = 0; c < NUM_CLIPS; c++)
+            clip_migrate_to_notes(&inst->tracks[t].clips[c]);
     seq8_ilog(inst, "SEQ8 state restored from file");
 }
 
@@ -1193,6 +1229,83 @@ static void clip_init(clip_t *cl) {
         cl->step_vel[s]        = SEQ_VEL;
         cl->step_gate[s]       = GATE_TICKS;
         memset(cl->note_tick_offset[s], 0, 8 * sizeof(int16_t));
+    }
+    cl->note_count = 0;
+    memset(cl->notes, 0, sizeof(cl->notes));
+    memset(cl->occ_cache, 0, sizeof(cl->occ_cache));
+    cl->occ_dirty = 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Note-centric helpers (Stage B+)                                     */
+/* ------------------------------------------------------------------ */
+
+/* Logical step for an absolute clip tick using midpoint assignment. */
+static uint16_t note_step(uint32_t tick, uint16_t clip_len) {
+    uint32_t shifted = tick + (uint32_t)(TICKS_PER_STEP / 2);
+    return (uint16_t)((shifted / (uint32_t)TICKS_PER_STEP) % (uint32_t)clip_len);
+}
+
+/* Find all active note indices in step S; returns count. */
+static int notes_in_step(clip_t *cl, uint16_t s, uint16_t *idxs, int max_out) {
+    int count = 0;
+    uint16_t i;
+    for (i = 0; i < cl->note_count && count < max_out; i++) {
+        if (!cl->notes[i].active) continue;
+        if (note_step(cl->notes[i].tick, cl->length) == s)
+            idxs[count++] = i;
+    }
+    return count;
+}
+
+/* Rebuild the 256-bit occupancy cache from notes[]. */
+static void clip_occ_update(clip_t *cl) {
+    memset(cl->occ_cache, 0, sizeof(cl->occ_cache));
+    uint16_t i;
+    for (i = 0; i < cl->note_count; i++) {
+        if (!cl->notes[i].active) continue;
+        uint16_t s = note_step(cl->notes[i].tick, cl->length);
+        cl->occ_cache[s >> 3] |= (uint8_t)(1u << (s & 7));
+    }
+    cl->occ_dirty = 0;
+}
+
+/* Insert a note; write all fields before incrementing note_count (render-thread safe). */
+static int clip_insert_note(clip_t *cl, uint32_t tick, uint16_t gate,
+                             uint8_t pitch, uint8_t vel) {
+    if (cl->note_count >= MAX_NOTES_PER_CLIP) return -1;
+    int idx = (int)cl->note_count;
+    cl->notes[idx].tick              = tick;
+    cl->notes[idx].gate              = gate;
+    cl->notes[idx].pitch             = pitch;
+    cl->notes[idx].vel               = vel;
+    cl->notes[idx].suppress_until_wrap = 0;
+    cl->notes[idx].pad[0]            = 0;
+    cl->notes[idx].pad[1]            = 0;
+    cl->notes[idx].active            = 1;   /* activate last */
+    cl->note_count++;
+    cl->occ_dirty = 1;
+    return idx;
+}
+
+/* Derive notes[] from step arrays. Called after state load so both representations exist. */
+static void clip_migrate_to_notes(clip_t *cl) {
+    int s, ni;
+    cl->note_count = 0;
+    memset(cl->notes, 0, sizeof(cl->notes));
+    cl->occ_dirty = 1;
+    int clip_ticks = (int)cl->length * TICKS_PER_STEP;
+    for (s = 0; s < (int)cl->length; s++) {
+        if (!cl->steps[s] || cl->step_note_count[s] == 0) continue;
+        for (ni = 0; ni < (int)cl->step_note_count[s]; ni++) {
+            int32_t abs_tick = (int32_t)s * TICKS_PER_STEP
+                               + (int32_t)cl->note_tick_offset[s][ni];
+            if (abs_tick < 0) abs_tick += clip_ticks;
+            if (abs_tick >= clip_ticks) abs_tick = clip_ticks - 1;
+            clip_insert_note(cl, (uint32_t)abs_tick, cl->step_gate[s],
+                             cl->step_notes[s][ni], cl->step_vel[s]);
+            if (cl->note_count >= MAX_NOTES_PER_CLIP) return;
+        }
     }
 }
 
@@ -2436,6 +2549,11 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         if (!strcmp(sub, "clip_length"))
             return snprintf(out, out_len, "%d",
                             (int)tr->clips[tr->active_clip].length);
+        if (!strcmp(sub, "note_count"))
+            return snprintf(out, out_len, "%d",
+                            (int)tr->clips[tr->active_clip].note_count);
+        if (!strcmp(sub, "current_clip_tick"))
+            return snprintf(out, out_len, "%u", (unsigned)tr->current_clip_tick);
 
         /* tN_cM_step_S / tN_cM_length / tN_cM_active */
         if (sub[0] == 'c' && sub[1] >= '0' && sub[1] <= '9') {
@@ -2786,6 +2904,12 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 }
             }
             inst->global_tick++;
+        }
+        /* Update per-track atomic tick snapshot for set_param timing reads */
+        for (t = 0; t < NUM_TRACKS; t++) {
+            seq8_track_t *tr = &inst->tracks[t];
+            tr->current_clip_tick = (uint32_t)tr->current_step * TICKS_PER_STEP
+                                    + inst->tick_in_step;
         }
     }
 }
