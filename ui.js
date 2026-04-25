@@ -2408,12 +2408,27 @@ globalThis.onMidiMessageInternal = function (data) {
                     ? raw_p.trim().split(' ').map(Number).filter(function(n) { return n >= 0 && n <= 127; })
                     : [];
                 if (heldStepNotes.length === 0) {
-                    /* Empty step: defer auto-assign to release (tap) or hold threshold (hold+edit).
-                     * Knobs stay inactive until assignment happens at hold threshold. */
-                    stepWasEmpty  = true;
-                    stepEditVel   = effectiveVelocity(lastPadVelocity);
-                    stepEditGate  = 12;
-                    stepEditNudge = 0;
+                    stepWasEmpty = true;
+                    if (lastPlayedNote >= 0) {
+                        /* Known note: assign immediately so knobs work right away */
+                        const assignNote = lastPlayedNote;
+                        const assignVel  = effectiveVelocity(lastPadVelocity);
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + activeTrack + '_c' + ac_p + '_step_' + absP + '_toggle', assignNote + ' ' + assignVel);
+                        const raw_aa = typeof host_module_get_param === 'function'
+                            ? host_module_get_param(pref_p + '_notes') : null;
+                        heldStepNotes = (raw_aa && raw_aa.trim().length > 0)
+                            ? raw_aa.trim().split(' ').map(Number).filter(function(n) { return n >= 0 && n <= 127; })
+                            : [];
+                        clipSteps[activeTrack][ac_p][absP] = heldStepNotes.length > 0 ? 1 : 0;
+                        if (heldStepNotes.length > 0) clipNonEmpty[activeTrack][ac_p] = true;
+                        stepEditVel = assignVel; stepEditGate = 12; stepEditNudge = 0;
+                    } else {
+                        /* No note played yet: defer — add default root4 on release only */
+                        stepEditVel   = effectiveVelocity(lastPadVelocity);
+                        stepEditGate  = 12;
+                        stepEditNudge = 0;
+                    }
                 } else {
                     stepWasEmpty = false;
                     const rv = typeof host_module_get_param === 'function' ? host_module_get_param(pref_p + '_vel') : null;
