@@ -889,7 +889,7 @@ function pollDSP() {
         const bulk = host_module_get_param('t' + rt + '_c' + rac + '_steps');
         if (bulk && bulk.length >= NUM_STEPS) {
             for (let rs = 0; rs < NUM_STEPS; rs++)
-                clipSteps[rt][rac][rs] = bulk[rs] === '1' ? 1 : 0;
+                clipSteps[rt][rac][rs] = bulk[rs] === '1' ? 1 : (bulk[rs] === '2' ? 2 : 0);
             clipNonEmpty[rt][rac] = clipHasContent(rt, rac);
             screenDirty = true;
         }
@@ -1051,8 +1051,10 @@ function updateStepLEDs() {
             color = White;
         } else if (playing && absStep === cs) {
             color = White;
-        } else if (steps[absStep]) {
+        } else if (steps[absStep] === 1) {
             color = TRACK_COLORS[activeTrack];
+        } else if (steps[absStep] === 2) {
+            color = DarkGrey;
         } else {
             color = LED_OFF;
         }
@@ -1528,7 +1530,7 @@ function syncClipsFromDsp() {
             const bulk = host_module_get_param('t' + t + '_c' + c + '_steps');
             if (bulk && bulk.length >= NUM_STEPS) {
                 for (let s = 0; s < NUM_STEPS; s++)
-                    clipSteps[t][c][s] = bulk[s] === '1' ? 1 : 0;
+                    clipSteps[t][c][s] = bulk[s] === '1' ? 1 : (bulk[s] === '2' ? 2 : 0);
                 clipNonEmpty[t][c] = clipHasContent(t, c);
             }
             const len = host_module_get_param('t' + t + '_c' + c + '_length');
@@ -2681,7 +2683,7 @@ globalThis.onMidiMessageInternal = function (data) {
                             /* Deactivating: preserve note data */
                             if (typeof host_module_set_param === 'function')
                                 host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx, '0');
-                            clipSteps[activeTrack][ac_t][absIdx] = 0;
+                            clipSteps[activeTrack][ac_t][absIdx] = heldStepNotes.length > 0 ? 2 : 0;
                             if (clipNonEmpty[activeTrack][ac_t]) clipNonEmpty[activeTrack][ac_t] = clipHasContent(activeTrack, ac_t);
                             refreshSeqNotesIfCurrent(activeTrack, ac_t, absIdx);
                         }
