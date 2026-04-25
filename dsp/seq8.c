@@ -2138,18 +2138,31 @@ static void set_param(void *instance, const char *key, const char *val) {
             {
                 uint16_t sidx = (uint16_t)(abs_tick / TICKS_PER_STEP);
                 int16_t  off  = (int16_t)((int32_t)abs_tick - (int32_t)sidx * TICKS_PER_STEP);
-                if (sidx < SEQ_STEPS && cl->step_note_count[sidx] < 8) {
-                    int ni2 = (int)cl->step_note_count[sidx];
-                    if (ni2 == 0) {
-                        cl->step_vel[sidx] = (uint8_t)vel;
+                if (sidx < SEQ_STEPS) {
+                    /* Inactive step with stale data: overwrite rather than accumulate */
+                    if (!cl->steps[sidx] && cl->step_note_count[sidx] > 0) {
+                        int si;
+                        for (si = 0; si < 8; si++) {
+                            cl->step_notes[sidx][si] = 0;
+                            cl->note_tick_offset[sidx][si] = 0;
+                        }
+                        cl->step_note_count[sidx] = 0;
+                        cl->step_vel[sidx]  = (uint8_t)SEQ_VEL;
                         cl->step_gate[sidx] = (uint16_t)GATE_TICKS;
                     }
-                    cl->step_notes[sidx][ni2] = (uint8_t)pitch;
-                    cl->note_tick_offset[sidx][ni2] = off;
-                    cl->step_note_count[sidx]++;
-                    cl->steps[sidx] = 1;
-                    cl->active = 1;
-                    LRS_SET(tr, sidx);
+                    if (cl->step_note_count[sidx] < 8) {
+                        int ni2 = (int)cl->step_note_count[sidx];
+                        if (ni2 == 0) {
+                            cl->step_vel[sidx] = (uint8_t)vel;
+                            cl->step_gate[sidx] = (uint16_t)GATE_TICKS;
+                        }
+                        cl->step_notes[sidx][ni2] = (uint8_t)pitch;
+                        cl->note_tick_offset[sidx][ni2] = off;
+                        cl->step_note_count[sidx]++;
+                        cl->steps[sidx] = 1;
+                        cl->active = 1;
+                        LRS_SET(tr, sidx);
+                    }
                 }
             }
             return;
