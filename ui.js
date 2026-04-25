@@ -524,16 +524,9 @@ let countInStartTick    = -1;    /* tickCount when count-in began; -1 = inactive
 let countInQuarterTicks = 0;     /* JS ticks per quarter note at BPM read on arm (visual only) */
 let countInDspPrev      = false; /* previous DSP count_in_active value, for end-detection */
 let playingPrev         = false; /* previous value of `playing`, for stop-transition detection */
-let recordCaptureStep     = -1;   /* step index pinned for chord capture; -1 = no active window */
-let recordCaptureClip     = -1;   /* clip index pinned for chord capture */
-let recordCaptureEndTick  = -1;   /* tickCount when capture window expires */
-let recordCaptureRt       = -1;   /* track for current capture window */
-let recordCaptureBoundary = -1;   /* stepBoundaryTick snapshot at window open (shared for offset calc) */
-let recordCaptureBatch    = [];   /* [{pitch,offset,velocity}] buffered until window flushes */
-const RECORD_CAPTURE_TICKS = 8;  /* ~40ms at 196Hz: chord notes within this window land on same step */
-let stepBoundaryTick = new Array(NUM_TRACKS).fill(-1); /* JS tickCount when step last changed (for tick offset calc) */
-let noteOnTick       = new Map();  /* pitch → {tick, cs_r, ac_r, rt}: pending note-offs for gate capture */
-let recordBpm        = 120;        /* BPM cached at record arm time */
+let _recNoteOns  = [];  /* [{pitch,vel,rt}] buffered note-ons — flushed as one batch in tick() */
+let _recNoteOffs = [];  /* [{pitch,rt}]     buffered note-offs — flushed as one batch in tick() */
+let recordBpm    = 120; /* BPM cached at record arm time */
 
 let currentSetUuid   = '';        /* UUID of the active Move set; polled in tick() for change detection */
 let lastDspInstanceId = '';       /* DSP instance_nonce from last poll; change = hot-reload detected */
@@ -669,6 +662,8 @@ function disarmRecord() {
     countInStartTick    = -1;
     countInQuarterTicks = 0;
     _recordingNoteTrack.clear();
+    _recNoteOns.length  = 0;
+    _recNoteOffs.length = 0;
     if (typeof host_module_set_param === 'function') {
         host_module_set_param('record_count_in_cancel', '1');
         if (t >= 0) host_module_set_param('t' + t + '_recording', '0');
@@ -693,25 +688,22 @@ function effectiveVelocity(rawVel) {
     return stubInputVel > 0 ? stubInputVel : rawVel;
 }
 
-/* [legacy no-op] Chord batch flushing replaced by DSP-owns-timing recording. */
 function flushChordBatch() {}
 
-/* DSP-side recording: send pitch+velocity to DSP; DSP reads current_clip_tick
- * directly in the set_param handler (≤2.9ms accuracy, no JS timing computation). */
+/* DSP-side recording: buffer note events; tick() flushes as a single batched set_param so
+ * chords (multiple pads hit in the same ~5ms JS tick) are not lost to coalescing. */
 const _recordingNoteTrack = new Map(); /* pitch → track index, for matching note-offs */
 
 function recordNoteOn(pitch, velocity, rt) {
-    if (typeof host_module_set_param !== 'function') return;
     _recordingNoteTrack.set(pitch, rt);
-    host_module_set_param('t' + rt + '_record_note_on', pitch + ' ' + velocity);
+    _recNoteOns.push({pitch, vel: velocity, rt});
 }
 
 function recordNoteOff(pitch) {
     const rt = _recordingNoteTrack.get(pitch);
     if (rt === undefined) return;
     _recordingNoteTrack.delete(pitch);
-    if (typeof host_module_set_param !== 'function') return;
-    host_module_set_param('t' + rt + '_record_note_off', String(pitch));
+    _recNoteOffs.push({pitch, rt});
 }
 
 function openGlobalMenu() {
@@ -863,8 +855,6 @@ function pollDSP() {
     playing = (v[0] === '1');
     for (let t = 0; t < NUM_TRACKS; t++) {
         const newStep = parseInt(v[1 + t], 10) | 0;
-        if (newStep !== trackCurrentStep[t] && newStep >= 0)
-            stepBoundaryTick[t] = tickCount - 2; /* bias-correct for poll lag */
         trackCurrentStep[t]      = newStep;
         trackActiveClip[t]       = parseInt(v[9 + t], 10) | 0;
         trackQueuedClip[t]       = parseInt(v[17 + t], 10) | 0;
@@ -1834,6 +1824,22 @@ globalThis.tick = function () {
             lastSoloBlink = null;
         }
     }
+    /* Flush buffered recording events — one batched set_param per tick to survive coalescing.
+     * Note-ons take priority; note-offs wait until the next tick if both are pending. */
+    if (recordArmed && !recordCountingIn && typeof host_module_set_param === 'function') {
+        if (_recNoteOns.length > 0) {
+            const rt   = _recNoteOns[0].rt;
+            const pairs = _recNoteOns.map(function(n) { return n.pitch + ' ' + n.vel; }).join(' ');
+            host_module_set_param('t' + rt + '_record_note_on', pairs);
+            _recNoteOns.length = 0;
+        } else if (_recNoteOffs.length > 0) {
+            const rt     = _recNoteOffs[0].rt;
+            const pitches = _recNoteOffs.map(function(n) { return n.pitch; }).join(' ');
+            host_module_set_param('t' + rt + '_record_note_off', pitches);
+            _recNoteOffs.length = 0;
+        }
+    }
+
     if (screenDirty) { screenDirty = false; drawUI(); }
 };
 
