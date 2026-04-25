@@ -313,6 +313,7 @@ static int effective_mute(seq8_instance_t *inst, int t) {
 
 /* Forward declarations for note-centric helpers (defined after clip_init) */
 static void clip_migrate_to_notes(clip_t *cl);
+static void silence_track_notes_v2(seq8_instance_t *inst, seq8_track_t *tr);
 
 /* ------------------------------------------------------------------ */
 /* Utility                                                              */
@@ -1190,16 +1191,11 @@ static void pfx_note_off_imm(seq8_instance_t *inst, seq8_track_t *tr,
 }
 
 static void silence_muted_tracks(seq8_instance_t *inst) {
-    int t, n;
+    int t;
     for (t = 0; t < NUM_TRACKS; t++) {
         seq8_track_t *tr = &inst->tracks[t];
         if (effective_mute(inst, t)) {
-            if (tr->note_active) {
-                for (n = 0; n < (int)tr->pending_note_count; n++)
-                    pfx_note_off(inst, tr, tr->pending_notes[n]);
-                tr->note_active = 0;
-                tr->pending_note_count = 0;
-            }
+            silence_track_notes_v2(inst, tr);
             tr->step_dispatch_mask = 0;
         }
     }
@@ -1318,6 +1314,8 @@ static void seq8_clear_state(seq8_instance_t *inst) {
         seq8_track_t *tr = &inst->tracks[t];
         tr->note_active         = 0;
         tr->pending_note_count  = 0;
+        tr->play_pending_count  = 0;
+        tr->rec_pending_count   = 0;
         tr->pfx.event_count     = 0;
         memset(tr->pfx.active_notes, 0, sizeof(tr->pfx.active_notes));
         tr->clip_playing        = 0;
@@ -1330,6 +1328,7 @@ static void seq8_clear_state(seq8_instance_t *inst) {
         tr->current_step        = 0;
         tr->step_dispatch_mask  = 0;
         tr->next_early_mask     = 0;
+        tr->current_clip_tick   = 0;
         for (c = 0; c < NUM_CLIPS; c++)
             clip_init(&tr->clips[c]);
     }
@@ -2666,7 +2665,21 @@ static int effective_note_offset(clip_t *cl, seq8_track_t *tr, uint16_t s, int n
     return raw * (100 - tr->pfx.quantize) / 100;
 }
 
-/* Cut off all sounding notes and reset note state. */
+/* Compute effective fire tick for a note_t in the note-centric model.
+ * Quantize pulls tick toward step grid: q=100 → step grid, q=0 → raw tick. */
+static uint32_t effective_note_tick(const note_t *n, const clip_t *cl, int quantize) {
+    uint16_t sn = note_step(n->tick, cl->length);
+    int32_t step_grid = (int32_t)sn * TICKS_PER_STEP;
+    int32_t delta = (int32_t)n->tick - step_grid;
+    int32_t eff_delta = (quantize >= 100) ? 0 : delta * (100 - quantize) / 100;
+    int32_t eff_tick = step_grid + eff_delta;
+    int32_t clip_ticks = (int32_t)cl->length * TICKS_PER_STEP;
+    if (eff_tick < 0) eff_tick += clip_ticks;
+    if (eff_tick >= clip_ticks) eff_tick -= clip_ticks;
+    return (uint32_t)eff_tick;
+}
+
+/* Cut off all sounding notes and reset note state (legacy step-based path). */
 static void silence_track_notes(seq8_instance_t *inst, seq8_track_t *tr) {
     if (tr->note_active) {
         int n;
@@ -2675,6 +2688,16 @@ static void silence_track_notes(seq8_instance_t *inst, seq8_track_t *tr) {
         tr->note_active        = 0;
         tr->pending_note_count = 0;
     }
+}
+
+/* Cut off all sounding notes via note-centric play_pending. */
+static void silence_track_notes_v2(seq8_instance_t *inst, seq8_track_t *tr) {
+    int pp;
+    for (pp = 0; pp < (int)tr->play_pending_count; pp++)
+        pfx_note_off(inst, tr, tr->play_pending[pp].pitch);
+    tr->play_pending_count = 0;
+    tr->note_active = 0;
+    tr->pending_note_count = 0;
 }
 
 /* Start gate for step s and fire a single note ni immediately.
@@ -2762,28 +2785,29 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
             seq8_track_t *tr = &inst->tracks[t];
             clip_t *cl = &tr->clips[tr->active_clip];
 
-            /* Gate countdown: decrement each tick; fire note-off when it reaches 0.
-             * Runs before note-on so a gate expiring at step boundary clears note_active
-             * before the new step's note-on check, avoiding double note-off. */
-            if (tr->note_active) {
-                if (tr->gate_ticks_remaining > 0)
-                    tr->gate_ticks_remaining--;
-                if (tr->gate_ticks_remaining == 0) {
-                    int n;
-                    for (n = 0; n < (int)tr->pending_note_count; n++)
-                        pfx_note_off(inst, tr, tr->pending_notes[n]);
-                    tr->note_active = 0;
-                    tr->pending_note_count = 0;
+            /* Gate countdown: decrement each play_pending slot; fire note-off at 0.
+             * Runs before note-on so a gate expiring at step boundary doesn't double-fire. */
+            {
+                int pp;
+                for (pp = 0; pp < (int)tr->play_pending_count; ) {
+                    if (tr->play_pending[pp].ticks_remaining > 0)
+                        tr->play_pending[pp].ticks_remaining--;
+                    if (tr->play_pending[pp].ticks_remaining == 0) {
+                        pfx_note_off(inst, tr, tr->play_pending[pp].pitch);
+                        tr->play_pending[pp] = tr->play_pending[tr->play_pending_count - 1];
+                        tr->play_pending_count--;
+                    } else {
+                        pp++;
+                    }
                 }
+                tr->note_active = (tr->play_pending_count > 0) ? 1 : 0;
             }
 
             if (inst->tick_in_step == 0) {
                 /* Quantized boundary: launch queued clip (only if not waiting for page stop) */
                 if (tr->queued_clip >= 0 && !tr->pending_page_stop &&
                     inst->global_tick % QUANT_STEPS[inst->launch_quant] == 0) {
-                    silence_track_notes(inst, tr);
-                    tr->step_dispatch_mask  = 0;
-                    tr->next_early_mask     = 0;
+                    silence_track_notes_v2(inst, tr);
                     tr->active_clip  = (uint8_t)tr->queued_clip;
                     tr->queued_clip  = -1;
                     tr->current_step = 0;
@@ -2796,14 +2820,11 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 }
 
                 /* Page stop: silence at next main clock bar boundary (global_tick % 16).
-                 * Anchored to main clock, not track step page, so correctness is maintained
-                 * if per-track step resolution is introduced in the future. */
+                 * Anchored to main clock, not track step page. */
                 if (tr->pending_page_stop && inst->global_tick % 16 == 0) {
-                    tr->pending_page_stop   = 0;
-                    tr->clip_playing        = 0;
-                    tr->step_dispatch_mask  = 0;
-                    tr->next_early_mask     = 0;
-                    silence_track_notes(inst, tr);
+                    tr->pending_page_stop = 0;
+                    tr->clip_playing      = 0;
+                    silence_track_notes_v2(inst, tr);
                     if (tr->queued_clip >= 0) {
                         tr->active_clip  = (uint8_t)tr->queued_clip;
                         tr->queued_clip  = -1;
@@ -2816,76 +2837,42 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                         cl = &tr->clips[tr->active_clip];
                     }
                 }
-
-                /* Note on at step boundary: fire notes with offset≤0 immediately,
-                 * skip notes already fired early (next_early_mask), queue offset>0.
-                 * Suppressed while recording: live pad is heard directly; sequencer
-                 * playback on this track resumes on the next loop. */
-                if (tr->clip_playing && cl->steps[tr->current_step] && !effective_mute(inst, t) &&
-                        !(tr->recording && LRS_TEST(tr, tr->current_step))) {
-                    uint8_t was_early = tr->next_early_mask;
-                    tr->next_early_mask    = 0;
-                    tr->step_dispatch_mask = 0;
-                    int nc2 = (int)cl->step_note_count[tr->current_step];
-                    uint16_t s2 = tr->current_step;
-                    /* If no early-fired notes, cut off previous step's notes */
-                    if (!was_early)
-                        silence_track_notes(inst, tr);
-                    int ni2;
-                    for (ni2 = 0; ni2 < nc2; ni2++) {
-                        if (was_early & (1 << ni2)) continue; /* already sounding */
-                        int off2 = effective_note_offset(cl, tr, s2, ni2);
-                        if (off2 <= 0) {
-                            begin_step_note(inst, tr, cl, s2, ni2);
-                        } else {
-                            tr->step_dispatch_mask |= (1 << ni2);
-                            tr->step_dispatch_tick[ni2] = (uint8_t)off2;
-                        }
-                    }
-                } else {
-                    tr->next_early_mask    = 0;
-                    tr->step_dispatch_mask = 0;
-                }
             }
 
-            /* Deferred note-on: per-note positive tick_offset dispatch */
-            if (tr->step_dispatch_mask && tr->clip_playing &&
-                    !(tr->recording && LRS_TEST(tr, tr->current_step)) &&
-                    cl->steps[tr->current_step] && !effective_mute(inst, t)) {
-                uint16_t s2 = tr->current_step;
-                int ni2;
-                for (ni2 = 0; ni2 < 8; ni2++) {
-                    if (!(tr->step_dispatch_mask & (1 << ni2))) continue;
-                    if (inst->tick_in_step == (uint32_t)tr->step_dispatch_tick[ni2]) {
-                        tr->step_dispatch_mask &= (uint8_t)~(1 << ni2);
-                        begin_step_note(inst, tr, cl, s2, ni2);
-                    }
-                }
-            }
-
-            /* Negative-offset lookahead: fire next step's notes early.
-             * Gate starts from fire tick; gate countdown is per early-note group. */
-            if (tr->clip_playing && !effective_mute(inst, t) && inst->tick_in_step > 0) {
-                uint16_t ns = (uint16_t)((tr->current_step + 1) % cl->length);
-                if (cl->steps[ns] && !(tr->recording && LRS_TEST(tr, ns))) {
-                    int nc2 = (int)cl->step_note_count[ns];
-                    int ni2;
-                    for (ni2 = 0; ni2 < nc2; ni2++) {
-                        if (tr->next_early_mask & (1 << ni2)) continue;
-                        int off2 = effective_note_offset(cl, tr, ns, ni2);
-                        if (off2 < 0 && off2 > -TICKS_PER_STEP) {
-                            int fire_tick = TICKS_PER_STEP + off2;
-                            if ((int)inst->tick_in_step == fire_tick) {
-                                /* First early note for next step: cut off current step */
-                                if (!tr->next_early_mask) {
-                                    silence_track_notes(inst, tr);
-                                    tr->step_dispatch_mask = 0;
-                                }
-                                begin_step_note(inst, tr, cl, ns, ni2);
-                                tr->next_early_mask |= (1 << ni2);
+            /* Note-centric note-on: scan notes[] for any note whose effective tick
+             * matches current clip tick. Fires at the exact tick regardless of step
+             * boundary — handles both positive offsets (deferred) and negative offsets
+             * (early fire) without a dispatch mask or lookahead. */
+            if (tr->clip_playing && !effective_mute(inst, t)) {
+                uint32_t cct = (uint32_t)tr->current_step * TICKS_PER_STEP + inst->tick_in_step;
+                uint16_t ni2;
+                for (ni2 = 0; ni2 < cl->note_count; ni2++) {
+                    note_t *n = &cl->notes[ni2];
+                    if (!n->active || n->suppress_until_wrap) continue;
+                    if (effective_note_tick(n, cl, tr->pfx.quantize) != cct) continue;
+                    /* Note stealing: if this pitch is already in play_pending, cut it now */
+                    {
+                        int pp;
+                        for (pp = 0; pp < (int)tr->play_pending_count; pp++) {
+                            if (tr->play_pending[pp].pitch == n->pitch) {
+                                pfx_note_off(inst, tr, n->pitch);
+                                tr->play_pending[pp] = tr->play_pending[tr->play_pending_count - 1];
+                                tr->play_pending_count--;
+                                break;
                             }
                         }
                     }
+                    /* Gate */
+                    int eff_gate = (int)n->gate * tr->pfx.gate_time / 100;
+                    if (eff_gate < 1) eff_gate = 1;
+                    if (tr->play_pending_count < 32) {
+                        int pp_idx = (int)tr->play_pending_count;
+                        tr->play_pending[pp_idx].pitch          = n->pitch;
+                        tr->play_pending[pp_idx].ticks_remaining = (uint16_t)eff_gate;
+                        tr->play_pending_count++;
+                        tr->note_active = 1;
+                    }
+                    pfx_note_on(inst, tr, n->pitch, n->vel);
                 }
             }
         }
@@ -2898,8 +2885,14 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 clip_t *cl = &tr->clips[tr->active_clip];
                 if (tr->clip_playing) {
                     uint16_t ns2 = (uint16_t)((tr->current_step + 1) % cl->length);
-                    /* Clip wrapped: steps recorded this pass are now fair game for playback */
-                    if (ns2 == 0) memset(tr->live_recorded_steps, 0, 32);
+                    if (ns2 == 0) {
+                        /* Clip wrapped: clear suppress_until_wrap on all notes */
+                        uint16_t ni2;
+                        for (ni2 = 0; ni2 < cl->note_count; ni2++)
+                            cl->notes[ni2].suppress_until_wrap = 0;
+                        /* Also clear legacy LRS mask */
+                        memset(tr->live_recorded_steps, 0, 32);
+                    }
                     tr->current_step = ns2;
                 }
             }
