@@ -123,6 +123,7 @@ function fmtStretch(exp) {
     return '/' + (1 << (-exp));
 }
 function fmtLen(v) { return v + 'st'; }
+function fmtRes(v) { return ['1/32','1/16','1/8','1/4','1/2','1bar'][v] || '1/16'; }
 function fmtPct(v)   { return v + '%'; }
 function fmtNote(v)  { return NOTE_KEYS[((v | 0) % 12 + 12) % 12]; }
 function fmtPages(v) { return v + 'pg'; }
@@ -263,9 +264,11 @@ function pixelPrintC(cx, y, text, color) {
 /* Parameter bank definitions                                           */
 /* ------------------------------------------------------------------ */
 
+const TPS_VALUES = [12, 24, 48, 96, 192, 384];
+
 /* p(abbrev, fullName, dspKey, scope, min, max, defaultVal, fmtFn, sens, actionSuffix, lock)
  * scope: 'global' = key sent as-is; 'track' = prefixed tN_;
- *        'clip' = JS clipLength state; 'stub' = JS-only, no DSP call;
+ *        'clip' = per-clip JS state (clip_resolution); 'stub' = JS-only, no DSP call;
  *        'action' = one-shot DSP trigger, no bounded value
  * sens: raw encoder ticks required per unit change (default 1).
  * actionSuffix: get_param suffix for reading back state (default '_pos').
@@ -284,25 +287,27 @@ const BANKS = [
         p('Ch',   'MIDI Channel', 'channel',  'track', 1, 16, 1, fmtPlain),
         p('Rte',  'Route',        'route',    'track', 0, 1,  0, fmtRoute),
         p('Mode', 'Track Mode',   'pad_mode', 'track', 0, 1,  0, fmtPlain),
-        p('Res',  'Resolution',   null,       'stub',  0, 0,  0, fmtNA   ), /* NOT IN DSP */
-        p('Len',  'Clip Length',  'clip_length', 'track', 1, 256, 16, fmtLen, 4),
-        _X, _X, _X,
+        _X, _X, _X, _X, _X,
     ]},
-    /* 1 — TIMING (pad 93) — Beat Stretch, Clock Shift, Nudge, Quantize */
-    { name: 'TIMING', knobs: [
-        p('Stch', 'Beat Stretch',    'beat_stretch', 'action', 0, 0,   0,   fmtStretch, 16, '_factor', true),
-        p('Shft', 'Clock Shift',     'clock_shift',  'action', 0, 0,   0,   fmtSign,    8),
-        p('Ndg',  'Nudge',           'nudge',        'action', 0, 0,   0,   fmtSign,    8),
-        p('Qnt',  'Quantize',        'quantize',     'track',  0, 100, 0,   fmtPct),
-        _X, _X, _X, _X,
+    /* 1 — CLIP (pad 93) — Beat Stretch, Clock Shift, Nudge, Resolution, Length, (stubs) */
+    { name: 'CLIP', knobs: [
+        p('Stch', 'Beat Stretch',    'beat_stretch',    'action', 0, 0,   0,   fmtStretch, 16, '_factor', true),
+        p('Shft', 'Clock Shift',     'clock_shift',     'action', 0, 0,   0,   fmtSign,    8),
+        p('Ndg',  'Nudge',           'nudge',           'action', 0, 0,   0,   fmtSign,    8),
+        p('Res',  'Resolution',      'clip_resolution', 'clip',   0, 5,   1,   fmtRes, 16),
+        p('Len',  'Clip Length',     'clip_length',     'track',  1, 256, 16,  fmtLen, 4),
+        p('ClpS', 'Clip Start',      null,              'stub',   0, 0,   0,   fmtNA),
+        p('ClpE', 'Clip End',        null,              'stub',   0, 0,   0,   fmtNA),
+        _X,
     ]},
-    /* 2 — NOTE FX (pad 94) — fully wired; Oct/Ofs slowed */
+    /* 2 — NOTE FX (pad 94) — fully wired; Oct/Ofs slowed; Qnt moved here from TIMING */
     { name: 'NOTE FX', knobs: [
         p('Oct',  'Octave Shift',    'noteFX_octave',   'track', -4,   4,   0,   fmtSign, 6),
         p('Ofs',  'Note Offset',     'noteFX_offset',   'track', -24,  24,  0,   fmtSign, 4),
         p('Gate', 'Gate Time',       'noteFX_gate',     'track',  0,   400, 100, fmtPct,  2 ),
         p('Vel',  'Velocity Offset', 'noteFX_velocity', 'track', -127, 127, 0,   fmtSign    ),
-        _X, _X, _X, _X,
+        p('Qnt',  'Quantize',        'quantize',        'track',  0,   100, 0,   fmtPct),
+        _X, _X, _X,
     ]},
     /* 3 — HARMZ (pad 95) — fully wired; all params slowed */
     { name: 'HARMZ', knobs: [
@@ -520,6 +525,7 @@ let clipSteps        = Array.from({length: NUM_TRACKS}, () =>
 /* clipNonEmpty[track][clip] — cached result of clipHasContent; updated on every clipSteps write */
 let clipNonEmpty     = Array.from({length: NUM_TRACKS}, () => new Array(NUM_CLIPS).fill(false));
 let clipLength       = Array.from({length: NUM_TRACKS}, () => new Array(NUM_CLIPS).fill(16));
+let clipTPS          = Array.from({length: NUM_TRACKS}, () => new Array(NUM_CLIPS).fill(24));
 let trackCurrentStep = new Array(NUM_TRACKS).fill(-1);
 let trackCurrentPage = new Array(NUM_TRACKS).fill(0);
 let trackActiveClip  = new Array(NUM_TRACKS).fill(0);
@@ -1079,7 +1085,7 @@ function pollDSP() {
         const ctStr = host_module_get_param('t' + t + '_current_clip_tick');
         if (ctStr !== null && ctStr !== undefined) {
             const ct = parseInt(ctStr, 10) | 0;
-            const clipTicks = clipLength[t][ac] * 24;
+            const clipTicks = clipLength[t][ac] * (clipTPS[t][ac] || 24);
             const elapsed = ct >= seqNoteOnClipTick
                 ? ct - seqNoteOnClipTick
                 : clipTicks - seqNoteOnClipTick + ct;
@@ -1123,7 +1129,13 @@ function readBankParams(t, bankIdx) {
         }
         if (pm.scope === 'clip') {
             const ac = trackActiveClip[t];
-            bankParams[t][bankIdx][k] = Math.max(1, Math.round(clipLength[t][ac] / 16));
+            if (pm.dspKey === 'clip_resolution') {
+                const tps = clipTPS[t][ac] || 24;
+                const idx = TPS_VALUES.indexOf(tps);
+                bankParams[t][bankIdx][k] = idx >= 0 ? idx : 1;
+            } else {
+                bankParams[t][bankIdx][k] = pm.def;
+            }
             continue;
         }
         if (pm.scope === 'action') {
@@ -1175,10 +1187,13 @@ function applyBankParam(t, bankIdx, knobIdx, val) {
             if (trackCurrentPage[t] > maxPage) trackCurrentPage[t] = maxPage;
         }
     } else if (pm.scope === 'clip') {
-        const ac    = trackActiveClip[t];
-        const steps = val * 16;
-        clipLength[t][ac] = steps;
-        host_module_set_param('t' + t + '_c' + ac + '_length', String(steps));
+        const ac = trackActiveClip[t];
+        if (pm.dspKey === 'clip_resolution') {
+            if (recordArmed && !recordCountingIn && recordArmedTrack === t) return;
+            const idx = Math.max(0, Math.min(5, val));
+            clipTPS[t][ac] = TPS_VALUES[idx];
+            host_module_set_param('t' + t + '_clip_resolution', String(idx));
+        }
     }
 }
 
@@ -1253,8 +1268,9 @@ function updateStepLEDs() {
      * Full steps covered by gate → White; partial step at end → DarkGrey.
      * Only overlays in-bounds steps; steps beyond gate keep their normal color. */
     if (heldStep >= 0 && knobTouched === 2 && heldStepNotes.length > 0) {
-        const fullSteps    = Math.floor(stepEditGate / 24);
-        const partialTicks = stepEditGate % 24;
+        const _acTps = clipTPS[activeTrack][effectiveClip(activeTrack)] || 24;
+        const fullSteps    = Math.floor(stepEditGate / _acTps);
+        const partialTicks = stepEditGate % _acTps;
         for (let i = 0; i < 16; i++) {
             const absStep = base + i;
             if (absStep >= len) continue;
@@ -1576,7 +1592,7 @@ function drawUI() {
 
     /* Compress-limit override: highest priority for ~1500ms after a blocked compress */
     if (stretchBlockedEndTick >= 0) {
-        print(4, 10, '[TIMING     ]', 1);
+        print(4, 10, '[CLIP       ]', 1);
         print(4, 22, 'Beat Stretch', 1);
         print(4, 34, 'COMPRESS LIMIT', 1);
         return;
@@ -1584,7 +1600,7 @@ function drawUI() {
 
     /* Beat-stretch flash: ~1000ms after a successful stretch */
     if (stretchFlashEndTick >= 0) {
-        print(4, 10, '[TIMING     ]', 1);
+        print(4, 10, '[CLIP       ]', 1);
         print(4, 22, 'Beat Stretch', 1);
         print(4, 34, stretchFlashLabel, 1);
         return;
@@ -1631,7 +1647,7 @@ function drawUI() {
             /* Dur / Vel / Ndg */
             const RHS_LABELS = ['Dur', 'Vel', 'Ndg'];
             const RHS_VALS   = [
-                (stepEditGate / 24).toFixed(2),
+                (stepEditGate / (clipTPS[activeTrack][ac] || 24)).toFixed(2),
                 String(stepEditVel),
                 (stepEditNudge >= 0 ? '+' : '') + String(stepEditNudge)
             ];
@@ -1733,6 +1749,11 @@ function syncClipsFromDsp() {
             const len = host_module_get_param('t' + t + '_c' + c + '_length');
             if (len !== null && len !== undefined)
                 clipLength[t][c] = parseInt(len, 10) || 16;
+            const tpsRaw = host_module_get_param('t' + t + '_c' + c + '_tps');
+            if (tpsRaw !== null && tpsRaw !== undefined) {
+                const tpsVal = parseInt(tpsRaw, 10);
+                clipTPS[t][c] = TPS_VALUES.indexOf(tpsVal) >= 0 ? tpsVal : 24;
+            }
         }
         const ac2 = host_module_get_param('t' + t + '_active_clip');
         if (ac2 !== null && ac2 !== undefined) trackActiveClip[t] = parseInt(ac2, 10) | 0;
@@ -2098,7 +2119,7 @@ globalThis.onMidiMessageInternal = function (data) {
     if (d1 >= 0 && d1 <= 9) {
         if ((status & 0xF0) === 0x90) {
             if (d2 === 127) {
-                if (d1 <= 7 && activeBank >= 0) { knobTouched = d1; screenDirty = true; }
+                if (d1 <= 7 && activeBank >= 0) { knobTouched = d1; knobTurnedTick[d1] = -1; screenDirty = true; }
                 if (d1 === MoveMainTouch && !globalMenuOpen && !shiftHeld) { jogTouched = true; forceRedraw(); }
             } else if (d2 < 64) {
                 if (d1 <= 7) {
@@ -2545,7 +2566,9 @@ globalThis.onMidiMessageInternal = function (data) {
                 }
             } else if (knobIdx === 2) {
                 /* K3 Dur: gate in 6-tick steps (±25% of a step per detent) */
-                stepEditGate = Math.max(1, Math.min(6144, stepEditGate + dir * 6));
+                { const _acD = effectiveClip(activeTrack);
+                  const _gmaxD = Math.min(65535, 256 * (clipTPS[activeTrack][_acD] || 24));
+                  stepEditGate = Math.max(1, Math.min(_gmaxD, stepEditGate + dir * 6)); }
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param(pfx + '_gate', String(stepEditGate));
             } else if (knobIdx === 3) {
@@ -2554,8 +2577,10 @@ globalThis.onMidiMessageInternal = function (data) {
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param(pfx + '_vel', String(stepEditVel));
             } else {
-                /* K5 Nudge: tick offset -23..23 */
-                stepEditNudge = Math.max(-23, Math.min(23, stepEditNudge + dir));
+                /* K5 Nudge: tick offset ±(TPS-1) */
+                { const _acN = effectiveClip(activeTrack);
+                  const _tpsN1 = (clipTPS[activeTrack][_acN] || 24) - 1;
+                  stepEditNudge = Math.max(-_tpsN1, Math.min(_tpsN1, stepEditNudge + dir)); }
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param(pfx + '_nudge', String(stepEditNudge));
             }
@@ -2625,7 +2650,7 @@ globalThis.onMidiMessageInternal = function (data) {
                                         trackCurrentPage[t] = newPages - 1;
                                     /* Per-touch label: dir +1 → fmtStretch shows 'x2', -1 → '/2' */
                                     bankParams[t][bank][knobIdx] = dir;
-                                    /* Momentary OLED flash for when TIMING bank isn't visible */
+                                    /* Momentary OLED flash for when CLIP bank isn't visible */
                                     stretchFlashLabel   = dir > 0 ? 'x2' : '/2';
                                     stretchFlashEndTick = tickCount + OCTAVE_OVERLAY_TICKS;
                                 }
