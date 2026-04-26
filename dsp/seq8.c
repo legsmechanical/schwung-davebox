@@ -1835,9 +1835,13 @@ static void set_param(void *instance, const char *key, const char *val) {
                 cl->steps[i] = 0;
                 memset(cl->step_notes[i], 0, 8);
                 cl->step_note_count[i] = 0;
+                cl->step_vel[i]  = (uint8_t)SEQ_VEL;
+                cl->step_gate[i] = (uint16_t)GATE_TICKS;
                 memset(cl->note_tick_offset[i], 0, 8 * sizeof(int16_t));
             }
-            cl->active     = 0;
+            cl->active          = 0;
+            cl->stretch_exp     = 0;
+            cl->clock_shift_pos = 0;
             cl->note_count = 0;
             memset(cl->notes, 0, sizeof(cl->notes));
             cl->occ_dirty  = 1;
@@ -2227,9 +2231,13 @@ static void set_param(void *instance, const char *key, const char *val) {
                     cl->steps[i] = 0;
                     memset(cl->step_notes[i], 0, 8);
                     cl->step_note_count[i] = 0;
+                    cl->step_vel[i]  = (uint8_t)SEQ_VEL;
+                    cl->step_gate[i] = (uint16_t)GATE_TICKS;
                     memset(cl->note_tick_offset[i], 0, 8 * sizeof(int16_t));
                 }
-                cl->active = 0;
+                cl->active          = 0;
+                cl->stretch_exp     = 0;
+                cl->clock_shift_pos = 0;
                 cl->note_count = 0;
                 memset(cl->notes, 0, sizeof(cl->notes));
                 cl->occ_dirty = 1;
@@ -2255,9 +2263,13 @@ static void set_param(void *instance, const char *key, const char *val) {
                     cl->steps[i] = 0;
                     memset(cl->step_notes[i], 0, 8);
                     cl->step_note_count[i] = 0;
+                    cl->step_vel[i]  = (uint8_t)SEQ_VEL;
+                    cl->step_gate[i] = (uint16_t)GATE_TICKS;
                     memset(cl->note_tick_offset[i], 0, 8 * sizeof(int16_t));
                 }
-                cl->active = 0;
+                cl->active          = 0;
+                cl->stretch_exp     = 0;
+                cl->clock_shift_pos = 0;
                 cl->note_count = 0;
                 memset(cl->notes, 0, sizeof(cl->notes));
                 cl->occ_dirty = 1;
