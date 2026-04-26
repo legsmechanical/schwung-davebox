@@ -2500,9 +2500,13 @@ globalThis.onMidiMessageInternal = function (data) {
                                 bankParams[t][bank][knobIdx] = (cur + (dir === 1 ? 1 : len - 1)) % len;
                             }
                         } else {
-                            /* Nudge and other continuous action params: fire DSP, no JS mirror */
-                            if (typeof host_module_set_param === 'function')
+                            /* Nudge and other continuous action params: fire DSP, schedule steps re-read */
+                            if (typeof host_module_set_param === 'function') {
                                 host_module_set_param('t' + t + '_' + pm.dspKey, String(dir));
+                                pendingStepsReread      = 2;
+                                pendingStepsRereadTrack = t;
+                                pendingStepsRereadClip  = ac;
+                            }
                         }
                     } else {
                         const cur = bankParams[activeTrack][bank][knobIdx];
