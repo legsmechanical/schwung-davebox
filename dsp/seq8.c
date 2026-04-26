@@ -2532,6 +2532,7 @@ static void set_param(void *instance, const char *key, const char *val) {
 
         if (!strcmp(sub, "nudge")) {
             int dir = my_atoi(val);
+            if (dir == 0) { tr->clips[tr->active_clip].nudge_pos = 0; return; }
             if (dir != 1 && dir != -1) return;
             clip_t *cl = &tr->clips[tr->active_clip];
             int len = (int)cl->length;

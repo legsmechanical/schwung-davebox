@@ -1992,6 +1992,11 @@ globalThis.onMidiMessageInternal = function (data) {
                 if (d1 === MoveMainTouch && !globalMenuOpen && !shiftHeld) { jogTouched = true; forceRedraw(); }
             } else if (d2 < 64) {
                 if (d1 <= 7) {
+                    if (activeBank >= 0 && BANKS[activeBank].knobs[d1] && BANKS[activeBank].knobs[d1].dspKey === 'nudge') {
+                        bankParams[activeTrack][activeBank][d1] = 0;
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + activeTrack + '_nudge', '0');
+                    }
                     knobTouched = -1;
                     knobLocked[d1] = false;
                     knobAccum[d1]  = 0;
@@ -2003,6 +2008,11 @@ globalThis.onMidiMessageInternal = function (data) {
         }
         if ((status & 0xF0) === 0x80) {
             if (d1 <= 7) {
+                if (activeBank >= 0 && BANKS[activeBank].knobs[d1] && BANKS[activeBank].knobs[d1].dspKey === 'nudge') {
+                    bankParams[activeTrack][activeBank][d1] = 0;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + activeTrack + '_nudge', '0');
+                }
                 knobTouched = -1;
                 knobLocked[d1] = false;
                 knobAccum[d1]  = 0;
