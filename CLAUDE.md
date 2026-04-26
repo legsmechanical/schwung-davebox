@@ -68,11 +68,10 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 ## Upcoming tasks
 
 ### Current branch (unquantized-recording)
-1. **Fine clock shift + Shift+±/- octave transpose** — Fine clock shift: TIMING bank action, shifts all note tick positions ±1 tick per action, clamped ±23. Shift+±/-: transposes entire active clip ±1 octave in Track View.
-2. **Scale-aware key/scale changes** — global option: changing Key/Scale transposes all clip notes to fit new scale. Design TBD.
-3. **Clip resolution** — per-clip TICKS_PER_STEP (1/32·1/16·1/8·1/4·1/2·1-bar). Stored in clip_t. Move Len+Res to dedicated CLIP bank.
-4. **Bank param LED indicators** — LED under knob lights when param differs from init default. Nondestructive params only (NOTE FX, HARMZ, MIDI DLY, TIMING Qnt). Dirty flag, no per-tick polling.
-5. **Step/note editing fixes** — see pending fixes in planning doc.
+1. **Scale-aware key/scale changes** — global option: changing Key/Scale transposes all clip notes to fit new scale. Design TBD.
+2. **Clip resolution** — per-clip TICKS_PER_STEP (1/32·1/16·1/8·1/4·1/2·1-bar). Stored in clip_t. Move Len+Res to dedicated CLIP bank.
+3. **Bank param LED indicators** — LED under knob lights when param differs from init default. Nondestructive params only (NOTE FX, HARMZ, MIDI DLY, TIMING Qnt). Dirty flag, no per-tick polling.
+4. **Step/note editing fixes** — see pending fixes in planning doc.
 
 ### After current branch merges
 8. Per-clip params · 9. MIDI Delay Rnd refinement · 10. Full instance reset · 11. Undo/Redo (3 levels) · 12. Drum mode · 13. State snapshots (16 slots) · 14. Arpeggiator · 15. Swing (wire stub) · 16. MIDI clock sync
