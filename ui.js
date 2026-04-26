@@ -2879,16 +2879,36 @@ globalThis.onMidiMessageExternal = function (data) {
     const msgCh   = (status & 0x0F) + 1;  /* 1-indexed */
 
     if (midiInChannel !== 0 && msgCh !== midiInChannel) return;
-    if (sessionView) return;
+    /* Route to activeTrack in all views — activeTrack always reflects last Track View focus */
 
     const t = activeTrack;
 
     if (msgType === 0x90 && d2 > 0) {
         const vel = effectiveVelocity(d2);
+        lastPlayedNote  = d1;
+        lastPadVelocity = vel;
         liveSendNote(t, 0x90, d1, vel);
         const isRec = recordArmed && !recordCountingIn && t === recordArmedTrack;
         if (isRec) recordNoteOn(d1, vel, t);
         extHeldNotes.set(d1, { track: t, recording: isRec });
+        if (heldStep >= 0 && !shiftHeld && !sessionView) {
+            const ac = effectiveClip(t);
+            if (typeof host_module_set_param === 'function')
+                host_module_set_param('t' + t + '_c' + ac + '_step_' + heldStep + '_toggle', d1 + ' ' + vel);
+            const raw = typeof host_module_get_param === 'function'
+                ? host_module_get_param('t' + t + '_c' + ac + '_step_' + heldStep + '_notes') : null;
+            heldStepNotes = (raw && raw.trim().length > 0)
+                ? raw.trim().split(' ').map(Number).filter(function(n) { return n >= 0 && n <= 127; })
+                : [];
+            clipSteps[t][ac][heldStep] = heldStepNotes.length > 0 ? 1 : 0;
+            if (heldStepNotes.length > 0) {
+                clipNonEmpty[t][ac] = true;
+            } else if (clipNonEmpty[t][ac]) {
+                clipNonEmpty[t][ac] = clipHasContent(t, ac);
+            }
+            refreshSeqNotesIfCurrent(t, ac, heldStep);
+            forceRedraw();
+        }
     } else if (msgType === 0x80 || (msgType === 0x90 && d2 === 0)) {
         const info = extHeldNotes.get(d1);
         liveSendNote(info ? info.track : t, 0x80, d1, 0);
