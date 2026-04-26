@@ -293,6 +293,8 @@ typedef struct {
     uint8_t input_vel;
     /* Input quantize: 1=snap live recording to step grid (zero offset), 0=unquantized */
     uint8_t inp_quant;
+    /* External MIDI channel filter: 0=All, 1-16=specific channel */
+    uint8_t midi_in_channel;
 } seq8_instance_t;
 
 static const host_api_v1_t *g_host = NULL;
@@ -493,6 +495,7 @@ static void seq8_save_state(seq8_instance_t *inst) {
     fprintf(fp, ",\"saw\":%d", (int)inst->scale_aware);
     fprintf(fp, ",\"iv\":%d",  (int)inst->input_vel);
     fprintf(fp, ",\"iq\":%d",  (int)inst->inp_quant);
+    fprintf(fp, ",\"mic\":%d", (int)inst->midi_in_channel);
     fprintf(fp, "}");
     fclose(fp);
 }
@@ -666,8 +669,9 @@ static void seq8_load_state(seq8_instance_t *inst) {
         }
     }
     inst->scale_aware = (uint8_t)(json_get_int(buf, "saw", 0) != 0);
-    inst->input_vel   = (uint8_t)clamp_i(json_get_int(buf, "iv", 0), 0, 127);
-    inst->inp_quant   = (uint8_t)(json_get_int(buf, "iq", 0) != 0);
+    inst->input_vel      = (uint8_t)clamp_i(json_get_int(buf, "iv",  0), 0, 127);
+    inst->inp_quant      = (uint8_t)(json_get_int(buf, "iq", 0) != 0);
+    inst->midi_in_channel = (uint8_t)clamp_i(json_get_int(buf, "mic", 0), 0, 16);
     free(buf);
     /* Build step arrays from loaded notes[] for display/edit compat */
     for (t = 0; t < NUM_TRACKS; t++)
@@ -1605,6 +1609,11 @@ static void set_param(void *instance, const char *key, const char *val) {
         inst->inp_quant = my_atoi(val) ? 1 : 0;
         return;
     }
+    if (!strcmp(key, "midi_in_channel")) {
+        inst->midi_in_channel = (uint8_t)clamp_i(my_atoi(val), 0, 16);
+        seq8_save_state(inst);
+        return;
+    }
     if (!strcmp(key, "input_vel")) {
         inst->input_vel = (uint8_t)clamp_i(my_atoi(val), 0, 127);
         return;
@@ -1778,11 +1787,14 @@ static void set_param(void *instance, const char *key, const char *val) {
             clip_t *dst = &inst->tracks[dstT].clips[dstC];
             if (srcT == dstT && srcC == dstC) return;
             dst->length = src->length;
-            memcpy(dst->steps, src->steps, SEQ_STEPS);
-            memcpy(dst->step_notes, src->step_notes, SEQ_STEPS * 8);
+            memcpy(dst->steps,           src->steps,           SEQ_STEPS);
+            memcpy(dst->step_notes,      src->step_notes,      SEQ_STEPS * 8);
             memcpy(dst->step_note_count, src->step_note_count, SEQ_STEPS);
+            memcpy(dst->step_vel,        src->step_vel,        SEQ_STEPS);
+            memcpy(dst->step_gate,       src->step_gate,       SEQ_STEPS * sizeof(uint16_t));
             memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
             dst->active = src->active;
+            clip_migrate_to_notes(dst);
         }
         return;
     }
@@ -1801,11 +1813,14 @@ static void set_param(void *instance, const char *key, const char *val) {
             clip_t *src = &inst->tracks[t].clips[srcRow];
             clip_t *dst = &inst->tracks[t].clips[dstRow];
             dst->length = src->length;
-            memcpy(dst->steps, src->steps, SEQ_STEPS);
-            memcpy(dst->step_notes, src->step_notes, SEQ_STEPS * 8);
+            memcpy(dst->steps,           src->steps,           SEQ_STEPS);
+            memcpy(dst->step_notes,      src->step_notes,      SEQ_STEPS * 8);
             memcpy(dst->step_note_count, src->step_note_count, SEQ_STEPS);
+            memcpy(dst->step_vel,        src->step_vel,        SEQ_STEPS);
+            memcpy(dst->step_gate,       src->step_gate,       SEQ_STEPS * sizeof(uint16_t));
             memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
             dst->active = src->active;
+            clip_migrate_to_notes(dst);
         }
         return;
     }
@@ -2072,25 +2087,46 @@ static void set_param(void *instance, const char *key, const char *val) {
                     return;
                 }
                 if (!strcmp(q, "_reassign")) {
-                    /* Move all notes from step sidx to dstStep, adjusting offsets.
-                     * Only moves if destination is empty. Preserves active/inactive state. */
+                    /* Move notes from step sidx to dstStep, adjusting offsets.
+                     * If dstStep is empty: simple move. If occupied: merge; dst notes
+                     * take precedence (duplicate pitches from src are dropped). */
                     int dstStep = clamp_i(my_atoi(val), 0, (int)cl->length - 1);
                     if (dstStep == sidx) return;
                     if (cl->step_note_count[sidx] == 0) return;
-                    if (cl->step_note_count[dstStep] > 0) return;
                     {
                         int offset_adjust = ((int)sidx - dstStep) * TICKS_PER_STEP;
                         int ni;
-                        for (ni = 0; ni < (int)cl->step_note_count[sidx]; ni++) {
-                            cl->step_notes[dstStep][ni] = cl->step_notes[sidx][ni];
-                            int new_off = (int)cl->note_tick_offset[sidx][ni] + offset_adjust;
-                            cl->note_tick_offset[dstStep][ni] =
-                                (int16_t)clamp_i(new_off, -(TICKS_PER_STEP-1), (TICKS_PER_STEP-1));
+                        if (cl->step_note_count[dstStep] == 0) {
+                            /* Empty dst: move everything */
+                            for (ni = 0; ni < (int)cl->step_note_count[sidx]; ni++) {
+                                cl->step_notes[dstStep][ni] = cl->step_notes[sidx][ni];
+                                int new_off = (int)cl->note_tick_offset[sidx][ni] + offset_adjust;
+                                cl->note_tick_offset[dstStep][ni] =
+                                    (int16_t)clamp_i(new_off, -(TICKS_PER_STEP-1), (TICKS_PER_STEP-1));
+                            }
+                            cl->step_note_count[dstStep] = cl->step_note_count[sidx];
+                            cl->step_vel[dstStep]        = cl->step_vel[sidx];
+                            cl->step_gate[dstStep]       = cl->step_gate[sidx];
+                            cl->steps[dstStep]           = cl->steps[sidx];
+                        } else {
+                            /* Occupied dst: merge; dst notes take precedence on pitch collision */
+                            for (ni = 0; ni < (int)cl->step_note_count[sidx]; ni++) {
+                                uint8_t pitch = cl->step_notes[sidx][ni];
+                                int nj, dup = 0;
+                                for (nj = 0; nj < (int)cl->step_note_count[dstStep]; nj++) {
+                                    if (cl->step_notes[dstStep][nj] == pitch) { dup = 1; break; }
+                                }
+                                if (dup || cl->step_note_count[dstStep] >= 8) continue;
+                                int slot = (int)cl->step_note_count[dstStep];
+                                cl->step_notes[dstStep][slot] = pitch;
+                                int new_off = (int)cl->note_tick_offset[sidx][ni] + offset_adjust;
+                                cl->note_tick_offset[dstStep][slot] =
+                                    (int16_t)clamp_i(new_off, -(TICKS_PER_STEP-1), (TICKS_PER_STEP-1));
+                                cl->step_note_count[dstStep]++;
+                            }
+                            /* dst vel/gate unchanged; activate if src was active */
+                            if (cl->steps[sidx]) cl->steps[dstStep] = 1;
                         }
-                        cl->step_note_count[dstStep] = cl->step_note_count[sidx];
-                        cl->step_vel[dstStep]        = cl->step_vel[sidx];
-                        cl->step_gate[dstStep]       = cl->step_gate[sidx];
-                        cl->steps[dstStep]           = cl->steps[sidx];
                         memset(cl->step_notes[sidx], 0, 8);
                         memset(cl->note_tick_offset[sidx], 0, 8 * sizeof(int16_t));
                         cl->step_note_count[sidx] = 0;
@@ -2105,6 +2141,26 @@ static void set_param(void *instance, const char *key, const char *val) {
                     }
                     clip_migrate_to_notes(cl);
                     if (!tr->recording) seq8_save_state(inst);
+                    return;
+                }
+                if (!strcmp(q, "_copy_to")) {
+                    /* tN_cC_step_S_copy_to — copy all step data to dstStep (overwrite); src unchanged */
+                    int dstStep = clamp_i(my_atoi(val), 0, (int)cl->length - 1);
+                    if (dstStep == sidx) return;
+                    if (cl->step_note_count[sidx] == 0) return;
+                    memcpy(cl->step_notes[dstStep], cl->step_notes[sidx], 8);
+                    memcpy(cl->note_tick_offset[dstStep], cl->note_tick_offset[sidx], 8 * sizeof(int16_t));
+                    cl->step_note_count[dstStep] = cl->step_note_count[sidx];
+                    cl->step_vel[dstStep]        = cl->step_vel[sidx];
+                    cl->step_gate[dstStep]       = cl->step_gate[sidx];
+                    cl->steps[dstStep]           = cl->steps[sidx];
+                    {
+                        int any = 0, k;
+                        for (k = 0; k < (int)cl->length; k++) if (cl->steps[k]) { any = 1; break; }
+                        cl->active = (uint8_t)any;
+                    }
+                    clip_migrate_to_notes(cl);
+                    seq8_save_state(inst);
                     return;
                 }
                 if (!strcmp(q, "_pitch")) {
@@ -2173,6 +2229,26 @@ static void set_param(void *instance, const char *key, const char *val) {
                 } else if (tr->queued_clip == cidx) {
                     tr->queued_clip = -1;
                 }
+                seq8_save_state(inst);
+                return;
+            }
+            if (!strncmp(p, "_clear_keep", 11) && p[11] == '\0') {
+                /* tN_cC_clear_keep — wipe all steps, preserve playback state */
+                int i;
+                for (i = 0; i < SEQ_STEPS; i++) {
+                    cl->steps[i] = 0;
+                    memset(cl->step_notes[i], 0, 8);
+                    cl->step_note_count[i] = 0;
+                    memset(cl->note_tick_offset[i], 0, 8 * sizeof(int16_t));
+                }
+                cl->active = 0;
+                cl->note_count = 0;
+                memset(cl->notes, 0, sizeof(cl->notes));
+                cl->occ_dirty = 1;
+                silence_track_notes_v2(inst, tr);
+                tr->rec_pending_count = 0;
+                tr->recording = 0;
+                if (tr->queued_clip == cidx) tr->queued_clip = -1;
                 seq8_save_state(inst);
                 return;
             }
@@ -2635,6 +2711,8 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         return snprintf(out, out_len, "%d", inst ? (int)inst->inp_quant : 0);
     if (!strcmp(key, "input_vel"))
         return snprintf(out, out_len, "%d", inst ? (int)inst->input_vel : 0);
+    if (!strcmp(key, "midi_in_channel"))
+        return snprintf(out, out_len, "%d", inst ? (int)inst->midi_in_channel : 0);
     if (!strcmp(key, "launch_quant"))
         return snprintf(out, out_len, "%d", inst ? (int)inst->launch_quant : 0);
     if (!strcmp(key, "version"))
