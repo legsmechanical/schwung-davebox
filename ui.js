@@ -882,10 +882,10 @@ function pollDSP() {
     }
     playingPrev = playing;
 
-    /* Refresh step LEDs while recording — DSP writes steps[], JS mirror would be stale */
-    if (recordArmed && playing) {
+    /* Refresh step LEDs while recording or holding a step (nudge may move note across boundary) */
+    if ((recordArmed && playing) || heldStep >= 0) {
         const rt = activeTrack;
-        const rac = trackActiveClip[rt];
+        const rac = effectiveClip(rt);
         const bulk = host_module_get_param('t' + rt + '_c' + rac + '_steps');
         if (bulk && bulk.length >= NUM_STEPS) {
             for (let rs = 0; rs < NUM_STEPS; rs++)
