@@ -22,7 +22,7 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 
 **unquantized-recording A–L**: noteFX_gate · uint16 step_gate · deferred note-on · quantize knob (render-time) · sparse persistence (v=7) · step edit overlay K1–K5 (v=8) · live recording · Input Vel + Inp Quant · `note_t`+`notes[]` absolute model · 8-note poly · per-note tick offsets · `step_muted`/inactive steps (v=11) · `_reassign`+boundary crossing · `stepWasHeld` · `pendingStepsReread`.
 
-**Post-A–L**: clip copy fix (step_vel/step_gate + clip_migrate_to_notes) · Track View focus-jump fix · Quit global menu item · pad LEDs follow gate duration · gate overlay wraps at clip end · loop view page content indicator · Delete+track preserves active playback state (`_clear_keep`) · step copy (`_copy_to`).
+**Post-A–L**: clip copy fix (step_vel/step_gate + clip_migrate_to_notes) · Track View focus-jump fix · Quit global menu item · pad LEDs follow gate duration · gate overlay wraps at clip end · loop view page content indicator · Delete+track preserves active playback state (`_clear_keep`) · step copy (`_copy_to`) · external MIDI routing (`midi_in_channel`).
 
 ## What's Built
 
@@ -51,7 +51,7 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 
 **Beat Stretch** (TIMING K1, sens=16, lock): CW doubles, CCW halves. Compress blocked on collision → "COMPRESS LIMIT" ~1.5s. Atomic dry-run. tick_offset + gate scaled ×2/÷2 (clamped ±23). Compress: active steps first, then inactive-with-notes second pass (placed in empty slots, stay inactive). **Clock Shift** (TIMING K2, sens=8): rotates steps CW/CCW. **Quantize** (TIMING K3): render-time `effective_tick_offset = raw * (100-q) / 100`.
 
-**Global menu** (Shift + CC 50): jog navigate, jog click edit, Back exit. Items: BPM (40–250) · Key · Scale · Scale Aware · Launch (Now/1/16/1/8/1/4/1/2/1-bar) · Input Vel (0=Live, 1–127=fixed) · Inp Quant (ON=snap recording) · Save+Unload (stub) · Swing (stub) · Quit (saves state + calls `host_exit_module`).
+**Global menu** (Shift + CC 50): jog navigate, jog click edit, Back exit. Items: BPM (40–250) · Key · Scale · Scale Aware · Launch (Now/1/16/1/8/1/4/1/2/1-bar) · Input Vel (0=Live, 1–127=fixed) · Inp Quant (ON=snap recording) · MIDI In (All/1–16, channel filter for external USB-A MIDI) · Save+Unload (stub) · Swing (stub) · Quit (saves state + calls `host_exit_module`).
 
 **Play effects**: Note FX → Harmonize → MIDI Delay. `tN_pfx_reset` resets all atomically. Scale-aware: noteFX_offset/harm_intervals/delay_pitch via `scale_transpose()` at render time; drum tracks bypass.
 
@@ -70,8 +70,7 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 2. **Scale-aware key/scale changes** — global option: changing Key/Scale transposes all clip notes to fit new scale. Design TBD.
 3. **Clip resolution** — per-clip TICKS_PER_STEP (1/32·1/16·1/8·1/4·1/2·1-bar). Stored in clip_t. Move Len+Res to dedicated CLIP bank.
 4. **Bank param LED indicators** — LED under knob lights when param differs from init default. Nondestructive params only (NOTE FX, HARMZ, MIDI DLY, TIMING Qnt). Dirty flag, no per-tick polling.
-5. **External MIDI channel selector** — global menu MIDI In channel, routes to active Track View track.
-6. **Step/note editing fixes** — see pending fixes in planning doc.
+5. **Step/note editing fixes** — see pending fixes in planning doc.
 
 ### After current branch merges
 8. Per-clip params · 9. MIDI Delay Rnd refinement · 10. Full instance reset · 11. Undo/Redo (3 levels) · 12. Drum mode · 13. State snapshots (16 slots) · 14. Arpeggiator · 15. Swing (wire stub) · 16. MIDI clock sync
@@ -133,7 +132,7 @@ All `tN_` keys: N = 0..7.
 | `tN_recording` | set/get | `"0"` or `"1"` | 1 = overdub (defers save). 0 = disarm + flush. |
 | `tN_pfx_reset` | set | any | Atomically reset NOTE FX + HARMZ + MIDI DLY. |
 
-Other keys: `tN_active_clip`, `tN_current_step`, `tN_current_clip_tick` (get: `current_step*TPS+tick_in_step`), `tN_queued_clip`, `tN_cC_steps` (get: 256-char '0'/'1'/'2', midpoint-based position), `tN_cC_length`, `tN_cC_step_S` (set '0'/'1' = deactivate/activate without touching notes), `tN_launch_clip`, `launch_scene`, `transport` (set: `"play"`, `"stop"`, `"panic"`, `"deactivate_all"`), `playing`, `state_snapshot`, `tN_route`, `tN_pad_mode`, `tN_pad_octave`, `key`, `scale`, `scale_aware`, `bpm`, `launch_quant`, `input_vel`, `inp_quant`, noteFX/harm/delay params.
+Other keys: `tN_active_clip`, `tN_current_step`, `tN_current_clip_tick` (get: `current_step*TPS+tick_in_step`), `tN_queued_clip`, `tN_cC_steps` (get: 256-char '0'/'1'/'2', midpoint-based position), `tN_cC_length`, `tN_cC_step_S` (set '0'/'1' = deactivate/activate without touching notes), `tN_launch_clip`, `launch_scene`, `transport` (set: `"play"`, `"stop"`, `"panic"`, `"deactivate_all"`), `playing`, `state_snapshot`, `tN_route`, `tN_pad_mode`, `tN_pad_octave`, `key`, `scale`, `scale_aware`, `bpm`, `launch_quant`, `input_vel`, `inp_quant`, `midi_in_channel` (0=All, 1–16), noteFX/harm/delay params.
 
 ## DSP Struct Reference
 
@@ -184,7 +183,7 @@ typedef struct {
     seq8_track_t tracks[NUM_TRACKS];
     uint8_t  playing;
     uint32_t global_tick;       /* bar boundary = % 16 == 0 */
-    uint8_t  scale_aware, input_vel, inp_quant, pad_key, pad_scale, launch_quant;
+    uint8_t  scale_aware, input_vel, inp_quant, midi_in_channel, pad_key, pad_scale, launch_quant;
     uint8_t  mute[NUM_TRACKS], solo[NUM_TRACKS];
     /* + snapshots[16], instance_nonce, state_path, ext_queue */
 } seq8_instance_t;
