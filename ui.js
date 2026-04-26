@@ -190,12 +190,13 @@ const BANKS = [
         p('Len',  'Clip Length',  'clip_length', 'track', 1, 256, 16, fmtLen, 4),
         _X, _X, _X,
     ]},
-    /* 1 — TIMING (pad 93) — Beat Stretch, Clock Shift, Input Quantize */
+    /* 1 — TIMING (pad 93) — Beat Stretch, Clock Shift, Nudge, Quantize */
     { name: 'TIMING', knobs: [
         p('Stch', 'Beat Stretch',    'beat_stretch', 'action', 0, 0,   0,   fmtStretch, 16, '_factor', true),
         p('Shft', 'Clock Shift',     'clock_shift',  'action', 0, 0,   0,   fmtPlain,   8),
+        p('Ndg',  'Nudge',           'nudge',        'action', 0, 0,   0,   fmtSign,    1),
         p('Qnt',  'Quantize',        'quantize',     'track',  0, 100, 0,   fmtPct),
-        _X, _X, _X, _X, _X,
+        _X, _X, _X, _X,
     ]},
     /* 2 — NOTE FX (pad 94) — fully wired; Oct/Ofs slowed */
     { name: 'NOTE FX', knobs: [
@@ -2481,7 +2482,7 @@ globalThis.onMidiMessageInternal = function (data) {
                                     bankParams[t][bank][knobIdx] = parseActionRaw(rawFactor, 0);
                                 }
                             }
-                        } else {
+                        } else if (pm.dspKey === 'clock_shift') {
                             /* Clock Shift: continuous rotation, no lock */
                             if (len >= 2 && typeof host_module_set_param === 'function') {
                                 host_module_set_param('t' + t + '_' + pm.dspKey, String(dir));
@@ -2497,6 +2498,14 @@ globalThis.onMidiMessageInternal = function (data) {
                                 }
                                 const cur = bankParams[t][bank][knobIdx];
                                 bankParams[t][bank][knobIdx] = (cur + (dir === 1 ? 1 : len - 1)) % len;
+                            }
+                        } else {
+                            /* Nudge: fire DSP, schedule steps re-read for LED update */
+                            if (typeof host_module_set_param === 'function') {
+                                host_module_set_param('t' + t + '_' + pm.dspKey, String(dir));
+                                pendingStepsReread      = 2;
+                                pendingStepsRereadTrack = t;
+                                pendingStepsRereadClip  = ac;
                             }
                         }
                     } else {
