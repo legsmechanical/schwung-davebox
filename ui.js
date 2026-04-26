@@ -194,7 +194,7 @@ const BANKS = [
     { name: 'TIMING', knobs: [
         p('Stch', 'Beat Stretch',    'beat_stretch', 'action', 0, 0,   0,   fmtStretch, 16, '_factor', true),
         p('Shft', 'Clock Shift',     'clock_shift',  'action', 0, 0,   0,   fmtPlain,   8),
-        p('Ndg',  'Nudge',           'nudge',        'action', 0, 0,   0,   fmtSign,    1),
+        p('Ndg',  'Nudge',           'nudge',        'action', 0, 0,   0,   fmtSign,    8),
         p('Qnt',  'Quantize',        'quantize',     'track',  0, 100, 0,   fmtPct),
         _X, _X, _X, _X,
     ]},
@@ -2500,9 +2500,10 @@ globalThis.onMidiMessageInternal = function (data) {
                                 bankParams[t][bank][knobIdx] = (cur + (dir === 1 ? 1 : len - 1)) % len;
                             }
                         } else {
-                            /* Nudge: fire DSP, schedule steps re-read for LED update */
+                            /* Nudge: fire DSP, mirror counter locally for display, schedule steps re-read */
                             if (typeof host_module_set_param === 'function') {
                                 host_module_set_param('t' + t + '_' + pm.dspKey, String(dir));
+                                bankParams[t][bank][knobIdx] += dir;
                                 pendingStepsReread      = 2;
                                 pendingStepsRereadTrack = t;
                                 pendingStepsRereadClip  = ac;
