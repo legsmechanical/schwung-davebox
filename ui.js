@@ -2894,7 +2894,11 @@ globalThis.onMidiMessageExternal = function (data) {
         if (heldStep >= 0 && !shiftHeld && !sessionView) {
             const ac = effectiveClip(t);
             if (typeof host_module_set_param === 'function')
-                host_module_set_param('t' + t + '_c' + ac + '_step_' + heldStep + '_toggle', d1 + ' ' + vel);
+                /* Replace auto-assigned note if step was empty on hold; otherwise additive */
+                if (stepWasEmpty && heldStepNotes.length > 0)
+                    host_module_set_param('t' + t + '_c' + ac + '_step_' + heldStep + '_set_notes', String(d1));
+                else
+                    host_module_set_param('t' + t + '_c' + ac + '_step_' + heldStep + '_toggle', d1 + ' ' + vel);
             const raw = typeof host_module_get_param === 'function'
                 ? host_module_get_param('t' + t + '_c' + ac + '_step_' + heldStep + '_notes') : null;
             heldStepNotes = (raw && raw.trim().length > 0)
