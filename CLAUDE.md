@@ -28,6 +28,8 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 
 **per-clip-params**: `clip_pfx_params_t` (17 fields, 68B/clip) in `clip_t` · `pfx_sync_from_clip()` copies params into `tr->pfx` at every active_clip assignment — render path reads `tr->pfx` unchanged, zero overhead · `PFX_SET_BOTH` macro writes simultaneously to `tr->pfx` and active clip's `pfx_params` · pfx_reset + _clear/_clear_keep/row_clear reinitialize clip's pfx_params · clip_copy/row_copy propagate pfx_params · persistence v=13: sparse per-clip pfx keys (`t%dc%d_nfo` etc.) · JS `refreshPerClipBankParams(t)`: single `tN_pfx_snapshot` IPC call (vs 17 individual reads) populates all 3 per-clip banks; fires on clip switch via `lastDspActiveClip[]` change detection · `lastDspActiveClip[]` prevents pollDSP race when JS preemptively writes `trackActiveClip[]` before DSP switches
 
+**bank-param-LEDs**: Knob LEDs (CC 71-78) in Track View light White when `bankParams[activeTrack][activeBank][k] !== pm.def`. Applies to `PARAM_LED_BANKS = [2,3,4,5]` (NOTE FX, HARMZ, SEQ ARP, MIDI DLY). Session View active-track indicator unchanged. No extra dirty state — computed in `updateTrackLEDs` from existing `bankParams`; `cachedSetButtonLED` deduplicates. Track switch calls `refreshPerClipBankParams` when a per-clip bank is active.
+
 ## What's Built
 
 **Transport**: Play/Stop. Shift+Play: playing → `deactivate_all`; stopped → `panic`. Delete+Play = panic. **Do not use per-track `tN_deactivate` for bulk clearing** — DSP processes one per audio callback; pollDSP restores stale state between calls. BPM owned by SEQ8 after init; `set_param("bpm")` updates `tick_delta` + `cached_bpm`.
