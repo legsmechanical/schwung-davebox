@@ -1829,15 +1829,31 @@ static void set_param(void *instance, const char *key, const char *val) {
         int rowIdx = clamp_i(my_atoi(val), 0, NUM_CLIPS-1);
         int t, i;
         for (t = 0; t < NUM_TRACKS; t++) {
-            clip_t *cl = &inst->tracks[t].clips[rowIdx];
+            seq8_track_t *tr = &inst->tracks[t];
+            clip_t *cl = &tr->clips[rowIdx];
             for (i = 0; i < SEQ_STEPS; i++) {
                 cl->steps[i] = 0;
                 memset(cl->step_notes[i], 0, 8);
                 cl->step_note_count[i] = 0;
                 memset(cl->note_tick_offset[i], 0, 8 * sizeof(int16_t));
             }
-            cl->active = 0;
+            cl->active     = 0;
+            cl->note_count = 0;
+            memset(cl->notes, 0, sizeof(cl->notes));
+            cl->occ_dirty  = 1;
+            if ((int)tr->active_clip == rowIdx) {
+                silence_track_notes_v2(inst, tr);
+                tr->clip_playing      = 0;
+                tr->will_relaunch     = 0;
+                tr->queued_clip       = -1;
+                tr->pending_page_stop = 0;
+                tr->record_armed      = 0;
+                tr->recording         = 0;
+            } else if (tr->queued_clip == rowIdx) {
+                tr->queued_clip = -1;
+            }
         }
+        seq8_save_state(inst);
         return;
     }
 
