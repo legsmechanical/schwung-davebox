@@ -1329,10 +1329,10 @@ function updateTrackLEDs() {
             const focused   = effectiveClip(t);
             const isFocused = sceneIdx === focused;
             const isPlaying = trackClipPlaying[t] && trackActiveClip[t] === sceneIdx;
-            if (!clipNonEmpty[t][sceneIdx]) {
-                color = LED_OFF;
-            } else if (isFocused) {
+            if (isFocused) {
                 color = TRACK_COLORS[t];
+            } else if (!clipNonEmpty[t][sceneIdx]) {
+                color = LED_OFF;
             } else if (!clipHasActiveNotes(t, sceneIdx)) {
                 color = DarkGrey;
             } else {
