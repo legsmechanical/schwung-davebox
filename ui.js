@@ -52,7 +52,7 @@ import {
 } from '/data/UserData/schwung/shared/logger.mjs';
 
 import {
-    createInfo, createValue, createEnum, createToggle, formatItemValue
+    createInfo, createValue, createEnum, createToggle, createAction, formatItemValue
 } from '/data/UserData/schwung/shared/menu_items.mjs';
 
 import {
@@ -190,11 +190,12 @@ const BANKS = [
         p('Len',  'Clip Length',  'clip_length', 'track', 1, 256, 16, fmtLen, 4),
         _X, _X, _X,
     ]},
-    /* 1 — TIMING (pad 93) — Beat Stretch and Clock Shift wired */
+    /* 1 — TIMING (pad 93) — Beat Stretch, Clock Shift, Input Quantize */
     { name: 'TIMING', knobs: [
-        p('Stch', 'Beat Stretch', 'beat_stretch', 'action', 0, 0, 0, fmtStretch, 16, '_factor', true),
-        p('Shft', 'Clock Shift',  'clock_shift',  'action', 0, 0, 0, fmtPlain,   8),
-        _X, _X, _X, _X, _X, _X,
+        p('Stch', 'Beat Stretch',    'beat_stretch', 'action', 0, 0,   0,   fmtStretch, 16, '_factor', true),
+        p('Shft', 'Clock Shift',     'clock_shift',  'action', 0, 0,   0,   fmtPlain,   8),
+        p('Qnt',  'Quantize',         'quantize',     'track',  0, 100, 0,   fmtPct),
+        _X, _X, _X, _X, _X,
     ]},
     /* 2 — NOTE FX (pad 94) — fully wired; Oct/Ofs slowed */
     { name: 'NOTE FX', knobs: [
@@ -255,7 +256,8 @@ const BANKS = [
 let stubSwingAmt = 0;
 let stubSwingRes = 0;
 let stubInputVel = 0;
-let stubInpQuant = false;
+let inpQuant = false;
+let midiInChannel = 0;  /* 0=All, 1-16=specific channel */
 
 /* Launch quantization: 0=Now, 1=1/16, 2=1/8, 3=1/4, 4=1/2, 5=1-bar; default 0 */
 let launchQuant = 0;
@@ -329,14 +331,36 @@ function buildGlobalMenuItems() {
         }),
         createValue('Input Vel', {
             get: function() { return stubInputVel; },
-            set: function(v) { stubInputVel = v; },
+            set: function(v) {
+                stubInputVel = v;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('input_vel', String(v));
+            },
             min: 0, max: 127,
-            format: function(v) { return v === 0 ? 'Off' : String(v); }
+            format: function(v) { return v === 0 ? 'Live' : String(v); }
         }),
         createToggle('Inp Quant', {
-            get: function() { return stubInpQuant; },
-            set: function(v) { stubInpQuant = v; },
+            get: function() { return inpQuant; },
+            set: function(v) { inpQuant = v; host_module_set_param('inp_quant', v ? '1' : '0'); },
             onLabel: 'On', offLabel: 'Off'
+        }),
+        createEnum('MIDI In', {
+            get: function() { return midiInChannel; },
+            set: function(v) {
+                midiInChannel = v;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('midi_in_channel', String(v));
+            },
+            options: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16],
+            format: function(v) { return v === 0 ? 'All' : String(v); }
+        }),
+        createAction('Quit', function() {
+            removeFlagsWrap();
+            ledInitComplete = false;
+            invalidateLEDCache();
+            clearAllLEDs();
+            for (let _i = 0; _i < 4; _i++) setButtonLED(40 + _i, LED_OFF);
+            if (typeof host_exit_module === 'function') host_exit_module();
         }),
     ];
 }
@@ -368,8 +392,23 @@ const SCALE_INTERVALS = [
     [0, 2, 4, 6, 8, 10],           /* 12 Whole Tone      */
     [0, 2, 3, 5, 6, 8, 9, 11],     /* 13 Diminished      */
 ];
+
+/* Step-edit pitch nudge: move note up/down to next in-scale pitch.
+ * When scale-aware is off, shifts by exactly 1 semitone per dir. */
+function scaleNudgeNote(note, dir, key, scale) {
+    if (!scaleAware) return Math.max(0, Math.min(127, note + dir));
+    const ivls = SCALE_INTERVALS[scale];
+    let candidate = note + dir;
+    while (candidate >= 0 && candidate <= 127) {
+        const pc = ((candidate - key) % 12 + 12) % 12;
+        if (ivls.indexOf(pc) >= 0) return candidate;
+        candidate += dir;
+    }
+    return Math.max(0, Math.min(127, note + dir));
+}
+
 let padKey    = 9;
-let padScale  = 0;
+let padScale  = 1;   /* Minor */
 let padOctave = new Array(NUM_TRACKS).fill(3);
 let padNoteMap = new Array(32).fill(60);
 
@@ -435,6 +474,8 @@ let jogTouched     = false;       /* true while jog wheel is physically held */
 const BANK_DISPLAY_TICKS = 392;  /* ~2000ms at 196Hz tick rate */
 let stretchBlockedEndTick = -1;  /* tickCount deadline for COMPRESS LIMIT display; -1 = inactive */
 const STRETCH_BLOCKED_TICKS = 294;  /* ~1500ms at 196Hz */
+let noNoteFlashEndTick = -1;         /* tickCount deadline for NO NOTE flash; -1 = inactive */
+const NO_NOTE_FLASH_TICKS = 118;     /* ~600ms at 196Hz */
 let trackOctave = new Array(NUM_TRACKS).fill(0);  /* per-track live pad octave shift, -4..+4 */
 let octaveOverlayEndTick = -1;                    /* tickCount deadline for octave overlay; -1 = inactive */
 const OCTAVE_OVERLAY_TICKS = 196;                 /* ~1000ms at 196Hz */
@@ -455,15 +496,23 @@ let bankParams = Array.from({length: NUM_TRACKS}, () =>
  * first button's release to exit step edit prematurely. */
 let heldStepBtn   = -1;
 let heldStep      = -1;   /* absolute step index (page*16 + btn) of the held step */
-let heldStepNotes = [];   /* MIDI note numbers currently assigned to heldStep (up to 4) */
+let heldStepNotes = [];   /* MIDI note numbers currently assigned to heldStep (up to 8) */
+let stepWasEmpty  = false; /* true if step was empty when pressed; tap release should not deactivate */
+let stepWasHeld   = false; /* true once hold threshold fired; distinguishes hold-release from tap-release */
+let stepEditVel   = 100;  /* step edit overlay: current step velocity */
+let stepEditGate  = 12;   /* step edit overlay: current step gate ticks */
+let stepEditNudge = 0;    /* step edit overlay: current step tick offset */
 
 const STEP_HOLD_TICKS  = 40;   /* ~200ms at 196Hz: below = tap, at/above = hold */
 let stepBtnPressedTick = new Array(16).fill(-1); /* tickCount per button when press is pending; -1 = none */
-let lastPlayedNote     = 60;   /* MIDI note of last live pad press; fallback for empty step activation */
+let lastPlayedNote     = -1;   /* MIDI note of last live pad press; -1 = none yet */
+let lastPadVelocity    = 100;  /* velocity of last live pad press, for step input */
 let liveActiveNotes    = new Set(); /* pitches currently held via live pad input */
 let seqActiveNotes     = new Set(); /* pitches currently playing from sequencer (active track) */
 let seqLastStep        = -1;   /* last step index queried for seqActiveNotes */
 let seqLastClip        = -1;   /* last clip index queried for seqActiveNotes */
+let seqNoteOnClipTick  = -1;   /* clip tick when current seq notes started; -1 = no active note */
+let seqNoteGateTicks   = 0;    /* gate length in ticks for current seq notes */
 let deleteHeld         = false; /* true while Delete (CC 119) is held */
 let muteHeld           = false; /* true while Mute (CC 88) is held */
 let copyHeld           = false; /* true while Copy (CC 60) is held */
@@ -497,15 +546,17 @@ let countInStartTick    = -1;    /* tickCount when count-in began; -1 = inactive
 let countInQuarterTicks = 0;     /* JS ticks per quarter note at BPM read on arm (visual only) */
 let countInDspPrev      = false; /* previous DSP count_in_active value, for end-detection */
 let playingPrev         = false; /* previous value of `playing`, for stop-transition detection */
-let recordCaptureStep   = -1;    /* step index pinned for chord capture; -1 = no active window */
-let recordCaptureClip   = -1;    /* clip index pinned for chord capture */
-let recordCaptureEndTick = -1;   /* tickCount when capture window expires */
-const RECORD_CAPTURE_TICKS = 8;  /* ~40ms at 196Hz: chord notes within this window land on same step */
+let _recNoteOns  = [];  /* [{pitch,vel,rt}] buffered note-ons — flushed as one batch in tick() */
+let _recNoteOffs = [];  /* [{pitch,rt}]     buffered note-offs — flushed as one batch in tick() */
+let recordBpm    = 120; /* BPM cached at record arm time */
 
 let currentSetUuid   = '';        /* UUID of the active Move set; polled in tick() for change detection */
 let lastDspInstanceId = '';       /* DSP instance_nonce from last poll; change = hot-reload detected */
 let pendingSetLoad   = false;     /* true when set changed during init() but same DSP instance: save old, load new */
 let pendingDspSync   = 0;         /* ticks remaining before deferred syncClipsFromDsp() after set change */
+let pendingStepsReread      = 0;  /* ticks remaining before _steps re-read after _reassign */
+let pendingStepsRereadTrack = 0;
+let pendingStepsRereadClip  = 0;
 
 /* ------------------------------------------------------------------ */
 /* Utility                                                              */
@@ -561,6 +612,7 @@ function refreshSeqNotesIfCurrent(t, ac, absIdx) {
     if (absIdx !== trackCurrentStep[t] || ac !== trackActiveClip[t]) return;
     seqActiveNotes.clear();
     seqLastStep = -1;
+    seqNoteOnClipTick = -1;
     if (clipSteps[t][ac][absIdx] && typeof host_module_get_param === 'function') {
         const r = host_module_get_param('t' + t + '_c' + ac + '_step_' + absIdx + '_notes');
         if (r && r.trim().length > 0)
@@ -581,13 +633,16 @@ function clearStep(t, ac, absIdx) {
 }
 
 /* Clear all steps in a clip (single atomic DSP write). */
-function clearClip(t, ac) {
+function clearClip(t, ac, keepPlaying) {
     if (typeof host_module_set_param !== 'function') return;
-    host_module_set_param('t' + t + '_c' + ac + '_clear', '1');
+    const cmd = (keepPlaying && trackClipPlaying[t] && ac === trackActiveClip[t])
+        ? 't' + t + '_c' + ac + '_clear_keep'
+        : 't' + t + '_c' + ac + '_clear';
+    host_module_set_param(cmd, '1');
     const len = clipLength[t][ac];
     for (let s = 0; s < len; s++) clipSteps[t][ac][s] = 0;
     clipNonEmpty[t][ac] = false;
-    if (ac === trackActiveClip[t]) { seqActiveNotes.clear(); seqLastStep = -1; }
+    if (ac === trackActiveClip[t]) { seqActiveNotes.clear(); seqLastStep = -1; seqNoteOnClipTick = -1; }
 }
 
 /* Copy clip src→dst (single atomic DSP write, JS mirror update). */
@@ -614,6 +669,17 @@ function copyRow(srcRow, dstRow) {
     }
 }
 
+/* Copy step src→dst within same clip (single atomic DSP write, JS mirror update). */
+function copyStep(t, ac, srcAbs, dstAbs) {
+    if (typeof host_module_set_param !== 'function') return;
+    host_module_set_param('t' + t + '_c' + ac + '_step_' + srcAbs + '_copy_to', String(dstAbs));
+    clipSteps[t][ac][dstAbs] = clipSteps[t][ac][srcAbs];
+    if (clipSteps[t][ac][srcAbs] !== 0) clipNonEmpty[t][ac] = true;
+    pendingStepsReread      = 2;
+    pendingStepsRereadTrack = t;
+    pendingStepsRereadClip  = ac;
+}
+
 /* Clear all 8 tracks for a scene row (single atomic DSP write, JS mirror update). */
 function clearRow(rowIdx) {
     if (typeof host_module_set_param !== 'function') return;
@@ -635,9 +701,9 @@ function disarmRecord() {
     recordArmedTrack     = -1;
     countInStartTick    = -1;
     countInQuarterTicks = 0;
-    recordCaptureStep   = -1;
-    recordCaptureClip    = -1;
-    recordCaptureEndTick = -1;
+    _recordingNoteTrack.clear();
+    _recNoteOns.length  = 0;
+    _recNoteOffs.length = 0;
     if (typeof host_module_set_param === 'function') {
         host_module_set_param('record_count_in_cancel', '1');
         if (t >= 0) host_module_set_param('t' + t + '_recording', '0');
@@ -649,14 +715,36 @@ function disarmRecord() {
 function handoffRecordingToTrack(newTrack) {
     if (!recordArmed || recordCountingIn || newTrack === recordArmedTrack) return;
     const old = recordArmedTrack;
-    recordCaptureStep    = -1;
-    recordCaptureClip    = -1;
-    recordCaptureEndTick = -1;
-    recordArmedTrack     = newTrack;
+    _recordingNoteTrack.clear();
+    recordArmedTrack      = newTrack;
     if (typeof host_module_set_param === 'function') {
         if (old >= 0) host_module_set_param('t' + old + '_recording', '0');
         host_module_set_param('t' + newTrack + '_recording', '1');
     }
+}
+
+/* Returns the velocity to use for a pad hit: stubInputVel=0 → live, else fixed. */
+function effectiveVelocity(rawVel) {
+    return stubInputVel > 0 ? stubInputVel : rawVel;
+}
+
+function flushChordBatch() {}
+
+/* DSP-side recording: buffer note events; tick() flushes as a single batched set_param so
+ * chords (multiple pads hit in the same ~5ms JS tick) are not lost to coalescing. */
+const _recordingNoteTrack = new Map(); /* pitch → track index, for matching note-offs */
+const extHeldNotes = new Map(); /* pitch → {track, recording} — external MIDI held notes */
+
+function recordNoteOn(pitch, velocity, rt) {
+    _recordingNoteTrack.set(pitch, rt);
+    _recNoteOns.push({pitch, vel: velocity, rt});
+}
+
+function recordNoteOff(pitch) {
+    const rt = _recordingNoteTrack.get(pitch);
+    if (rt === undefined) return;
+    _recordingNoteTrack.delete(pitch);
+    _recNoteOffs.push({pitch, rt});
 }
 
 function openGlobalMenu() {
@@ -695,6 +783,12 @@ function clipHasContent(t, c) {
     return false;
 }
 
+function clipHasActiveNotes(t, c) {
+    const s = clipSteps[t][c];
+    for (let i = 0; i < NUM_STEPS; i++) if (s[i] === 1) return true;
+    return false;
+}
+
 /* When stopped with a clip queued, Track View should operate on the queued clip. */
 function effectiveClip(t) {
     const qc = trackQueuedClip[t];
@@ -713,6 +807,20 @@ function computePadNoteMap() {
         const semitone = oct * 12 + intervals[deg % n];
         padNoteMap[i] = Math.max(0, Math.min(127, root + semitone));
     }
+}
+
+/* Root note in pad layout closest to octave 4 — guaranteed in-scale and on a pad. */
+function defaultStepNote() {
+    const target = padKey + 60;  /* root pitch class in MIDI octave 4 */
+    let best = -1, bestDist = 999;
+    for (let i = 0; i < 32; i++) {
+        const p = padNoteMap[i] + trackOctave[activeTrack] * 12;
+        if (p < 0 || p > 127) continue;
+        if (padNoteMap[i] % 12 !== padKey) continue;  /* root notes only */
+        const d = Math.abs(p - target);
+        if (d < bestDist) { bestDist = d; best = p; }
+    }
+    return best >= 0 ? best : Math.max(0, Math.min(127, padNoteMap[0] + trackOctave[activeTrack] * 12));
 }
 
 /* Synchronously zero every LED that SEQ8 owns — call before host_hide_module(). */
@@ -793,9 +901,10 @@ function pollDSP() {
     if (v.length < 52) return;
     playing = (v[0] === '1');
     for (let t = 0; t < NUM_TRACKS; t++) {
-        trackCurrentStep[t]      = parseInt(v[1 + t], 10) | 0;
-        trackActiveClip[t]       = parseInt(v[9 + t], 10) | 0;
-        trackQueuedClip[t]       = parseInt(v[17 + t], 10) | 0;
+        const newStep = parseInt(v[1 + t], 10) | 0;
+        trackCurrentStep[t] = newStep;
+        if (playing) trackActiveClip[t] = parseInt(v[9 + t], 10) | 0;
+        trackQueuedClip[t]  = parseInt(v[17 + t], 10) | 0;
     }
     const countInDspActive = (v[25] === '1');
     for (let t = 0; t < NUM_TRACKS; t++) {
@@ -820,6 +929,19 @@ function pollDSP() {
     }
     playingPrev = playing;
 
+    /* Refresh step LEDs while recording or holding a step (nudge may move note across boundary) */
+    if ((recordArmed && playing) || heldStep >= 0) {
+        const rt = activeTrack;
+        const rac = effectiveClip(rt);
+        const bulk = host_module_get_param('t' + rt + '_c' + rac + '_steps');
+        if (bulk && bulk.length >= NUM_STEPS) {
+            for (let rs = 0; rs < NUM_STEPS; rs++)
+                clipSteps[rt][rac][rs] = bulk[rs] === '1' ? 1 : (bulk[rs] === '2' ? 2 : 0);
+            clipNonEmpty[rt][rac] = clipHasContent(rt, rac);
+            screenDirty = true;
+        }
+    }
+
     /* Track sequencer notes for active track pad highlighting */
     const t  = activeTrack;
     const ac = trackActiveClip[t];
@@ -828,11 +950,15 @@ function pollDSP() {
         seqActiveNotes.clear();
         seqLastStep = -1;
         seqLastClip = -1;
+        seqNoteOnClipTick = -1;
+        seqNoteGateTicks  = 0;
     } else if (cs !== seqLastStep || ac !== seqLastClip) {
         seqLastStep = cs;
         seqLastClip = ac;
         seqActiveNotes.clear();
-        if (cs >= 0 && clipSteps[t][ac][cs]) {
+        seqNoteOnClipTick = -1;
+        seqNoteGateTicks  = 0;
+        if (cs >= 0 && clipSteps[t][ac][cs] === 1) {
             const raw = host_module_get_param('t' + t + '_c' + ac + '_step_' + cs + '_notes');
             if (raw && raw.trim().length > 0) {
                 raw.trim().split(' ').forEach(function(sn) {
@@ -840,6 +966,20 @@ function pollDSP() {
                     if (pitch >= 0 && pitch <= 127) seqActiveNotes.add(pitch);
                 });
             }
+            const ctStr = host_module_get_param('t' + t + '_current_clip_tick');
+            const gStr  = host_module_get_param('t' + t + '_c' + ac + '_step_' + cs + '_gate');
+            if (ctStr !== null && ctStr !== undefined) seqNoteOnClipTick = parseInt(ctStr, 10) | 0;
+            if (gStr  !== null && gStr  !== undefined) seqNoteGateTicks  = parseInt(gStr,  10) | 0;
+        }
+    } else if (seqActiveNotes.size > 0 && seqNoteOnClipTick >= 0 && seqNoteGateTicks > 0) {
+        const ctStr = host_module_get_param('t' + t + '_current_clip_tick');
+        if (ctStr !== null && ctStr !== undefined) {
+            const ct = parseInt(ctStr, 10) | 0;
+            const clipTicks = clipLength[t][ac] * 24;
+            const elapsed = ct >= seqNoteOnClipTick
+                ? ct - seqNoteOnClipTick
+                : clipTicks - seqNoteOnClipTick + ct;
+            if (elapsed >= seqNoteGateTicks) seqActiveNotes.clear();
         }
     }
 
@@ -949,6 +1089,15 @@ function liveSendNote(t, type, pitch, vel) {
     }
 }
 
+function extNoteOffAll() {
+    if (extHeldNotes.size === 0) return;
+    for (const [pitch, info] of extHeldNotes) {
+        liveSendNote(info.track, 0x80, pitch, 0);
+        if (info.recording) recordNoteOff(pitch);
+    }
+    extHeldNotes.clear();
+}
+
 /* ------------------------------------------------------------------ */
 /* LED update functions                                                 */
 /* ------------------------------------------------------------------ */
@@ -959,8 +1108,16 @@ function updateStepLEDs() {
 
     if (loopHeld) {
         const pagesInUse = Math.max(1, Math.ceil(clipLength[activeTrack][ac] / 16));
-        for (let i = 0; i < 16; i++)
-            setLED(16 + i, i < pagesInUse ? TRACK_COLORS[activeTrack] : DarkGrey);
+        const blink = Math.floor(tickCount / 24) % 2;
+        const steps = clipSteps[activeTrack][ac];
+        for (let i = 0; i < 16; i++) {
+            if (i >= pagesInUse) { setLED(16 + i, DarkGrey); continue; }
+            let hasNotes = false;
+            for (let s = i * 16; s < (i + 1) * 16; s++) {
+                if (steps[s]) { hasNotes = true; break; }
+            }
+            setLED(16 + i, hasNotes ? (blink ? TRACK_COLORS[activeTrack] : TRACK_DIM_COLORS[activeTrack]) : TRACK_COLORS[activeTrack]);
+        }
         return;
     }
 
@@ -976,12 +1133,38 @@ function updateStepLEDs() {
             color = White;
         } else if (playing && absStep === cs) {
             color = White;
-        } else if (steps[absStep]) {
+        } else if (steps[absStep] === 1) {
             color = TRACK_COLORS[activeTrack];
+        } else if (steps[absStep] === 2) {
+            color = DarkGrey;
         } else {
             color = LED_OFF;
         }
         setLED(16 + i, color);
+    }
+
+    /* Gate overlay: K3 (Dur) touched while in step edit — visualize gate length on step buttons.
+     * Full steps covered by gate → White; partial step at end → DarkGrey.
+     * Only overlays in-bounds steps; steps beyond gate keep their normal color. */
+    if (heldStep >= 0 && knobTouched === 2 && heldStepNotes.length > 0) {
+        const fullSteps    = Math.floor(stepEditGate / 24);
+        const partialTicks = stepEditGate % 24;
+        for (let i = 0; i < 16; i++) {
+            const absStep = base + i;
+            if (absStep >= len) continue;
+            const offset = (absStep - heldStep + len) % len;
+            if (offset < fullSteps) {
+                setLED(16 + i, White);
+            } else if (offset === fullSteps && partialTicks > 0) {
+                setLED(16 + i, DarkGrey);
+            }
+        }
+    }
+
+    /* Copy-source blink: step-to-step copy waiting for destination */
+    if (copyHeld && copySrc && copySrc.kind === 'step' && Math.floor(copySrc.absStep / 16) === page) {
+        const btnIdx = copySrc.absStep % 16;
+        setLED(16 + btnIdx, (Math.floor(tickCount / 24) % 2) ? White : LED_OFF);
     }
 }
 
@@ -1086,14 +1269,15 @@ function updateSessionLEDs() {
         for (let t = 0; t < 8; t++) {
             const note = 92 - row * 8 + t;
             if (t >= NUM_TRACKS) { setLED(note, LED_OFF); continue; }
-            const hasContent    = clipNonEmpty[t][sceneIdx];
             const isActiveClip  = trackActiveClip[t] === sceneIdx;
             const isPlaying     = trackClipPlaying[t] && isActiveClip;
             const isPendingStop = trackPendingPageStop[t] && isActiveClip;
             const isQueued      = trackQueuedClip[t] === sceneIdx;
             const isWillRelaunch = trackWillRelaunch[t] && isActiveClip;
             let color;
-            if (!hasContent) {
+            if (!clipNonEmpty[t][sceneIdx]) {
+                color = LED_OFF;
+            } else if (!clipHasActiveNotes(t, sceneIdx)) {
                 color = DarkGrey;
             } else if (isPlaying && isPendingStop) {
                 color = (!playing || flashSixteenth) ? TRACK_DIM_COLORS[t] : LED_OFF;
@@ -1145,14 +1329,14 @@ function updateTrackLEDs() {
             const focused   = effectiveClip(t);
             const isFocused = sceneIdx === focused;
             const isPlaying = trackClipPlaying[t] && trackActiveClip[t] === sceneIdx;
-            if (isFocused && isPlaying) {
-                color = flashEighth ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
-            } else if (isFocused) {
+            if (isFocused) {
                 color = TRACK_COLORS[t];
-            } else if (clipNonEmpty[t][sceneIdx]) {
-                color = TRACK_DIM_COLORS[t];
-            } else {
+            } else if (!clipNonEmpty[t][sceneIdx]) {
                 color = LED_OFF;
+            } else if (!clipHasActiveNotes(t, sceneIdx)) {
+                color = DarkGrey;
+            } else {
+                color = TRACK_DIM_COLORS[t];
             }
         }
         /* Copy source blink: JS-side timer (transport-independent) */
@@ -1163,6 +1347,10 @@ function updateTrackLEDs() {
         }
         cachedSetButtonLED(40 + idx, color);
     }
+
+    /* Knob LEDs (CC 71-78): active track indicator in Session View only */
+    for (let k = 0; k < NUM_TRACKS; k++)
+        cachedSetButtonLED(71 + k, (sessionView && k === activeTrack) ? White : LED_OFF);
 }
 
 function forceRedraw() {
@@ -1288,6 +1476,13 @@ function drawUI() {
         return;
     }
 
+    /* No-note flash: ~600ms after pressing an empty step with no prior pad */
+    if (noNoteFlashEndTick >= 0) {
+        print(4, 22, 'NO NOTE', 1);
+        print(4, 34, 'Play a pad first', 1);
+        return;
+    }
+
     /* Octave overlay: ~1000ms after Up/Down octave shift */
     if (octaveOverlayEndTick >= 0) {
         const ac         = effectiveClip(activeTrack);
@@ -1304,16 +1499,50 @@ function drawUI() {
 
     /* Step edit: show assigned notes and step identity */
     if (heldStep >= 0) {
-        const ac       = effectiveClip(activeTrack);
+        const ac        = effectiveClip(activeTrack);
         const stepLabel = 'S' + (heldStep + 1);
-        const noteStr  = heldStepNotes.length === 0
-            ? '(empty)'
-            : heldStepNotes.map(midiNoteName).join(' ');
-        print(4, 10, 'TR' + (activeTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac] +
-                     '  ' + stepLabel, 1);
-        print(4, 22, 'STEP EDIT', 1);
-        print(4, 34, noteStr, 1);
+        const header    = 'TR' + (activeTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac] + '  ' + stepLabel;
+        print(4, 10, header, 1);
+        if (heldStepNotes.length > 0) {
+            /* Oct+Pit share a merged block; one note value centered under both labels */
+            const root = heldStepNotes[0];
+            const hiP  = (knobTouched === 0 || knobTouched === 1);
+            if (hiP) fill_rect(2, 20, 46, 24, 1);
+            print(2,  22, 'Oct', hiP ? 0 : 1);
+            print(27, 22, 'Pit', hiP ? 0 : 1);
+            const noteLabel = heldStepNotes.length > 1
+                ? midiNoteName(root) + ' +' + (heldStepNotes.length - 1)
+                : midiNoteName(root);
+            print(16, 34, noteLabel, hiP ? 0 : 1);
+            /* Dur / Vel / Ndg */
+            const RHS_LABELS = ['Dur', 'Vel', 'Ndg'];
+            const RHS_VALS   = [
+                (stepEditGate / 24).toFixed(2),
+                String(stepEditVel),
+                (stepEditNudge >= 0 ? '+' : '') + String(stepEditNudge)
+            ];
+            const RHS_X = [52, 77, 102];
+            for (let i = 0; i < 3; i++) {
+                const hi = (knobTouched === i + 2);
+                if (hi) fill_rect(RHS_X[i], 20, 23, 24, 1);
+                print(RHS_X[i], 22, RHS_LABELS[i], hi ? 0 : 1);
+                print(RHS_X[i], 34, RHS_VALS[i],   hi ? 0 : 1);
+            }
+        } else {
+            print(4, 22, 'STEP EDIT', 1);
+            print(4, 34, '(empty)', 1);
+        }
         drawTrackRow(46);
+        return;
+    }
+
+    /* Loop view: own priority state so screen is fully cleared first */
+    if (loopHeld) {
+        const ac_l    = effectiveClip(activeTrack);
+        const steps_l = clipLength[activeTrack][ac_l];
+        const pages_l = Math.max(1, Math.ceil(steps_l / 16));
+        print(4, 22, 'LOOP LEN: ' + steps_l + ' STEPS', 1);
+        print(4, 34, pages_l + ' OF 16 PAGES', 1);
         return;
     }
 
@@ -1354,14 +1583,7 @@ function drawUI() {
         const recTag = (recordArmed && !recordCountingIn && recordArmedTrack === activeTrack)
             ? ' REC' : '';
         print(4, 22, 'KNOB: [' + BANKS[activeBank].name + ']' + recTag, 1);
-        if (loopHeld) {
-            const steps = clipLength[activeTrack][ac];
-            const pages = Math.max(1, Math.ceil(steps / 16));
-            print(4, 22, 'LOOP LEN: ' + steps + ' STEPS', 1);
-            print(4, 34, pages + ' OF 16 PAGES', 1);
-        } else {
-            drawTrackRow(34);
-        }
+        drawTrackRow(34);
         let line4 = '';
         for (let t = 0; t < NUM_TRACKS; t++) {
             line4 += SCENE_LETTERS[trackActiveClip[t]];
@@ -1403,13 +1625,15 @@ function syncClipsFromDsp() {
             const bulk = host_module_get_param('t' + t + '_c' + c + '_steps');
             if (bulk && bulk.length >= NUM_STEPS) {
                 for (let s = 0; s < NUM_STEPS; s++)
-                    clipSteps[t][c][s] = bulk[s] === '1' ? 1 : 0;
+                    clipSteps[t][c][s] = bulk[s] === '1' ? 1 : (bulk[s] === '2' ? 2 : 0);
                 clipNonEmpty[t][c] = clipHasContent(t, c);
             }
             const len = host_module_get_param('t' + t + '_c' + c + '_length');
             if (len !== null && len !== undefined)
                 clipLength[t][c] = parseInt(len, 10) || 16;
         }
+        const ac2 = host_module_get_param('t' + t + '_active_clip');
+        if (ac2 !== null && ac2 !== undefined) trackActiveClip[t] = parseInt(ac2, 10) | 0;
         const po = host_module_get_param('t' + t + '_pad_octave');
         if (po !== null && po !== undefined) padOctave[t] = parseInt(po, 10) | 0;
         for (let b = 0; b < 8; b++) readBankParams(t, b);
@@ -1420,6 +1644,12 @@ function syncClipsFromDsp() {
     if (sp !== null && sp !== undefined) padScale = parseInt(sp, 10) | 0;
     const lqp = host_module_get_param('launch_quant');
     if (lqp !== null && lqp !== undefined) launchQuant = parseInt(lqp, 10) | 0;
+    const ivp = host_module_get_param('input_vel');
+    if (ivp !== null && ivp !== undefined) stubInputVel = parseInt(ivp, 10) | 0;
+    const iqp = host_module_get_param('inp_quant');
+    if (iqp !== null && iqp !== undefined) inpQuant = iqp === '1';
+    const micp = host_module_get_param('midi_in_channel');
+    if (micp !== null && micp !== undefined) midiInChannel = parseInt(micp, 10) | 0;
 }
 
 function syncMuteSoloFromDsp() {
@@ -1487,6 +1717,8 @@ globalThis.init = function () {
         syncMuteSoloFromDsp();
     }
 
+    extHeldNotes.clear();
+
     if (!hasInitedOnce) { sessionView = true; hasInitedOnce = true; }
 
     computePadNoteMap();
@@ -1506,7 +1738,7 @@ globalThis.tick = function () {
     if (pendingSetLoad && typeof host_module_set_param === 'function') {
         pendingSetLoad = false;
         disarmRecord();
-        heldStep = -1; heldStepBtn = -1; heldStepNotes = [];
+        heldStep = -1; heldStepBtn = -1; heldStepNotes = []; stepWasEmpty = false; stepWasHeld = false;
         seqActiveNotes.clear(); seqLastStep = -1; seqLastClip = -1;
         pendingDspSync = 5;
         host_module_set_param('state_load', currentSetUuid || '');
@@ -1541,6 +1773,22 @@ globalThis.tick = function () {
             computePadNoteMap();
             invalidateLEDCache();
             forceRedraw();
+        }
+    }
+
+    /* Deferred _steps re-read after _reassign: confirm DSP move in JS mirror */
+    if (pendingStepsReread > 0) {
+        pendingStepsReread--;
+        if (pendingStepsReread === 0) {
+            const prt  = pendingStepsRereadTrack;
+            const prac = pendingStepsRereadClip;
+            const bulk = host_module_get_param('t' + prt + '_c' + prac + '_steps');
+            if (bulk && bulk.length >= NUM_STEPS) {
+                for (let rs = 0; rs < NUM_STEPS; rs++)
+                    clipSteps[prt][prac][rs] = bulk[rs] === '1' ? 1 : (bulk[rs] === '2' ? 2 : 0);
+                clipNonEmpty[prt][prac] = clipHasContent(prt, prac);
+                forceRedraw();
+            }
         }
     }
 
@@ -1594,6 +1842,10 @@ globalThis.tick = function () {
             octaveOverlayEndTick = -1;
             screenDirty = true;
         }
+        if (noNoteFlashEndTick >= 0 && tickCount >= noNoteFlashEndTick) {
+            noNoteFlashEndTick = -1;
+            screenDirty = true;
+        }
 
         if (masterVolDelta !== 0 && typeof host_get_volume === 'function' && typeof host_set_volume === 'function') {
             host_set_volume(Math.max(0, Math.min(100, host_get_volume() + masterVolDelta)));
@@ -1602,25 +1854,31 @@ globalThis.tick = function () {
 
         if ((tickCount % POLL_INTERVAL) === 0) { pollDSP(); screenDirty = true; }
 
-        /* Step hold detection: any pending press crossing threshold → enter step edit (one at a time) */
-        if (heldStep < 0) {
-            for (let _btn = 0; _btn < 16; _btn++) {
-                if (stepBtnPressedTick[_btn] >= 0 &&
-                        (tickCount - stepBtnPressedTick[_btn]) >= STEP_HOLD_TICKS) {
-                    const ac_h   = effectiveClip(activeTrack);
-                    const absIdx = trackCurrentPage[activeTrack] * 16 + _btn;
-                    heldStepBtn              = _btn;
-                    heldStep                 = absIdx;
-                    stepBtnPressedTick[_btn] = -1;
-                    const raw_h = typeof host_module_get_param === 'function'
-                        ? host_module_get_param('t' + activeTrack + '_c' + ac_h + '_step_' + absIdx + '_notes')
-                        : null;
-                    heldStepNotes = (raw_h && raw_h.trim().length > 0)
-                        ? raw_h.trim().split(' ').map(Number).filter(function(n) { return n >= 0 && n <= 127; })
-                        : [];
-                    forceRedraw();
-                    break;
-                }
+        /* Step hold threshold: once elapsed, close the tap window so release won't toggle.
+         * Also auto-assign empty step now so knobs work immediately in step edit. */
+        if (heldStep >= 0 && heldStepBtn >= 0 && stepBtnPressedTick[heldStepBtn] >= 0 &&
+                (tickCount - stepBtnPressedTick[heldStepBtn]) >= STEP_HOLD_TICKS) {
+            stepBtnPressedTick[heldStepBtn] = -1;
+            stepWasHeld = true;
+            if (stepWasEmpty && heldStepNotes.length === 0 && typeof host_module_set_param === 'function') {
+                const ac_h = effectiveClip(activeTrack);
+                const assignNote = lastPlayedNote >= 0 ? lastPlayedNote : defaultStepNote();
+                const assignVel  = effectiveVelocity(lastPadVelocity);
+                host_module_set_param('t' + activeTrack + '_c' + ac_h + '_step_' + heldStep + '_toggle', assignNote + ' ' + assignVel);
+                const raw_h = typeof host_module_get_param === 'function'
+                    ? host_module_get_param('t' + activeTrack + '_c' + ac_h + '_step_' + heldStep + '_notes') : null;
+                heldStepNotes = (raw_h && raw_h.trim().length > 0)
+                    ? raw_h.trim().split(' ').map(Number).filter(function(n) { return n >= 0 && n <= 127; })
+                    : [];
+                clipSteps[activeTrack][ac_h][heldStep] = heldStepNotes.length > 0 ? 1 : 0;
+                if (heldStepNotes.length > 0) clipNonEmpty[activeTrack][ac_h] = true;
+                const rv = host_module_get_param('t' + activeTrack + '_c' + ac_h + '_step_' + heldStep + '_vel');
+                const rg = host_module_get_param('t' + activeTrack + '_c' + ac_h + '_step_' + heldStep + '_gate');
+                const rn = host_module_get_param('t' + activeTrack + '_c' + ac_h + '_step_' + heldStep + '_nudge');
+                stepEditVel   = rv !== null ? parseInt(rv, 10) : 100;
+                stepEditGate  = rg !== null ? parseInt(rg, 10) : 12;
+                stepEditNudge = rn !== null ? parseInt(rn, 10) : 0;
+                screenDirty = true;
             }
         }
 
@@ -1636,13 +1894,6 @@ globalThis.tick = function () {
                     return clipHasContent(t, c);
                 });
             });
-        }
-
-        /* Chord capture window expiry */
-        if (recordCaptureStep >= 0 && tickCount >= recordCaptureEndTick) {
-            recordCaptureStep    = -1;
-            recordCaptureClip    = -1;
-            recordCaptureEndTick = -1;
         }
 
         /* Refresh scene state cache for O(1) lookups in LED update functions */
@@ -1693,6 +1944,22 @@ globalThis.tick = function () {
             lastSoloBlink = null;
         }
     }
+    /* Flush buffered recording events — one batched set_param per tick to survive coalescing.
+     * Note-ons take priority; note-offs wait until the next tick if both are pending. */
+    if (recordArmed && !recordCountingIn && typeof host_module_set_param === 'function') {
+        if (_recNoteOns.length > 0) {
+            const rt   = _recNoteOns[0].rt;
+            const pairs = _recNoteOns.map(function(n) { return n.pitch + ' ' + n.vel; }).join(' ');
+            host_module_set_param('t' + rt + '_record_note_on', pairs);
+            _recNoteOns.length = 0;
+        } else if (_recNoteOffs.length > 0) {
+            const rt     = _recNoteOffs[0].rt;
+            const pitches = _recNoteOffs.map(function(n) { return n.pitch; }).join(' ');
+            host_module_set_param('t' + rt + '_record_note_off', pitches);
+            _recNoteOffs.length = 0;
+        }
+    }
+
     if (screenDirty) { screenDirty = false; drawUI(); }
 };
 
@@ -1812,6 +2079,7 @@ globalThis.onMidiMessageInternal = function (data) {
                         /* Track View + Shift: step active track 0–7, clamp at ends */
                         const next = Math.min(NUM_TRACKS - 1, Math.max(0, activeTrack + delta));
                         if (next !== activeTrack) {
+                            extNoteOffAll();
                             handoffRecordingToTrack(next);
                             activeTrack = next;
                             computePadNoteMap();
@@ -1881,6 +2149,8 @@ globalThis.onMidiMessageInternal = function (data) {
                     heldStepBtn        = -1;
                     heldStep           = -1;
                     heldStepNotes      = [];
+                    stepWasEmpty       = false;
+                    stepWasHeld        = false;
                     stepBtnPressedTick.fill(-1);
                     if (sessionView) {
                         for (let i = 0; i < 16; i++) setLED(16 + i, LED_OFF);
@@ -1902,6 +2172,8 @@ globalThis.onMidiMessageInternal = function (data) {
                 heldStepBtn        = -1;
                 heldStep           = -1;
                 heldStepNotes      = [];
+                stepWasEmpty       = false;
+                stepWasHeld        = false;
                 stepBtnPressedTick.fill(-1);
             }
             forceRedraw();
@@ -1960,6 +2232,7 @@ globalThis.onMidiMessageInternal = function (data) {
                 recordArmed         = true;
                 recordCountingIn    = true;
                 recordArmedTrack    = activeTrack;
+                recordBpm           = bpm;
                 countInStartTick    = tickCount;
                 countInQuarterTicks = Math.round(196 * 60 / bpm);
                 if (typeof host_module_set_param === 'function')
@@ -1967,9 +2240,12 @@ globalThis.onMidiMessageInternal = function (data) {
                 setButtonLED(MoveRec, Red);
             } else {
                 /* Playing → arm immediately with no count-in */
+                const rawBpmLive = typeof host_module_get_param === 'function'
+                    ? parseFloat(host_module_get_param('bpm')) : 120;
                 recordArmed      = true;
                 recordCountingIn = false;
                 recordArmedTrack = activeTrack;
+                recordBpm        = (rawBpmLive > 0 && isFinite(rawBpmLive)) ? rawBpmLive : 120;
                 setButtonLED(MoveRec, Red);
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('t' + activeTrack + '_recording', '1');
@@ -2018,7 +2294,9 @@ globalThis.onMidiMessageInternal = function (data) {
             const idx     = d1 - 40;
             const clipIdx = sceneRow + (3 - idx);
             if (copyHeld) {
-                if (sessionView) {
+                if (copySrc && copySrc.kind === 'step') {
+                    /* step copy in progress: swallow track/scene buttons — don't mix copy types */
+                } else if (sessionView) {
                     /* Copy: row-to-row gesture */
                     if (!copySrc) {
                         copySrc = { kind: 'row', row: clipIdx };
@@ -2048,8 +2326,8 @@ globalThis.onMidiMessageInternal = function (data) {
                     clearRow(clipIdx);
                     forceRedraw();
                 } else {
-                    /* Delete + track button (Track View): clear the clip at this scene position on active track */
-                    clearClip(activeTrack, clipIdx);
+                    /* Delete + track button (Track View): clear the clip; keep playing if it's currently active */
+                    clearClip(activeTrack, clipIdx, true);
                     forceRedraw();
                 }
             } else if (sessionView) {
@@ -2087,6 +2365,57 @@ globalThis.onMidiMessageInternal = function (data) {
                         host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
                 }
             }
+        }
+
+        /* Step edit overlay: K1-K5 intercept per-step params while a step is held and active */
+        if (heldStep >= 0 && heldStepNotes.length > 0 && d1 >= 71 && d1 <= 75) {
+            const knobIdx = d1 - 71;
+            const dir     = (d2 >= 1 && d2 <= 63) ? 1 : -1;
+            const t       = activeTrack;
+            const ac      = effectiveClip(t);
+            const pfx     = 't' + t + '_c' + ac + '_step_' + heldStep;
+            screenDirty   = true;
+            if (knobIdx === 0) {
+                /* K1 Oct: shift all notes ±12 semitones, sens=12 */
+                knobAccum[knobIdx] = (dir === knobLastDir[knobIdx]) ? knobAccum[knobIdx] + 1 : 1;
+                knobLastDir[knobIdx] = dir;
+                if (knobAccum[knobIdx] >= 12) {
+                    knobAccum[knobIdx] = 0;
+                    heldStepNotes = heldStepNotes.map(function(n) {
+                        return Math.max(0, Math.min(127, n + dir * 12));
+                    });
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param(pfx + '_set_notes', heldStepNotes.join(' '));
+                }
+            } else if (knobIdx === 1) {
+                /* K2 Pitch: shift each note ±1 scale degree (or ±1 semitone if scale-aware off), sens=6 */
+                knobAccum[knobIdx] = (dir === knobLastDir[knobIdx]) ? knobAccum[knobIdx] + 1 : 1;
+                knobLastDir[knobIdx] = dir;
+                if (knobAccum[knobIdx] >= 6) {
+                    knobAccum[knobIdx] = 0;
+                    heldStepNotes = heldStepNotes.map(function(n) {
+                        return scaleNudgeNote(n, dir, padKey, padScale);
+                    });
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param(pfx + '_set_notes', heldStepNotes.join(' '));
+                }
+            } else if (knobIdx === 2) {
+                /* K3 Dur: gate in 6-tick steps (±25% of a step per detent) */
+                stepEditGate = Math.max(1, Math.min(6144, stepEditGate + dir * 6));
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param(pfx + '_gate', String(stepEditGate));
+            } else if (knobIdx === 3) {
+                /* K4 Vel: velocity 0-127 */
+                stepEditVel = Math.max(0, Math.min(127, stepEditVel + dir));
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param(pfx + '_vel', String(stepEditVel));
+            } else {
+                /* K5 Nudge: tick offset -23..23 */
+                stepEditNudge = Math.max(-23, Math.min(23, stepEditNudge + dir));
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param(pfx + '_nudge', String(stepEditNudge));
+            }
+            return;
         }
 
         /* Knob CCs 71-78: apply delta to active bank parameter.
@@ -2134,7 +2463,10 @@ globalThis.onMidiMessageInternal = function (data) {
                                         const halfLen = len >> 1;
                                         const tmp = new Array(halfLen).fill(0);
                                         for (let si = 0; si < len; si++) {
-                                            if (steps[si] && !tmp[si >> 1]) tmp[si >> 1] = 1;
+                                            if (steps[si] === 1 && !tmp[si >> 1]) tmp[si >> 1] = 1;
+                                        }
+                                        for (let si = 0; si < len; si++) {
+                                            if (steps[si] === 2 && !tmp[si >> 1]) tmp[si >> 1] = 2;
                                         }
                                         for (let si = 0; si < len; si++) steps[si] = 0;
                                         for (let si = 0; si < halfLen; si++) steps[si] = tmp[si];
@@ -2220,6 +2552,20 @@ globalThis.onMidiMessageInternal = function (data) {
             if (typeof host_module_set_param === 'function')
                 host_module_set_param('t' + activeTrack + '_c' + ac + '_length', String(newLen));
             forceRedraw();
+        } else if (copyHeld) {
+            /* Copy + step button (Track View): step-to-step copy within active clip */
+            const ac     = effectiveClip(activeTrack);
+            const absIdx = trackCurrentPage[activeTrack] * 16 + idx;
+            if (!copySrc) {
+                copySrc = { kind: 'step', absStep: absIdx };
+                invalidateLEDCache();
+            } else if (copySrc.kind === 'step') {
+                if (copySrc.absStep !== absIdx) copyStep(activeTrack, ac, copySrc.absStep, absIdx);
+                copySrc = null;
+                invalidateLEDCache();
+                forceRedraw();
+            }
+            /* copySrc.kind !== 'step': swallow — don't mix copy types */
         } else if (deleteHeld) {
             /* Delete + step button (Track View): clear all notes from that step */
             const ac     = effectiveClip(activeTrack);
@@ -2227,8 +2573,56 @@ globalThis.onMidiMessageInternal = function (data) {
             clearStep(activeTrack, ac, absIdx);
             forceRedraw();
         } else if (!shiftHeld) {
-            /* Record press — tap vs hold decided in tick() or note-off */
+            /* Record press time for tap detection on release.
+             * Enter step edit immediately — tap vs hold decided on release. */
             stepBtnPressedTick[idx] = tickCount;
+            if (heldStep < 0) {
+                const ac_p   = effectiveClip(activeTrack);
+                const absP   = trackCurrentPage[activeTrack] * 16 + idx;
+                heldStepBtn  = idx;
+                heldStep     = absP;
+                const pref_p = 't' + activeTrack + '_c' + ac_p + '_step_' + absP;
+                const raw_p  = typeof host_module_get_param === 'function'
+                    ? host_module_get_param(pref_p + '_notes') : null;
+                heldStepNotes = (raw_p && raw_p.trim().length > 0)
+                    ? raw_p.trim().split(' ').map(Number).filter(function(n) { return n >= 0 && n <= 127; })
+                    : [];
+                if (heldStepNotes.length === 0) {
+                    stepWasEmpty = true;
+                    if (lastPlayedNote >= 0) {
+                        /* Known note: assign immediately so knobs work right away */
+                        const assignNote = lastPlayedNote;
+                        const assignVel  = effectiveVelocity(lastPadVelocity);
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + activeTrack + '_c' + ac_p + '_step_' + absP + '_toggle', assignNote + ' ' + assignVel);
+                        const raw_aa = typeof host_module_get_param === 'function'
+                            ? host_module_get_param(pref_p + '_notes') : null;
+                        heldStepNotes = (raw_aa && raw_aa.trim().length > 0)
+                            ? raw_aa.trim().split(' ').map(Number).filter(function(n) { return n >= 0 && n <= 127; })
+                            : [];
+                        clipSteps[activeTrack][ac_p][absP] = heldStepNotes.length > 0 ? 1 : 0;
+                        if (heldStepNotes.length > 0) clipNonEmpty[activeTrack][ac_p] = true;
+                        stepEditVel = assignVel; stepEditGate = 12; stepEditNudge = 0;
+                    } else {
+                        /* No note played yet: flash message, don't enter step edit */
+                        heldStep    = -1;
+                        heldStepBtn = -1;
+                        stepWasEmpty = false;
+                        stepWasHeld  = false;
+                        noNoteFlashEndTick = tickCount + NO_NOTE_FLASH_TICKS;
+                        screenDirty = true;
+                    }
+                } else {
+                    stepWasEmpty = false;
+                    const rv = typeof host_module_get_param === 'function' ? host_module_get_param(pref_p + '_vel') : null;
+                    const rg = typeof host_module_get_param === 'function' ? host_module_get_param(pref_p + '_gate') : null;
+                    const rn = typeof host_module_get_param === 'function' ? host_module_get_param(pref_p + '_nudge') : null;
+                    stepEditVel   = rv !== null ? parseInt(rv, 10) : 100;
+                    stepEditGate  = rg !== null ? parseInt(rg, 10) : 12;
+                    stepEditNudge = rn !== null ? parseInt(rn, 10) : 0;
+                }
+                forceRedraw();
+            }
         }
     }
 
@@ -2246,7 +2640,9 @@ globalThis.onMidiMessageInternal = function (data) {
                     } else if (copyHeld) {
                         /* Copy + clip pad (Session View): clip-to-clip copy */
                         const clipIdx = sceneRow + row;
-                        if (!copySrc) {
+                        if (copySrc && copySrc.kind === 'step') {
+                            /* step copy in progress: swallow */
+                        } else if (!copySrc) {
                             copySrc = { kind: 'clip', track: t, clip: clipIdx };
                             invalidateLEDCache();
                         } else if (copySrc.kind === 'clip') {
@@ -2324,7 +2720,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     const ac    = effectiveClip(activeTrack);
                     const pitch = Math.max(0, Math.min(127, padNoteMap[padIdx] + trackOctave[activeTrack] * 12));
                     if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + activeTrack + '_c' + ac + '_step_' + heldStep + '_toggle', String(pitch));
+                        host_module_set_param('t' + activeTrack + '_c' + ac + '_step_' + heldStep + '_toggle', pitch + ' ' + effectiveVelocity(d2));
                     /* Read back authoritative note list */
                     const raw = typeof host_module_get_param === 'function'
                         ? host_module_get_param('t' + activeTrack + '_c' + ac + '_step_' + heldStep + '_notes')
@@ -2343,7 +2739,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     /* Preview note */
                     padPitch[padIdx] = pitch;
                     liveActiveNotes.add(pitch);
-                    liveSendNote(activeTrack, 0x90, pitch, Math.max(80, d2));
+                    liveSendNote(activeTrack, 0x90, pitch, effectiveVelocity(d2));
                     forceRedraw();
                 } else if (shiftHeld && padIdx >= 24 && padIdx <= 31) {
                     /* Shift + top-row pad (notes 92-99): select bank.
@@ -2363,6 +2759,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     }
                 } else if (shiftHeld && padIdx < NUM_TRACKS) {
                     /* Shift + bottom-row pad: select active track */
+                    extNoteOffAll();
                     handoffRecordingToTrack(padIdx);
                     activeTrack = padIdx;
                     computePadNoteMap();
@@ -2375,9 +2772,10 @@ globalThis.onMidiMessageInternal = function (data) {
                     const basePitch = padNoteMap[padIdx];
                     const pitch = Math.max(0, Math.min(127, basePitch + trackOctave[activeTrack] * 12));
                     padPitch[padIdx] = pitch;
-                    lastPlayedNote = pitch;
+                    lastPlayedNote  = pitch;
+                    lastPadVelocity = effectiveVelocity(d2);
                     liveActiveNotes.add(pitch);
-                    liveSendNote(activeTrack, 0x90, pitch, Math.max(80, d2));
+                    liveSendNote(activeTrack, 0x90, pitch, effectiveVelocity(d2));
                     /* Pre-roll capture: note in last 1/16th of count-in → step 0 */
                     if (recordArmed && recordCountingIn &&
                             activeTrack === recordArmedTrack &&
@@ -2386,39 +2784,13 @@ globalThis.onMidiMessageInternal = function (data) {
                             typeof host_module_set_param === 'function') {
                         const rt   = recordArmedTrack;
                         const ac_r = trackActiveClip[rt];
-                        host_module_set_param('t' + rt + '_c' + ac_r + '_step_0_add', String(pitch));
+                        host_module_set_param('t' + rt + '_c' + ac_r + '_step_0_add', pitch + ' 0 ' + effectiveVelocity(d2));
                         clipSteps[rt][ac_r][0] = 1;
                         clipNonEmpty[rt][ac_r] = true;
                     }
-                    /* Overdub capture: add to current step of armed track.
-                     * Pin step index for RECORD_CAPTURE_TICKS so chord notes arriving
-                     * across poll boundaries all land on the same step. */
-                    if (recordArmed && !recordCountingIn &&
-                            activeTrack === recordArmedTrack &&
-                            typeof host_module_set_param === 'function') {
-                        const rt   = recordArmedTrack;
-                        const ac_r = trackActiveClip[rt];
-                        let   cs_r;
-                        if (recordCaptureStep >= 0 && recordCaptureClip === ac_r) {
-                            /* Reuse pinned step for chord */
-                            cs_r = recordCaptureStep;
-                        } else {
-                            /* First note of a new chord — pin current step */
-                            cs_r = trackCurrentStep[rt];
-                            if (cs_r >= 0) {
-                                recordCaptureStep    = cs_r;
-                                recordCaptureClip    = ac_r;
-                                recordCaptureEndTick = tickCount + RECORD_CAPTURE_TICKS;
-                            }
-                        }
-                        if (cs_r >= 0) {
-                            host_module_set_param(
-                                't' + rt + '_c' + ac_r + '_step_' + cs_r + '_add',
-                                String(pitch));
-                            clipSteps[rt][ac_r][cs_r] = 1;
-                            clipNonEmpty[rt][ac_r] = true;
-                        }
-                    }
+                    /* Overdub capture: add to current step of armed track with tick offset + velocity */
+                    if (recordArmed && !recordCountingIn && activeTrack === recordArmedTrack)
+                        recordNoteOn(pitch, effectiveVelocity(d2), recordArmedTrack);
                 }
             }
         }
@@ -2426,53 +2798,67 @@ globalThis.onMidiMessageInternal = function (data) {
 
     /* Pad releases: note-off */
     if ((status & 0xF0) === 0x80 || ((status & 0xF0) === 0x90 && d2 === 0)) {
-        /* Step button release: exit edit or commit tap-toggle */
+        /* Step button release: tap-toggle if within threshold, always exit step edit */
         if (d1 >= 16 && d1 <= 31) {
             const btn = d1 - 16;
             if (btn === heldStepBtn) {
-                /* Exit step edit mode */
+                if (stepBtnPressedTick[btn] >= 0) {
+                    /* Quick release within threshold — commit as tap toggle */
+                    const ac_t   = effectiveClip(activeTrack);
+                    const absIdx = heldStep;
+                    stepBtnPressedTick[btn] = -1;
+                    if (stepWasEmpty) {
+                        /* Note was assigned on press — tap confirms, nothing more to do */
+                    } else {
+                        const wasOn = clipSteps[activeTrack][ac_t][absIdx] === 1;
+                        if (!wasOn) {
+                            if (heldStepNotes.length === 0) {
+                                const assignNote2 = lastPlayedNote >= 0 ? lastPlayedNote : defaultStepNote();
+                                if (typeof host_module_set_param === 'function')
+                                    host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx + '_toggle', assignNote2 + ' ' + effectiveVelocity(lastPadVelocity));
+                            } else {
+                                if (typeof host_module_set_param === 'function')
+                                    host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx, '1');
+                            }
+                            clipSteps[activeTrack][ac_t][absIdx] = 1;
+                            clipNonEmpty[activeTrack][ac_t] = true;
+                            refreshSeqNotesIfCurrent(activeTrack, ac_t, absIdx);
+                        } else {
+                            /* Deactivating: preserve note data */
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx, '0');
+                            clipSteps[activeTrack][ac_t][absIdx] = heldStepNotes.length > 0 ? 2 : 0;
+                            if (clipNonEmpty[activeTrack][ac_t]) clipNonEmpty[activeTrack][ac_t] = clipHasContent(activeTrack, ac_t);
+                            refreshSeqNotesIfCurrent(activeTrack, ac_t, absIdx);
+                        }
+                    }
+                }
+                /* On long-hold release: if nudge moved notes past the step midpoint,
+                 * reassign them to the adjacent step slot so it's editable from there. */
+                if (stepWasHeld && heldStep >= 0 && heldStepNotes.length > 0) {
+                    const ac_ra = effectiveClip(activeTrack);
+                    const lenRa = clipLength[activeTrack][ac_ra];
+                    let dstStep = -1;
+                    if (stepEditNudge >= 12)
+                        dstStep = (heldStep + 1) % lenRa;
+                    else if (stepEditNudge <= -13)
+                        dstStep = (heldStep - 1 + lenRa) % lenRa;
+                    if (dstStep >= 0) {
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + activeTrack + '_c' + ac_ra + '_step_' + heldStep + '_reassign', String(dstStep));
+                        clipSteps[activeTrack][ac_ra][heldStep] = 0;
+                    }
+                    /* Always re-read after hold release: poll may have set a neighbor lit */
+                    pendingStepsReread = 2;
+                    pendingStepsRereadTrack = activeTrack;
+                    pendingStepsRereadClip  = ac_ra;
+                }
+                /* Always exit step edit on release of the held button */
                 heldStepBtn   = -1;
                 heldStep      = -1;
                 heldStepNotes = [];
-                forceRedraw();
-            } else if (stepBtnPressedTick[btn] >= 0) {
-                /* Tap: released before hold threshold — toggle step on/off */
-                const ac_t   = effectiveClip(activeTrack);
-                const absIdx = trackCurrentPage[activeTrack] * 16 + btn;
-                const wasOn  = clipSteps[activeTrack][ac_t][absIdx] === 1;
-                stepBtnPressedTick[btn] = -1;
-                if (!wasOn) {
-                    /* Activating: assign lastPlayedNote if step has default note */
-                    const raw_t = typeof host_module_get_param === 'function'
-                        ? host_module_get_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx + '_notes')
-                        : null;
-                    const norm = raw_t ? raw_t.trim() : '';
-                    if (!norm) {
-                        /* count=0: assign lastPlayedNote via toggle */
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx + '_toggle', String(lastPlayedNote));
-                    } else if (norm === '60' && lastPlayedNote !== 60) {
-                        /* Default C4 and player last played something else: swap */
-                        if (typeof host_module_set_param === 'function') {
-                            host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx + '_toggle', '60');
-                            host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx + '_toggle', String(lastPlayedNote));
-                        }
-                    } else {
-                        /* Has explicit notes or C4 is lastPlayedNote: reactivate as-is */
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx, '1');
-                    }
-                    clipSteps[activeTrack][ac_t][absIdx] = 1;
-                    clipNonEmpty[activeTrack][ac_t] = true;
-                    refreshSeqNotesIfCurrent(activeTrack, ac_t, absIdx);
-                } else {
-                    /* Deactivating: preserve note data */
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + activeTrack + '_c' + ac_t + '_step_' + absIdx, '0');
-                    clipSteps[activeTrack][ac_t][absIdx] = 0;
-                    if (clipNonEmpty[activeTrack][ac_t]) clipNonEmpty[activeTrack][ac_t] = clipHasContent(activeTrack, ac_t);
-                    refreshSeqNotesIfCurrent(activeTrack, ac_t, absIdx);
-                }
+                stepWasEmpty  = false;
+                stepWasHeld   = false;
                 forceRedraw();
             }
         }
@@ -2482,13 +2868,59 @@ globalThis.onMidiMessageInternal = function (data) {
             liveActiveNotes.delete(pitch);
             padPitch[padIdx] = -1;
             if (!sessionView) liveSendNote(activeTrack, 0x80, pitch, 0);
+            if (recordArmed && !recordCountingIn) recordNoteOff(pitch);
         }
     }
 };
 
 globalThis.onMidiMessageExternal = function (data) {
-    const status = data[0] | 0;
-    const d1     = (data[1] ?? 0) | 0;
-    const d2     = (data[2] ?? 0) | 0;
-    console.log("MIDI EXT: status=0x" + fmtHex(status) + " data1=" + fmtHex(d1) + " data2=" + fmtHex(d2));
+    const status  = data[0] | 0;
+    const d1      = (data[1] ?? 0) | 0;
+    const d2      = (data[2] ?? 0) | 0;
+    const msgType = status & 0xF0;
+    const msgCh   = (status & 0x0F) + 1;  /* 1-indexed */
+
+    if (midiInChannel !== 0 && msgCh !== midiInChannel) return;
+    /* Route to activeTrack in all views — activeTrack always reflects last Track View focus */
+
+    const t = activeTrack;
+
+    if (msgType === 0x90 && d2 > 0) {
+        const vel = effectiveVelocity(d2);
+        lastPlayedNote  = d1;
+        lastPadVelocity = vel;
+        liveSendNote(t, 0x90, d1, vel);
+        const isRec = recordArmed && !recordCountingIn && t === recordArmedTrack;
+        if (isRec) recordNoteOn(d1, vel, t);
+        extHeldNotes.set(d1, { track: t, recording: isRec });
+        if (heldStep >= 0 && !shiftHeld && !sessionView) {
+            const ac = effectiveClip(t);
+            if (typeof host_module_set_param === 'function')
+                /* Replace auto-assigned note if step was empty on hold; otherwise additive */
+                if (stepWasEmpty && heldStepNotes.length > 0)
+                    host_module_set_param('t' + t + '_c' + ac + '_step_' + heldStep + '_set_notes', String(d1));
+                else
+                    host_module_set_param('t' + t + '_c' + ac + '_step_' + heldStep + '_toggle', d1 + ' ' + vel);
+            const raw = typeof host_module_get_param === 'function'
+                ? host_module_get_param('t' + t + '_c' + ac + '_step_' + heldStep + '_notes') : null;
+            heldStepNotes = (raw && raw.trim().length > 0)
+                ? raw.trim().split(' ').map(Number).filter(function(n) { return n >= 0 && n <= 127; })
+                : [];
+            clipSteps[t][ac][heldStep] = heldStepNotes.length > 0 ? 1 : 0;
+            if (heldStepNotes.length > 0) {
+                clipNonEmpty[t][ac] = true;
+            } else if (clipNonEmpty[t][ac]) {
+                clipNonEmpty[t][ac] = clipHasContent(t, ac);
+            }
+            refreshSeqNotesIfCurrent(t, ac, heldStep);
+            forceRedraw();
+        }
+    } else if (msgType === 0x80 || (msgType === 0x90 && d2 === 0)) {
+        const info = extHeldNotes.get(d1);
+        liveSendNote(info ? info.track : t, 0x80, d1, 0);
+        if (info && info.recording) recordNoteOff(d1);
+        extHeldNotes.delete(d1);
+    } else if (msgType === 0xB0 || msgType === 0xD0 || msgType === 0xA0 || msgType === 0xE0) {
+        liveSendNote(t, msgType, d1, d2);
+    }
 };
