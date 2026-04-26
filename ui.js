@@ -1331,12 +1331,10 @@ function updateTrackLEDs() {
             const isPlaying = trackClipPlaying[t] && trackActiveClip[t] === sceneIdx;
             if (!clipNonEmpty[t][sceneIdx]) {
                 color = LED_OFF;
-            } else if (!clipHasActiveNotes(t, sceneIdx)) {
-                color = DarkGrey;
-            } else if (isFocused && isPlaying) {
-                color = flashEighth ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
             } else if (isFocused) {
                 color = TRACK_COLORS[t];
+            } else if (!clipHasActiveNotes(t, sceneIdx)) {
+                color = DarkGrey;
             } else {
                 color = TRACK_DIM_COLORS[t];
             }
