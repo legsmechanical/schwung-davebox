@@ -14,7 +14,7 @@
 
 SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move — standalone 8-track MIDI sequencer. No audio. C (DSP) + JavaScript (UI). Background running via tool reconnect.
 
-## Build history (current branch: `per-clip-params`)
+## Build history (on master)
 
 Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play effects → clip model/Session View/background running.
 
@@ -59,25 +59,22 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 
 **External MIDI routing**: `onMidiMessageExternal` routes all external MIDI (note-on/off, CC, pitch bend, aftertouch) to `activeTrack` in all views — `activeTrack` always reflects last Track View focus. Channel filter from MIDI In param (0=All). Note-on: applies `effectiveVelocity`; updates `lastPlayedNote`/`lastPadVelocity`; if recording armed, calls `recordNoteOn`. Note-off: routes to originating track via `extHeldNotes` map. Track switch (`extNoteOffAll`): sends note-offs for all held external notes before changing track. Step integration: held step + external note-on toggles pitch (replace via `_set_notes` if step was empty and auto-assigned; additive via `_toggle` otherwise).
 
-**Play effects**: Note FX → Harmonize → MIDI Delay. `tN_pfx_reset` resets all atomically. Scale-aware: noteFX_offset/harm_intervals/delay_pitch via `scale_transpose()` at render time; drum tracks bypass.
+**Play effects**: Note FX → Harmonize → MIDI Delay. Per-clip: each clip carries its own NOTE FX/HARMZ/MIDI DLY params (`clip_pfx_params_t`); switching clips loads that clip's params via `pfx_sync_from_clip`. `tN_pfx_reset` resets active clip's params atomically. Scale-aware: noteFX_offset/harm_intervals/delay_pitch via `scale_transpose()` at render time; drum tracks bypass.
 
 **Mute/Solo**: `effective_mute(t)` = `mute[t] || (any_solo && !solo[t])`; gates render note-on. Mute LED (Track View, focused): blink=muted, solid=soloed. OLED row: inverted=muted, blink=soloed. Snapshots (Session View, Mute held): 16 step buttons; Shift+Mute+step = save; Mute+step = recall.
 
 **Scale**: 14 scales, `SCALE_IVLS[14][8]`. `computePadNoteMap` uses `intervals.length`. Scale-aware play effects: `scale_transpose(inst, note, deg_offset)` anchors to note's degree then shifts.
 
-**State persistence**: v=12. Saved at Shift+Back and `destroy_instance`. Note format: `tick:pitch:vel:gate:sm;`. Per-clip stretch_exp/clock_shift_pos/ticks_per_step if nonzero/non-default. `step_muted=1` preserves inactive-step notes through reload.
+**State persistence**: v=13. Saved at Shift+Back and `destroy_instance`. Note format: `tick:pitch:vel:gate:sm;`. Per-clip stretch_exp/clock_shift_pos/ticks_per_step if nonzero/non-default. Per-clip pfx params sparse (`t%dc%d_nfo` etc.) if non-default. `step_muted=1` preserves inactive-step notes through reload.
 
-**JS internals**: `effectiveClip(t)` → queued if stopped+queued else active. `pendingDspSync` (5-tick countdown after state_load). `pendingStepsReread` (2-tick countdown after `_reassign`/`_copy_to`; re-reads `_steps` bulk). `stepWasHeld` set at hold threshold, cleared on release/press/cancel — `stepBtnPressedTick` is -1 for both paths at release time so can't be used. `seqNoteOnClipTick`/`seqNoteGateTicks`: clip-tick gate expiry for pad highlight; `seqActiveNotes` cleared when elapsed ≥ gate (wrap-safe). `pollDSP` overwrites `trackActiveClip[t]` only when `playing`. `clipTPS[t][c]`: JS mirror of per-clip ticks_per_step; used for Dur display, gate LED viz, K3 gate max, K5 nudge range, clip-tick computation. Synced at state load via `t{n}_c{c}_tps` get_param.
+**JS internals**: `effectiveClip(t)` → queued if stopped+queued else active. `pendingDspSync` (5-tick countdown after state_load). `pendingStepsReread` (2-tick countdown after `_reassign`/`_copy_to`; re-reads `_steps` bulk). `stepWasHeld` set at hold threshold, cleared on release/press/cancel — `stepBtnPressedTick` is -1 for both paths at release time so can't be used. `seqNoteOnClipTick`/`seqNoteGateTicks`: clip-tick gate expiry for pad highlight; `seqActiveNotes` cleared when elapsed ≥ gate (wrap-safe). `pollDSP` unconditionally overwrites `trackActiveClip[t]` when playing; `lastDspActiveClip[t]` tracks last DSP-reported value — change triggers `refreshPerClipBankParams(t)` (single `tN_pfx_snapshot` IPC call). `clipTPS[t][c]`: JS mirror of per-clip ticks_per_step; used for Dur display, gate LED viz, K3 gate max, K5 nudge range, clip-tick computation. Synced at state load via `t{n}_c{c}_tps` get_param. `bankParams[t][b][k]`: JS mirror of bank knob values; per-clip banks (2=NOTE FX, 3=HARMZ, 5=MIDI DLY) refreshed on clip switch.
 
 ## Upcoming tasks
 
-### Current branch (per-clip-resolution)
 1. **Scale-aware key/scale changes** — global option: changing Key/Scale transposes all clip notes to fit new scale. Design TBD.
 2. **Bank param LED indicators** — LED under knob lights when param differs from init default. Nondestructive params only (NOTE FX, HARMZ, MIDI DLY, CLIP Qnt). Dirty flag, no per-tick polling.
 3. **Step/note editing fixes** — see pending fixes in planning doc.
-
-### After current branch merges
-8. Per-clip params · 9. MIDI Delay Rnd refinement · 10. Full instance reset · 11. Undo/Redo (3 levels) · 12. Drum mode · 13. State snapshots (16 slots) · 14. Arpeggiator · 15. Swing (wire stub) · 16. MIDI clock sync
+4. MIDI Delay Rnd refinement · 5. Full instance reset · 6. Undo/Redo (3 levels) · 7. Drum mode · 8. State snapshots (16 slots) · 9. Arpeggiator · 10. Swing (wire stub) · 11. MIDI clock sync
 
 ## Per-set state
 
@@ -165,6 +162,7 @@ typedef struct {
     uint16_t clock_shift_pos;   /* Persisted. */
     int8_t   stretch_exp;       /* 0=1x, ±1=×2/÷2. Persisted. */
     uint16_t ticks_per_step;    /* TPS_VALUES[0..5]={12,24,48,96,192,384}. Default 24. Persisted if non-default. */
+    clip_pfx_params_t pfx_params; /* per-clip NOTE FX/HARMZ/MIDI DLY params (17 fields, 68B). */
     note_t   notes[512];        /* absolute-position list; rebuilt from step arrays at init/edit */
     uint16_t note_count;        /* active+tombstoned; not decremented on removal */
     uint8_t  occ_cache[32];     /* 256-bit occupancy bitmap */
@@ -218,7 +216,7 @@ JS sends pitch+vel via set_param on pad press; DSP reads `tick_in_step + current
 - Do not load SEQ8 from within SEQ8 — LED corruption. Workaround: Shift+Back first.
 - Live pad latency floor: ~3–7ms structural.
 - All 8 tracks route to the same Schwung chain.
-- State file v=12 — wrong/missing version → deleted, clean start.
+- State file v=13 — wrong/missing version → deleted, clean start.
 - `g_host->get_clock_status` is NULL — no background transport follow.
 - `g_host->get_bpm` non-null but doesn't track BPM changes while stopped.
 - See `SCHWUNG_SEQ8_LIMITATIONS.md` for framework interaction patterns and gotchas.
