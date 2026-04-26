@@ -175,6 +175,32 @@ typedef struct {
 } note_t; /* 12 bytes */
 
 /* ------------------------------------------------------------------ */
+/* Per-clip play-effect params (17 fields, ~68 bytes)                  */
+/* Runtime state (events, active_notes, sample_counter, cached_bpm,   */
+/* rng, route) stays in play_fx_t inside seq8_track_t.                */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    int octave_shift;       /* -4..+4  */
+    int note_offset;        /* -24..+24 */
+    int gate_time;          /* 0..400 percent; default 100 */
+    int velocity_offset;    /* -127..+127 */
+    int quantize;           /* 0..100 */
+    int unison;             /* 0=off, 1=x2, 2=x3 */
+    int octaver;            /* -4..+4 */
+    int harmonize_1;        /* -24..+24 */
+    int harmonize_2;        /* -24..+24 */
+    int delay_time_idx;     /* 0..10 */
+    int delay_level;        /* 0..127 */
+    int repeat_times;       /* 0..16 */
+    int fb_velocity;        /* -127..+127 */
+    int fb_note;            /* -24..+24 */
+    int fb_note_random;     /* 0 or 1 */
+    int fb_gate_time;       /* -100..+100 */
+    int fb_clock;           /* -100..+100 */
+} clip_pfx_params_t;
+
+/* ------------------------------------------------------------------ */
 /* Clip and track structs                                               */
 /* ------------------------------------------------------------------ */
 
@@ -197,6 +223,8 @@ typedef struct {
     int16_t  nudge_pos;
     /* Per-clip tick resolution; TPS_VALUES[0..5] = 12/24/48/96/192/384; default 24 (1/16). */
     uint16_t ticks_per_step;
+    /* Per-clip play-effect params: NOTE FX, HARMZ, MIDI DLY. */
+    clip_pfx_params_t pfx_params;
     /* Note-centric model (Stage B+): note list derived from step arrays at init */
     note_t   notes[MAX_NOTES_PER_CLIP];
     uint16_t note_count;         /* slots used (active+tombstoned); updated by set_param, not render */
@@ -326,6 +354,8 @@ static int  clip_insert_note(clip_t *cl, uint32_t tick, uint16_t gate, uint8_t p
 static void clip_migrate_to_notes(clip_t *cl);
 static void clip_build_steps_from_notes(clip_t *cl);
 static void silence_track_notes_v2(seq8_instance_t *inst, seq8_track_t *tr);
+static void clip_pfx_params_init(clip_pfx_params_t *p);
+static void pfx_sync_from_clip(seq8_track_t *tr);
 
 /* ------------------------------------------------------------------ */
 /* Utility                                                              */
@@ -423,7 +453,7 @@ static void seq8_save_state(seq8_instance_t *inst) {
     FILE *fp = fopen(inst->state_path, "w");
     if (!fp) return;
     int t, c;
-    fprintf(fp, "{\"v\":12,\"playing\":%d", inst->playing);
+    fprintf(fp, "{\"v\":13,\"playing\":%d", inst->playing);
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
     for (t = 0; t < NUM_TRACKS; t++)
@@ -442,6 +472,27 @@ static void seq8_save_state(seq8_instance_t *inst) {
                 fprintf(fp, ",\"t%dc%d_cs\":%d", t, c, (int)cl->clock_shift_pos);
             if (cl->ticks_per_step != TICKS_PER_STEP)
                 fprintf(fp, ",\"t%dc%d_tps\":%d", t, c, (int)cl->ticks_per_step);
+            /* Per-clip play-effect params (sparse — only non-default) */
+            {
+                const clip_pfx_params_t *p2 = &cl->pfx_params;
+                if (p2->octave_shift    != 0)   fprintf(fp, ",\"t%dc%d_nfo\":%d",  t, c, p2->octave_shift);
+                if (p2->note_offset     != 0)   fprintf(fp, ",\"t%dc%d_nfof\":%d", t, c, p2->note_offset);
+                if (p2->gate_time       != 100) fprintf(fp, ",\"t%dc%d_nfg\":%d",  t, c, p2->gate_time);
+                if (p2->velocity_offset != 0)   fprintf(fp, ",\"t%dc%d_nfv\":%d",  t, c, p2->velocity_offset);
+                if (p2->quantize        != 0)   fprintf(fp, ",\"t%dc%d_qnt\":%d",  t, c, p2->quantize);
+                if (p2->unison          != 0)   fprintf(fp, ",\"t%dc%d_hu\":%d",   t, c, p2->unison);
+                if (p2->octaver         != 0)   fprintf(fp, ",\"t%dc%d_ho\":%d",   t, c, p2->octaver);
+                if (p2->harmonize_1     != 0)   fprintf(fp, ",\"t%dc%d_h1\":%d",   t, c, p2->harmonize_1);
+                if (p2->harmonize_2     != 0)   fprintf(fp, ",\"t%dc%d_h2\":%d",   t, c, p2->harmonize_2);
+                if (p2->delay_time_idx  != 0)   fprintf(fp, ",\"t%dc%d_dt\":%d",   t, c, p2->delay_time_idx);
+                if (p2->delay_level     != 0)   fprintf(fp, ",\"t%dc%d_dl\":%d",   t, c, p2->delay_level);
+                if (p2->repeat_times    != 0)   fprintf(fp, ",\"t%dc%d_dr\":%d",   t, c, p2->repeat_times);
+                if (p2->fb_velocity     != 0)   fprintf(fp, ",\"t%dc%d_dvf\":%d",  t, c, p2->fb_velocity);
+                if (p2->fb_note         != 0)   fprintf(fp, ",\"t%dc%d_dpf\":%d",  t, c, p2->fb_note);
+                if (p2->fb_note_random  != 0)   fprintf(fp, ",\"t%dc%d_dpr\":%d",  t, c, p2->fb_note_random);
+                if (p2->fb_gate_time    != 0)   fprintf(fp, ",\"t%dc%d_dgf\":%d",  t, c, p2->fb_gate_time);
+                if (p2->fb_clock        != 0)   fprintf(fp, ",\"t%dc%d_dcf\":%d",  t, c, p2->fb_clock);
+            }
             /* note list: "tick:pitch:vel:gate;" for each active note */
             if (cl->note_count > 0) {
                 uint16_t ni;
@@ -482,20 +533,9 @@ static void seq8_save_state(seq8_instance_t *inst) {
             fputc('"', fp);
         }
     }
-    /* Per-track play effects and mode */
-    for (t = 0; t < NUM_TRACKS; t++) {
-        play_fx_t *fx = &inst->tracks[t].pfx;
+    /* Per-track: pad_mode (route saved above with channel) */
+    for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_pm\":%d", t, (int)inst->tracks[t].pad_mode);
-        fprintf(fp, ",\"t%d_nfo\":%d,\"t%d_nfof\":%d,\"t%d_nfg\":%d,\"t%d_nfv\":%d",
-                t, fx->octave_shift, t, fx->note_offset, t, fx->gate_time, t, fx->velocity_offset);
-        fprintf(fp, ",\"t%d_hu\":%d,\"t%d_ho\":%d,\"t%d_h1\":%d,\"t%d_h2\":%d",
-                t, fx->unison, t, fx->octaver, t, fx->harmonize_1, t, fx->harmonize_2);
-        fprintf(fp, ",\"t%d_dt\":%d,\"t%d_dl\":%d,\"t%d_dr\":%d,\"t%d_dvf\":%d",
-                t, fx->delay_time_idx, t, fx->delay_level, t, fx->repeat_times, t, fx->fb_velocity);
-        fprintf(fp, ",\"t%d_dpf\":%d,\"t%d_dgf\":%d,\"t%d_dcf\":%d,\"t%d_dpr\":%d",
-                t, fx->fb_note, t, fx->fb_gate_time, t, fx->fb_clock, t, fx->fb_note_random);
-        fprintf(fp, ",\"t%d_qnt\":%d", t, fx->quantize);
-    }
     /* Global settings */
     fprintf(fp, ",\"key\":%d,\"scale\":%d,\"lq\":%d",
             (int)inst->pad_key, (int)inst->pad_scale, (int)inst->launch_quant);
@@ -523,8 +563,8 @@ static void seq8_load_state(seq8_instance_t *inst) {
     if (!n) { free(buf); remove(inst->state_path); return; }
     buf[n] = '\0';
 
-    /* Version gate: delete and ignore any state file that isn't v=12. */
-    if (json_get_int(buf, "v", -1) != 12) {
+    /* Version gate: delete and ignore any state file that isn't v=13. */
+    if (json_get_int(buf, "v", -1) != 13) {
         free(buf);
         remove(inst->state_path);
         seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
@@ -635,45 +675,50 @@ static void seq8_load_state(seq8_instance_t *inst) {
             inst->snap_valid[n] = 1;
         }
     }
-    /* Per-track play effects and mode */
+    /* Per-track: pad_mode (route/channel already loaded above) */
     for (t = 0; t < NUM_TRACKS; t++) {
-        play_fx_t *fx = &inst->tracks[t].pfx;
         snprintf(key, sizeof(key), "t%d_pm", t);
         inst->tracks[t].pad_mode = (uint8_t)clamp_i(json_get_int(buf, key, 0), 0, 0);
-        snprintf(key, sizeof(key), "t%d_nfo", t);
-        fx->octave_shift   = clamp_i(json_get_int(buf, key, 0),    -4,  4);
-        snprintf(key, sizeof(key), "t%d_nfof", t);
-        fx->note_offset    = clamp_i(json_get_int(buf, key, 0),   -24, 24);
-        snprintf(key, sizeof(key), "t%d_nfg", t);
-        fx->gate_time      = clamp_i(json_get_int(buf, key, 100),   0, 400);
-        snprintf(key, sizeof(key), "t%d_nfv", t);
-        fx->velocity_offset = clamp_i(json_get_int(buf, key, 0), -127, 127);
-        snprintf(key, sizeof(key), "t%d_hu", t);
-        fx->unison         = clamp_i(json_get_int(buf, key, 0),     0,   2);
-        snprintf(key, sizeof(key), "t%d_ho", t);
-        fx->octaver        = clamp_i(json_get_int(buf, key, 0),    -4,   4);
-        snprintf(key, sizeof(key), "t%d_h1", t);
-        fx->harmonize_1    = clamp_i(json_get_int(buf, key, 0),   -24,  24);
-        snprintf(key, sizeof(key), "t%d_h2", t);
-        fx->harmonize_2    = clamp_i(json_get_int(buf, key, 0),   -24,  24);
-        snprintf(key, sizeof(key), "t%d_dt", t);
-        fx->delay_time_idx = clamp_i(json_get_int(buf, key, 0),     0, NUM_CLOCK_VALUES - 1);
-        snprintf(key, sizeof(key), "t%d_dl", t);
-        fx->delay_level    = clamp_i(json_get_int(buf, key, 0),     0, 127);
-        snprintf(key, sizeof(key), "t%d_dr", t);
-        fx->repeat_times   = clamp_i(json_get_int(buf, key, 0),     0, MAX_REPEATS);
-        snprintf(key, sizeof(key), "t%d_dvf", t);
-        fx->fb_velocity    = clamp_i(json_get_int(buf, key, 0),  -127, 127);
-        snprintf(key, sizeof(key), "t%d_dpf", t);
-        fx->fb_note        = clamp_i(json_get_int(buf, key, 0),   -24,  24);
-        snprintf(key, sizeof(key), "t%d_dgf", t);
-        fx->fb_gate_time   = clamp_i(json_get_int(buf, key, 0),  -100, 100);
-        snprintf(key, sizeof(key), "t%d_dcf", t);
-        fx->fb_clock       = clamp_i(json_get_int(buf, key, 0),  -100, 100);
-        snprintf(key, sizeof(key), "t%d_dpr", t);
-        fx->fb_note_random = json_get_int(buf, key, 0) ? 1 : 0;
-        snprintf(key, sizeof(key), "t%d_qnt", t);
-        fx->quantize       = clamp_i(json_get_int(buf, key, 0), 0, 100);
+    }
+    /* Per-clip play-effect params (sparse — missing keys default to neutral) */
+    for (t = 0; t < NUM_TRACKS; t++) {
+        for (c = 0; c < NUM_CLIPS; c++) {
+            clip_pfx_params_t *p2 = &inst->tracks[t].clips[c].pfx_params;
+            snprintf(key, sizeof(key), "t%dc%d_nfo",  t, c);
+            p2->octave_shift    = clamp_i(json_get_int(buf, key,   0),    -4,  4);
+            snprintf(key, sizeof(key), "t%dc%d_nfof", t, c);
+            p2->note_offset     = clamp_i(json_get_int(buf, key,   0),   -24, 24);
+            snprintf(key, sizeof(key), "t%dc%d_nfg",  t, c);
+            p2->gate_time       = clamp_i(json_get_int(buf, key, 100),     0, 400);
+            snprintf(key, sizeof(key), "t%dc%d_nfv",  t, c);
+            p2->velocity_offset = clamp_i(json_get_int(buf, key,   0),  -127, 127);
+            snprintf(key, sizeof(key), "t%dc%d_qnt",  t, c);
+            p2->quantize        = clamp_i(json_get_int(buf, key,   0),     0, 100);
+            snprintf(key, sizeof(key), "t%dc%d_hu",   t, c);
+            p2->unison          = clamp_i(json_get_int(buf, key,   0),     0,   2);
+            snprintf(key, sizeof(key), "t%dc%d_ho",   t, c);
+            p2->octaver         = clamp_i(json_get_int(buf, key,   0),    -4,   4);
+            snprintf(key, sizeof(key), "t%dc%d_h1",   t, c);
+            p2->harmonize_1     = clamp_i(json_get_int(buf, key,   0),   -24,  24);
+            snprintf(key, sizeof(key), "t%dc%d_h2",   t, c);
+            p2->harmonize_2     = clamp_i(json_get_int(buf, key,   0),   -24,  24);
+            snprintf(key, sizeof(key), "t%dc%d_dt",   t, c);
+            p2->delay_time_idx  = clamp_i(json_get_int(buf, key,   0),     0, NUM_CLOCK_VALUES - 1);
+            snprintf(key, sizeof(key), "t%dc%d_dl",   t, c);
+            p2->delay_level     = clamp_i(json_get_int(buf, key,   0),     0, 127);
+            snprintf(key, sizeof(key), "t%dc%d_dr",   t, c);
+            p2->repeat_times    = clamp_i(json_get_int(buf, key,   0),     0, MAX_REPEATS);
+            snprintf(key, sizeof(key), "t%dc%d_dvf",  t, c);
+            p2->fb_velocity     = clamp_i(json_get_int(buf, key,   0),  -127, 127);
+            snprintf(key, sizeof(key), "t%dc%d_dpf",  t, c);
+            p2->fb_note         = clamp_i(json_get_int(buf, key,   0),   -24,  24);
+            snprintf(key, sizeof(key), "t%dc%d_dpr",  t, c);
+            p2->fb_note_random  = json_get_int(buf, key, 0) ? 1 : 0;
+            snprintf(key, sizeof(key), "t%dc%d_dgf",  t, c);
+            p2->fb_gate_time    = clamp_i(json_get_int(buf, key,   0),  -100, 100);
+            snprintf(key, sizeof(key), "t%dc%d_dcf",  t, c);
+            p2->fb_clock        = clamp_i(json_get_int(buf, key,   0),  -100, 100);
+        }
     }
     /* Global settings */
     inst->pad_key      = (uint8_t)clamp_i(json_get_int(buf, "key",   9), 0, 11);
@@ -697,6 +742,9 @@ static void seq8_load_state(seq8_instance_t *inst) {
     for (t = 0; t < NUM_TRACKS; t++)
         for (c = 0; c < NUM_CLIPS; c++)
             clip_build_steps_from_notes(&inst->tracks[t].clips[c]);
+    /* Sync each track's tr->pfx params from its active clip's pfx_params */
+    for (t = 0; t < NUM_TRACKS; t++)
+        pfx_sync_from_clip(&inst->tracks[t]);
     seq8_ilog(inst, "SEQ8 state restored from file");
 }
 
@@ -1117,6 +1165,50 @@ static void pfx_init_defaults(play_fx_t *fx) {
     fx->route      = ROUTE_SCHWUNG;    /* default: Schwung chains */
 }
 
+static void clip_pfx_params_init(clip_pfx_params_t *p) {
+    p->octave_shift    = 0;
+    p->note_offset     = 0;
+    p->gate_time       = 100;
+    p->velocity_offset = 0;
+    p->quantize        = 0;
+    p->unison          = 0;
+    p->octaver         = 0;
+    p->harmonize_1     = 0;
+    p->harmonize_2     = 0;
+    p->delay_time_idx  = 0;
+    p->delay_level     = 0;
+    p->repeat_times    = 0;
+    p->fb_velocity     = 0;
+    p->fb_note         = 0;
+    p->fb_note_random  = 0;
+    p->fb_gate_time    = 0;
+    p->fb_clock        = 0;
+}
+
+/* Copy per-clip pfx params from active clip into tr->pfx (the render surface).
+ * Call this whenever active_clip changes so the render path always sees the
+ * correct clip's params via tr->pfx. */
+static void pfx_sync_from_clip(seq8_track_t *tr) {
+    const clip_pfx_params_t *p = &tr->clips[tr->active_clip].pfx_params;
+    tr->pfx.octave_shift    = p->octave_shift;
+    tr->pfx.note_offset     = p->note_offset;
+    tr->pfx.gate_time       = p->gate_time;
+    tr->pfx.velocity_offset = p->velocity_offset;
+    tr->pfx.quantize        = p->quantize;
+    tr->pfx.unison          = p->unison;
+    tr->pfx.octaver         = p->octaver;
+    tr->pfx.harmonize_1     = p->harmonize_1;
+    tr->pfx.harmonize_2     = p->harmonize_2;
+    tr->pfx.delay_time_idx  = p->delay_time_idx;
+    tr->pfx.delay_level     = p->delay_level;
+    tr->pfx.repeat_times    = p->repeat_times;
+    tr->pfx.fb_velocity     = p->fb_velocity;
+    tr->pfx.fb_note         = p->fb_note;
+    tr->pfx.fb_note_random  = p->fb_note_random;
+    tr->pfx.fb_gate_time    = p->fb_gate_time;
+    tr->pfx.fb_clock        = p->fb_clock;
+}
+
 static void clip_init(clip_t *cl) {
     int s;
     cl->length         = SEQ_STEPS_DEFAULT;
@@ -1125,6 +1217,7 @@ static void clip_init(clip_t *cl) {
     cl->stretch_exp     = 0;
     cl->nudge_pos       = 0;
     cl->ticks_per_step  = TICKS_PER_STEP;
+    clip_pfx_params_init(&cl->pfx_params);
     for (s = 0; s < SEQ_STEPS; s++) {
         cl->steps[s]           = 0;
         memset(cl->step_notes[s], 0, 8);
@@ -1424,62 +1517,69 @@ static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
 /* set_param helpers                                                    */
 /* ------------------------------------------------------------------ */
 
-/* Apply a play-effects key/value to a specific track's pfx. */
+/* Apply a play-effects key/value to a specific track's pfx and to the
+ * active clip's pfx_params (so params persist per-clip across switches). */
 static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
                     const char *key, const char *val) {
-    play_fx_t *fx = &tr->pfx;
+    play_fx_t         *fx = &tr->pfx;
+    clip_pfx_params_t *cp = &tr->clips[tr->active_clip].pfx_params;
+
+#define PFX_SET_BOTH(fx_field, cp_field, lo, hi) \
+    { int _v = clamp_i(my_atoi(val), (lo), (hi)); fx->fx_field = _v; cp->cp_field = _v; }
 
     if (!strcmp(key, "noteFX_octave"))
-        { fx->octave_shift    = clamp_i(my_atoi(val), -4, 4);    return; }
+        { PFX_SET_BOTH(octave_shift, octave_shift, -4, 4); return; }
     if (!strcmp(key, "noteFX_offset"))
-        { fx->note_offset     = clamp_i(my_atoi(val), -24, 24);  return; }
-    if (!strcmp(key, "noteFX_gate")) {
-        fx->gate_time = clamp_i(my_atoi(val), 0, 400);
-        return;
-    }
+        { PFX_SET_BOTH(note_offset, note_offset, -24, 24); return; }
+    if (!strcmp(key, "noteFX_gate"))
+        { PFX_SET_BOTH(gate_time, gate_time, 0, 400); return; }
     if (!strcmp(key, "noteFX_velocity"))
-        { fx->velocity_offset = clamp_i(my_atoi(val), -127, 127); return; }
+        { PFX_SET_BOTH(velocity_offset, velocity_offset, -127, 127); return; }
 
     if (!strcmp(key, "harm_unison")) {
-        if      (!strcmp(val, "OFF") || !strcmp(val, "0")) fx->unison = 0;
-        else if (!strcmp(val, "x2")  || !strcmp(val, "1")) fx->unison = 1;
-        else if (!strcmp(val, "x3")  || !strcmp(val, "2")) fx->unison = 2;
-        else fx->unison = clamp_i(my_atoi(val), 0, 2);
+        int _v;
+        if      (!strcmp(val, "OFF") || !strcmp(val, "0")) _v = 0;
+        else if (!strcmp(val, "x2")  || !strcmp(val, "1")) _v = 1;
+        else if (!strcmp(val, "x3")  || !strcmp(val, "2")) _v = 2;
+        else _v = clamp_i(my_atoi(val), 0, 2);
+        fx->unison = _v; cp->unison = _v;
         return;
     }
     if (!strcmp(key, "harm_octaver"))
-        { fx->octaver     = clamp_i(my_atoi(val), -4, 4);   return; }
+        { PFX_SET_BOTH(octaver, octaver, -4, 4); return; }
     if (!strcmp(key, "harm_interval1"))
-        { fx->harmonize_1 = clamp_i(my_atoi(val), -24, 24); return; }
+        { PFX_SET_BOTH(harmonize_1, harmonize_1, -24, 24); return; }
     if (!strcmp(key, "harm_interval2"))
-        { fx->harmonize_2 = clamp_i(my_atoi(val), -24, 24); return; }
+        { PFX_SET_BOTH(harmonize_2, harmonize_2, -24, 24); return; }
 
     if (!strcmp(key, "delay_time"))
-        { fx->delay_time_idx = clamp_i(my_atoi(val), 0, NUM_CLOCK_VALUES - 1); return; }
+        { PFX_SET_BOTH(delay_time_idx, delay_time_idx, 0, NUM_CLOCK_VALUES - 1); return; }
     if (!strcmp(key, "delay_level"))
-        { fx->delay_level    = clamp_i(my_atoi(val), 0, 127);    return; }
+        { PFX_SET_BOTH(delay_level, delay_level, 0, 127); return; }
     if (!strcmp(key, "delay_repeats"))
-        { fx->repeat_times   = clamp_i(my_atoi(val), 0, MAX_REPEATS); return; }
+        { PFX_SET_BOTH(repeat_times, repeat_times, 0, MAX_REPEATS); return; }
     if (!strcmp(key, "delay_vel_fb"))
-        { fx->fb_velocity    = clamp_i(my_atoi(val), -127, 127); return; }
+        { PFX_SET_BOTH(fb_velocity, fb_velocity, -127, 127); return; }
     if (!strcmp(key, "delay_pitch_fb"))
-        { fx->fb_note        = clamp_i(my_atoi(val), -24, 24);   return; }
+        { PFX_SET_BOTH(fb_note, fb_note, -24, 24); return; }
     if (!strcmp(key, "delay_pitch_random")) {
-        fx->fb_note_random = (!strcmp(val, "on") || !strcmp(val, "1")) ? 1 : 0;
+        int _v = (!strcmp(val, "on") || !strcmp(val, "1")) ? 1 : 0;
+        fx->fb_note_random = _v; cp->fb_note_random = _v;
         return;
     }
     if (!strcmp(key, "delay_gate_fb"))
-        { fx->fb_gate_time   = clamp_i(my_atoi(val), -100, 100); return; }
+        { PFX_SET_BOTH(fb_gate_time, fb_gate_time, -100, 100); return; }
     if (!strcmp(key, "delay_clock_fb"))
-        { fx->fb_clock       = clamp_i(my_atoi(val), -100, 100); return; }
+        { PFX_SET_BOTH(fb_clock, fb_clock, -100, 100); return; }
 
-    if (!strcmp(key, "quantize")) {
-        fx->quantize = clamp_i(my_atoi(val), 0, 100);
-        return;
-    }
+    if (!strcmp(key, "quantize"))
+        { PFX_SET_BOTH(quantize, quantize, 0, 100); return; }
+
+#undef PFX_SET_BOTH
 
     if (!strcmp(key, "pfx_reset")) {
         pfx_reset(fx);
+        clip_pfx_params_init(cp);
         return;
     }
 
@@ -1490,6 +1590,7 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
         } else if (!strcmp(val, "0") && inst->printing) {
             inst->printing = 0;
             pfx_reset(fx);
+            clip_pfx_params_init(cp);
             seq8_ilog(inst, "SEQ8 print: done, chain reset to neutral");
         }
         return;
@@ -1661,6 +1762,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                                            ? (uint16_t)(tr2->current_step % newlen)
                                            : (uint16_t)(inst->global_tick % newlen);
                     tr2->active_clip      = (uint8_t)tr2->queued_clip;
+                    pfx_sync_from_clip(tr2);
                     tr2->clip_playing     = 1;
                     tr2->queued_clip      = -1;
                     tr2->pending_page_stop = 0;
@@ -1737,6 +1839,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                                        ? (uint16_t)(tr2->current_step % newlen)
                                        : (uint16_t)(inst->global_tick % newlen);
                 tr2->active_clip      = (uint8_t)cidx;
+                pfx_sync_from_clip(tr2);
                 tr2->clip_playing     = 1;
                 tr2->queued_clip      = -1;
                 tr2->pending_page_stop = 0;
@@ -1816,6 +1919,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             if (srcT == dstT && srcC == dstC) return;
             dst->length        = src->length;
             dst->ticks_per_step = src->ticks_per_step;
+            dst->pfx_params    = src->pfx_params;
             memcpy(dst->steps,           src->steps,           SEQ_STEPS);
             memcpy(dst->step_notes,      src->step_notes,      SEQ_STEPS * 8);
             memcpy(dst->step_note_count, src->step_note_count, SEQ_STEPS);
@@ -1824,6 +1928,8 @@ static void set_param(void *instance, const char *key, const char *val) {
             memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
             dst->active = src->active;
             clip_migrate_to_notes(dst);
+            if ((int)inst->tracks[dstT].active_clip == dstC)
+                pfx_sync_from_clip(&inst->tracks[dstT]);
         }
         return;
     }
@@ -1843,6 +1949,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             clip_t *dst = &inst->tracks[t].clips[dstRow];
             dst->length         = src->length;
             dst->ticks_per_step = src->ticks_per_step;
+            dst->pfx_params     = src->pfx_params;
             memcpy(dst->steps,           src->steps,           SEQ_STEPS);
             memcpy(dst->step_notes,      src->step_notes,      SEQ_STEPS * 8);
             memcpy(dst->step_note_count, src->step_note_count, SEQ_STEPS);
@@ -1851,6 +1958,8 @@ static void set_param(void *instance, const char *key, const char *val) {
             memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
             dst->active = src->active;
             clip_migrate_to_notes(dst);
+            if ((int)inst->tracks[t].active_clip == dstRow)
+                pfx_sync_from_clip(&inst->tracks[t]);
         }
         return;
     }
@@ -1874,11 +1983,13 @@ static void set_param(void *instance, const char *key, const char *val) {
             cl->clock_shift_pos = 0;
             cl->nudge_pos       = 0;
             cl->ticks_per_step  = TICKS_PER_STEP;
+            clip_pfx_params_init(&cl->pfx_params);
             cl->note_count = 0;
             memset(cl->notes, 0, sizeof(cl->notes));
             cl->occ_dirty  = 1;
             if ((int)tr->active_clip == rowIdx) {
                 silence_track_notes_v2(inst, tr);
+                pfx_sync_from_clip(tr);
                 tr->clip_playing      = 0;
                 tr->will_relaunch     = 0;
                 tr->queued_clip       = -1;
@@ -1909,6 +2020,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                                        ? (uint16_t)(tr->current_step % newlen)
                                        : (uint16_t)(inst->global_tick % newlen);
                 tr->active_clip      = (uint8_t)new_cidx;
+                pfx_sync_from_clip(tr);
                 tr->tick_in_step     = 0;
                 tr->clip_playing     = 1;
                 tr->queued_clip      = -1;
@@ -2276,12 +2388,14 @@ static void set_param(void *instance, const char *key, const char *val) {
                 cl->clock_shift_pos = 0;
                 cl->nudge_pos       = 0;
                 cl->ticks_per_step  = TICKS_PER_STEP;
+                clip_pfx_params_init(&cl->pfx_params);
                 cl->note_count = 0;
                 memset(cl->notes, 0, sizeof(cl->notes));
                 cl->occ_dirty = 1;
                 /* Deactivate track if the cleared clip is active or queued */
                 if ((int)tr->active_clip == cidx) {
                     silence_track_notes_v2(inst, tr);
+                    pfx_sync_from_clip(tr);
                     tr->clip_playing      = 0;
                     tr->will_relaunch     = 0;
                     tr->queued_clip       = -1;
@@ -2310,10 +2424,12 @@ static void set_param(void *instance, const char *key, const char *val) {
                 cl->clock_shift_pos = 0;
                 cl->nudge_pos       = 0;
                 cl->ticks_per_step  = TICKS_PER_STEP;
+                clip_pfx_params_init(&cl->pfx_params);
                 cl->note_count = 0;
                 memset(cl->notes, 0, sizeof(cl->notes));
                 cl->occ_dirty = 1;
                 silence_track_notes_v2(inst, tr);
+                pfx_sync_from_clip(tr);
                 tr->rec_pending_count = 0;
                 tr->recording = 0;
                 if (tr->queued_clip == cidx) tr->queued_clip = -1;
@@ -3286,6 +3402,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                     inst->global_tick % QUANT_STEPS[inst->launch_quant] == 0) {
                     silence_track_notes_v2(inst, tr);
                     tr->active_clip  = (uint8_t)tr->queued_clip;
+                    pfx_sync_from_clip(tr);
                     tr->queued_clip  = -1;
                     tr->current_step = 0;
                     tr->tick_in_step = 0;
@@ -3305,6 +3422,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                     silence_track_notes_v2(inst, tr);
                     if (tr->queued_clip >= 0) {
                         tr->active_clip  = (uint8_t)tr->queued_clip;
+                        pfx_sync_from_clip(tr);
                         tr->queued_clip  = -1;
                         tr->current_step = 0;
                         tr->tick_in_step = 0;

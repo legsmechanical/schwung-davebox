@@ -528,7 +528,8 @@ let clipLength       = Array.from({length: NUM_TRACKS}, () => new Array(NUM_CLIP
 let clipTPS          = Array.from({length: NUM_TRACKS}, () => new Array(NUM_CLIPS).fill(24));
 let trackCurrentStep = new Array(NUM_TRACKS).fill(-1);
 let trackCurrentPage = new Array(NUM_TRACKS).fill(0);
-let trackActiveClip  = new Array(NUM_TRACKS).fill(0);
+let trackActiveClip     = new Array(NUM_TRACKS).fill(0);
+let lastDspActiveClip   = new Array(NUM_TRACKS).fill(0);
 let trackQueuedClip  = new Array(NUM_TRACKS).fill(-1);
 let trackClipPlaying     = new Array(NUM_TRACKS).fill(false);
 let trackWillRelaunch    = new Array(NUM_TRACKS).fill(false);
@@ -752,7 +753,10 @@ function clearClip(t, ac, keepPlaying) {
     const len = clipLength[t][ac];
     for (let s = 0; s < len; s++) clipSteps[t][ac][s] = 0;
     clipNonEmpty[t][ac] = false;
-    if (ac === trackActiveClip[t]) { seqActiveNotes.clear(); seqLastStep = -1; seqNoteOnClipTick = -1; }
+    if (ac === trackActiveClip[t]) {
+        seqActiveNotes.clear(); seqLastStep = -1; seqNoteOnClipTick = -1;
+        resetPerClipBankParamsToDefault(t);
+    }
 }
 
 /* Copy clip src→dst (single atomic DSP write, JS mirror update). */
@@ -763,7 +767,10 @@ function copyClip(srcT, srcC, dstT, dstC) {
     clipSteps[dstT][dstC] = clipSteps[srcT][srcC].slice();
     clipLength[dstT][dstC] = clipLength[srcT][srcC];
     clipNonEmpty[dstT][dstC] = clipNonEmpty[srcT][srcC];
-    if (dstC === trackActiveClip[dstT]) { seqActiveNotes.clear(); seqLastStep = -1; }
+    if (dstC === trackActiveClip[dstT]) {
+        seqActiveNotes.clear(); seqLastStep = -1;
+        refreshPerClipBankParams(dstT);
+    }
 }
 
 /* Copy all 8 tracks for a scene row (single atomic DSP write, JS mirror update). */
@@ -775,7 +782,10 @@ function copyRow(srcRow, dstRow) {
         clipSteps[t][dstRow] = clipSteps[t][srcRow].slice();
         clipLength[t][dstRow] = clipLength[t][srcRow];
         clipNonEmpty[t][dstRow] = clipNonEmpty[t][srcRow];
-        if (dstRow === trackActiveClip[t]) { seqActiveNotes.clear(); seqLastStep = -1; }
+        if (dstRow === trackActiveClip[t]) {
+            seqActiveNotes.clear(); seqLastStep = -1;
+            refreshPerClipBankParams(t);
+        }
     }
 }
 
@@ -798,7 +808,10 @@ function clearRow(rowIdx) {
         const len = clipLength[t][rowIdx];
         for (let s = 0; s < len; s++) clipSteps[t][rowIdx][s] = 0;
         clipNonEmpty[t][rowIdx] = false;
-        if (rowIdx === trackActiveClip[t]) { seqActiveNotes.clear(); seqLastStep = -1; }
+        if (rowIdx === trackActiveClip[t]) {
+            seqActiveNotes.clear(); seqLastStep = -1;
+            resetPerClipBankParamsToDefault(t);
+        }
     }
 }
 
@@ -1003,6 +1016,30 @@ function drainLedInit() {
     if (ledInitIndex >= ledInitQueue.length) ledInitComplete = true;
 }
 
+/* Per-clip banks: NOTE FX (2), HARMZ (3), MIDI DLY (5) */
+const PER_CLIP_BANKS = [2, 3, 5];
+
+/* Read per-clip bank params from DSP into bankParams for track t. */
+function refreshPerClipBankParams(t) {
+    if (typeof host_module_get_param !== 'function') return;
+    for (let bi = 0; bi < PER_CLIP_BANKS.length; bi++)
+        readBankParams(t, PER_CLIP_BANKS[bi]);
+    screenDirty = true;
+}
+
+/* Reset per-clip bankParams to defaults for track t (no DSP call needed —
+ * DSP already reset them; this just keeps JS mirrors in sync). */
+function resetPerClipBankParamsToDefault(t) {
+    for (let bi = 0; bi < PER_CLIP_BANKS.length; bi++) {
+        const b = PER_CLIP_BANKS[bi];
+        for (let k = 0; k < 8; k++) {
+            const pm = BANKS[b].knobs[k];
+            if (pm) bankParams[t][b][k] = pm.def;
+        }
+    }
+    screenDirty = true;
+}
+
 function pollDSP() {
     if (typeof host_module_get_param !== 'function') return;
     const snap = host_module_get_param('state_snapshot');
@@ -1013,7 +1050,14 @@ function pollDSP() {
     for (let t = 0; t < NUM_TRACKS; t++) {
         const newStep = parseInt(v[1 + t], 10) | 0;
         trackCurrentStep[t] = newStep;
-        if (playing) trackActiveClip[t] = parseInt(v[9 + t], 10) | 0;
+        if (playing) {
+            const newClip = parseInt(v[9 + t], 10) | 0;
+            trackActiveClip[t] = newClip;
+            if (newClip !== lastDspActiveClip[t]) {
+                lastDspActiveClip[t] = newClip;
+                refreshPerClipBankParams(t);
+            }
+        }
         trackQueuedClip[t]  = parseInt(v[17 + t], 10) | 0;
     }
     const countInDspActive = (v[25] === '1');
@@ -1756,7 +1800,10 @@ function syncClipsFromDsp() {
             }
         }
         const ac2 = host_module_get_param('t' + t + '_active_clip');
-        if (ac2 !== null && ac2 !== undefined) trackActiveClip[t] = parseInt(ac2, 10) | 0;
+        if (ac2 !== null && ac2 !== undefined) {
+            trackActiveClip[t] = parseInt(ac2, 10) | 0;
+            lastDspActiveClip[t] = trackActiveClip[t];
+        }
         const po = host_module_get_param('t' + t + '_pad_octave');
         if (po !== null && po !== undefined) padOctave[t] = parseInt(po, 10) | 0;
         for (let b = 0; b < 8; b++) readBankParams(t, b);
@@ -2523,6 +2570,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     if (!playing) {
                         trackActiveClip[t]  = clipIdx;
                         trackCurrentPage[t] = 0;
+                        refreshPerClipBankParams(t);
                     }
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
@@ -2852,6 +2900,7 @@ globalThis.onMidiMessageInternal = function (data) {
                                 if (!playing) {
                                     trackActiveClip[t]  = clipIdx;
                                     trackCurrentPage[t] = 0;
+                                    refreshPerClipBankParams(t);
                                 }
                                 if (typeof host_module_set_param === 'function')
                                     host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
@@ -2886,6 +2935,7 @@ globalThis.onMidiMessageInternal = function (data) {
                             if (!playing) {
                                 trackActiveClip[t]  = clipIdx;
                                 trackCurrentPage[t] = 0;
+                                refreshPerClipBankParams(t);
                             }
                             if (typeof host_module_set_param === 'function')
                                 host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
