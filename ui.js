@@ -2340,7 +2340,10 @@ globalThis.onMidiMessageInternal = function (data) {
                                         const halfLen = len >> 1;
                                         const tmp = new Array(halfLen).fill(0);
                                         for (let si = 0; si < len; si++) {
-                                            if (steps[si] && !tmp[si >> 1]) tmp[si >> 1] = 1;
+                                            if (steps[si] === 1 && !tmp[si >> 1]) tmp[si >> 1] = 1;
+                                        }
+                                        for (let si = 0; si < len; si++) {
+                                            if (steps[si] === 2 && !tmp[si >> 1]) tmp[si >> 1] = 2;
                                         }
                                         for (let si = 0; si < len; si++) steps[si] = 0;
                                         for (let si = 0; si < halfLen; si++) steps[si] = tmp[si];

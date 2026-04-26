@@ -2469,6 +2469,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                     tmp_gate[i] = GATE_TICKS;
                     memset(tmp_tick_offset[i], 0, 8 * sizeof(int16_t));
                 }
+                /* First pass: active steps — these win any destination conflict */
                 for (i = 0; i < len; i++) {
                     if (cl->steps[i]) {
                         int dst = i / 2;
@@ -2476,6 +2477,25 @@ static void set_param(void *instance, const char *key, const char *val) {
                             int ng = ((int)cl->step_gate[i] + 1) / 2;
                             if (ng < 1) ng = 1;
                             tmp_steps[dst] = 1;
+                            memcpy(tmp_notes[dst], cl->step_notes[i], 8);
+                            tmp_nc[dst]   = cl->step_note_count[i];
+                            tmp_vel[dst]  = cl->step_vel[i];
+                            tmp_gate[dst] = (uint16_t)ng;
+                            for (ni2 = 0; ni2 < 8; ni2++) {
+                                int nt = (int)cl->note_tick_offset[i][ni2] / 2;
+                                tmp_tick_offset[dst][ni2] = (int16_t)nt;
+                            }
+                        }
+                    }
+                }
+                /* Second pass: inactive steps with notes — fill empty destinations only */
+                for (i = 0; i < len; i++) {
+                    if (!cl->steps[i] && cl->step_note_count[i] > 0) {
+                        int dst = i / 2;
+                        if (tmp_nc[dst] == 0) {
+                            int ng = ((int)cl->step_gate[i] + 1) / 2;
+                            if (ng < 1) ng = 1;
+                            /* tmp_steps[dst] stays 0 (inactive) */
                             memcpy(tmp_notes[dst], cl->step_notes[i], 8);
                             tmp_nc[dst]   = cl->step_note_count[i];
                             tmp_vel[dst]  = cl->step_vel[i];
