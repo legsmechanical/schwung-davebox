@@ -2692,6 +2692,23 @@ globalThis.onMidiMessageInternal = function (data) {
                         }
                     }
                 }
+                /* On long-hold release: if nudge moved notes past the step midpoint,
+                 * reassign them to the adjacent step slot so it's editable from there. */
+                if (stepBtnPressedTick[btn] >= 0 && heldStep >= 0 && heldStepNotes.length > 0) {
+                    const ac_ra = effectiveClip(activeTrack);
+                    const lenRa = clipLength[activeTrack][ac_ra];
+                    let dstStep = -1;
+                    if (stepEditNudge >= 12)
+                        dstStep = (heldStep + 1) % lenRa;
+                    else if (stepEditNudge <= -13)
+                        dstStep = (heldStep - 1 + lenRa) % lenRa;
+                    if (dstStep >= 0 && clipSteps[activeTrack][ac_ra][dstStep] === 0) {
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + activeTrack + '_c' + ac_ra + '_step_' + heldStep + '_reassign', String(dstStep));
+                        clipSteps[activeTrack][ac_ra][dstStep] = clipSteps[activeTrack][ac_ra][heldStep] || 1;
+                        clipSteps[activeTrack][ac_ra][heldStep] = 0;
+                    }
+                }
                 /* Always exit step edit on release of the held button */
                 heldStepBtn   = -1;
                 heldStep      = -1;

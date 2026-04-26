@@ -2045,27 +2045,63 @@ static void set_param(void *instance, const char *key, const char *val) {
                     return;
                 }
                 if (!strcmp(q, "_vel")) {
-                    if (!cl->steps[sidx]) return;
+                    if (cl->step_note_count[sidx] == 0) return;
                     cl->step_vel[sidx] = (uint8_t)clamp_i(my_atoi(val), 0, 127);
                     clip_migrate_to_notes(cl);
                     if (!tr->recording) seq8_save_state(inst);
                     return;
                 }
                 if (!strcmp(q, "_gate")) {
-                    if (!cl->steps[sidx]) return;
+                    if (cl->step_note_count[sidx] == 0) return;
                     cl->step_gate[sidx] = (uint16_t)clamp_i(my_atoi(val), 1, SEQ_STEPS * TICKS_PER_STEP);
                     clip_migrate_to_notes(cl);
                     if (!tr->recording) seq8_save_state(inst);
                     return;
                 }
                 if (!strcmp(q, "_nudge")) {
-                    if (!cl->steps[sidx] || cl->step_note_count[sidx] == 0) return;
+                    if (cl->step_note_count[sidx] == 0) return;
                     int new_val = clamp_i(my_atoi(val), -(TICKS_PER_STEP-1), (TICKS_PER_STEP-1));
                     int delta = new_val - (int)cl->note_tick_offset[sidx][0];
                     int ni;
                     for (ni = 0; ni < (int)cl->step_note_count[sidx]; ni++) {
                         int o = (int)cl->note_tick_offset[sidx][ni] + delta;
                         cl->note_tick_offset[sidx][ni] = (int16_t)clamp_i(o, -(TICKS_PER_STEP-1), (TICKS_PER_STEP-1));
+                    }
+                    clip_migrate_to_notes(cl);
+                    if (!tr->recording) seq8_save_state(inst);
+                    return;
+                }
+                if (!strcmp(q, "_reassign")) {
+                    /* Move all notes from step sidx to dstStep, adjusting offsets.
+                     * Only moves if destination is empty. Preserves active/inactive state. */
+                    int dstStep = clamp_i(my_atoi(val), 0, (int)cl->length - 1);
+                    if (dstStep == sidx) return;
+                    if (cl->step_note_count[sidx] == 0) return;
+                    if (cl->step_note_count[dstStep] > 0) return;
+                    {
+                        int offset_adjust = ((int)sidx - dstStep) * TICKS_PER_STEP;
+                        int ni;
+                        for (ni = 0; ni < (int)cl->step_note_count[sidx]; ni++) {
+                            cl->step_notes[dstStep][ni] = cl->step_notes[sidx][ni];
+                            int new_off = (int)cl->note_tick_offset[sidx][ni] + offset_adjust;
+                            cl->note_tick_offset[dstStep][ni] =
+                                (int16_t)clamp_i(new_off, -(TICKS_PER_STEP-1), (TICKS_PER_STEP-1));
+                        }
+                        cl->step_note_count[dstStep] = cl->step_note_count[sidx];
+                        cl->step_vel[dstStep]        = cl->step_vel[sidx];
+                        cl->step_gate[dstStep]       = cl->step_gate[sidx];
+                        cl->steps[dstStep]           = cl->steps[sidx];
+                        memset(cl->step_notes[sidx], 0, 8);
+                        memset(cl->note_tick_offset[sidx], 0, 8 * sizeof(int16_t));
+                        cl->step_note_count[sidx] = 0;
+                        cl->step_vel[sidx]        = (uint8_t)SEQ_VEL;
+                        cl->step_gate[sidx]       = (uint16_t)GATE_TICKS;
+                        cl->steps[sidx]           = 0;
+                    }
+                    {
+                        int any = 0, k;
+                        for (k = 0; k < (int)cl->length; k++) if (cl->steps[k]) { any = 1; break; }
+                        cl->active = (uint8_t)any;
                     }
                     clip_migrate_to_notes(cl);
                     if (!tr->recording) seq8_save_state(inst);
