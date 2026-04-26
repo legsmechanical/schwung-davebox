@@ -192,6 +192,8 @@ typedef struct {
     uint16_t clock_shift_pos;
     /* Stretch exponent: 0=1x, +1=x2, +2=x4, -1=/2, -2=/4. Not persisted. */
     int8_t   stretch_exp;
+    /* Cumulative nudge ticks applied since last clear. Display only, not persisted. */
+    int16_t  nudge_pos;
     /* Note-centric model (Stage B+): note list derived from step arrays at init */
     note_t   notes[MAX_NOTES_PER_CLIP];
     uint16_t note_count;         /* slots used (active+tombstoned); updated by set_param, not render */
@@ -2238,6 +2240,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 cl->active          = 0;
                 cl->stretch_exp     = 0;
                 cl->clock_shift_pos = 0;
+                cl->nudge_pos       = 0;
                 cl->note_count = 0;
                 memset(cl->notes, 0, sizeof(cl->notes));
                 cl->occ_dirty = 1;
@@ -2270,6 +2273,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 cl->active          = 0;
                 cl->stretch_exp     = 0;
                 cl->clock_shift_pos = 0;
+                cl->nudge_pos       = 0;
                 cl->note_count = 0;
                 memset(cl->notes, 0, sizeof(cl->notes));
                 cl->occ_dirty = 1;
@@ -2586,6 +2590,7 @@ static void set_param(void *instance, const char *key, const char *val) {
               for (s = 0; s < len; s++) if (cl->steps[s]) { any2 = 1; break; }
               cl->active = (uint8_t)any2;
             }
+            cl->nudge_pos += (int16_t)dir;
             clip_migrate_to_notes(cl);
             return;
         }
@@ -2904,6 +2909,9 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         if (!strcmp(sub, "clock_shift_pos"))
             return snprintf(out, out_len, "%d",
                             (int)tr->clips[tr->active_clip].clock_shift_pos);
+        if (!strcmp(sub, "nudge_pos"))
+            return snprintf(out, out_len, "%d",
+                            (int)tr->clips[tr->active_clip].nudge_pos);
         if (!strcmp(sub, "beat_stretch_factor")) {
             int exp = (int)tr->clips[tr->active_clip].stretch_exp;
             if (exp == 0) return snprintf(out, out_len, "1x");
