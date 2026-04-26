@@ -190,12 +190,13 @@ const BANKS = [
         p('Len',  'Clip Length',  'clip_length', 'track', 1, 256, 16, fmtLen, 4),
         _X, _X, _X,
     ]},
-    /* 1 — TIMING (pad 93) — Beat Stretch, Clock Shift, Input Quantize */
+    /* 1 — TIMING (pad 93) — Beat Stretch, Clock Shift, Nudge, Quantize */
     { name: 'TIMING', knobs: [
         p('Stch', 'Beat Stretch',    'beat_stretch', 'action', 0, 0,   0,   fmtStretch, 16, '_factor', true),
         p('Shft', 'Clock Shift',     'clock_shift',  'action', 0, 0,   0,   fmtPlain,   8),
-        p('Qnt',  'Quantize',         'quantize',     'track',  0, 100, 0,   fmtPct),
-        _X, _X, _X, _X, _X,
+        p('Ndg',  'Nudge',           'nudge',        'action', 0, 0,   0,   fmtNA,      1),
+        p('Qnt',  'Quantize',        'quantize',     'track',  0, 100, 0,   fmtPct),
+        _X, _X, _X, _X,
     ]},
     /* 2 — NOTE FX (pad 94) — fully wired; Oct/Ofs slowed */
     { name: 'NOTE FX', knobs: [
@@ -2276,13 +2277,26 @@ globalThis.onMidiMessageInternal = function (data) {
         /* Up/Down: scene group nav in Session View or while overview held; octave shift in Track View */
         if (d1 === MoveDown && d2 === 127 && (sessionView || sessionOverlayHeld) && sceneRow < NUM_CLIPS - 4) { sceneRow = Math.min(NUM_CLIPS - 4, sceneRow + 4); forceRedraw(); }
         if (d1 === MoveUp   && d2 === 127 && (sessionView || sessionOverlayHeld) && sceneRow > 0)              { sceneRow = Math.max(0, sceneRow - 4);              forceRedraw(); }
-        if (d1 === MoveUp   && d2 > 0 && !sessionView && !sessionOverlayHeld) {
+        /* Shift+Up/Down: transpose active clip ±1 octave (Track View only) */
+        if (d1 === MoveUp   && d2 > 0 && shiftHeld && !sessionView && !sessionOverlayHeld && !globalMenuOpen) {
+            const t = activeTrack, ac = effectiveClip(t);
+            if (typeof host_module_set_param === 'function')
+                host_module_set_param('t' + t + '_c' + ac + '_transpose', '12');
+            screenDirty = true;
+        }
+        if (d1 === MoveDown && d2 > 0 && shiftHeld && !sessionView && !sessionOverlayHeld && !globalMenuOpen) {
+            const t = activeTrack, ac = effectiveClip(t);
+            if (typeof host_module_set_param === 'function')
+                host_module_set_param('t' + t + '_c' + ac + '_transpose', '-12');
+            screenDirty = true;
+        }
+        if (d1 === MoveUp   && d2 > 0 && !shiftHeld && !sessionView && !sessionOverlayHeld) {
             trackOctave[activeTrack] = Math.min(4, trackOctave[activeTrack] + 1);
             octaveOverlayEndTick = tickCount + OCTAVE_OVERLAY_TICKS;
             screenDirty = true;
             if (heldStep >= 0) forceRedraw();
         }
-        if (d1 === MoveDown && d2 > 0 && !sessionView && !sessionOverlayHeld) {
+        if (d1 === MoveDown && d2 > 0 && !shiftHeld && !sessionView && !sessionOverlayHeld) {
             trackOctave[activeTrack] = Math.max(-4, trackOctave[activeTrack] - 1);
             octaveOverlayEndTick = tickCount + OCTAVE_OVERLAY_TICKS;
             screenDirty = true;
@@ -2481,7 +2495,7 @@ globalThis.onMidiMessageInternal = function (data) {
                                     bankParams[t][bank][knobIdx] = parseActionRaw(rawFactor, 0);
                                 }
                             }
-                        } else {
+                        } else if (pm.dspKey === 'clock_shift') {
                             /* Clock Shift: continuous rotation, no lock */
                             if (len >= 2 && typeof host_module_set_param === 'function') {
                                 host_module_set_param('t' + t + '_' + pm.dspKey, String(dir));
@@ -2498,6 +2512,10 @@ globalThis.onMidiMessageInternal = function (data) {
                                 const cur = bankParams[t][bank][knobIdx];
                                 bankParams[t][bank][knobIdx] = (cur + (dir === 1 ? 1 : len - 1)) % len;
                             }
+                        } else {
+                            /* Nudge and other continuous action params: fire DSP, no JS mirror */
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_' + pm.dspKey, String(dir));
                         }
                     } else {
                         const cur = bankParams[activeTrack][bank][knobIdx];

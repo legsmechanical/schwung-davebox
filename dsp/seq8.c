@@ -2252,6 +2252,21 @@ static void set_param(void *instance, const char *key, const char *val) {
                 seq8_save_state(inst);
                 return;
             }
+            if (!strncmp(p, "_transpose", 10) && p[10] == '\0') {
+                int delta = my_atoi(val);
+                if (delta == 0) return;
+                int s, ni;
+                for (s = 0; s < (int)cl->length; s++) {
+                    for (ni = 0; ni < (int)cl->step_note_count[s]; ni++) {
+                        int np = (int)cl->step_notes[s][ni] + delta;
+                        if (np < 0) np = 0;
+                        else if (np > 127) np = 127;
+                        cl->step_notes[s][ni] = (uint8_t)np;
+                    }
+                }
+                clip_migrate_to_notes(cl);
+                return;
+            }
             return;
         }
 
@@ -2494,6 +2509,70 @@ static void set_param(void *instance, const char *key, const char *val) {
             int i, any = 0;
             for (i = 0; i < len; i++) if (cl->steps[i]) { any = 1; break; }
             cl->active = (uint8_t)any;
+            clip_migrate_to_notes(cl);
+            return;
+        }
+
+        if (!strcmp(sub, "nudge")) {
+            int dir = my_atoi(val);
+            if (dir != 1 && dir != -1) return;
+            clip_t *cl = &tr->clips[tr->active_clip];
+            int len = (int)cl->length;
+            if (len < 1) return;
+            /* crossing notes bounded at notes[] capacity */
+            struct { int16_t dst; uint8_t pitch, vel, active; uint16_t gate; } cross[512];
+            int ncross = 0;
+            int s, ni, wi;
+            for (s = 0; s < len; s++) {
+                if (cl->step_note_count[s] == 0) continue;
+                wi = 0;
+                for (ni = 0; ni < (int)cl->step_note_count[s]; ni++) {
+                    int new_off = (int)cl->note_tick_offset[s][ni] + dir;
+                    if (new_off < -(TICKS_PER_STEP-1) || new_off > (TICKS_PER_STEP-1)) {
+                        if (ncross < 512) {
+                            cross[ncross].dst    = (int16_t)((dir > 0) ? (s+1)%len : (s-1+len)%len);
+                            cross[ncross].pitch  = cl->step_notes[s][ni];
+                            cross[ncross].vel    = cl->step_vel[s];
+                            cross[ncross].gate   = cl->step_gate[s];
+                            cross[ncross].active = cl->steps[s];
+                            ncross++;
+                        }
+                    } else {
+                        cl->step_notes[s][wi]       = cl->step_notes[s][ni];
+                        cl->note_tick_offset[s][wi] = (int16_t)new_off;
+                        wi++;
+                    }
+                }
+                for (ni = wi; ni < (int)cl->step_note_count[s]; ni++) {
+                    cl->step_notes[s][ni]       = 0;
+                    cl->note_tick_offset[s][ni] = 0;
+                }
+                cl->step_note_count[s] = (uint8_t)wi;
+                if (wi == 0) {
+                    cl->steps[s]     = 0;
+                    cl->step_vel[s]  = (uint8_t)SEQ_VEL;
+                    cl->step_gate[s] = (uint16_t)GATE_TICKS;
+                }
+            }
+            { int ci;
+              for (ci = 0; ci < ncross; ci++) {
+                int dst = (int)cross[ci].dst;
+                if (cl->step_note_count[dst] >= 8) continue;
+                int slot = (int)cl->step_note_count[dst];
+                cl->step_notes[dst][slot]       = cross[ci].pitch;
+                cl->note_tick_offset[dst][slot] = 0;
+                if (slot == 0) {
+                    cl->step_vel[dst]  = cross[ci].vel;
+                    cl->step_gate[dst] = cross[ci].gate;
+                }
+                if (cross[ci].active) cl->steps[dst] = 1;
+                cl->step_note_count[dst]++;
+              }
+            }
+            { int any2 = 0;
+              for (s = 0; s < len; s++) if (cl->steps[s]) { any2 = 1; break; }
+              cl->active = (uint8_t)any2;
+            }
             clip_migrate_to_notes(cl);
             return;
         }
