@@ -2252,21 +2252,6 @@ static void set_param(void *instance, const char *key, const char *val) {
                 seq8_save_state(inst);
                 return;
             }
-            if (!strncmp(p, "_transpose", 10) && p[10] == '\0') {
-                int delta = my_atoi(val);
-                if (delta == 0) return;
-                int s, ni;
-                for (s = 0; s < (int)cl->length; s++) {
-                    for (ni = 0; ni < (int)cl->step_note_count[s]; ni++) {
-                        int np = (int)cl->step_notes[s][ni] + delta;
-                        if (np < 0) np = 0;
-                        else if (np > 127) np = 127;
-                        cl->step_notes[s][ni] = (uint8_t)np;
-                    }
-                }
-                clip_migrate_to_notes(cl);
-                return;
-            }
             return;
         }
 

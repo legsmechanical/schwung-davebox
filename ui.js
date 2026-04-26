@@ -2277,26 +2277,13 @@ globalThis.onMidiMessageInternal = function (data) {
         /* Up/Down: scene group nav in Session View or while overview held; octave shift in Track View */
         if (d1 === MoveDown && d2 === 127 && (sessionView || sessionOverlayHeld) && sceneRow < NUM_CLIPS - 4) { sceneRow = Math.min(NUM_CLIPS - 4, sceneRow + 4); forceRedraw(); }
         if (d1 === MoveUp   && d2 === 127 && (sessionView || sessionOverlayHeld) && sceneRow > 0)              { sceneRow = Math.max(0, sceneRow - 4);              forceRedraw(); }
-        /* Shift+Up/Down: transpose active clip ±1 octave (Track View only) */
-        if (d1 === MoveUp   && d2 > 0 && shiftHeld && !sessionView && !sessionOverlayHeld && !globalMenuOpen) {
-            const t = activeTrack, ac = effectiveClip(t);
-            if (typeof host_module_set_param === 'function')
-                host_module_set_param('t' + t + '_c' + ac + '_transpose', '12');
-            screenDirty = true;
-        }
-        if (d1 === MoveDown && d2 > 0 && shiftHeld && !sessionView && !sessionOverlayHeld && !globalMenuOpen) {
-            const t = activeTrack, ac = effectiveClip(t);
-            if (typeof host_module_set_param === 'function')
-                host_module_set_param('t' + t + '_c' + ac + '_transpose', '-12');
-            screenDirty = true;
-        }
-        if (d1 === MoveUp   && d2 > 0 && !shiftHeld && !sessionView && !sessionOverlayHeld) {
+        if (d1 === MoveUp   && d2 > 0 && !sessionView && !sessionOverlayHeld) {
             trackOctave[activeTrack] = Math.min(4, trackOctave[activeTrack] + 1);
             octaveOverlayEndTick = tickCount + OCTAVE_OVERLAY_TICKS;
             screenDirty = true;
             if (heldStep >= 0) forceRedraw();
         }
-        if (d1 === MoveDown && d2 > 0 && !shiftHeld && !sessionView && !sessionOverlayHeld) {
+        if (d1 === MoveDown && d2 > 0 && !sessionView && !sessionOverlayHeld) {
             trackOctave[activeTrack] = Math.max(-4, trackOctave[activeTrack] - 1);
             octaveOverlayEndTick = tickCount + OCTAVE_OVERLAY_TICKS;
             screenDirty = true;
