@@ -193,7 +193,7 @@ const BANKS = [
     /* 1 — TIMING (pad 93) — Beat Stretch, Clock Shift, Nudge, Quantize */
     { name: 'TIMING', knobs: [
         p('Stch', 'Beat Stretch',    'beat_stretch', 'action', 0, 0,   0,   fmtStretch, 16, '_factor', true),
-        p('Shft', 'Clock Shift',     'clock_shift',  'action', 0, 0,   0,   fmtPlain,   8),
+        p('Shft', 'Clock Shift',     'clock_shift',  'action', 0, 0,   0,   fmtSign,    8),
         p('Ndg',  'Nudge',           'nudge',        'action', 0, 0,   0,   fmtSign,    8),
         p('Qnt',  'Quantize',        'quantize',     'track',  0, 100, 0,   fmtPct),
         _X, _X, _X, _X,
@@ -480,6 +480,9 @@ const NO_NOTE_FLASH_TICKS = 118;     /* ~600ms at 196Hz */
 let trackOctave = new Array(NUM_TRACKS).fill(0);  /* per-track live pad octave shift, -4..+4 */
 let octaveOverlayEndTick = -1;                    /* tickCount deadline for octave overlay; -1 = inactive */
 const OCTAVE_OVERLAY_TICKS = 196;                 /* ~1000ms at 196Hz */
+let stretchFlashEndTick = -1;                     /* tickCount deadline for beat-stretch flash; -1 = inactive */
+let stretchFlashLabel = '';                       /* 'x2' or '/2' */
+let clockShiftTouchDelta = 0;                     /* per-touch cumulative step delta; reset on release */
 let screenDirty = true;   /* true = OLED must redraw this tick */
 let lastBlinkOn = null;   /* tracks session overview blink state for dirty detection */
 
@@ -1024,6 +1027,8 @@ function readBankParams(t, bankIdx) {
             continue;
         }
         if (pm.scope === 'action') {
+            /* beat_stretch and clock_shift display per-touch labels (0 at rest) rather than absolute position */
+            if (pm.dspKey === 'beat_stretch' || pm.dspKey === 'clock_shift') { bankParams[t][bankIdx][k] = 0; continue; }
             const stateKey = 't' + t + '_' + pm.dspKey + pm.actionSuffix;
             const raw = host_module_get_param(stateKey);
             bankParams[t][bankIdx][k] = parseActionRaw(raw, pm.def);
@@ -1477,6 +1482,14 @@ function drawUI() {
         return;
     }
 
+    /* Beat-stretch flash: ~1000ms after a successful stretch */
+    if (stretchFlashEndTick >= 0) {
+        print(4, 10, '[TIMING     ]', 1);
+        print(4, 22, 'Beat Stretch', 1);
+        print(4, 34, stretchFlashLabel, 1);
+        return;
+    }
+
     /* No-note flash: ~600ms after pressing an empty step with no prior pad */
     if (noNoteFlashEndTick >= 0) {
         print(4, 22, 'NO NOTE', 1);
@@ -1551,13 +1564,12 @@ function drawUI() {
         /* State 1: knob touched — single parameter */
         const pm  = BANKS[bank].knobs[knobTouched];
         const val = bankParams[activeTrack][bank][knobTouched];
-        print(4, 10, bankHeader(bank), 1);
-        print(4, 22, pm.full || '-', 1);
-        print(4, 34, pm.fmt(val), 1);
-        /* line 4 blank */
+        print(4,  0, bankHeader(bank), 1);
+        print(4, 12, pm.full || '-', 1);
+        print(4, 24, pm.fmt(val), 1);
 
     } else if (bank >= 0 && inTimeout) {
-        /* States 2/3: bank overview */
+        /* States 2/3: bank overview — 5 rows at y=0/12/24/36/48 */
         const knobs = BANKS[bank].knobs;
         const vals  = bankParams[activeTrack][bank];
         const line2 = col4(knobs[0].abbrev) + ' ' + col4(knobs[1].abbrev) + ' ' +
@@ -1568,10 +1580,15 @@ function drawUI() {
                       col4(knobs[3].abbrev ? knobs[3].fmt(vals[3]) : null);
         const line4 = col4(knobs[4].abbrev) + ' ' + col4(knobs[5].abbrev) + ' ' +
                       col4(knobs[6].abbrev) + ' ' + col4(knobs[7].abbrev);
-        print(4, 10, bankHeader(bank), 1);
-        print(4, 22, line2, 1);
-        print(4, 34, line3, 1);
-        print(4, 46, line4, 1);
+        const line5 = col4(knobs[4].abbrev ? knobs[4].fmt(vals[4]) : null) + ' ' +
+                      col4(knobs[5].abbrev ? knobs[5].fmt(vals[5]) : null) + ' ' +
+                      col4(knobs[6].abbrev ? knobs[6].fmt(vals[6]) : null) + ' ' +
+                      col4(knobs[7].abbrev ? knobs[7].fmt(vals[7]) : null);
+        print(4,  0, bankHeader(bank), 1);
+        print(4, 12, line2, 1);
+        print(4, 24, line3, 1);
+        print(4, 36, line4, 1);
+        print(4, 48, line5, 1);
 
     } else {
         /* State 4: normal Track View */
@@ -1839,6 +1856,10 @@ globalThis.tick = function () {
             stretchBlockedEndTick = -1;
             screenDirty = true;
         }
+        if (stretchFlashEndTick >= 0 && tickCount >= stretchFlashEndTick) {
+            stretchFlashEndTick = -1;
+            screenDirty = true;
+        }
         if (octaveOverlayEndTick >= 0 && tickCount >= octaveOverlayEndTick) {
             octaveOverlayEndTick = -1;
             screenDirty = true;
@@ -1992,10 +2013,16 @@ globalThis.onMidiMessageInternal = function (data) {
                 if (d1 === MoveMainTouch && !globalMenuOpen && !shiftHeld) { jogTouched = true; forceRedraw(); }
             } else if (d2 < 64) {
                 if (d1 <= 7) {
-                    if (activeBank >= 0 && BANKS[activeBank].knobs[d1] && BANKS[activeBank].knobs[d1].dspKey === 'nudge') {
-                        bankParams[activeTrack][activeBank][d1] = 0;
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + activeTrack + '_nudge', '0');
+                    if (activeBank >= 0 && BANKS[activeBank].knobs[d1]) {
+                        const relPm = BANKS[activeBank].knobs[d1];
+                        if (relPm.dspKey === 'nudge') {
+                            bankParams[activeTrack][activeBank][d1] = 0;
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + activeTrack + '_nudge', '0');
+                        } else if (relPm.dspKey === 'clock_shift' || relPm.dspKey === 'beat_stretch') {
+                            clockShiftTouchDelta = 0;
+                            bankParams[activeTrack][activeBank][d1] = 0;
+                        }
                     }
                     knobTouched = -1;
                     knobLocked[d1] = false;
@@ -2008,10 +2035,16 @@ globalThis.onMidiMessageInternal = function (data) {
         }
         if ((status & 0xF0) === 0x80) {
             if (d1 <= 7) {
-                if (activeBank >= 0 && BANKS[activeBank].knobs[d1] && BANKS[activeBank].knobs[d1].dspKey === 'nudge') {
-                    bankParams[activeTrack][activeBank][d1] = 0;
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + activeTrack + '_nudge', '0');
+                if (activeBank >= 0 && BANKS[activeBank].knobs[d1]) {
+                    const relPm = BANKS[activeBank].knobs[d1];
+                    if (relPm.dspKey === 'nudge') {
+                        bankParams[activeTrack][activeBank][d1] = 0;
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + activeTrack + '_nudge', '0');
+                    } else if (relPm.dspKey === 'clock_shift' || relPm.dspKey === 'beat_stretch') {
+                        clockShiftTouchDelta = 0;
+                        bankParams[activeTrack][activeBank][d1] = 0;
+                    }
                 }
                 knobTouched = -1;
                 knobLocked[d1] = false;
@@ -2043,6 +2076,15 @@ globalThis.onMidiMessageInternal = function (data) {
                 shiftHeld: shiftHeld
             });
             screenDirty = true;
+            return;
+        }
+        if (d1 === 3 && d2 === 127 && shiftHeld && deleteHeld && !sessionView) {
+            /* Shift+Delete+jog: full reset — NOTE FX, HARMZ, MIDI DLY, + SEQ ARP */
+            resetFxBanks(activeTrack);
+            for (let k = 0; k < 8; k++) {
+                const pm = BANKS[4].knobs[k];
+                if (pm) bankParams[activeTrack][4][k] = pm.def;
+            }
             return;
         }
         if (d1 === 3 && d2 === 127 && deleteHeld && !sessionView) {
@@ -2487,9 +2529,11 @@ globalThis.onMidiMessageInternal = function (data) {
                                     const newPages = Math.max(1, Math.ceil(clipLength[t][ac] / 16));
                                     if (trackCurrentPage[t] >= newPages)
                                         trackCurrentPage[t] = newPages - 1;
-                                    /* Read factor back from DSP — authoritative */
-                                    const rawFactor = host_module_get_param('t' + t + '_beat_stretch_factor');
-                                    bankParams[t][bank][knobIdx] = parseActionRaw(rawFactor, 0);
+                                    /* Per-touch label: dir +1 → fmtStretch shows 'x2', -1 → '/2' */
+                                    bankParams[t][bank][knobIdx] = dir;
+                                    /* Momentary OLED flash for when TIMING bank isn't visible */
+                                    stretchFlashLabel   = dir > 0 ? 'x2' : '/2';
+                                    stretchFlashEndTick = tickCount + OCTAVE_OVERLAY_TICKS;
                                 }
                             }
                         } else if (pm.dspKey === 'clock_shift') {
@@ -2506,8 +2550,8 @@ globalThis.onMidiMessageInternal = function (data) {
                                     for (let si = 0; si < len - 1; si++) steps[si] = steps[si + 1];
                                     steps[len - 1] = first;
                                 }
-                                const cur = bankParams[t][bank][knobIdx];
-                                bankParams[t][bank][knobIdx] = (cur + (dir === 1 ? 1 : len - 1)) % len;
+                                clockShiftTouchDelta += dir;
+                                bankParams[t][bank][knobIdx] = clockShiftTouchDelta;
                             }
                         } else {
                             /* Nudge: fire DSP, mirror counter locally for display, schedule steps re-read */
