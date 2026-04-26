@@ -1017,7 +1017,8 @@ function drainLedInit() {
 }
 
 /* Per-clip banks: NOTE FX (2), HARMZ (3), MIDI DLY (5) */
-const PER_CLIP_BANKS = [2, 3, 5];
+const PER_CLIP_BANKS  = [2, 3, 5];
+const PARAM_LED_BANKS = [2, 3, 4, 5]; /* NOTE FX, HARMZ, SEQ ARP, MIDI DLY */
 
 /* Read per-clip bank params from DSP into bankParams for track t. */
 function refreshPerClipBankParams(t) {
@@ -1522,9 +1523,21 @@ function updateTrackLEDs() {
         cachedSetButtonLED(40 + idx, color);
     }
 
-    /* Knob LEDs (CC 71-78): active track indicator in Session View only */
-    for (let k = 0; k < NUM_TRACKS; k++)
-        cachedSetButtonLED(71 + k, (sessionView && k === activeTrack) ? White : LED_OFF);
+    /* Knob LEDs (CC 71-78):
+     *   Session View              → White on activeTrack (active-track indicator)
+     *   Track View + PARAM_LED_BANKS → White when param ≠ default for activeTrack/activeBank */
+    for (let k = 0; k < NUM_TRACKS; k++) {
+        let ledVal = LED_OFF;
+        if (sessionView) {
+            ledVal = (k === activeTrack) ? White : LED_OFF;
+        } else if (PARAM_LED_BANKS.indexOf(activeBank) >= 0) {
+            const pm = BANKS[activeBank].knobs[k];
+            if (pm && pm.abbrev && pm.scope !== 'stub') {
+                ledVal = (bankParams[activeTrack][activeBank][k] !== pm.def) ? White : LED_OFF;
+            }
+        }
+        cachedSetButtonLED(71 + k, ledVal);
+    }
 }
 
 function forceRedraw() {
@@ -3007,6 +3020,8 @@ globalThis.onMidiMessageInternal = function (data) {
                     seqActiveNotes.clear();
                     seqLastStep = -1;
                     seqLastClip = -1;
+                    if (PER_CLIP_BANKS.indexOf(activeBank) >= 0)
+                        refreshPerClipBankParams(padIdx);
                     screenDirty = true;
                 } else if (!shiftHeld) {
                     /* Live note — apply per-track octave shift, clamp 0-127 */
