@@ -192,8 +192,6 @@ typedef struct {
     uint16_t clock_shift_pos;
     /* Stretch exponent: 0=1x, +1=x2, +2=x4, -1=/2, -2=/4. Not persisted. */
     int8_t   stretch_exp;
-    /* Cumulative nudge ticks applied since last clear. Display only, not persisted. */
-    int16_t  nudge_pos;
     /* Note-centric model (Stage B+): note list derived from step arrays at init */
     note_t   notes[MAX_NOTES_PER_CLIP];
     uint16_t note_count;         /* slots used (active+tombstoned); updated by set_param, not render */
@@ -2240,7 +2238,6 @@ static void set_param(void *instance, const char *key, const char *val) {
                 cl->active          = 0;
                 cl->stretch_exp     = 0;
                 cl->clock_shift_pos = 0;
-                cl->nudge_pos       = 0;
                 cl->note_count = 0;
                 memset(cl->notes, 0, sizeof(cl->notes));
                 cl->occ_dirty = 1;
@@ -2273,7 +2270,6 @@ static void set_param(void *instance, const char *key, const char *val) {
                 cl->active          = 0;
                 cl->stretch_exp     = 0;
                 cl->clock_shift_pos = 0;
-                cl->nudge_pos       = 0;
                 cl->note_count = 0;
                 memset(cl->notes, 0, sizeof(cl->notes));
                 cl->occ_dirty = 1;
@@ -2526,71 +2522,6 @@ static void set_param(void *instance, const char *key, const char *val) {
             int i, any = 0;
             for (i = 0; i < len; i++) if (cl->steps[i]) { any = 1; break; }
             cl->active = (uint8_t)any;
-            clip_migrate_to_notes(cl);
-            return;
-        }
-
-        if (!strcmp(sub, "nudge")) {
-            int dir = my_atoi(val);
-            if (dir != 1 && dir != -1) return;
-            clip_t *cl = &tr->clips[tr->active_clip];
-            int len = (int)cl->length;
-            if (len < 1) return;
-            /* crossing notes bounded at notes[] capacity */
-            struct { int16_t dst; uint8_t pitch, vel, active; uint16_t gate; } cross[512];
-            int ncross = 0;
-            int s, ni, wi;
-            for (s = 0; s < len; s++) {
-                if (cl->step_note_count[s] == 0) continue;
-                wi = 0;
-                for (ni = 0; ni < (int)cl->step_note_count[s]; ni++) {
-                    int new_off = (int)cl->note_tick_offset[s][ni] + dir;
-                    if (new_off < -(TICKS_PER_STEP-1) || new_off > (TICKS_PER_STEP-1)) {
-                        if (ncross < 512) {
-                            cross[ncross].dst    = (int16_t)((dir > 0) ? (s+1)%len : (s-1+len)%len);
-                            cross[ncross].pitch  = cl->step_notes[s][ni];
-                            cross[ncross].vel    = cl->step_vel[s];
-                            cross[ncross].gate   = cl->step_gate[s];
-                            cross[ncross].active = cl->steps[s];
-                            ncross++;
-                        }
-                    } else {
-                        cl->step_notes[s][wi]       = cl->step_notes[s][ni];
-                        cl->note_tick_offset[s][wi] = (int16_t)new_off;
-                        wi++;
-                    }
-                }
-                for (ni = wi; ni < (int)cl->step_note_count[s]; ni++) {
-                    cl->step_notes[s][ni]       = 0;
-                    cl->note_tick_offset[s][ni] = 0;
-                }
-                cl->step_note_count[s] = (uint8_t)wi;
-                if (wi == 0) {
-                    cl->steps[s]     = 0;
-                    cl->step_vel[s]  = (uint8_t)SEQ_VEL;
-                    cl->step_gate[s] = (uint16_t)GATE_TICKS;
-                }
-            }
-            { int ci;
-              for (ci = 0; ci < ncross; ci++) {
-                int dst = (int)cross[ci].dst;
-                if (cl->step_note_count[dst] >= 8) continue;
-                int slot = (int)cl->step_note_count[dst];
-                cl->step_notes[dst][slot]       = cross[ci].pitch;
-                cl->note_tick_offset[dst][slot] = 0;
-                if (slot == 0) {
-                    cl->step_vel[dst]  = cross[ci].vel;
-                    cl->step_gate[dst] = cross[ci].gate;
-                }
-                if (cross[ci].active) cl->steps[dst] = 1;
-                cl->step_note_count[dst]++;
-              }
-            }
-            { int any2 = 0;
-              for (s = 0; s < len; s++) if (cl->steps[s]) { any2 = 1; break; }
-              cl->active = (uint8_t)any2;
-            }
-            cl->nudge_pos += (int16_t)dir;
             clip_migrate_to_notes(cl);
             return;
         }
@@ -2909,9 +2840,6 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         if (!strcmp(sub, "clock_shift_pos"))
             return snprintf(out, out_len, "%d",
                             (int)tr->clips[tr->active_clip].clock_shift_pos);
-        if (!strcmp(sub, "nudge_pos"))
-            return snprintf(out, out_len, "%d",
-                            (int)tr->clips[tr->active_clip].nudge_pos);
         if (!strcmp(sub, "beat_stretch_factor")) {
             int exp = (int)tr->clips[tr->active_clip].stretch_exp;
             if (exp == 0) return snprintf(out, out_len, "1x");
