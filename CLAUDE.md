@@ -22,7 +22,7 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 
 **unquantized-recording A–L**: noteFX_gate · uint16 step_gate · deferred note-on · quantize knob (render-time) · sparse persistence (v=7) · step edit overlay K1–K5 (v=8) · live recording · Input Vel + Inp Quant · `note_t`+`notes[]` absolute model · 8-note poly · per-note tick offsets · `step_muted`/inactive steps (v=11) · `_reassign`+boundary crossing · `stepWasHeld` · `pendingStepsReread`.
 
-**Post-A–L**: clip copy fix (step_vel/step_gate + clip_migrate_to_notes) · Track View focus-jump fix (pollDSP overwrites active_clip only when playing) · Quit global menu item · pad LEDs follow gate duration · gate overlay wraps at clip end · loop view page content indicator · Delete+track preserves active playback state (`_clear_keep` DSP command).
+**Post-A–L**: clip copy fix (step_vel/step_gate + clip_migrate_to_notes) · Track View focus-jump fix · Quit global menu item · pad LEDs follow gate duration · gate overlay wraps at clip end · loop view page content indicator · Delete+track preserves active playback state (`_clear_keep`) · step copy (`_copy_to`).
 
 ## What's Built
 
@@ -43,7 +43,9 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 
 **Step edit overlay** (held step): 5-column OLED: Oct · Pit · Dur · Vel · Ndg. K1 Oct (sens=12) · K2 Pitch scale-aware · K3 Dur ±6 ticks/detent · K4 Vel ±1 · K5 Nudge ±1 tick. Multi-note: lowest note + "+N". Nudge moves all notes in step as unit; crossing ±12 ticks moves display to adjacent step live; `_reassign` commits on hold-release. Nudging into occupied step merges (dst pitch wins; active src activates inactive dst). Delete+step clears to defaults. K3 (Dur) touch: step LEDs visualize gate length (White = full steps covered, DarkGrey = partial tick remainder); wraps at clip end.
 
-**Delete combos**: CC 119 held. Delete+step = clear step · Delete+track button = clear clip (Track View: keeps playing if clip was active, uses `_clear_keep`; Session View: deactivates) · Delete+clip pad (Session View) = clear clip + deactivate · Delete+Mute = clear all mute/solo · Delete+jog click (Track View) = `tN_pfx_reset` · Delete+Play = panic.
+**Copy combos** (CC 60 held): Copy+step (Track View) = step-to-step copy within active clip — src blinks white, press dest to copy notes/vel/gate/tick offsets; release Copy to cancel · Copy+track button (Track View) or Copy+pad (Session View) = clip-to-clip copy · Copy+scene row button (Session View) = row copy. Mixed kinds swallowed.
+
+**Delete combos**: CC 119 held. Delete+step = clear step · Delete+track button = clear clip (Track View: keeps playing if clip was active via `_clear_keep`; Session View: deactivates) · Delete+clip pad (Session View) = clear clip + deactivate · Delete+Mute = clear all mute/solo · Delete+jog click (Track View) = `tN_pfx_reset` · Delete+Play = panic.
 
 **Active bank**: Single global `activeBank`. Shift + top-row pad (92–98); same bank → TRACK (0). Display priority: count-in → COMPRESS LIMIT → octave → step edit → knob → jog/bank-select → header (+` REC`).
 
@@ -59,18 +61,17 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 
 **State persistence**: v=11. Saved at Shift+Back and `destroy_instance`. Note format: `tick:pitch:vel:gate:sm;`. Per-clip stretch_exp/clock_shift_pos if nonzero. `step_muted=1` preserves inactive-step notes through reload.
 
-**JS internals**: `effectiveClip(t)` → queued if stopped+queued else active. `pendingDspSync` (5-tick countdown after state_load). `pendingStepsReread` (2-tick countdown after `_reassign`). `stepWasHeld` flag set at hold threshold, cleared on release/press/cancel — required because `stepBtnPressedTick` is -1 for both tap and hold at release time. `seqNoteOnClipTick`/`seqNoteGateTicks`: track clip-tick onset + gate length for active step; `seqActiveNotes` cleared when elapsed ticks ≥ gate (with wrap); reset in `refreshSeqNotesIfCurrent`. `pollDSP` overwrites `trackActiveClip[t]` from DSP only when `playing` (prevents focus-jump while stopped+queued).
+**JS internals**: `effectiveClip(t)` → queued if stopped+queued else active. `pendingDspSync` (5-tick countdown after state_load). `pendingStepsReread` (2-tick countdown after `_reassign`/`_copy_to`; re-reads `_steps` bulk). `stepWasHeld` set at hold threshold, cleared on release/press/cancel — `stepBtnPressedTick` is -1 for both paths at release time so can't be used. `seqNoteOnClipTick`/`seqNoteGateTicks`: clip-tick gate expiry for pad highlight; `seqActiveNotes` cleared when elapsed ≥ gate (wrap-safe). `pollDSP` overwrites `trackActiveClip[t]` only when `playing`.
 
 ## Upcoming tasks
 
 ### Current branch (unquantized-recording)
 1. **Fine clock shift + Shift+±/- octave transpose** — Fine clock shift: TIMING bank action, shifts all note tick positions ±1 tick per action, clamped ±23. Shift+±/-: transposes entire active clip ±1 octave in Track View.
-2. **Step copy** (Track View, CC 60) — hold Copy, source step blinks white, press dest → copy all notes/gate/vel/offsets. Same clip only.
-3. **Scale-aware key/scale changes** — global option: changing Key/Scale transposes all clip notes to fit new scale. Design TBD.
-4. **Clip resolution** — per-clip TICKS_PER_STEP (1/32·1/16·1/8·1/4·1/2·1-bar). Stored in clip_t. Move Len+Res to dedicated CLIP bank.
-5. **Bank param LED indicators** — LED under knob lights when param differs from init default. Nondestructive params only (NOTE FX, HARMZ, MIDI DLY, TIMING Qnt). Dirty flag, no per-tick polling.
-6. **External MIDI channel selector** — global menu MIDI In channel, routes to active Track View track.
-7. **Step/note editing fixes** — see pending fixes in planning doc.
+2. **Scale-aware key/scale changes** — global option: changing Key/Scale transposes all clip notes to fit new scale. Design TBD.
+3. **Clip resolution** — per-clip TICKS_PER_STEP (1/32·1/16·1/8·1/4·1/2·1-bar). Stored in clip_t. Move Len+Res to dedicated CLIP bank.
+4. **Bank param LED indicators** — LED under knob lights when param differs from init default. Nondestructive params only (NOTE FX, HARMZ, MIDI DLY, TIMING Qnt). Dirty flag, no per-tick polling.
+5. **External MIDI channel selector** — global menu MIDI In channel, routes to active Track View track.
+6. **Step/note editing fixes** — see pending fixes in planning doc.
 
 ### After current branch merges
 8. Per-clip params · 9. MIDI Delay Rnd refinement · 10. Full instance reset · 11. Undo/Redo (3 levels) · 12. Drum mode · 13. State snapshots (16 slots) · 14. Arpeggiator · 15. Swing (wire stub) · 16. MIDI clock sync
@@ -124,6 +125,7 @@ All `tN_` keys: N = 0..7.
 | `tN_cC_step_S_gate` | set/get | `"1"`–`"6144"` | No-op if step has no notes. Saves state. |
 | `tN_cC_step_S_nudge` | set/get | `"-23"`–`"23"` | Moves all notes in step as unit. No-op if step has no notes. Saves state. |
 | `tN_cC_step_S_reassign` | set | dest step index | Move/merge notes to dest. Empty dest: simple move. Occupied dest: merge (dst pitch wins; active src activates inactive dst). Always clears src. Saves state. |
+| `tN_cC_step_S_copy_to` | set | dest step index | Copy all step data (notes, vel, gate, tick offsets) to dest; overwrites dest; src unchanged. Saves state. |
 | `tN_cC_step_S_pitch` | set | signed delta | Shift all notes by N semitones. No-op if step has no notes. Saves state. |
 | `tN_cC_step_S_set_notes` | set | space-sep MIDI notes | Replace all notes. No-op if step has no notes. Saves state. |
 | `tN_cC_clear` | set | any | Atomic wipe all steps + deactivate track. Saves state. |
@@ -193,17 +195,13 @@ typedef struct {
 2. Gate countdown: decrement `play_pending[].ticks_remaining`; `pfx_note_off` at 0.
 3. Note-on: if `clip_playing && !effective_mute`, scan `notes[]` for `effective_note_tick(n) == current_clip_tick`. Skip `step_muted` and `suppress_until_wrap`. Add to `play_pending[]`.
 
-**note_t field semantics**: `active`=tombstone/slot-in-use (set by clip_insert_note; never cleared by user action — removal rebuilds notes[] via clip_migrate_to_notes). `step_muted`=user-controlled MIDI suppression (set during clip_migrate_to_notes when steps[s]=0 but step_note_count[s]>0). `suppress_until_wrap`=recording suppressor only. See `SCHWUNG_SEQ8_LIMITATIONS.md` for patterns and gotchas.
-
-**Hybrid model**: Step arrays = edit surface (all set_param handlers write step arrays then call clip_migrate_to_notes). notes[] = playback surface (render_block scans exclusively). clip_migrate_to_notes is one-way (step arrays → notes[]); clip_build_steps_from_notes runs only at state load. All new DSP commands must call clip_migrate_to_notes after mutating step arrays.
+**Hybrid model**: Step arrays = edit surface; notes[] = playback surface. All set_param handlers write step arrays then call `clip_migrate_to_notes` (one-way rebuild; never modify notes[] directly). `clip_build_steps_from_notes` runs only at state load. `active`=tombstone flag; `step_muted`=MIDI suppression for inactive steps; `suppress_until_wrap`=recording only. See `SCHWUNG_SEQ8_LIMITATIONS.md`.
 
 **state_snapshot** (52 values): `playing cs0..7 ac0..7 qc0..7 count_in cp0..7 wr0..7 ps0..7 flash_eighth flash_sixteenth`.
 
 ## Recording architecture (DSP-owns-timing)
 
-JS sends pitch+vel via set_param on pad press (and `onMidiMessageExternal` for external MIDI). DSP set_param handler reads `tick_in_step + current_step` at arrival, computes absolute tick = `current_step × TPS + tick_in_step`, adds note to note list immediately with placeholder gate (1 tick). Note-off: JS sends `tN_record_note_off "pitch"`; DSP computes gate = note_off_tick − note_on_tick, with loop-wrap: gate = clip_length_ticks − note_on_tick + note_off_tick if note_off < note_on. 10-slot `rec_pending[]` map. Input Quantize ON snaps tick to nearest step boundary. Recording disarm: `finalize_pending_notes` closes all pending note-ons at current tick.
-
-**Accuracy**: ≤2.9ms (same render block). DSP-owns-timing via set_param is the only viable approach on v0.9.7 (on_midi dispatches to JS only; host_module_send_midi undefined).
+JS sends pitch+vel via set_param on pad press; DSP reads `tick_in_step + current_step` at arrival → absolute tick, inserts note with placeholder gate (1 tick). Note-off: JS sends `tN_record_note_off "pitch"`; DSP computes gate with loop-wrap. 10-slot `rec_pending[]` map. Input Quantize ON snaps to step boundary. Disarm: `finalize_pending_notes` closes all pending note-ons. Accuracy ≤2.9ms (same render block). DSP-owns-timing is the only viable approach on v0.9.7 (on_midi → JS only; host_module_send_midi undefined).
 
 ## Known limitations
 
