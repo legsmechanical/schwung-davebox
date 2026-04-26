@@ -1347,6 +1347,10 @@ function updateTrackLEDs() {
         }
         cachedSetButtonLED(40 + idx, color);
     }
+
+    /* Knob LEDs (CC 71-78): active track indicator in Session View only */
+    for (let k = 0; k < NUM_TRACKS; k++)
+        cachedSetButtonLED(71 + k, (sessionView && k === activeTrack) ? White : LED_OFF);
 }
 
 function forceRedraw() {
