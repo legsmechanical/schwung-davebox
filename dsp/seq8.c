@@ -2962,6 +2962,15 @@ static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
         return snprintf(out, out_len, "%s",
                         fx->route == ROUTE_MOVE ? "move" : "schwung");
 
+    /* Batch read: all 17 per-clip pfx params in bank-knob order (NOTE FX K0-K4,
+     * HARMZ K0-K3, MIDI DLY K0-K7). Avoids 17 individual IPC round-trips. */
+    if (!strcmp(key, "pfx_snapshot"))
+        return snprintf(out, out_len, "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d",
+            fx->octave_shift, fx->note_offset, fx->gate_time, fx->velocity_offset, fx->quantize,
+            fx->unison, fx->octaver, fx->harmonize_1, fx->harmonize_2,
+            fx->delay_time_idx, fx->delay_level, fx->repeat_times,
+            fx->fb_velocity, fx->fb_note, fx->fb_gate_time, fx->fb_clock, fx->fb_note_random);
+
     if (!strcmp(key, "noteFX_octave"))    return snprintf(out, out_len, "%d", fx->octave_shift);
     if (!strcmp(key, "noteFX_offset"))    return snprintf(out, out_len, "%d", fx->note_offset);
     if (!strcmp(key, "noteFX_gate"))      return snprintf(out, out_len, "%d", fx->gate_time);

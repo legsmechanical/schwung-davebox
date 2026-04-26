@@ -1022,8 +1022,16 @@ const PER_CLIP_BANKS = [2, 3, 5];
 /* Read per-clip bank params from DSP into bankParams for track t. */
 function refreshPerClipBankParams(t) {
     if (typeof host_module_get_param !== 'function') return;
-    for (let bi = 0; bi < PER_CLIP_BANKS.length; bi++)
-        readBankParams(t, PER_CLIP_BANKS[bi]);
+    const snap = host_module_get_param('t' + t + '_pfx_snapshot');
+    if (!snap) return;
+    const v = snap.split(' ');
+    if (v.length < 17) return;
+    /* NOTE FX bank (2): K0=oct K1=ofs K2=gate K3=vel K4=qnt */
+    for (let k = 0; k < 5; k++) bankParams[t][2][k] = parseInt(v[k], 10) | 0;
+    /* HARMZ bank (3): K0=unis K1=oct K2=hrm1 K3=hrm2 */
+    for (let k = 0; k < 4; k++) bankParams[t][3][k] = parseInt(v[5 + k], 10) | 0;
+    /* MIDI DLY bank (5): K0=dly K1=lvl K2=rep K3=vfb K4=pfb K5=gfb K6=clk K7=rnd */
+    for (let k = 0; k < 8; k++) bankParams[t][5][k] = parseInt(v[9 + k], 10) | 0;
     screenDirty = true;
 }
 
