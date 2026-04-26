@@ -22,7 +22,7 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 
 **unquantized-recording A–L**: noteFX_gate · uint16 step_gate · deferred note-on · quantize knob (render-time) · sparse persistence (v=7) · step edit overlay K1–K5 (v=8) · live recording · Input Vel + Inp Quant · `note_t`+`notes[]` absolute model · 8-note poly · per-note tick offsets · `step_muted`/inactive steps (v=11) · `_reassign`+boundary crossing · `stepWasHeld` · `pendingStepsReread`.
 
-**Post-A–L** (merged to master): clip copy fix (step_vel/step_gate + clip_migrate_to_notes) · Track View focus-jump fix · Quit global menu item · pad LEDs follow gate duration · gate overlay wraps at clip end · loop view page content indicator · Delete+track preserves active playback state (`_clear_keep`) · step copy (`_copy_to`) · external MIDI routing (`midi_in_channel`) · Session View active-track knob LED indicator · clip LED hierarchy (focused=bright, inactive-only=DarkGrey, empty=off) · external MIDI step input integration (lastPlayedNote + held-step toggle/replace).
+**Post-A–L** (merged to master): clip copy fix (step_vel/step_gate + clip_migrate_to_notes) · Track View focus-jump fix · Quit global menu item · pad LEDs follow gate duration · gate overlay wraps at clip end · loop view page content indicator · Delete+track preserves active playback state (`_clear_keep`) · step copy (`_copy_to`) · external MIDI routing (`midi_in_channel`) · Session View active-track knob LED indicator · clip LED hierarchy (focused=bright, inactive-only=DarkGrey, empty=off) · external MIDI step input integration (lastPlayedNote + held-step toggle/replace) · TIMING K3=Clip Nudge (±1 tick/detent, ±12 midpoint crossing, display resets on release) · row_clear fix (notes[], deactivate, save) · clip clear fixes (step_vel/step_gate/stretch_exp/clock_shift_pos reset) · TIMING per-touch display labels (Beat Stretch: '1x'/'x2'/'/2'; Clock Shift: signed delta; both reset on release) · beat stretch OLED flash · Shift+Delete+jog = full bank reset (NOTE FX+HARMZ+MIDI DLY+SEQ ARP) · bank overview 5-row layout (y=0/12/24/36/48) with K5–K8 values.
 
 ## What's Built
 
@@ -45,11 +45,11 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 
 **Copy combos** (CC 60 held): Copy+step (Track View) = step-to-step copy within active clip — src blinks white, press dest to copy notes/vel/gate/tick offsets; release Copy to cancel · Copy+track button (Track View) or Copy+pad (Session View) = clip-to-clip copy · Copy+scene row button (Session View) = row copy. Mixed kinds swallowed.
 
-**Delete combos**: CC 119 held. Delete+step = clear step · Delete+track button = clear clip (Track View: keeps playing if clip was active via `_clear_keep`; Session View: deactivates) · Delete+clip pad (Session View) = clear clip + deactivate · Delete+Mute = clear all mute/solo · Delete+jog click (Track View) = `tN_pfx_reset` · Delete+Play = panic.
+**Delete combos**: CC 119 held. Delete+step = clear step · Delete+track button = clear clip (Track View: keeps playing if clip was active via `_clear_keep`; Session View: deactivates) · Delete+clip pad (Session View) = clear clip + deactivate · Delete+Mute = clear all mute/solo · Delete+jog click (Track View) = `tN_pfx_reset` (NOTE FX + HARMZ + MIDI DLY) · **Shift+Delete+jog click** (Track View) = full reset: NOTE FX + HARMZ + MIDI DLY + SEQ ARP · Delete+Play = panic.
 
-**Active bank**: Single global `activeBank`. Shift + top-row pad (92–98); same bank → TRACK (0). Display priority: count-in → COMPRESS LIMIT → octave → step edit → knob → jog/bank-select → header (+` REC`).
+**Active bank**: Single global `activeBank`. Shift + top-row pad (92–98); same bank → TRACK (0). Display priority: count-in → COMPRESS LIMIT → beat-stretch flash → no-note flash → octave → step edit → knob (State 1: bank header+name+value at y=0/12/24) → jog/bank-select (States 2/3: 5-row overview at y=0/12/24/36/48 with K1–K8 abbrevs+values) → header (+` REC`).
 
-**Beat Stretch** (TIMING K1, sens=16, lock): CW doubles, CCW halves. Compress blocked on collision → "COMPRESS LIMIT" ~1.5s. Atomic dry-run. tick_offset + gate scaled ×2/÷2 (clamped ±23). Compress: active steps first, then inactive-with-notes second pass (placed in empty slots, stay inactive). **Clock Shift** (TIMING K2, sens=8): rotates steps CW/CCW. **Quantize** (TIMING K3): render-time `effective_tick_offset = raw * (100-q) / 100`.
+**Beat Stretch** (TIMING K1, sens=16, lock): CW doubles, CCW halves. Compress blocked on collision → "COMPRESS LIMIT" ~1.5s. Atomic dry-run. tick_offset + gate scaled ×2/÷2 (clamped ±23). Compress: active steps first, then inactive-with-notes second pass (placed in empty slots, stay inactive). Display: per-touch label '1x'/'x2'/'/2'; resets to '1x' on release; OLED flash ~1s on success. **Clock Shift** (TIMING K2, sens=8): rotates steps CW/CCW. Display: per-touch signed delta (+1, -3 etc); resets to 0 on release. **Clip Nudge** (TIMING K3, sens=8): shifts all note_tick_offsets ±1 tick/detent. Crosses step boundary at ±12 (midpoint); dst_off = new_off ∓ TICKS_PER_STEP. Display shows cumulative ticks while held; resets to 0 on release (sends tN_nudge=0). **Quantize** (TIMING K4): render-time `effective_tick_offset = raw * (100-q) / 100`.
 
 **Global menu** (Shift + CC 50): jog navigate, jog click edit, Back exit. Items: BPM (40–250) · Key · Scale · Scale Aware · Launch (Now/1/16/1/8/1/4/1/2/1-bar) · Input Vel (0=Live, 1–127=fixed) · Inp Quant (ON=snap recording) · MIDI In (All/1–16, channel filter for external USB-A MIDI) · Save+Unload (stub) · Swing (stub) · Quit (saves state + calls `host_exit_module`).
 
@@ -95,7 +95,7 @@ Banks via **Shift + top-row pad** (92–99). Same bank again → TRACK (0).
 | Bank | Pad | K1 | K2 | K3 | K4 | K5 | K6 | K7 | K8 |
 |------|-----|----|----|----|----|----|----|----|----|
 | 0 TRACK | 92 | Ch (stub) | Rte | Mode | Res (stub) | Len (sens=4) | — | — | — |
-| 1 TIMING | 93 | Stch (sens=16, lock) | Shft (sens=8) | Qnt (0–100) | — | — | — | — | — |
+| 1 TIMING | 93 | Stch (sens=16, lock) | Shft (sens=8) | Ndg (sens=8) | Qnt (0–100) | — | — | — | — |
 | 2 NOTE FX | 94 | Oct (sens=6) | Ofs (sens=4) | Gate (sens=2) | Vel | — | — | — | — |
 | 3 HARMZ | 95 | Unis (sens=4) | Oct (sens=4) | Hrm1 (sens=4) | Hrm2 (sens=4) | — | — | — | — |
 | 4 SEQ ARP | 96 | On | Type | Sort | Hold | OctR | Spd | — | — |
