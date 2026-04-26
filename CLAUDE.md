@@ -14,7 +14,7 @@
 
 SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move — standalone 8-track MIDI sequencer. No audio. C (DSP) + JavaScript (UI). Background running via tool reconnect.
 
-## Build history (current branch: `unquantized-recording`)
+## Build history (current branch: `master`)
 
 Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play effects → clip model/Session View/background running.
 
@@ -22,7 +22,7 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 
 **unquantized-recording A–L**: noteFX_gate · uint16 step_gate · deferred note-on · quantize knob (render-time) · sparse persistence (v=7) · step edit overlay K1–K5 (v=8) · live recording · Input Vel + Inp Quant · `note_t`+`notes[]` absolute model · 8-note poly · per-note tick offsets · `step_muted`/inactive steps (v=11) · `_reassign`+boundary crossing · `stepWasHeld` · `pendingStepsReread`.
 
-**Post-A–L**: clip copy fix (step_vel/step_gate + clip_migrate_to_notes) · Track View focus-jump fix · Quit global menu item · pad LEDs follow gate duration · gate overlay wraps at clip end · loop view page content indicator · Delete+track preserves active playback state (`_clear_keep`) · step copy (`_copy_to`) · external MIDI routing (`midi_in_channel`) · Session View active-track knob LED indicator · clip LED hierarchy (focused=bright, inactive-only=DarkGrey, empty=off) · external MIDI step input integration (lastPlayedNote + held-step toggle/replace).
+**Post-A–L** (merged to master): clip copy fix (step_vel/step_gate + clip_migrate_to_notes) · Track View focus-jump fix · Quit global menu item · pad LEDs follow gate duration · gate overlay wraps at clip end · loop view page content indicator · Delete+track preserves active playback state (`_clear_keep`) · step copy (`_copy_to`) · external MIDI routing (`midi_in_channel`) · Session View active-track knob LED indicator · clip LED hierarchy (focused=bright, inactive-only=DarkGrey, empty=off) · external MIDI step input integration (lastPlayedNote + held-step toggle/replace).
 
 ## What's Built
 
