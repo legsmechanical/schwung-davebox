@@ -162,6 +162,104 @@ function parseActionRaw(raw, def) {
 }
 
 /* ------------------------------------------------------------------ */
+/* mcufont 5×5 pixel font (source: fonts/mcufont.h)                    */
+/* Each glyph: 5 rows, bits 4-0 MSB-first. Rendered on 6×6 grid.      */
+/* ------------------------------------------------------------------ */
+const MCUFONT = {
+    'A':[0b01110,0b10001,0b11111,0b10001,0b10001],
+    'B':[0b11110,0b10001,0b11110,0b10001,0b11110],
+    'C':[0b01111,0b10000,0b10000,0b10000,0b01111],
+    'D':[0b11110,0b10001,0b10001,0b10001,0b11110],
+    'E':[0b11111,0b10000,0b11100,0b10000,0b11111],
+    'F':[0b11111,0b10000,0b11100,0b10000,0b10000],
+    'G':[0b01111,0b10000,0b10011,0b10001,0b01111],
+    'H':[0b10001,0b10001,0b11111,0b10001,0b10001],
+    'I':[0b11111,0b00100,0b00100,0b00100,0b11111],
+    'J':[0b11111,0b00010,0b00010,0b10010,0b01100],
+    'K':[0b10010,0b10100,0b11000,0b10100,0b10010],
+    'L':[0b10000,0b10000,0b10000,0b10000,0b11111],
+    'M':[0b11111,0b10101,0b10101,0b10001,0b10001],
+    'N':[0b10001,0b11001,0b10101,0b10011,0b10001],
+    'O':[0b01110,0b10001,0b10001,0b10001,0b01110],
+    'P':[0b11110,0b10001,0b11110,0b10000,0b10000],
+    'Q':[0b01110,0b10001,0b10001,0b10010,0b01101],
+    'R':[0b11110,0b10001,0b11110,0b10010,0b10001],
+    'S':[0b01111,0b10000,0b01110,0b00001,0b11110],
+    'T':[0b11111,0b00100,0b00100,0b00100,0b00100],
+    'U':[0b10001,0b10001,0b10001,0b10001,0b01110],
+    'V':[0b10001,0b10001,0b01010,0b01010,0b00100],
+    'W':[0b10001,0b10001,0b10101,0b10101,0b11011],
+    'X':[0b10001,0b01010,0b00100,0b01010,0b10001],
+    'Y':[0b10001,0b01010,0b00100,0b00100,0b00100],
+    'Z':[0b11111,0b00010,0b00100,0b01000,0b11111],
+    'a':[0b00000,0b01111,0b10001,0b10001,0b01111],
+    'b':[0b10000,0b11110,0b10001,0b10001,0b11110],
+    'c':[0b00000,0b01111,0b10000,0b10000,0b01111],
+    'd':[0b00001,0b01111,0b10001,0b10001,0b01111],
+    'e':[0b00000,0b01110,0b11111,0b10000,0b01111],
+    'f':[0b00000,0b01111,0b10000,0b11110,0b10000],
+    'g':[0b00000,0b01110,0b11111,0b00001,0b11110],
+    'h':[0b10000,0b10000,0b11110,0b10001,0b10001],
+    'i':[0b00100,0b00000,0b01100,0b00100,0b01110],
+    'j':[0b00010,0b00000,0b00010,0b10010,0b01100],
+    'k':[0b10000,0b10000,0b10110,0b11000,0b10110],
+    'l':[0b00000,0b10000,0b10000,0b10000,0b01111],
+    'm':[0b00000,0b11110,0b10101,0b10101,0b10001],
+    'n':[0b00000,0b11110,0b10001,0b10001,0b10001],
+    'o':[0b00000,0b01110,0b10001,0b10001,0b01110],
+    'p':[0b00000,0b11110,0b10001,0b11110,0b10000],
+    'q':[0b00000,0b01111,0b10001,0b01111,0b00001],
+    'r':[0b00000,0b01110,0b10000,0b10000,0b10000],
+    's':[0b00000,0b01110,0b11000,0b00110,0b11100],
+    't':[0b00000,0b11111,0b00100,0b00100,0b00100],
+    'u':[0b00000,0b10001,0b10001,0b10001,0b01110],
+    'v':[0b00000,0b10001,0b10001,0b01010,0b00100],
+    'w':[0b00000,0b10001,0b10101,0b10101,0b01110],
+    'x':[0b00000,0b10010,0b01100,0b01100,0b10010],
+    'y':[0b00000,0b10010,0b01110,0b00010,0b01100],
+    'z':[0b00000,0b11110,0b00100,0b01000,0b11110],
+    '0':[0b01110,0b10001,0b10101,0b10001,0b01110],
+    '1':[0b01100,0b10100,0b00100,0b00100,0b11111],
+    '2':[0b01110,0b10001,0b00110,0b01000,0b11111],
+    '3':[0b11111,0b00001,0b01110,0b00001,0b11110],
+    '4':[0b10010,0b10010,0b11111,0b00010,0b00010],
+    '5':[0b11111,0b10000,0b01110,0b00001,0b11110],
+    '6':[0b01110,0b10000,0b11110,0b10001,0b01110],
+    '7':[0b11111,0b00010,0b00100,0b01000,0b01000],
+    '8':[0b01110,0b10001,0b01110,0b10001,0b01110],
+    '9':[0b11111,0b10001,0b11111,0b00001,0b00001],
+    '-':[0b00000,0b00000,0b01110,0b00000,0b00000],
+    '+':[0b00000,0b00100,0b01110,0b00100,0b00000],
+    '.':[0b00000,0b00000,0b00000,0b00000,0b01000],
+    ',':[0b00000,0b00000,0b00000,0b00100,0b01000],
+    '?':[0b01110,0b10001,0b00110,0b00000,0b00100],
+    '!':[0b00100,0b00100,0b00100,0b00000,0b00100],
+    ':':[0b00000,0b01000,0b00000,0b01000,0b00000],
+    '=':[0b00000,0b01110,0b00000,0b01110,0b00000],
+    "'":[0b00100,0b00100,0b00000,0b00000,0b00000],
+    '#':[0b01010,0b11111,0b01010,0b11111,0b01010],
+};
+
+function pixelPrint(x, y, text, color) {
+    for (let ci = 0; ci < text.length; ci++) {
+        const g = MCUFONT[text[ci]];
+        if (g) {
+            for (let row = 0; row < 5; row++) {
+                const bits = g[row];
+                for (let col = 0; col < 5; col++) {
+                    if (bits & (1 << (4 - col)))
+                        set_pixel(x + ci * 6 + col, y + row, color);
+                }
+            }
+        }
+    }
+}
+
+function pixelPrintC(cx, y, text, color) {
+    pixelPrint(cx - Math.floor((text.length * 6 - 1) / 2), y, text, color);
+}
+
+/* ------------------------------------------------------------------ */
 /* Parameter bank definitions                                           */
 /* ------------------------------------------------------------------ */
 
@@ -464,9 +562,10 @@ let masterVolDelta = 0;              /* accumulated CC 79 ticks; drained in tick
  * knobAccum[k] counts raw encoder ticks; fires delta when >= pm.sens.
  * knobLastDir[k] tracks last direction for reversal detection.
  * knobLocked[k] blocks further firing until touch release (used by lock=true params). */
-let knobAccum   = new Array(8).fill(0);
-let knobLastDir = new Array(8).fill(0);
-let knobLocked  = new Array(8).fill(false);
+let knobAccum      = new Array(8).fill(0);
+let knobLastDir    = new Array(8).fill(0);
+let knobLocked     = new Array(8).fill(false);
+let knobTurnedTick = new Array(8).fill(-1); /* tick of last turn; drives highlight when touch doesn't register */
 
 /* bankSelectTick: tickCount at last bank select, used for 2-second State 3 timeout.
  * -1 = timeout not active. */
@@ -480,6 +579,7 @@ const NO_NOTE_FLASH_TICKS = 118;     /* ~600ms at 196Hz */
 let trackOctave = new Array(NUM_TRACKS).fill(0);  /* per-track live pad octave shift, -4..+4 */
 let octaveOverlayEndTick = -1;                    /* tickCount deadline for octave overlay; -1 = inactive */
 const OCTAVE_OVERLAY_TICKS = 196;                 /* ~1000ms at 196Hz */
+const KNOB_TURN_HIGHLIGHT_TICKS = 120;            /* ~600ms at 196Hz — highlight after turn without touch */
 let stretchFlashEndTick = -1;                     /* tickCount deadline for beat-stretch flash; -1 = inactive */
 let stretchFlashLabel = '';                       /* 'x2' or '/2' */
 let clockShiftTouchDelta = 0;                     /* per-touch cumulative step delta; reset on release */
@@ -1522,12 +1622,12 @@ function drawUI() {
             const root = heldStepNotes[0];
             const hiP  = (knobTouched === 0 || knobTouched === 1);
             if (hiP) fill_rect(2, 20, 46, 24, 1);
-            print(2,  22, 'Oct', hiP ? 0 : 1);
-            print(27, 22, 'Pit', hiP ? 0 : 1);
+            print(2,  23, 'Oct', hiP ? 0 : 1);
+            print(27, 23, 'Pit', hiP ? 0 : 1);
             const noteLabel = heldStepNotes.length > 1
                 ? midiNoteName(root) + ' +' + (heldStepNotes.length - 1)
                 : midiNoteName(root);
-            print(16, 34, noteLabel, hiP ? 0 : 1);
+            pixelPrintC(25, 36, noteLabel, hiP ? 0 : 1);
             /* Dur / Vel / Ndg */
             const RHS_LABELS = ['Dur', 'Vel', 'Ndg'];
             const RHS_VALS   = [
@@ -1539,8 +1639,8 @@ function drawUI() {
             for (let i = 0; i < 3; i++) {
                 const hi = (knobTouched === i + 2);
                 if (hi) fill_rect(RHS_X[i], 20, 23, 24, 1);
-                print(RHS_X[i], 22, RHS_LABELS[i], hi ? 0 : 1);
-                print(RHS_X[i], 34, RHS_VALS[i],   hi ? 0 : 1);
+                print(RHS_X[i], 23, RHS_LABELS[i], hi ? 0 : 1);
+                pixelPrintC(RHS_X[i] + 11, 36, RHS_VALS[i], hi ? 0 : 1);
             }
         } else {
             print(4, 22, 'STEP EDIT', 1);
@@ -1560,35 +1660,19 @@ function drawUI() {
         return;
     }
 
-    if (bank >= 0 && knobTouched >= 0) {
-        /* State 1: knob touched — single parameter */
-        const pm  = BANKS[bank].knobs[knobTouched];
-        const val = bankParams[activeTrack][bank][knobTouched];
-        print(4,  0, bankHeader(bank), 1);
-        print(4, 12, pm.full || '-', 1);
-        print(4, 24, pm.fmt(val), 1);
-
-    } else if (bank >= 0 && inTimeout) {
-        /* States 2/3: bank overview — 5 rows at y=0/12/24/36/48 */
+    if (bank >= 0 && (knobTouched >= 0 || inTimeout)) {
+        /* Bank overview — 5 rows; touched knob column inverted */
         const knobs = BANKS[bank].knobs;
         const vals  = bankParams[activeTrack][bank];
-        const line2 = col4(knobs[0].abbrev) + ' ' + col4(knobs[1].abbrev) + ' ' +
-                      col4(knobs[2].abbrev) + ' ' + col4(knobs[3].abbrev);
-        const line3 = col4(knobs[0].abbrev ? knobs[0].fmt(vals[0]) : null) + ' ' +
-                      col4(knobs[1].abbrev ? knobs[1].fmt(vals[1]) : null) + ' ' +
-                      col4(knobs[2].abbrev ? knobs[2].fmt(vals[2]) : null) + ' ' +
-                      col4(knobs[3].abbrev ? knobs[3].fmt(vals[3]) : null);
-        const line4 = col4(knobs[4].abbrev) + ' ' + col4(knobs[5].abbrev) + ' ' +
-                      col4(knobs[6].abbrev) + ' ' + col4(knobs[7].abbrev);
-        const line5 = col4(knobs[4].abbrev ? knobs[4].fmt(vals[4]) : null) + ' ' +
-                      col4(knobs[5].abbrev ? knobs[5].fmt(vals[5]) : null) + ' ' +
-                      col4(knobs[6].abbrev ? knobs[6].fmt(vals[6]) : null) + ' ' +
-                      col4(knobs[7].abbrev ? knobs[7].fmt(vals[7]) : null);
-        print(4,  0, bankHeader(bank), 1);
-        print(4, 12, line2, 1);
-        print(4, 24, line3, 1);
-        print(4, 36, line4, 1);
-        print(4, 48, line5, 1);
+        print(4, 0, bankHeader(bank), 1);
+        for (let k = 0; k < 8; k++) {
+            const colX = 4 + (k % 4) * 30;
+            const rowY = k < 4 ? 12 : 36;
+            const hi   = (knobTouched === k);
+            if (hi) fill_rect(colX, rowY, 24, 24, 1);
+            print(colX, rowY,      col4(knobs[k].abbrev), hi ? 0 : 1);
+            print(colX, rowY + 12, col4(knobs[k].abbrev ? knobs[k].fmt(vals[k]) : null), hi ? 0 : 1);
+        }
 
     } else {
         /* State 4: normal Track View */
@@ -1858,6 +1942,11 @@ globalThis.tick = function () {
         }
         if (stretchFlashEndTick >= 0 && tickCount >= stretchFlashEndTick) {
             stretchFlashEndTick = -1;
+            screenDirty = true;
+        }
+        if (knobTouched >= 0 && knobTurnedTick[knobTouched] >= 0 &&
+                (tickCount - knobTurnedTick[knobTouched]) >= KNOB_TURN_HIGHLIGHT_TICKS) {
+            knobTouched = -1;
             screenDirty = true;
         }
         if (octaveOverlayEndTick >= 0 && tickCount >= octaveOverlayEndTick) {
@@ -2427,6 +2516,8 @@ globalThis.onMidiMessageInternal = function (data) {
             const t       = activeTrack;
             const ac      = effectiveClip(t);
             const pfx     = 't' + t + '_c' + ac + '_step_' + heldStep;
+            knobTouched          = knobIdx;
+            knobTurnedTick[knobIdx] = tickCount;
             screenDirty   = true;
             if (knobIdx === 0) {
                 /* K1 Oct: shift all notes ±12 semitones, sens=12 */
@@ -2477,6 +2568,9 @@ globalThis.onMidiMessageInternal = function (data) {
          * pm.lock = true: fire once then block until touch release (knobLocked). */
         if (d1 >= 71 && d1 <= 78) {
             const knobIdx = d1 - 71;
+            knobTouched          = knobIdx;
+            knobTurnedTick[knobIdx] = tickCount;
+            screenDirty = true;
             const bank    = activeBank;
             const pm      = BANKS[bank].knobs[knobIdx];
             if (pm && pm.abbrev && pm.scope !== 'stub' && !knobLocked[knobIdx]) {
