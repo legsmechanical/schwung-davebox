@@ -1103,6 +1103,30 @@ static void set_param(void *instance, const char *key, const char *val) {
             return;
         }
 
+        if (!strcmp(sub, "clip_resolution_zoom")) {
+            if (tr->recording) return;
+            int idx = clamp_i(my_atoi(val), 0, 5);
+            uint16_t new_tps = TPS_VALUES[idx];
+            clip_t *cl = &tr->clips[tr->active_clip];
+            uint16_t old_tps = cl->ticks_per_step;
+            if (new_tps == old_tps) return;
+            uint32_t old_ticks = (uint32_t)cl->length * (uint32_t)old_tps;
+            uint32_t new_len32 = (old_ticks + (uint32_t)new_tps - 1) / (uint32_t)new_tps;
+            if (new_len32 > SEQ_STEPS) return;
+            uint32_t abs_clip_tick = (uint32_t)tr->current_step * (uint32_t)old_tps + tr->tick_in_step;
+            cl->ticks_per_step = new_tps;
+            cl->length = (uint16_t)new_len32;
+            tr->current_step = (uint16_t)(abs_clip_tick / (uint32_t)new_tps);
+            tr->tick_in_step  = abs_clip_tick % (uint32_t)new_tps;
+            if (tr->current_step >= cl->length) {
+                tr->current_step = (uint16_t)(cl->length - 1);
+                tr->tick_in_step = 0;
+            }
+            clip_build_steps_from_notes(cl);
+            seq8_save_state(inst);
+            return;
+        }
+
         /* tN_pad_octave / tN_pad_mode */
         if (!strcmp(sub, "pad_octave")) {
             tr->pad_octave = (uint8_t)clamp_i(my_atoi(val), 0, 8);

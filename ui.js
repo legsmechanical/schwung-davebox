@@ -2949,8 +2949,36 @@ globalThis.onMidiMessageInternal = function (data) {
                         const cur = bankParams[activeTrack][bank][knobIdx];
                         const nv  = Math.max(pm.min, Math.min(pm.max, cur + dir));
                         if (nv !== cur) {
-                            bankParams[activeTrack][bank][knobIdx] = nv;
-                            applyBankParam(activeTrack, bank, knobIdx, nv);
+                            if (shiftHeld && pm.dspKey === 'clip_resolution') {
+                                const _t   = activeTrack;
+                                const _ac  = effectiveClip(_t);
+                                const _old_tps = clipTPS[_t][_ac];
+                                const _new_tps = TPS_VALUES[nv];
+                                const _old_ticks = clipLength[_t][_ac] * _old_tps;
+                                const _new_len = Math.ceil(_old_ticks / _new_tps);
+                                if (_new_len > 256) {
+                                    showActionPopup('NOTES OUT', 'OF RANGE');
+                                    forceRedraw();
+                                } else if (heldStep >= 0 || (recordArmed && !recordCountingIn && recordArmedTrack === _t)) {
+                                    /* blocked — do nothing */
+                                } else {
+                                    bankParams[activeTrack][bank][knobIdx] = nv;
+                                    clipTPS[_t][_ac]    = _new_tps;
+                                    clipLength[_t][_ac] = _new_len;
+                                    const _maxPage = Math.max(0, Math.ceil(_new_len / 16) - 1);
+                                    if (trackCurrentPage[_t] > _maxPage) trackCurrentPage[_t] = _maxPage;
+                                    if (typeof host_module_set_param === 'function')
+                                        host_module_set_param('t' + _t + '_clip_resolution_zoom', String(nv));
+                                    pendingStepsReread      = 2;
+                                    pendingStepsRereadTrack = _t;
+                                    pendingStepsRereadClip  = _ac;
+                                    refreshPerClipBankParams(_t);
+                                    forceRedraw();
+                                }
+                            } else {
+                                bankParams[activeTrack][bank][knobIdx] = nv;
+                                applyBankParam(activeTrack, bank, knobIdx, nv);
+                            }
                         }
                     }
                 }
