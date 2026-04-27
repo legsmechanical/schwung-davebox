@@ -85,15 +85,30 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
 /* Send targeted note-offs for all gen_notes of active entries in active_notes[].
  * Used on stop/panic for ROUTE_MOVE tracks — send_panic's 128-note flood
  * exceeds midi_inject_to_move's rate limit, so only a few notes make it through. */
-static void silence_active_notes_move(seq8_track_t *tr) {
+static void silence_active_notes_move(seq8_instance_t *inst, seq8_track_t *tr) {
     play_fx_t *fx = &tr->pfx;
     uint8_t off_s = (uint8_t)(0x80 | tr->channel);
-    int n, i;
+    uint8_t cc_s  = (uint8_t)(0xB0 | tr->channel);
+    int n, i, sent = 0;
+    int has_inject = (g_host && g_host->midi_inject_to_move) ? 1 : 0;
+    /* Targeted note-offs for pitches tracked in active_notes */
     for (n = 0; n < 128; n++) {
         pfx_active_t *an = &fx->active_notes[n];
         if (!an->active) continue;
-        for (i = 0; i < an->gen_count; i++)
+        for (i = 0; i < an->gen_count; i++) {
             pfx_send(fx, off_s, an->gen_notes[i], 0);
+            sent++;
+        }
+    }
+    /* CC 123 (All Notes Off) kills any notes not captured above —
+     * delay repeats, notes from a prior stop where active_notes was
+     * already cleared, etc. 1 packet vs 128 note-offs. */
+    pfx_send(fx, cc_s, 123, 0);
+    {
+        char _lb[64];
+        snprintf(_lb, sizeof(_lb), "silence_move: inject=%d pp=%d sent=%d+cc123",
+                 has_inject, (int)tr->play_pending_count, sent);
+        seq8_ilog(inst, _lb);
     }
 }
 
@@ -131,7 +146,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 int t;
                 for (t = 0; t < NUM_TRACKS; t++) {
                     if (inst->tracks[t].pfx.route == ROUTE_MOVE)
-                        silence_active_notes_move(&inst->tracks[t]);
+                        silence_active_notes_move(inst, &inst->tracks[t]);
                     silence_track_notes_v2(inst, &inst->tracks[t]);
                     inst->tracks[t].pfx.event_count = 0;
                     memset(inst->tracks[t].pfx.active_notes, 0,
@@ -160,7 +175,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             int t;
             for (t = 0; t < NUM_TRACKS; t++) {
                 if (inst->tracks[t].pfx.route == ROUTE_MOVE)
-                    silence_active_notes_move(&inst->tracks[t]);
+                    silence_active_notes_move(inst, &inst->tracks[t]);
                 silence_track_notes_v2(inst, &inst->tracks[t]);
                 inst->tracks[t].pfx.event_count = 0;
                 memset(inst->tracks[t].pfx.active_notes, 0,
