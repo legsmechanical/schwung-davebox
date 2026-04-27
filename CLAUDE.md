@@ -9,28 +9,22 @@
 - **Commit after each logical change** — work directly on master, one commit per change.
 - **Deploy and verify on device before reporting done** — always build+install and confirm on Move.
 - **Reboot after every deploy** — Shift+Back does NOT reload JS from disk.
-- **JS-only deploy**: `cp ui.js dist/seq8/ui.js && ./scripts/install.sh` then reboot. `build.sh` required for DSP changes (also copies JS, so always safe to run).
+- **JS-only deploy**: `cp ui.js dist/seq8/ui.js && cp ui_constants.mjs dist/seq8/ && ./scripts/install.sh` then reboot. `build.sh` required for DSP changes (also copies all JS).
 - **CLAUDE.md**: update at session end or after a major phase — not after routine task work.
 
 SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move — standalone 8-track MIDI sequencer. No audio. C (DSP) + JavaScript (UI). Background running via tool reconnect.
 
 ## Build history (on master)
 
-Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play effects → clip model/Session View/background running.
+Phases 0–4, 5a–5z-e, unquantized-recording A–L, Post-A–L (complete): full sequencer — transport, clip model (5-state), step entry/recording, session view, mute/solo/snapshots, 14 scales, scale-aware play effects, clip copy; `note_t`+`notes[]` absolute model, `step_muted`/inactive steps, `_clear_keep`, `pixelPrint`/`pixelPrintC`, `knobTurnedTick[]`. Persistence v=11.
 
-**5a–5z-e** (complete): live pads · banks · beat stretch/clock shift/octave · step entry/hold/chord · recording+count-in · clip model (5-state) · session view · launch quantization · per-set state (UUID) · mute/solo/snapshots · 14 scales · scale-aware play effects · persistence v=6 · clip copy.
+**per-clip-resolution**: per-clip `ticks_per_step` in `clip_t` · `master_tick_in_step` drives global_tick/launch-quant; per-track `tick_in_step` uses `cl->ticks_per_step` · `clip_resolution` set_param: proportional note+gate rescaling, rescales `tick_in_step`, blocked while recording (guard also in JS `applyBankParam`) · `knobTurnedTick[d1] = -1` on touch-on prevents stale turn-timeout clearing overview · persistence v=12.
 
-**unquantized-recording A–L**: noteFX_gate · uint16 step_gate · deferred note-on · quantize knob (render-time) · sparse persistence (v=7) · step edit overlay K1–K5 (v=8) · live recording · Input Vel + Inp Quant · `note_t`+`notes[]` absolute model · 8-note poly · per-note tick offsets · `step_muted`/inactive steps (v=11) · `_reassign`+boundary crossing · `stepWasHeld` · `pendingStepsReread`.
+**per-clip-params**: `clip_pfx_params_t` (17 fields, 68B/clip) in `clip_t` · `pfx_sync_from_clip()` at active_clip assignment; `PFX_SET_BOTH` macro writes `tr->pfx` + active clip's `pfx_params` simultaneously · pfx_reset/_clear/_clear_keep/row_clear reinitialize; clip_copy/row_copy propagate · `lastDspActiveClip[]` prevents pollDSP race; triggers `refreshPerClipBankParams(t)` on change · persistence v=13.
 
-**Post-A–L** (merged to master): clip copy fix · Track View focus-jump fix · Quit menu item · pad LEDs follow gate duration · gate overlay wraps at clip end · loop view page content indicator · `_clear_keep` (preserves playback) · step copy (`_copy_to`) · external MIDI routing (`midi_in_channel`) · Session View active-track knob LED · clip LED hierarchy (focused=bright, inactive-only=DarkGrey, empty=off) · external MIDI step input (lastPlayedNote + held-step toggle/replace) · Clip Nudge CLIP K3 · row_clear/clip_clear fixes · CLIP per-touch display labels · beat stretch OLED flash · Shift+Delete+jog = full bank reset · bank overview 5-row layout · mcufont 5×5 pixel renderer (`pixelPrint`/`pixelPrintC`; `fonts/mcufont.h`) · step edit overlay pixel-font values · bank overview inline column highlight · knob-turn highlight (`knobTurnedTick[]`, ~600ms timeout).
+**bank-param-LEDs**: `bankParams[t][b][k] !== pm.def` lights knob LED White in Track View for banks 2/3/4/5; `cachedSetButtonLED` deduplicates. Track switch refreshes per-clip banks.
 
-**per-clip-resolution**: per-clip `ticks_per_step` in `clip_t`  · knob touch fix: `knobTurnedTick[d1] = -1` on touch-on prevents stale turn-timeout from immediately clearing the overview during active touch · (TPS_VALUES = {12,24,48,96,192,384} = 1/32·1/16·1/8·1/4·1/2·1bar; default 24=1/16) · `master_tick_in_step` drives `global_tick`/launch-quant boundaries; per-track `tick_in_step` uses `cl->ticks_per_step` for playback · `clip_resolution` set_param handler: proportional note+gate rescaling (×new/old), rescales `tick_in_step`, calls `clip_build_steps_from_notes`, saves state; guarded `if (tr->recording) return` · JS `clipTPS[t][c]` mirrors DSP tps; synced via `t{n}_c{c}_tps` get_param at state load; recording guard in `applyBankParam` · persistence v=12: saves `t%dc%d_tps` if non-default · bank 1 renamed TIMING → CLIP; Len moved from TRACK K5 to CLIP K5; Qnt moved from TIMING K4 to NOTE FX K5; CLIP K4=Res (sens=16, 1/32–1bar), K6=ClpS (stub), K7=ClpE (stub)
-
-**per-clip-params**: `clip_pfx_params_t` (17 fields, 68B/clip) in `clip_t` · `pfx_sync_from_clip()` copies params into `tr->pfx` at every active_clip assignment — render path reads `tr->pfx` unchanged, zero overhead · `PFX_SET_BOTH` macro writes simultaneously to `tr->pfx` and active clip's `pfx_params` · pfx_reset + _clear/_clear_keep/row_clear reinitialize clip's pfx_params · clip_copy/row_copy propagate pfx_params · persistence v=13: sparse per-clip pfx keys (`t%dc%d_nfo` etc.) · JS `refreshPerClipBankParams(t)`: single `tN_pfx_snapshot` IPC call (vs 17 individual reads) populates all 3 per-clip banks; fires on clip switch via `lastDspActiveClip[]` change detection · `lastDspActiveClip[]` prevents pollDSP race when JS preemptively writes `trackActiveClip[]` before DSP switches
-
-**bank-param-LEDs**: Knob LEDs (CC 71-78) in Track View light White when `bankParams[activeTrack][activeBank][k] !== pm.def`. Applies to `PARAM_LED_BANKS = [2,3,4,5]` (NOTE FX, HARMZ, SEQ ARP, MIDI DLY). Session View active-track indicator unchanged. No extra dirty state — computed in `updateTrackLEDs` from existing `bankParams`; `cachedSetButtonLED` deduplicates. Track switch calls `refreshPerClipBankParams` when a per-clip bank is active.
-
-**code-organization**: knob sensitivity audit (sens=16 baseline from clip-resolution knob, fine-tuned per-knob) · DSP split: `set_param` section (1435 lines) extracted to `dsp/seq8_set_param.c` via `#include` trick — single translation unit, no build changes · JS split: hardware constants, palette, TRACK_COLORS, SCALE_NAMES, DELAY_LABELS, TPS_VALUES, fmt functions, MCUFONT, pixelPrint/pixelPrintC extracted to `ui_constants.mjs` (ES module import)
+**code-organization**: sens=16 baseline for knobs, fine-tuned per-knob · `dsp/seq8_set_param.c` via `#include` (single translation unit) · `ui_constants.mjs` (ES module) for constants/palette/fmt/MCUFONT.
 
 ## What's Built
 
@@ -151,12 +145,12 @@ typedef struct {
     uint8_t  suppress_until_wrap; /* skip until clip wraps (recording suppressor) */
     uint8_t  step_muted;          /* from inactive step; suppressed from MIDI */
     uint8_t  pad[1];
-} note_t; /* 12 bytes */
+} note_t;
 
 typedef struct {
     uint8_t  steps[SEQ_STEPS];               /* 0=off/1=on; step may have notes even when 0 */
-    uint8_t  step_notes[SEQ_STEPS][8];       /* up to 8 notes per step */
-    uint8_t  step_note_count[SEQ_STEPS];     /* 0..8 */
+    uint8_t  step_notes[SEQ_STEPS][8];
+    uint8_t  step_note_count[SEQ_STEPS];
     uint8_t  step_vel[SEQ_STEPS];
     uint16_t step_gate[SEQ_STEPS];
     int16_t  note_tick_offset[SEQ_STEPS][8]; /* per-note ±23 ticks */
