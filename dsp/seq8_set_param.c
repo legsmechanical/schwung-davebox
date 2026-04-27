@@ -91,7 +91,8 @@ static void silence_active_notes_move(seq8_instance_t *inst, seq8_track_t *tr) {
     uint8_t cc_s  = (uint8_t)(0xB0 | tr->channel);
     int n, i, sent = 0;
     int has_inject = (g_host && g_host->midi_inject_to_move) ? 1 : 0;
-    /* Targeted note-offs for pitches tracked in active_notes */
+
+    /* Pass 1: notes still in active_notes (gate not yet expired) */
     for (n = 0; n < 128; n++) {
         pfx_active_t *an = &fx->active_notes[n];
         if (!an->active) continue;
@@ -100,14 +101,26 @@ static void silence_active_notes_move(seq8_instance_t *inst, seq8_track_t *tr) {
             sent++;
         }
     }
-    /* CC 123 (All Notes Off) kills any notes not captured above —
-     * delay repeats, notes from a prior stop where active_notes was
-     * already cleared, etc. 1 packet vs 128 note-offs. */
+
+    /* Pass 2: note-offs already queued in event queue but not yet fired.
+     * pfx_note_off clears active_notes immediately when it queues; these
+     * notes are sounding on Move but won't reach it when event_count is
+     * cleared. Fire them now before the queue is wiped. */
+    for (i = 0; i < fx->event_count; i++) {
+        uint8_t status = fx->events[i].msg[0];
+        if ((status & 0xF0) == 0x80) {
+            pfx_send(fx, status, fx->events[i].msg[1], fx->events[i].msg[2]);
+            sent++;
+        }
+    }
+
+    /* Pass 3: CC 123 (All Notes Off) as safety net */
     pfx_send(fx, cc_s, 123, 0);
+
     {
         char _lb[64];
-        snprintf(_lb, sizeof(_lb), "silence_move: inject=%d pp=%d sent=%d+cc123",
-                 has_inject, (int)tr->play_pending_count, sent);
+        snprintf(_lb, sizeof(_lb), "silence_move: inject=%d pp=%d eq=%d sent=%d",
+                 has_inject, (int)tr->play_pending_count, fx->event_count, sent);
         seq8_ilog(inst, _lb);
     }
 }
