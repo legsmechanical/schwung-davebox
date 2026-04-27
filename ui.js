@@ -511,6 +511,8 @@ let recordBpm    = 120; /* BPM cached at record arm time */
 
 let currentSetUuid   = '';        /* UUID of the active Move set; polled in tick() for change detection */
 let lastDspInstanceId = '';       /* DSP instance_nonce from last poll; change = hot-reload detected */
+const pendingLiveNotes = Array.from({length: NUM_TRACKS}, () => []);  /* buffered live notes flushed each tick */
+
 let pendingSetLoad   = false;     /* true when set changed during init() but same DSP instance: save old, load new */
 let pendingDspSync   = 0;         /* ticks remaining before deferred syncClipsFromDsp() after set change */
 let pendingStepsReread      = 0;  /* ticks remaining before _steps re-read after _reassign */
@@ -1251,10 +1253,7 @@ function liveSendNote(t, type, pitch, vel) {
     const status = type | ch;
     if (route === 1) {
         const isOff = (type === 0x80) || (type === 0x90 && vel === 0);
-        if (isOff)
-            host_module_set_param('t' + t + '_live_note_off', String(pitch));
-        else
-            host_module_set_param('t' + t + '_live_note_on', pitch + ' ' + vel);
+        pendingLiveNotes[t].push(isOff ? { isOff: true, pitch } : { isOff: false, pitch, vel });
     } else {
         if (typeof shadow_send_midi_to_dsp === 'function') shadow_send_midi_to_dsp([status, pitch, vel]);
     }
@@ -1974,6 +1973,17 @@ globalThis.init = function () {
 
 globalThis.tick = function () {
     tickCount++;
+
+    /* Flush live note batches: offs first, then ons; one set_param per track so no coalescing. */
+    for (let _t = 0; _t < NUM_TRACKS; _t++) {
+        if (pendingLiveNotes[_t].length === 0) continue;
+        const evts = pendingLiveNotes[_t];
+        pendingLiveNotes[_t] = [];
+        const parts = [];
+        for (const e of evts) if (e.isOff)  parts.push('off ' + e.pitch);
+        for (const e of evts) if (!e.isOff) parts.push('on '  + e.pitch + ' ' + e.vel);
+        host_module_set_param('t' + _t + '_live_notes', parts.join(' '));
+    }
 
     /* Set change detected in init(): send UUID so DSP constructs path and loads. */
     if (pendingSetLoad && typeof host_module_set_param === 'function') {
