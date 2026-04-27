@@ -1310,6 +1310,29 @@ static void set_param(void *instance, const char *key, const char *val) {
             return;
         }
 
+        if (!strcmp(sub, "live_note_on")) {
+            /* tN_live_note_on "pitch vel" — live pad monitoring for ROUTE_MOVE tracks.
+             * Routes through pfx_note_on so play effects (harmonize, delay, etc.) apply. */
+            int pitch = 0, vel = SEQ_VEL;
+            const char *sp = val;
+            while (*sp >= '0' && *sp <= '9') { pitch = pitch * 10 + (*sp++ - '0'); }
+            while (*sp == ' ') sp++;
+            if (*sp >= '0' && *sp <= '9') {
+                vel = 0;
+                while (*sp >= '0' && *sp <= '9') { vel = vel * 10 + (*sp++ - '0'); }
+            }
+            if (inst->input_vel > 0) vel = (int)inst->input_vel;
+            pfx_note_on(inst, tr, (uint8_t)clamp_i(pitch, 0, 127), (uint8_t)clamp_i(vel, 1, 127));
+            return;
+        }
+
+        if (!strcmp(sub, "live_note_off")) {
+            /* tN_live_note_off "pitch" — immediate release; bypasses gate_smp minimum. */
+            int pitch = my_atoi(val);
+            pfx_note_off_imm(inst, tr, (uint8_t)clamp_i(pitch, 0, 127));
+            return;
+        }
+
         if (!strcmp(sub, "clip_length")) {
             clip_t *cl = &tr->clips[tr->active_clip];
             cl->length = (uint16_t)clamp_i(my_atoi(val), 1, SEQ_STEPS);

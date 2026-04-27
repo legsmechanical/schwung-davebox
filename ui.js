@@ -1250,7 +1250,11 @@ function liveSendNote(t, type, pitch, vel) {
     const route = bankParams[t][0][1];                /* Rte knob: 0=Schwung, 1=Move */
     const status = type | ch;
     if (route === 1) {
-        if (typeof move_midi_external_send === 'function') move_midi_external_send([status, pitch, vel]);
+        const isOff = (type === 0x80) || (type === 0x90 && vel === 0);
+        if (isOff)
+            host_module_set_param('t' + t + '_live_note_off', String(pitch));
+        else
+            host_module_set_param('t' + t + '_live_note_on', pitch + ' ' + vel);
     } else {
         if (typeof shadow_send_midi_to_dsp === 'function') shadow_send_midi_to_dsp([status, pitch, vel]);
     }
