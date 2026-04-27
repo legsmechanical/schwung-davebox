@@ -330,6 +330,18 @@ typedef struct {
     uint8_t inp_quant;
     /* External MIDI channel filter: 0=All, 1-16=specific channel */
     uint8_t midi_in_channel;
+
+    /* 1-level undo/redo: up to NUM_TRACKS clip snapshots per operation */
+    clip_t  undo_clips[NUM_TRACKS];
+    uint8_t undo_clip_tracks[NUM_TRACKS];
+    uint8_t undo_clip_indices[NUM_TRACKS];
+    uint8_t undo_clip_count;
+    uint8_t undo_valid;
+    clip_t  redo_clips[NUM_TRACKS];
+    uint8_t redo_clip_tracks[NUM_TRACKS];
+    uint8_t redo_clip_indices[NUM_TRACKS];
+    uint8_t redo_clip_count;
+    uint8_t redo_valid;
 } seq8_instance_t;
 
 static const host_api_v1_t *g_host = NULL;
@@ -1511,6 +1523,56 @@ static void destroy_instance(void *instance) {
 
 static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
     (void)instance; (void)msg; (void)len; (void)source;
+}
+
+/* ------------------------------------------------------------------ */
+/* Undo/redo helpers                                                    */
+/* ------------------------------------------------------------------ */
+
+static void undo_begin_single(seq8_instance_t *inst, int t, int c) {
+    inst->undo_clip_count    = 1;
+    inst->undo_clip_tracks[0]  = (uint8_t)t;
+    inst->undo_clip_indices[0] = (uint8_t)c;
+    memcpy(&inst->undo_clips[0], &inst->tracks[t].clips[c], sizeof(clip_t));
+    inst->undo_valid = 1;
+    inst->redo_valid = 0;
+}
+
+static void undo_begin_row(seq8_instance_t *inst, int row_c) {
+    int t;
+    inst->undo_clip_count = NUM_TRACKS;
+    for (t = 0; t < NUM_TRACKS; t++) {
+        inst->undo_clip_tracks[t]  = (uint8_t)t;
+        inst->undo_clip_indices[t] = (uint8_t)row_c;
+        memcpy(&inst->undo_clips[t], &inst->tracks[t].clips[row_c], sizeof(clip_t));
+    }
+    inst->undo_valid = 1;
+    inst->redo_valid = 0;
+}
+
+static void apply_clip_restore(seq8_instance_t *inst,
+                                clip_t *clips,
+                                uint8_t *tracks, uint8_t *indices, uint8_t count) {
+    int i;
+    for (i = 0; i < (int)count; i++) {
+        int t = (int)tracks[i], c = (int)indices[i];
+        seq8_track_t *tr = &inst->tracks[t];
+        int is_active_clip = ((int)tr->active_clip == c);
+        int is_queued_clip = (tr->queued_clip == (int8_t)c);
+        if ((tr->recording || tr->record_armed) && (is_active_clip || is_queued_clip)) {
+            finalize_pending_notes(&tr->clips[c], tr);
+            silence_track_notes_v2(inst, tr);
+            tr->recording         = 0;
+            tr->record_armed      = 0;
+            tr->rec_pending_count = 0;
+        }
+        if ((int)inst->count_in_track == t && inst->count_in_ticks > 0)
+            inst->count_in_ticks = 0;
+        memcpy(&tr->clips[c], &clips[i], sizeof(clip_t));
+        clip_migrate_to_notes(&tr->clips[c]);
+        if (is_active_clip)
+            pfx_sync_from_clip(tr);
+    }
 }
 
 #include "seq8_set_param.c"
