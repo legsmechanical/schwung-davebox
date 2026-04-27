@@ -627,9 +627,11 @@ function showActionPopup(...lines) {
 }
 
 function playMetronomeClick() {
-    const vel = Math.max(1, Math.round(metronomeVol * 127 / 100));
-    if (typeof move_midi_inject_to_move === 'function') {
-        move_midi_inject_to_move([0x09, 0x90, 108, vel]);
+    if (typeof host_preview_play === 'function') {
+        host_preview_play('/data/UserData/schwung/modules/tools/seq8/metro_click.wav');
+    } else if (typeof shadow_send_midi_to_dsp === 'function') {
+        const vel = Math.max(1, Math.round(metronomeVol * 127 / 100));
+        shadow_send_midi_to_dsp([0x90, 76, vel]);
         metroNoteOffTick = tickCount + 2;
     }
 }
