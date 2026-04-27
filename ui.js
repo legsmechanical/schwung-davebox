@@ -112,7 +112,7 @@ const BANKS = [
         p('Len',  'Clip Length',     'clip_length',     'track',  1, 256, 16,  fmtLen, 4),
         p('ClpS', 'Clip Start',      null,              'stub',   0, 0,   0,   fmtNA),
         p('ClpE', 'Clip End',        null,              'stub',   0, 0,   0,   fmtNA),
-        _X,
+        p('SqFl', 'Seq Follow',      null,              'seqfollow', 0, 1, 1,  fmtBool),
     ]},
     /* 2 — NOTE FX (pad 94) — fully wired; Oct/Ofs slowed; Qnt moved here from TIMING */
     { name: 'NOTE FX', knobs: [
@@ -340,6 +340,7 @@ let clipSteps        = Array.from({length: NUM_TRACKS}, () =>
 let clipNonEmpty     = Array.from({length: NUM_TRACKS}, () => new Array(NUM_CLIPS).fill(false));
 let clipLength       = Array.from({length: NUM_TRACKS}, () => new Array(NUM_CLIPS).fill(16));
 let clipTPS          = Array.from({length: NUM_TRACKS}, () => new Array(NUM_CLIPS).fill(24));
+let clipSeqFollow    = Array.from({length: NUM_TRACKS}, () => new Array(NUM_CLIPS).fill(true));
 let trackCurrentStep = new Array(NUM_TRACKS).fill(-1);
 let trackCurrentPage = new Array(NUM_TRACKS).fill(0);
 let trackActiveClip     = new Array(NUM_TRACKS).fill(0);
@@ -934,6 +935,9 @@ function refreshPerClipBankParams(t) {
     for (let k = 0; k < 4; k++) bankParams[t][3][k] = parseInt(v[5 + k], 10) | 0;
     /* MIDI DLY bank (5): K0=dly K1=lvl K2=rep K3=vfb K4=pfb K5=gfb K6=clk K7=rnd */
     for (let k = 0; k < 8; k++) bankParams[t][5][k] = parseInt(v[9 + k], 10) | 0;
+    /* CLIP bank (1): K7=SqFl (JS-only per-clip) */
+    const ac = trackActiveClip[t];
+    bankParams[t][1][7] = clipSeqFollow[t][ac] ? 1 : 0;
     screenDirty = true;
 }
 
@@ -978,6 +982,22 @@ function pollDSP() {
     }
     flashEighth    = (v[50] === '1');
     flashSixteenth = (v[51] === '1');
+
+    /* SeqFollow: auto-page activeTrack to follow playhead */
+    if (playing) {
+        const _sft = activeTrack;
+        const _sfac = effectiveClip(_sft);
+        if (clipSeqFollow[_sft][_sfac] && trackClipPlaying[_sft]) {
+            const _cs = trackCurrentStep[_sft];
+            if (_cs >= 0) {
+                const newPage = Math.floor(_cs / 16);
+                if (newPage !== trackCurrentPage[_sft]) {
+                    trackCurrentPage[_sft] = newPage;
+                    screenDirty = true;
+                }
+            }
+        }
+    }
 
     /* Count-in end: DSP fired transport+recording — sync JS state */
     if (countInDspPrev && !countInDspActive && playing) {
@@ -1082,6 +1102,10 @@ function readBankParams(t, bankIdx) {
             bankParams[t][bankIdx][k] = pm ? pm.def : 0;
             continue;
         }
+        if (pm.scope === 'seqfollow') {
+            bankParams[t][bankIdx][k] = clipSeqFollow[t][trackActiveClip[t]] ? 1 : 0;
+            continue;
+        }
         if (pm.scope === 'clip') {
             const ac = trackActiveClip[t];
             if (pm.dspKey === 'clip_resolution') {
@@ -1122,7 +1146,12 @@ function readBankParams(t, bankIdx) {
 /* Send a single param change to DSP and apply any JS-side side-effects. */
 function applyBankParam(t, bankIdx, knobIdx, val) {
     const pm = BANKS[bankIdx].knobs[knobIdx];
-    if (!pm || pm.scope === 'stub' || !pm.dspKey) return;
+    if (!pm || pm.scope === 'stub') return;
+    if (pm.scope === 'seqfollow') {
+        clipSeqFollow[t][trackActiveClip[t]] = val !== 0;
+        return;
+    }
+    if (!pm.dspKey) return;
     if (typeof host_module_set_param !== 'function') return;
 
     if (pm.scope === 'global') {
@@ -1684,6 +1713,32 @@ function drawUI() {
             if (t < NUM_TRACKS - 1) line4 += ' ';
         }
         print(4, 46, line4, 1);
+        drawPositionBar(activeTrack);
+    }
+}
+
+function drawPositionBar(t) {
+    const ac = effectiveClip(t);
+    const totalPages = Math.max(1, Math.ceil(clipLength[t][ac] / 16));
+    const viewPage = Math.min(trackCurrentPage[t], totalPages - 1);
+    const cs = trackCurrentStep[t];
+    const playPage = (playing && trackClipPlaying[t] && cs >= 0)
+                   ? Math.min(Math.floor(cs / 16), totalPages - 1) : -1;
+    const barY = 57, barH = 5, segGap = 1;
+    const segW = Math.max(2, Math.floor((120 - (totalPages - 1) * segGap) / totalPages));
+    const startX = 4;
+    for (let pg = 0; pg < totalPages; pg++) {
+        const x = startX + pg * (segW + segGap);
+        if (pg === viewPage) {
+            fill_rect(x, barY, segW, barH, 1);
+        } else if (pg === playPage) {
+            fill_rect(x, barY, segW, 1, 1);
+            fill_rect(x, barY + barH - 1, segW, 1, 1);
+            fill_rect(x, barY, 1, barH, 1);
+            fill_rect(x + segW - 1, barY, 1, barH, 1);
+        } else {
+            fill_rect(x, barY + barH - 1, segW, 1, 1);
+        }
     }
 }
 
@@ -2236,6 +2291,7 @@ globalThis.onMidiMessageInternal = function (data) {
                             extNoteOffAll();
                             handoffRecordingToTrack(next);
                             activeTrack = next;
+                            bankParams[next][1][7] = clipSeqFollow[next][trackActiveClip[next]] ? 1 : 0;
                             computePadNoteMap();
                             seqActiveNotes.clear();
                             seqLastStep = -1;
@@ -2967,6 +3023,7 @@ globalThis.onMidiMessageInternal = function (data) {
                             }
                             handoffRecordingToTrack(t);
                             activeTrack = t;
+                            bankParams[t][1][7] = clipSeqFollow[t][trackActiveClip[t]] ? 1 : 0;
                             sessionView = false;
                             invalidateLEDCache();
                             forceRedraw();
@@ -2992,6 +3049,7 @@ globalThis.onMidiMessageInternal = function (data) {
                             /* Launch clip for this track */
                             handoffRecordingToTrack(t);
                             activeTrack = t;
+                            bankParams[t][1][7] = clipSeqFollow[t][trackActiveClip[t]] ? 1 : 0;
                             if (!playing) {
                                 trackActiveClip[t]  = clipIdx;
                                 trackCurrentPage[t] = 0;
@@ -3055,6 +3113,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     extNoteOffAll();
                     handoffRecordingToTrack(padIdx);
                     activeTrack = padIdx;
+                    bankParams[padIdx][1][7] = clipSeqFollow[padIdx][trackActiveClip[padIdx]] ? 1 : 0;
                     computePadNoteMap();
                     seqActiveNotes.clear();
                     seqLastStep = -1;
