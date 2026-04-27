@@ -295,7 +295,7 @@ typedef struct {
     uint8_t  count_in_track;        /* track to arm for recording on fire */
 
     /* Metronome: clicks on quarter notes while recording/count-in is active */
-    uint8_t  metro_on;              /* 0=off, 1=on */
+    uint8_t  metro_on;              /* 0=off,1=count-in only,2=count+rec,3=always */
     uint8_t  metro_vol;             /* 0-100, default 80 */
     uint16_t metro_beat_count;      /* monotonic counter; incremented on each quarter-note beat */
 
@@ -564,7 +564,7 @@ static void seq8_save_state(seq8_instance_t *inst) {
     fprintf(fp, ",\"iv\":%d",  (int)inst->input_vel);
     fprintf(fp, ",\"iq\":%d",  (int)inst->inp_quant);
     fprintf(fp, ",\"mic\":%d", (int)inst->midi_in_channel);
-    if (inst->metro_on)        fprintf(fp, ",\"metro_on\":1");
+    if (inst->metro_on != 1)   fprintf(fp, ",\"metro_on\":%d", (int)inst->metro_on);
     if (inst->metro_vol != 80) fprintf(fp, ",\"metro_vol\":%d", (int)inst->metro_vol);
     fprintf(fp, "}");
     fclose(fp);
@@ -758,7 +758,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
     inst->input_vel      = (uint8_t)clamp_i(json_get_int(buf, "iv",  0), 0, 127);
     inst->inp_quant      = (uint8_t)(json_get_int(buf, "iq", 0) != 0);
     inst->midi_in_channel = (uint8_t)clamp_i(json_get_int(buf, "mic", 0), 0, 16);
-    inst->metro_on  = (uint8_t)(json_get_int(buf, "metro_on",  0) != 0);
+    inst->metro_on  = (uint8_t)clamp_i(json_get_int(buf, "metro_on", 1), 0, 3);
     inst->metro_vol = (uint8_t)clamp_i(json_get_int(buf, "metro_vol", 80), 0, 100);
     free(buf);
     /* Build step arrays from loaded notes[] for display/edit compat */
@@ -1446,6 +1446,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     inst->pad_key      = 9;   /* A */
     inst->pad_scale    = 1;   /* Minor */
     inst->launch_quant = 0;   /* Now */
+    inst->metro_on     = 1;    /* default: Count (count-in only) */
     inst->metro_vol    = 80;
     strncpy(inst->state_path, SEQ8_STATE_PATH_FALLBACK, sizeof(inst->state_path) - 1);
 
@@ -1688,7 +1689,7 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
     if (!strcmp(key, "midi_in_channel"))
         return snprintf(out, out_len, "%d", inst ? (int)inst->midi_in_channel : 0);
     if (!strcmp(key, "metro_on"))
-        return snprintf(out, out_len, "%d", inst ? (int)inst->metro_on : 0);
+        return snprintf(out, out_len, "%d", inst ? (int)inst->metro_on : 1);
     if (!strcmp(key, "metro_vol"))
         return snprintf(out, out_len, "%d", inst ? (int)inst->metro_vol : 80);
     if (!strcmp(key, "launch_quant"))
@@ -2033,7 +2034,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
             inst->tick_accum += inst->tick_delta;
             while (inst->tick_accum >= inst->tick_threshold && inst->count_in_ticks > 0) {
                 inst->tick_accum -= inst->tick_threshold;
-                if (inst->metro_on) {
+                if (inst->metro_on >= 1) {
                     int old_q = (int)((inst->count_in_ticks - 1) / PPQN);
                     inst->count_in_ticks--;
                     if (inst->count_in_ticks > 0) {
@@ -2073,11 +2074,15 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
     while (inst->tick_accum >= inst->tick_threshold) {
         inst->tick_accum -= inst->tick_threshold;
 
-        /* Metro beat: fire on every quarter note (4 master steps) while any track is recording */
-        if (inst->metro_on && inst->master_tick_in_step == 0 && inst->global_tick % 4 == 0) {
-            int _tt;
-            for (_tt = 0; _tt < NUM_TRACKS; _tt++)
-                if (inst->tracks[_tt].recording) { inst->metro_beat_count++; break; }
+        /* Metro beat: mode 2 (On) = while recording; mode 3 (Rec+Ply) = always */
+        if (inst->metro_on >= 2 && inst->master_tick_in_step == 0 && inst->global_tick % 4 == 0) {
+            if (inst->metro_on == 3) {
+                inst->metro_beat_count++;
+            } else {
+                int _tt;
+                for (_tt = 0; _tt < NUM_TRACKS; _tt++)
+                    if (inst->tracks[_tt].recording) { inst->metro_beat_count++; break; }
+            }
         }
 
         for (t = 0; t < NUM_TRACKS; t++) {

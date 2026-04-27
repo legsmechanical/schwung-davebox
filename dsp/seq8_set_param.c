@@ -243,7 +243,7 @@ static void set_param(void *instance, const char *key, const char *val) {
         inst->count_in_track = (uint8_t)track;
         inst->count_in_ticks = 4 * PPQN;  /* 1 bar; tick_delta already tracks actual BPM */
         inst->tick_accum     = 0;          /* reset phase so first beat fires on schedule */
-        if (inst->metro_on) inst->metro_beat_count++;  /* beat 1 fires immediately */
+        if (inst->metro_on >= 1) inst->metro_beat_count++;  /* beat 1 fires immediately */
         return;
     }
     if (!strcmp(key, "record_count_in_cancel")) {
@@ -253,7 +253,7 @@ static void set_param(void *instance, const char *key, const char *val) {
 
     /* --- Metronome --- */
     if (!strcmp(key, "metro_on")) {
-        inst->metro_on = (uint8_t)(my_atoi(val) != 0);
+        inst->metro_on = (uint8_t)clamp_i(my_atoi(val), 0, 3);
         return;
     }
     if (!strcmp(key, "metro_vol")) {
