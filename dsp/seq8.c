@@ -786,6 +786,7 @@ static void pfx_send(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
 static void send_panic(seq8_instance_t *inst) {
     int t, n;
     for (t = 0; t < NUM_TRACKS; t++) {
+        if (inst->tracks[t].pfx.route == ROUTE_MOVE) continue; /* deferred via pfx_q_fire */
         for (n = 0; n < 128; n++)
             pfx_send(&inst->tracks[t].pfx,
                      (uint8_t)(0x80 | inst->tracks[t].channel), (uint8_t)n, 0);

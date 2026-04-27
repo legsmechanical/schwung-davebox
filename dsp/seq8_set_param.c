@@ -158,12 +158,20 @@ static void set_param(void *instance, const char *key, const char *val) {
             if (inst->playing) {
                 int t;
                 for (t = 0; t < NUM_TRACKS; t++) {
-                    if (inst->tracks[t].pfx.route == ROUTE_MOVE)
-                        silence_active_notes_move(inst, &inst->tracks[t]);
+                    play_fx_t *fx = &inst->tracks[t].pfx;
                     silence_track_notes_v2(inst, &inst->tracks[t]);
-                    inst->tracks[t].pfx.event_count = 0;
-                    memset(inst->tracks[t].pfx.active_notes, 0,
-                           sizeof(inst->tracks[t].pfx.active_notes));
+                    if (fx->route == ROUTE_MOVE) {
+                        /* Reschedule queued note-offs to fire immediately in render_block.
+                         * pfx_send from set_param context doesn't release Move synth voices;
+                         * only inject from render_block (pfx_q_fire) does. */
+                        int ei;
+                        for (ei = 0; ei < fx->event_count; ei++)
+                            fx->events[ei].fire_at = fx->sample_counter;
+                        memset(fx->active_notes, 0, sizeof(fx->active_notes));
+                    } else {
+                        fx->event_count = 0;
+                        memset(fx->active_notes, 0, sizeof(fx->active_notes));
+                    }
                     inst->tracks[t].clips[inst->tracks[t].active_clip].clock_shift_pos = 0;
                     if (inst->tracks[t].clip_playing) {
                         inst->tracks[t].will_relaunch = 1;
@@ -187,12 +195,17 @@ static void set_param(void *instance, const char *key, const char *val) {
         } else if (!strcmp(val, "panic")) {
             int t;
             for (t = 0; t < NUM_TRACKS; t++) {
-                if (inst->tracks[t].pfx.route == ROUTE_MOVE)
-                    silence_active_notes_move(inst, &inst->tracks[t]);
+                play_fx_t *fx = &inst->tracks[t].pfx;
                 silence_track_notes_v2(inst, &inst->tracks[t]);
-                inst->tracks[t].pfx.event_count = 0;
-                memset(inst->tracks[t].pfx.active_notes, 0,
-                       sizeof(inst->tracks[t].pfx.active_notes));
+                if (fx->route == ROUTE_MOVE) {
+                    int ei;
+                    for (ei = 0; ei < fx->event_count; ei++)
+                        fx->events[ei].fire_at = fx->sample_counter;
+                    memset(fx->active_notes, 0, sizeof(fx->active_notes));
+                } else {
+                    fx->event_count = 0;
+                    memset(fx->active_notes, 0, sizeof(fx->active_notes));
+                }
                 inst->tracks[t].clips[inst->tracks[t].active_clip].clock_shift_pos = 0;
                 inst->tracks[t].clip_playing      = 0;
                 inst->tracks[t].will_relaunch     = 0;
