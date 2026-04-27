@@ -185,7 +185,55 @@ address — not what `_steps` says.
 
 ---
 
-## 10. Opportunities Not Yet Taken
+## 10. `midi_inject_to_move` From set_param Context Does Not Release Move Synth Voices
+
+`midi_inject_to_move` can be called from two contexts: the render_block audio thread
+and set_param (the Schwung param-dispatch thread). Both calls write into the inject
+SHM ring successfully — the ring accepts the packet regardless of which thread called.
+However, **Move's voice allocator only acts on inject packets that arrive from the
+render_block (audio thread) context**. Packets injected from set_param context are
+received by Move but do not cause it to release held voices.
+
+**Observed symptom**: note-offs injected in stop/panic handlers reach the ring
+(`inject=1, sent=N` in log) but ROUTE_MOVE synth voices continue sounding.
+
+**The correct pattern for ROUTE_MOVE note-offs on stop/panic**:
+1. Call `silence_track_notes_v2` — uses `pfx_note_off`, which queues note-offs into
+   `fx->events[]` (with `fire_at` set to a future sample count) and clears `active_notes`.
+2. Reschedule all queued events to fire immediately: `events[i].fire_at = fx->sample_counter`.
+3. Do NOT clear `event_count` — let `pfx_q_fire` drain the queue in the next render_block.
+4. Skip ROUTE_MOVE tracks in `send_panic`: the 128-note flood would overflow the inject
+   ring (64 packets, drains at 8/SPI tick) and most note-offs would be lost anyway.
+
+`pfx_q_fire` runs unconditionally in render_block *before* the `if (!inst->playing) return`
+guard, so it drains the queue even when transport is stopped.
+
+**Contrast with ROUTE_SCHWUNG**: `midi_send_internal` works correctly from any context,
+so SCHWUNG tracks can clear `event_count` and send via `send_panic` as before.
+
+**Related**: the inject SHM ring holds 64 packets and drains at 8 packets per SPI tick
+(~2.9ms). `send_panic`'s 128-note × 4-track = 512 inject packets would take ~187ms to
+drain and most would be silently dropped if the ring fills.
+
+---
+
+## 11. Live Note Flush Coalescing With Step Toggle set_params
+
+When a step button is pressed or released, a `pendingLiveNotes` flush (to silence any
+held pad notes) can be dispatched in the same JS tick as a step-toggle `set_param`.
+Due to the coalescing rule (last set_param per tick wins), the step toggle is dropped.
+
+**Symptom**: toggling a step activates/deactivates multiple other steps in a seemingly
+random pattern (the live-note flush overwrites the intended toggle, and the DSP acts on
+stale step state).
+
+**Fix**: set `stepOpTick = tickCount` at both step press and step release. The flush
+guard checks `tickCount !== stepOpTick` before dispatching, preventing the flush from
+sharing a tick with any step-button event.
+
+---
+
+## 12. Opportunities Not Yet Taken
 
 **DSP-side recording** would eliminate the biggest remaining source of JS-mirror
 complexity. Currently, live recording timing is computed in JS from polled
