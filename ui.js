@@ -2490,11 +2490,18 @@ globalThis.onMidiMessageInternal = function (data) {
                         showActionPopup('PASTED');
                     }
                 }
-            } else if (shiftHeld && deleteHeld && !sessionView) {
-                /* Shift+Delete+clip (Track View only): full factory reset */
-                hardResetClip(activeTrack, clipIdx);
-                forceRedraw();
-                showActionPopup('CLIP', 'CLEARED');
+            } else if (shiftHeld && deleteHeld) {
+                if (sessionView) {
+                    /* Shift+Delete+scene row (Session View): hard reset all 8 clips in row */
+                    for (let t = 0; t < NUM_TRACKS; t++) hardResetClip(t, clipIdx);
+                    forceRedraw();
+                    showActionPopup('CLIPS', 'CLEARED');
+                } else {
+                    /* Shift+Delete+clip (Track View): full factory reset */
+                    hardResetClip(activeTrack, clipIdx);
+                    forceRedraw();
+                    showActionPopup('CLIP', 'CLEARED');
+                }
             } else if (deleteHeld) {
                 if (sessionView) {
                     /* Delete + scene row button (Session View): clear all 8 clips in that row */
@@ -2854,6 +2861,12 @@ globalThis.onMidiMessageInternal = function (data) {
                             showActionPopup('PASTED');
                         }
                         /* copySrc.kind === 'row': swallow — don't mix copy types */
+                    } else if (shiftHeld && deleteHeld) {
+                        /* Shift+Delete + clip pad (Session View): hard reset that clip */
+                        const clipIdx = sceneRow + row;
+                        hardResetClip(t, clipIdx);
+                        forceRedraw();
+                        showActionPopup('CLIP', 'CLEARED');
                     } else if (deleteHeld) {
                         /* Delete + clip pad (Session View): clear that clip */
                         const clipIdx = sceneRow + row;
