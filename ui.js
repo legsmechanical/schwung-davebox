@@ -641,6 +641,7 @@ function copyClip(srcT, srcC, dstT, dstC) {
     clipSteps[dstT][dstC] = clipSteps[srcT][srcC].slice();
     clipLength[dstT][dstC] = clipLength[srcT][srcC];
     clipNonEmpty[dstT][dstC] = clipNonEmpty[srcT][srcC];
+    clipTPS[dstT][dstC] = clipTPS[srcT][srcC];
     if (dstC === trackActiveClip[dstT]) {
         seqActiveNotes.clear(); seqLastStep = -1;
         refreshPerClipBankParams(dstT);
@@ -681,6 +682,7 @@ function copyRow(srcRow, dstRow) {
         clipSteps[t][dstRow] = clipSteps[t][srcRow].slice();
         clipLength[t][dstRow] = clipLength[t][srcRow];
         clipNonEmpty[t][dstRow] = clipNonEmpty[t][srcRow];
+        clipTPS[t][dstRow] = clipTPS[t][srcRow];
         if (dstRow === trackActiveClip[t]) {
             seqActiveNotes.clear(); seqLastStep = -1;
             refreshPerClipBankParams(t);
@@ -1615,6 +1617,7 @@ function drawTrackRow(y) {
         } else {
             print(x, y, String(_t + 1), 1);
         }
+        if (_t === activeTrack) fill_rect(x, y + 8, 6, 1, 1);
     }
 }
 
@@ -3119,6 +3122,9 @@ globalThis.onMidiMessageInternal = function (data) {
                             invalidateLEDCache();
                             forceRedraw();
                         } else if (trackClipPlaying[t] && isActiveClip) {
+                            handoffRecordingToTrack(t);
+                            activeTrack = t;
+                            refreshPerClipBankParams(t);
                             if (trackPendingPageStop[t]) {
                                 /* Pending stop → cancel by re-launching */
                                 if (typeof host_module_set_param === 'function')
@@ -3130,10 +3136,16 @@ globalThis.onMidiMessageInternal = function (data) {
                             }
                         } else if (trackWillRelaunch[t] && isActiveClip) {
                             /* Transport stopped, clip primed to restart → cancel */
+                            handoffRecordingToTrack(t);
+                            activeTrack = t;
+                            refreshPerClipBankParams(t);
                             if (typeof host_module_set_param === 'function')
                                 host_module_set_param('t' + t + '_deactivate', '1');
                         } else if (trackQueuedClip[t] === clipIdx) {
                             /* Queued to launch → cancel */
+                            handoffRecordingToTrack(t);
+                            activeTrack = t;
+                            refreshPerClipBankParams(t);
                             if (typeof host_module_set_param === 'function')
                                 host_module_set_param('t' + t + '_deactivate', '1');
                         } else {
