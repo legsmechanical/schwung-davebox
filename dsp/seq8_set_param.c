@@ -639,6 +639,12 @@ static void set_param(void *instance, const char *key, const char *val) {
                 /* Quantized or stopped: queue for next boundary */
                 tr->queued_clip   = (int8_t)new_cidx;
                 tr->will_relaunch = 0;
+                /* Preview queued clip pfx for JS display while stopped.
+                 * Safe: render loop exits immediately when !inst->playing. */
+                if (!inst->playing) {
+                    tr->active_clip = (uint8_t)new_cidx;
+                    pfx_sync_from_clip(tr);
+                }
             }
             return;
         }

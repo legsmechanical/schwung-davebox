@@ -451,8 +451,6 @@ let undoAvailable      = false;
 let redoAvailable      = false;
 let undoSeqArpSnapshot = null;  /* null or {track, params[8]} — SEQ ARP (JS-only) for full reset */
 let redoSeqArpSnapshot = null;
-let undoFlashEndTick   = -1;    /* OLED flash deadline for UNDO/REDO/NOTHING TO messages */
-let undoFlashLabel     = '';
 
 /* Per-track mute/solo state (JS mirrors DSP) */
 let trackMuted         = new Array(NUM_TRACKS).fill(false);
@@ -602,6 +600,7 @@ function hardResetClip(t, ac) {
     clipNonEmpty[t][ac] = false;
     clipTPS[t][ac] = 24;
     if (ac === trackActiveClip[t]) {
+        trackCurrentPage[t] = 0;
         seqActiveNotes.clear(); seqLastStep = -1; seqNoteOnClipTick = -1;
         resetPerClipBankParamsToDefault(t);
     }
@@ -1435,7 +1434,13 @@ function updateTrackLEDs() {
             const focused   = effectiveClip(t);
             const isFocused = sceneIdx === focused;
             const isPlaying = trackClipPlaying[t] && trackActiveClip[t] === sceneIdx;
-            if (isFocused) {
+            const slowPulse = Math.floor(tickCount / 98) % 2;
+            const isWillRelaunch = trackWillRelaunch[t] && trackActiveClip[t] === sceneIdx;
+            if (isFocused && isPlaying) {
+                color = flashEighth ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
+            } else if (isFocused && isWillRelaunch) {
+                color = slowPulse ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
+            } else if (isFocused) {
                 color = TRACK_COLORS[t];
             } else if (!clipNonEmpty[t][sceneIdx]) {
                 color = LED_OFF;
@@ -1557,6 +1562,15 @@ function drawUI() {
     if (globalMenuOpen) { drawGlobalMenu(); return; }
     clear_screen();
     if (sessionView) {
+        if (actionPopupEndTick >= 0) {
+            if (actionPopupLines.length >= 2) {
+                print(4, 22, actionPopupLines[0], 1);
+                print(4, 34, actionPopupLines[1], 1);
+            } else {
+                print(4, 28, actionPopupLines[0], 1);
+            }
+            return;
+        }
         const base = sceneRow;
         print(4, 10, 'SESSION  GRP ' + (Math.floor(sceneRow / 4) + 1), 1);
         print(4, 22, SCENE_LETTERS[base] + '-' + SCENE_LETTERS[base + 3], 1);
@@ -1609,12 +1623,6 @@ function drawUI() {
     if (noNoteFlashEndTick >= 0) {
         print(4, 22, 'NO NOTE', 1);
         print(4, 34, 'Play a pad first', 1);
-        return;
-    }
-
-    /* Undo/redo flash: ~1000ms after Undo or Shift+Undo */
-    if (undoFlashEndTick >= 0) {
-        print(4, 22, undoFlashLabel, 1);
         return;
     }
 
@@ -2010,10 +2018,6 @@ globalThis.tick = function () {
         }
         if (noNoteFlashEndTick >= 0 && tickCount >= noNoteFlashEndTick) {
             noNoteFlashEndTick = -1;
-            screenDirty = true;
-        }
-        if (undoFlashEndTick >= 0 && tickCount >= undoFlashEndTick) {
-            undoFlashEndTick = -1;
             screenDirty = true;
         }
 
@@ -2429,11 +2433,9 @@ globalThis.onMidiMessageInternal = function (data) {
                     redoAvailable = false;
                     pendingDspSync = 5;
                     for (let _t = 0; _t < NUM_TRACKS; _t++) refreshPerClipBankParams(_t);
-                    undoFlashLabel   = 'REDO';
-                    undoFlashEndTick = tickCount + OCTAVE_OVERLAY_TICKS;
+                    showActionPopup('REDO');
                 } else {
-                    undoFlashLabel   = 'NOTHING TO REDO';
-                    undoFlashEndTick = tickCount + OCTAVE_OVERLAY_TICKS;
+                    showActionPopup('NOTHING TO', 'REDO');
                 }
             } else {
                 if (undoAvailable) {
@@ -2456,11 +2458,9 @@ globalThis.onMidiMessageInternal = function (data) {
                     undoAvailable = false;
                     pendingDspSync = 5;
                     for (let _t = 0; _t < NUM_TRACKS; _t++) refreshPerClipBankParams(_t);
-                    undoFlashLabel   = 'UNDO';
-                    undoFlashEndTick = tickCount + OCTAVE_OVERLAY_TICKS;
+                    showActionPopup('UNDO');
                 } else {
-                    undoFlashLabel   = 'NOTHING TO UNDO';
-                    undoFlashEndTick = tickCount + OCTAVE_OVERLAY_TICKS;
+                    showActionPopup('NOTHING TO', 'UNDO');
                 }
             }
             screenDirty = true;
