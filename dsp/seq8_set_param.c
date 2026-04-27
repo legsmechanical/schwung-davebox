@@ -82,6 +82,21 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
     }
 }
 
+/* Send targeted note-offs for all gen_notes of active entries in active_notes[].
+ * Used on stop/panic for ROUTE_MOVE tracks — send_panic's 128-note flood
+ * exceeds midi_inject_to_move's rate limit, so only a few notes make it through. */
+static void silence_active_notes_move(seq8_track_t *tr) {
+    play_fx_t *fx = &tr->pfx;
+    uint8_t off_s = (uint8_t)(0x80 | tr->channel);
+    int n, i;
+    for (n = 0; n < 128; n++) {
+        pfx_active_t *an = &fx->active_notes[n];
+        if (!an->active) continue;
+        for (i = 0; i < an->gen_count; i++)
+            pfx_send(fx, off_s, an->gen_notes[i], 0);
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* set_param                                                            */
 /* ------------------------------------------------------------------ */
@@ -117,6 +132,8 @@ static void set_param(void *instance, const char *key, const char *val) {
                 for (t = 0; t < NUM_TRACKS; t++) {
                     silence_track_notes_v2(inst, &inst->tracks[t]);
                     inst->tracks[t].pfx.event_count = 0;
+                    if (inst->tracks[t].pfx.route == ROUTE_MOVE)
+                        silence_active_notes_move(&inst->tracks[t]);
                     memset(inst->tracks[t].pfx.active_notes, 0,
                            sizeof(inst->tracks[t].pfx.active_notes));
                     inst->tracks[t].clips[inst->tracks[t].active_clip].clock_shift_pos = 0;
@@ -144,6 +161,8 @@ static void set_param(void *instance, const char *key, const char *val) {
             for (t = 0; t < NUM_TRACKS; t++) {
                 silence_track_notes_v2(inst, &inst->tracks[t]);
                 inst->tracks[t].pfx.event_count = 0;
+                if (inst->tracks[t].pfx.route == ROUTE_MOVE)
+                    silence_active_notes_move(&inst->tracks[t]);
                 memset(inst->tracks[t].pfx.active_notes, 0,
                        sizeof(inst->tracks[t].pfx.active_notes));
                 inst->tracks[t].clips[inst->tracks[t].active_clip].clock_shift_pos = 0;
