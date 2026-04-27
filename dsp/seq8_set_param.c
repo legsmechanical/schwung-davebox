@@ -1237,6 +1237,11 @@ static void set_param(void *instance, const char *key, const char *val) {
                         }
                     }
                 }
+                /* Live monitoring for ROUTE_MOVE: play note immediately so the
+                 * performer hears it without a separate live_notes set_param that
+                 * would race/coalesce with this record_note_on call. */
+                if (tr->pfx.route == ROUTE_MOVE)
+                    pfx_note_on(inst, tr, (uint8_t)pitch, (uint8_t)vel);
             }
             return;
         }
@@ -1306,6 +1311,10 @@ static void set_param(void *instance, const char *key, const char *val) {
                 /* Remove rec_pending slot */
                 tr->rec_pending[ri] = tr->rec_pending[tr->rec_pending_count - 1];
                 tr->rec_pending_count--;
+
+                /* Live monitoring for ROUTE_MOVE */
+                if (tr->pfx.route == ROUTE_MOVE)
+                    pfx_note_off_imm(inst, tr, (uint8_t)pitch);
             }
             return;
         }

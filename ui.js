@@ -1252,8 +1252,13 @@ function liveSendNote(t, type, pitch, vel) {
     const route = bankParams[t][0][1];                /* Rte knob: 0=Schwung, 1=Move */
     const status = type | ch;
     if (route === 1) {
-        const isOff = (type === 0x80) || (type === 0x90 && vel === 0);
-        pendingLiveNotes[t].push(isOff ? { isOff: true, pitch } : { isOff: false, pitch, vel });
+        /* When recording is active, record_note_on/off DSP handlers do live monitoring
+         * inline — skip buffering here to avoid coalescing with those set_params. */
+        const activelyRecording = recordArmed && !recordCountingIn && recordArmedTrack === t;
+        if (!activelyRecording) {
+            const isOff = (type === 0x80) || (type === 0x90 && vel === 0);
+            pendingLiveNotes[t].push(isOff ? { isOff: true, pitch } : { isOff: false, pitch, vel });
+        }
     } else {
         if (typeof shadow_send_midi_to_dsp === 'function') shadow_send_midi_to_dsp([status, pitch, vel]);
     }
