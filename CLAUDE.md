@@ -4,7 +4,7 @@
 
 ## Session workflow
 
-- **Start of session**: run `~/schwung-docs/update.sh` and report the result. The Schwung docs in `~/schwung-docs/` are the source of truth for all Schwung platform API, module development, and framework behavior. Consult them before making assumptions about platform capabilities or constraints.
+- **Start of session**: run `~/schwung-docs/update.sh` and report the result. If unsure about a specific platform API or behavior, grep `~/schwung-docs/` rather than assuming.
 - **Validate before acting** — read or grep the actual code first. Never act on assumptions.
 - **Commit after each logical change** — work directly on master, one commit per change.
 - **Deploy and verify on device before reporting done** — always build+install and confirm on Move.

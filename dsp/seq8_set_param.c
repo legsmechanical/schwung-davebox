@@ -115,9 +115,8 @@ static void set_param(void *instance, const char *key, const char *val) {
             if (inst->playing) {
                 int t;
                 for (t = 0; t < NUM_TRACKS; t++) {
-                    inst->tracks[t].note_active         = 0;
-                    inst->tracks[t].pending_note_count  = 0;
-                    inst->tracks[t].pfx.event_count     = 0;
+                    silence_track_notes_v2(inst, &inst->tracks[t]);
+                    inst->tracks[t].pfx.event_count = 0;
                     memset(inst->tracks[t].pfx.active_notes, 0,
                            sizeof(inst->tracks[t].pfx.active_notes));
                     inst->tracks[t].clips[inst->tracks[t].active_clip].clock_shift_pos = 0;
@@ -143,9 +142,8 @@ static void set_param(void *instance, const char *key, const char *val) {
         } else if (!strcmp(val, "panic")) {
             int t;
             for (t = 0; t < NUM_TRACKS; t++) {
-                inst->tracks[t].note_active         = 0;
-                inst->tracks[t].pending_note_count  = 0;
-                inst->tracks[t].pfx.event_count     = 0;
+                silence_track_notes_v2(inst, &inst->tracks[t]);
+                inst->tracks[t].pfx.event_count = 0;
                 memset(inst->tracks[t].pfx.active_notes, 0,
                        sizeof(inst->tracks[t].pfx.active_notes));
                 inst->tracks[t].clips[inst->tracks[t].active_clip].clock_shift_pos = 0;
@@ -624,13 +622,15 @@ static void set_param(void *instance, const char *key, const char *val) {
             int new_cidx = clamp_i(my_atoi(val), 0, NUM_CLIPS - 1);
             if (inst->launch_quant == 0 && (tr->clip_playing || inst->playing)) {
                 /* Now + transport active: fire immediately */
+                silence_track_notes_v2(inst, tr);
                 uint16_t newlen = tr->clips[new_cidx].length;
                 tr->current_step     = tr->clip_playing
                                        ? (uint16_t)(tr->current_step % newlen)
                                        : (uint16_t)(inst->global_tick % newlen);
                 tr->active_clip      = (uint8_t)new_cidx;
                 pfx_sync_from_clip(tr);
-                tr->tick_in_step     = 0;
+                if (tr->tick_in_step >= tr->clips[new_cidx].ticks_per_step)
+                    tr->tick_in_step = 0;
                 tr->clip_playing     = 1;
                 tr->queued_clip      = -1;
                 tr->pending_page_stop = 0;
