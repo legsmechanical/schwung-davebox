@@ -401,8 +401,9 @@ let trackOctave = new Array(NUM_TRACKS).fill(0);  /* per-track live pad octave s
 let octaveOverlayEndTick = -1;                    /* tickCount deadline for octave overlay; -1 = inactive */
 const OCTAVE_OVERLAY_TICKS = 196;                 /* ~1000ms at 196Hz */
 const KNOB_TURN_HIGHLIGHT_TICKS = 120;            /* ~600ms at 196Hz — highlight after turn without touch */
-let stretchFlashEndTick = -1;                     /* tickCount deadline for beat-stretch flash; -1 = inactive */
-let stretchFlashLabel = '';                       /* 'x2' or '/2' */
+let actionPopupEndTick = -1;   /* tickCount deadline for action confirmation pop-up; -1 = inactive */
+let actionPopupLines   = [];   /* 1 or 2 strings to display */
+const ACTION_POPUP_TICKS = 98; /* ~500ms at 196Hz */
 let clockShiftTouchDelta = 0;                     /* per-touch cumulative step delta; reset on release */
 let screenDirty = true;   /* true = OLED must redraw this tick */
 let lastBlinkOn = null;   /* tracks session overview blink state for dirty detection */
@@ -564,6 +565,12 @@ function clearStep(t, ac, absIdx) {
     clipSteps[t][ac][absIdx] = 0;
     if (clipNonEmpty[t][ac]) clipNonEmpty[t][ac] = clipHasContent(t, ac);
     refreshSeqNotesIfCurrent(t, ac, absIdx);
+}
+
+function showActionPopup(...lines) {
+    actionPopupLines   = lines;
+    actionPopupEndTick = tickCount + ACTION_POPUP_TICKS;
+    screenDirty = true;
 }
 
 /* Clear all steps in a clip (single atomic DSP write). */
@@ -1492,11 +1499,14 @@ function drawUI() {
         return;
     }
 
-    /* Beat-stretch flash: ~1000ms after a successful stretch */
-    if (stretchFlashEndTick >= 0) {
-        print(4, 10, '[CLIP       ]', 1);
-        print(4, 22, 'Beat Stretch', 1);
-        print(4, 34, stretchFlashLabel, 1);
+    /* Action confirmation pop-up: ~500ms; defers to step edit and active-knob bank overview */
+    if (actionPopupEndTick >= 0 && heldStep < 0 && knobTouched < 0) {
+        if (actionPopupLines.length >= 2) {
+            print(4, 22, actionPopupLines[0], 1);
+            print(4, 34, actionPopupLines[1], 1);
+        } else {
+            print(4, 28, actionPopupLines[0], 1);
+        }
         return;
     }
 
@@ -1864,8 +1874,8 @@ globalThis.tick = function () {
             stretchBlockedEndTick = -1;
             screenDirty = true;
         }
-        if (stretchFlashEndTick >= 0 && tickCount >= stretchFlashEndTick) {
-            stretchFlashEndTick = -1;
+        if (actionPopupEndTick >= 0 && tickCount >= actionPopupEndTick) {
+            actionPopupEndTick = -1;
             screenDirty = true;
         }
         if (knobTouched >= 0 && knobTurnedTick[knobTouched] >= 0 &&
@@ -2107,11 +2117,13 @@ globalThis.onMidiMessageInternal = function (data) {
                 if (pm) bankParams[_arpTrack][4][k] = pm.def;
             }
             undoSeqArpSnapshot = { track: _arpTrack, params: _arpParams };
+            showActionPopup('CLIP PARAMS', 'RESET');
             return;
         }
         if (d1 === 3 && d2 === 127 && deleteHeld && !sessionView) {
             resetFxBanks(activeTrack);
             undoSeqArpSnapshot = null;
+            showActionPopup('BANK RESET');
             return;
         }
 
@@ -2439,11 +2451,13 @@ globalThis.onMidiMessageInternal = function (data) {
                     if (!copySrc) {
                         copySrc = { kind: 'row', row: clipIdx };
                         invalidateLEDCache();
+                        showActionPopup('COPIED');
                     } else if (copySrc.kind === 'row') {
                         copyRow(copySrc.row, clipIdx);
                         copySrc = null;
                         invalidateLEDCache();
                         forceRedraw();
+                        showActionPopup('PASTED');
                     }
                     /* copySrc.kind === 'clip': swallow — don't mix copy types */
                 } else {
@@ -2451,11 +2465,13 @@ globalThis.onMidiMessageInternal = function (data) {
                     if (!copySrc) {
                         copySrc = { kind: 'clip', track: activeTrack, clip: clipIdx };
                         invalidateLEDCache();
+                        showActionPopup('COPIED');
                     } else if (copySrc.kind === 'clip') {
                         copyClip(copySrc.track, copySrc.clip, activeTrack, clipIdx);
                         copySrc = null;
                         invalidateLEDCache();
                         forceRedraw();
+                        showActionPopup('PASTED');
                     }
                 }
             } else if (deleteHeld) {
@@ -2463,10 +2479,12 @@ globalThis.onMidiMessageInternal = function (data) {
                     /* Delete + scene row button (Session View): clear all 8 clips in that row */
                     clearRow(clipIdx);
                     forceRedraw();
+                    showActionPopup('SEQUENCES', 'CLEARED');
                 } else {
                     /* Delete + track button (Track View): clear the clip; keep playing if it's currently active */
                     clearClip(activeTrack, clipIdx, true);
                     forceRedraw();
+                    showActionPopup('SEQUENCE', 'CLEARED');
                 }
             } else if (sessionView) {
                 sceneBtnFlashTick[idx] = tickCount;
@@ -2631,9 +2649,6 @@ globalThis.onMidiMessageInternal = function (data) {
                                         trackCurrentPage[t] = newPages - 1;
                                     /* Per-touch label: dir +1 → fmtStretch shows 'x2', -1 → '/2' */
                                     bankParams[t][bank][knobIdx] = dir;
-                                    /* Momentary OLED flash for when CLIP bank isn't visible */
-                                    stretchFlashLabel   = dir > 0 ? 'x2' : '/2';
-                                    stretchFlashEndTick = tickCount + OCTAVE_OVERLAY_TICKS;
                                 }
                             }
                         } else if (pm.dspKey === 'clock_shift') {
@@ -2809,11 +2824,13 @@ globalThis.onMidiMessageInternal = function (data) {
                         } else if (!copySrc) {
                             copySrc = { kind: 'clip', track: t, clip: clipIdx };
                             invalidateLEDCache();
+                            showActionPopup('COPIED');
                         } else if (copySrc.kind === 'clip') {
                             copyClip(copySrc.track, copySrc.clip, t, clipIdx);
                             copySrc = null;
                             invalidateLEDCache();
                             forceRedraw();
+                            showActionPopup('PASTED');
                         }
                         /* copySrc.kind === 'row': swallow — don't mix copy types */
                     } else if (deleteHeld) {
@@ -2821,6 +2838,7 @@ globalThis.onMidiMessageInternal = function (data) {
                         const clipIdx = sceneRow + row;
                         clearClip(t, clipIdx);
                         forceRedraw();
+                        showActionPopup('SEQUENCE', 'CLEARED');
                     } else {
                         const clipIdx      = sceneRow + row;
                         const isActiveClip = trackActiveClip[t] === clipIdx;
