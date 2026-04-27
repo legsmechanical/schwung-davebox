@@ -280,7 +280,31 @@ function buildGlobalMenuItems() {
             for (let _i = 0; _i < 4; _i++) setButtonLED(40 + _i, LED_OFF);
             if (typeof host_exit_module === 'function') host_exit_module();
         }),
+        createAction('Clear Sess', function() {
+            confirmClearSession = true;
+            confirmClearSel     = 1;
+            screenDirty         = true;
+        }),
     ];
+}
+
+function doClearSession() {
+    const sp = uuidToStatePath(currentSetUuid);
+    if (typeof host_write_file === 'function') host_write_file(sp, '{"v":0}');
+    /* Reset JS-only state not covered by pendingSetLoad */
+    activeBank = 0;
+    undoSeqArpSnapshot = null;
+    redoSeqArpSnapshot = null;
+    for (let _t = 0; _t < NUM_TRACKS; _t++) {
+        for (let _c = 0; _c < NUM_CLIPS; _c++) clipSeqFollow[_t][_c] = true;
+        for (let _k = 0; _k < 8; _k++) {
+            const _pm = BANKS[4].knobs[_k];
+            bankParams[_t][4][_k] = _pm ? _pm.def : 0;
+        }
+    }
+    pendingSetLoad  = true;
+    globalMenuOpen  = false;
+    confirmClearSession = false;
 }
 
 /* ------------------------------------------------------------------ */
@@ -464,6 +488,8 @@ let globalMenuState       = null;
 let globalMenuStack       = null;
 let bpmWasEditing         = false;
 let lastSentMenuEditValue = null;  /* dedup: only send set_param when edit value changes */
+let confirmClearSession   = false; /* showing Clear Session confirmation dialog */
+let confirmClearSel       = 1;     /* 0=Yes, 1=No; default No */
 
 /* Session overview overlay (hold CC 50) */
 let noteSessionPressedTick  = -1;    /* tickCount when CC 50 pressed; -1 = not pending */
@@ -782,7 +808,37 @@ function openGlobalMenu() {
 }
 
 
+function drawClearSessionConfirm() {
+    clear_screen();
+    drawMenuHeader('CLEAR SESSION');
+    print(4, 16, 'This will clear the', 1);
+    print(4, 25, 'entire project and', 1);
+    print(4, 34, 'cannot be undone.', 1);
+    const noX = 6, yesX = 74, btnY = 46, btnW = 46, btnH = 13;
+    if (confirmClearSel === 1) {
+        fill_rect(noX, btnY, btnW, btnH, 1);
+        print(noX + 17, btnY + 3, 'No', 0);
+    } else {
+        fill_rect(noX, btnY, btnW, 1, 1);
+        fill_rect(noX, btnY + btnH - 1, btnW, 1, 1);
+        fill_rect(noX, btnY, 1, btnH, 1);
+        fill_rect(noX + btnW - 1, btnY, 1, btnH, 1);
+        print(noX + 17, btnY + 3, 'No', 1);
+    }
+    if (confirmClearSel === 0) {
+        fill_rect(yesX, btnY, btnW, btnH, 1);
+        print(yesX + 14, btnY + 3, 'Yes', 0);
+    } else {
+        fill_rect(yesX, btnY, btnW, 1, 1);
+        fill_rect(yesX, btnY + btnH - 1, btnW, 1, 1);
+        fill_rect(yesX, btnY, 1, btnH, 1);
+        fill_rect(yesX + btnW - 1, btnY, 1, btnH, 1);
+        print(yesX + 14, btnY + 3, 'Yes', 1);
+    }
+}
+
 function drawGlobalMenu() {
+    if (confirmClearSession) { drawClearSessionConfirm(); return; }
     clear_screen();
     drawMenuHeader('GLOBAL');
     drawMenuList({
@@ -2234,6 +2290,12 @@ globalThis.onMidiMessageInternal = function (data) {
 
         /* CC 3 = jog wheel physical click */
         if (d1 === 3 && d2 === 127 && globalMenuOpen) {
+            if (confirmClearSession) {
+                if (confirmClearSel === 0) doClearSession();
+                else { confirmClearSession = false; }
+                screenDirty = true;
+                return;
+            }
             handleMenuInput({
                 cc: 3, value: d2,
                 items: globalMenuItems, state: globalMenuState, stack: globalMenuStack,
@@ -2267,7 +2329,10 @@ globalThis.onMidiMessageInternal = function (data) {
 
         if (d1 === MoveMainKnob) {
             if (globalMenuOpen) {
-                if (globalMenuState.editing) {
+                if (confirmClearSession) {
+                    const delta = decodeDelta(d2);
+                    if (delta !== 0) { confirmClearSel = confirmClearSel === 0 ? 1 : 0; screenDirty = true; }
+                } else if (globalMenuState.editing) {
                     /* Edit mode: linear jog for all item types, no acceleration. */
                     const delta = decodeDelta(d2);
                     if (delta !== 0) {
@@ -2422,7 +2487,10 @@ globalThis.onMidiMessageInternal = function (data) {
 
         /* Back: close global menu if open; otherwise (with Shift) hide module */
         if (d1 === MoveBack && d2 === 127) {
-            if (globalMenuOpen) {
+            if (globalMenuOpen && confirmClearSession) {
+                confirmClearSession = false;
+                forceRedraw();
+            } else if (globalMenuOpen) {
                 globalMenuOpen = false;
                 lastSentMenuEditValue = null;
                 forceRedraw();
