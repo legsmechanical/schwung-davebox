@@ -53,20 +53,34 @@ with wave.open(dst, 'wb') as w:
     w.writeframes(struct.pack('<' + 'h' * len(samples), *samples))
 print(f"metro_click.wav: {len(samples)} frames @ {rate} Hz, 16-bit mono")
 
-# Generate 25 pitch variants (metro_click_0.wav = no shift ... metro_click_24.wav = -24 semitones).
-# Declares a proportionally higher sample rate so a resampling player slows down = lower pitch.
-# No audio resampling needed: same PCM data, only header sample rate changes.
-import math
+# Generate 25 pitch-shifted variants (metro_click_0.wav = no shift .. metro_click_24.wav = -24 semitones).
+# Time-stretch via linear interpolation: ratio = 2^(N/12) makes audio N semitones lower.
+# Trim base to 300ms first so stretched files stay compact.
+import math, struct
 with wave.open(dst, 'rb') as r:
     base_rate = r.getframerate()
-    base_data = r.readframes(r.getnframes())
+    nf = r.getnframes()
+    base_samples = list(struct.unpack('<' + 'h' * nf, r.readframes(nf)))
+base_samples = base_samples[:round(0.300 * base_rate)]  # trim to 300ms
 for n in range(25):
-    new_rate = round(base_rate * (2.0 ** (n / 12.0)))
+    if n == 0:
+        out_samples = base_samples
+    else:
+        ratio = 2.0 ** (n / 12.0)
+        out_len = round(len(base_samples) * ratio)
+        out_samples = []
+        for i in range(out_len):
+            pos = i / ratio
+            i0 = int(pos)
+            i1 = min(i0 + 1, len(base_samples) - 1)
+            frac = pos - i0
+            s = round(base_samples[i0] + frac * (base_samples[i1] - base_samples[i0]))
+            out_samples.append(max(-32768, min(32767, s)))
     out = f"dist/seq8/metro_click_{n}.wav"
     with wave.open(out, 'wb') as w:
-        w.setnchannels(1); w.setsampwidth(2); w.setframerate(new_rate)
-        w.writeframes(base_data)
-print(f"metro pitch variants: metro_click_0.wav ({base_rate} Hz) .. metro_click_24.wav ({round(base_rate * 2**(24/12))} Hz)")
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(base_rate)
+        w.writeframes(struct.pack('<' + 'h' * len(out_samples), *out_samples))
+print(f"metro pitch variants: 25 files, 300ms base trimmed, 0..-24 semitones")
 PYEOF
 
 echo ""
