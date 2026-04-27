@@ -338,7 +338,7 @@ let clipSteps        = Array.from({length: NUM_TRACKS}, () =>
                            Array.from({length: NUM_CLIPS}, () => new Array(NUM_STEPS).fill(0)));
 /* clipNonEmpty[track][clip] — cached result of clipHasContent; updated on every clipSteps write */
 let clipNonEmpty     = Array.from({length: NUM_TRACKS}, () => new Array(NUM_CLIPS).fill(false));
-let clipLength       = Array.from({length: NUM_TRACKS}, () => new Array(NUM_CLIPS).fill(128));
+let clipLength       = Array.from({length: NUM_TRACKS}, () => new Array(NUM_CLIPS).fill(16));
 let clipTPS          = Array.from({length: NUM_TRACKS}, () => new Array(NUM_CLIPS).fill(24));
 let clipSeqFollow    = Array.from({length: NUM_TRACKS}, () => new Array(NUM_CLIPS).fill(true));
 let trackCurrentStep = new Array(NUM_TRACKS).fill(-1);
@@ -596,7 +596,7 @@ function hardResetClip(t, ac) {
     if (typeof host_module_set_param !== 'function') return;
     undoAvailable = true; redoAvailable = false; undoSeqArpSnapshot = null;
     host_module_set_param('t' + t + '_c' + ac + '_hard_reset', '1');
-    const defaultLen = 128;
+    const defaultLen = 16;
     for (let s = 0; s < NUM_STEPS; s++) clipSteps[t][ac][s] = 0;
     clipLength[t][ac] = defaultLen;
     clipNonEmpty[t][ac] = false;
@@ -637,7 +637,7 @@ function cutClip(srcT, srcC, dstT, dstC) {
         refreshPerClipBankParams(dstT);
     }
     for (let s = 0; s < NUM_STEPS; s++) clipSteps[srcT][srcC][s] = 0;
-    clipLength[srcT][srcC] = 128;
+    clipLength[srcT][srcC] = 16;
     clipNonEmpty[srcT][srcC] = false;
     clipTPS[srcT][srcC] = 24;
     if (srcC === trackActiveClip[srcT]) {
@@ -679,7 +679,7 @@ function cutRow(srcRow, dstRow) {
             refreshPerClipBankParams(t);
         }
         for (let s = 0; s < NUM_STEPS; s++) clipSteps[t][srcRow][s] = 0;
-        clipLength[t][srcRow] = 128;
+        clipLength[t][srcRow] = 16;
         clipNonEmpty[t][srcRow] = false;
         clipTPS[t][srcRow] = 24;
         if (srcRow === trackActiveClip[t]) {
@@ -1779,7 +1779,7 @@ function syncClipsFromDsp() {
             }
             const len = host_module_get_param('t' + t + '_c' + c + '_length');
             if (len !== null && len !== undefined)
-                clipLength[t][c] = parseInt(len, 10) || 128;
+                clipLength[t][c] = parseInt(len, 10) || 16;
             const tpsRaw = host_module_get_param('t' + t + '_c' + c + '_tps');
             if (tpsRaw !== null && tpsRaw !== undefined) {
                 const tpsVal = parseInt(tpsRaw, 10);
