@@ -47,7 +47,7 @@ for i in range(0, len(raw), sw * nch):
         b = raw[i + ch*sw : i + ch*sw + sw]
         v = struct.unpack('<i', b + (b'\xff' if b[2] & 0x80 else b'\x00'))[0] >> 8
         ch_vals.append(v)
-    samples.append(max(-32768, min(32767, sum(ch_vals) // len(ch_vals) >> 8)))
+    samples.append(max(-32768, min(32767, sum(ch_vals) // len(ch_vals))))
 with wave.open(dst, 'wb') as w:
     w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate)
     w.writeframes(struct.pack('<' + 'h' * len(samples), *samples))
