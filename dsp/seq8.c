@@ -37,7 +37,7 @@
 
 /* MIDI routing: where track output is delivered */
 #define ROUTE_SCHWUNG  0   /* host->midi_send_internal → Schwung active chain */
-#define ROUTE_MOVE     1   /* ext_queue → JS move_midi_inject_to_move → Move native tracks */
+#define ROUTE_MOVE     1   /* host->midi_inject_to_move → Move native tracks */
 
 /* External MIDI queue: DSP buffers ROUTE_MOVE events; JS drains via get_param("ext_queue") */
 #define EXT_QUEUE_SIZE 64
@@ -768,20 +768,13 @@ static void seq8_load_state(seq8_instance_t *inst) {
 
 /* Send 3-byte MIDI message. Routes on fx->route:
  *   ROUTE_SCHWUNG → midi_send_internal (Schwung chain, immediate)
- *   ROUTE_MOVE    → enqueue in g_inst->ext_queue; JS drains each tick via
- *                   get_param("ext_queue") and calls move_midi_inject_to_move(). */
+ *   ROUTE_MOVE    → midi_inject_to_move (cable 2, CIN from status; NULL-safe) */
 static void pfx_send(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
     if (!g_host) return;
     if (fx->route == ROUTE_MOVE) {
-        if (g_inst) {
-            int next = (g_inst->ext_head + 1) % EXT_QUEUE_SIZE;
-            if (next != g_inst->ext_tail) {
-                g_inst->ext_queue[g_inst->ext_head].s  = status;
-                g_inst->ext_queue[g_inst->ext_head].d1 = d1;
-                g_inst->ext_queue[g_inst->ext_head].d2 = d2;
-                g_inst->ext_head = next;
-            }
-        }
+        if (!g_host->midi_inject_to_move) return;
+        uint8_t pkt[4] = { (uint8_t)(0x20 | (status >> 4)), status, d1, d2 };
+        g_host->midi_inject_to_move(pkt, 4);
         return;
     }
     const uint8_t msg[4] = { (uint8_t)(status >> 4), status, d1, d2 };

@@ -9,7 +9,8 @@
     "component_type": "tool",
     "tool_config": {
         "interactive": true,
-        "skip_file_browser": true
+        "skip_file_browser": true,
+        "overtake": true
     },
     "capabilities": {
         "midi_in": true,

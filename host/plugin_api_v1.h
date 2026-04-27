@@ -86,6 +86,12 @@ typedef struct host_api_v1 {
      * NULL if host does not support tempo. */
     float (*get_bpm)(void);
 
+    /* Inject a USB-MIDI packet into Move's MIDI_IN as if it came from
+     * external USB. Cable nibble is preserved — use cable 2 for pitched
+     * MIDI routed to Move tracks; cable 0 is Move's internal pad protocol.
+     * Rate-limited to ~16 packets/tick. NULL on non-shadow hosts. */
+    int (*midi_inject_to_move)(const uint8_t *msg, int len);
+
 } host_api_v1_t;
 
 /*
