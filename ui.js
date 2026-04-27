@@ -272,7 +272,7 @@ function buildGlobalMenuItems() {
             options: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16],
             format: function(v) { return v === 0 ? 'All' : String(v); }
         }),
-        createValue('Metro', {
+        createEnum('Metro', {
             get: function() { return metronomeOn; },
             set: function(v) {
                 metronomeOn = v | 0;
@@ -491,6 +491,7 @@ let muteUsedAsModifier    = false; /* set true when Mute+X compound; suppresses 
 
 /* Metronome */
 let metronomeOn      = 1; /* 0=Off,1=Count,2=On,3=Rec+Ply */
+let metronomeOnLast  = 1; /* last non-off mode; restored on Mute+Play toggle-on */
 let metronomeVol     = 80;
 let metroPrevBeat    = 0;    /* last metro_beat_count seen from DSP */
 let metroNoteOffTick = -1;   /* tick when to send note-off for last metro click */
@@ -888,6 +889,7 @@ function drawGlobalMenu() {
         items: globalMenuItems,
         selectedIndex: globalMenuState.selectedIndex,
         listArea: { topY: menuLayoutDefaults.listTopY, bottomY: menuLayoutDefaults.listBottomNoFooter },
+        valueX: 76,
         valueAlignRight: true,
         prioritizeSelectedValue: true,
         selectedMinLabelChars: 9,
@@ -1940,7 +1942,10 @@ function syncClipsFromDsp() {
     const micp = host_module_get_param('midi_in_channel');
     if (micp !== null && micp !== undefined) midiInChannel = parseInt(micp, 10) | 0;
     const monRaw = host_module_get_param('metro_on');
-    if (monRaw !== null && monRaw !== undefined) metronomeOn = parseInt(monRaw, 10) | 0;
+    if (monRaw !== null && monRaw !== undefined) {
+        metronomeOn = parseInt(monRaw, 10) | 0;
+        if (metronomeOn !== 0) metronomeOnLast = metronomeOn;
+    }
     const mvolRaw = host_module_get_param('metro_vol');
     if (mvolRaw !== null && mvolRaw !== undefined) metronomeVol = parseInt(mvolRaw, 10) | 0;
 }
@@ -2642,7 +2647,8 @@ globalThis.onMidiMessageInternal = function (data) {
                     host_module_set_param('transport', 'panic');
             } else if (muteHeld) {
                 muteUsedAsModifier = true;
-                metronomeOn = metronomeOn === 0 ? 1 : 0;
+                if (metronomeOn !== 0) metronomeOnLast = metronomeOn;
+                metronomeOn = metronomeOn === 0 ? metronomeOnLast : 0;
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('metro_on', String(metronomeOn));
                 showActionPopup('METRO ' + (metronomeOn === 0 ? 'OFF' : 'ON'));
