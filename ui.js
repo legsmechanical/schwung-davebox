@@ -1753,6 +1753,14 @@ function drawPositionBar(t) {
             fill_rect(x, barY + barH - 1, segW, 1, 1);
         }
     }
+    /* Playhead dot: 1px wide, full bar height, mapped across 128px width */
+    if (playing && trackClipPlaying[t] && cs >= 0) {
+        const totalSteps = Math.max(1, clipLength[t][ac]);
+        const dotX = Math.floor(cs * 128 / totalSteps);
+        const viewSegStart = startX + viewPage * (segW + segGap);
+        const onSolid = dotX >= viewSegStart && dotX < viewSegStart + segW;
+        fill_rect(dotX, barY, 1, barH, onSolid ? 0 : 1);
+    }
 }
 
 function fmtHex(b) {
@@ -2307,6 +2315,20 @@ globalThis.onMidiMessageInternal = function (data) {
                             seqLastClip = -1;
                             forceRedraw();
                         }
+                    } else if (loopHeld) {
+                        /* Track View + Loop held: adjust active clip length ±1 step */
+                        const _t  = activeTrack;
+                        const _ac = effectiveClip(_t);
+                        const _cur = clipLength[_t][_ac];
+                        const _nv  = Math.max(1, Math.min(256, _cur + delta));
+                        if (_nv !== _cur) {
+                            clipLength[_t][_ac] = _nv;
+                            const _maxPage = Math.max(0, Math.ceil(_nv / 16) - 1);
+                            if (trackCurrentPage[_t] > _maxPage) trackCurrentPage[_t] = _maxPage;
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + _t + '_clip_length', String(_nv));
+                            forceRedraw();
+                        }
                     } else {
                         /* Track View: step active bank 0–6, clamp at ends (bank 7 reserved) */
                         const cur  = activeBank;
@@ -2583,13 +2605,12 @@ globalThis.onMidiMessageInternal = function (data) {
                         showActionPopup(shiftHeld ? 'CUT' : 'COPIED');
                     } else if (copySrc.kind === 'row') {
                         copyRow(copySrc.row, clipIdx);
-                        copySrc = null;
                         invalidateLEDCache();
                         forceRedraw();
                         showActionPopup('PASTED');
                     } else if (copySrc.kind === 'cut_row') {
                         cutRow(copySrc.row, clipIdx);
-                        copySrc = null;
+                        copySrc = { kind: 'row', row: clipIdx };
                         invalidateLEDCache();
                         forceRedraw();
                         showActionPopup('PASTED');
@@ -2605,13 +2626,12 @@ globalThis.onMidiMessageInternal = function (data) {
                         showActionPopup(shiftHeld ? 'CUT' : 'COPIED');
                     } else if (copySrc.kind === 'clip') {
                         copyClip(copySrc.track, copySrc.clip, activeTrack, clipIdx);
-                        copySrc = null;
                         invalidateLEDCache();
                         forceRedraw();
                         showActionPopup('PASTED');
                     } else if (copySrc.kind === 'cut_clip') {
                         cutClip(copySrc.track, copySrc.clip, activeTrack, clipIdx);
-                        copySrc = null;
+                        copySrc = { kind: 'clip', track: activeTrack, clip: clipIdx };
                         invalidateLEDCache();
                         forceRedraw();
                         showActionPopup('PASTED');
@@ -2896,7 +2916,6 @@ globalThis.onMidiMessageInternal = function (data) {
                 invalidateLEDCache();
             } else if (copySrc.kind === 'step') {
                 if (copySrc.absStep !== absIdx) copyStep(activeTrack, ac, copySrc.absStep, absIdx);
-                copySrc = null;
                 invalidateLEDCache();
                 forceRedraw();
             }
@@ -2985,13 +3004,12 @@ globalThis.onMidiMessageInternal = function (data) {
                             showActionPopup(shiftHeld ? 'CUT' : 'COPIED');
                         } else if (copySrc.kind === 'clip') {
                             copyClip(copySrc.track, copySrc.clip, t, clipIdx);
-                            copySrc = null;
                             invalidateLEDCache();
                             forceRedraw();
                             showActionPopup('PASTED');
                         } else if (copySrc.kind === 'cut_clip') {
                             cutClip(copySrc.track, copySrc.clip, t, clipIdx);
-                            copySrc = null;
+                            copySrc = { kind: 'clip', track: t, clip: clipIdx };
                             invalidateLEDCache();
                             forceRedraw();
                             showActionPopup('PASTED');
