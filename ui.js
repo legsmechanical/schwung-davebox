@@ -284,7 +284,7 @@ const _X = p(null, null, null, 'stub', 0, 0, 0, fmtNA);
 const BANKS = [
     /* 0 — TRACK (pad 92) */
     { name: 'TRACK', knobs: [
-        p('Ch',   'MIDI Channel', 'channel',  'track', 1, 16, 1, fmtPlain),
+        p('Ch',   'MIDI Channel', 'channel',  'track', 1, 16, 1, fmtPlain, 6),
         p('Rte',  'Route',        'route',    'track', 0, 1,  0, fmtRoute),
         p('Mode', 'Track Mode',   'pad_mode', 'track', 0, 1,  0, fmtPlain),
         _X, _X, _X, _X, _X,
@@ -302,8 +302,8 @@ const BANKS = [
     ]},
     /* 2 — NOTE FX (pad 94) — fully wired; Oct/Ofs slowed; Qnt moved here from TIMING */
     { name: 'NOTE FX', knobs: [
-        p('Oct',  'Octave Shift',    'noteFX_octave',   'track', -4,   4,   0,   fmtSign, 6),
-        p('Ofs',  'Note Offset',     'noteFX_offset',   'track', -24,  24,  0,   fmtSign, 4),
+        p('Oct',  'Octave Shift',    'noteFX_octave',   'track', -4,   4,   0,   fmtSign, 16),
+        p('Ofs',  'Note Offset',     'noteFX_offset',   'track', -24,  24,  0,   fmtSign, 8),
         p('Gate', 'Gate Time',       'noteFX_gate',     'track',  0,   400, 100, fmtPct,  2 ),
         p('Vel',  'Velocity Offset', 'noteFX_velocity', 'track', -127, 127, 0,   fmtSign    ),
         p('Qnt',  'Quantize',        'quantize',        'track',  0,   100, 0,   fmtPct),
@@ -312,9 +312,9 @@ const BANKS = [
     /* 3 — HARMZ (pad 95) — fully wired; all params slowed */
     { name: 'HARMZ', knobs: [
         p('Unis', 'Unison',     'harm_unison',    'track', 0,   2,  0, fmtUnis, 4),
-        p('Oct',  'Octaver',    'harm_octaver',   'track', -4,  4,  0, fmtSign, 4),
-        p('Hrm1', 'Harmony 1',  'harm_interval1', 'track', -24, 24, 0, fmtSign, 4),
-        p('Hrm2', 'Harmony 2',  'harm_interval2', 'track', -24, 24, 0, fmtSign, 4),
+        p('Oct',  'Octaver',    'harm_octaver',   'track', -4,  4,  0, fmtSign, 16),
+        p('Hrm1', 'Harmony 1',  'harm_interval1', 'track', -24, 24, 0, fmtSign, 8),
+        p('Hrm2', 'Harmony 2',  'harm_interval2', 'track', -24, 24, 0, fmtSign, 8),
         _X, _X, _X, _X,
     ]},
     /* 4 — SEQ ARP (pad 96) — stub: arpeggiator not in DSP */
@@ -329,11 +329,11 @@ const BANKS = [
     ]},
     /* 5 — MIDI DLY (pad 97) — fully wired */
     { name: 'MIDI DLY', knobs: [
-        p('Dly',  'Delay Time',     'delay_time',         'track', 0,    10,  0, fmtDly  ),
+        p('Dly',  'Delay Time',     'delay_time',         'track', 0,    10,  0, fmtDly,   16),
         p('Lvl',  'Delay Level',    'delay_level',        'track', 0,    127, 0, fmtPlain),
-        p('Rep',  'Repeats',        'delay_repeats',      'track', 0,    16,  0, fmtPlain),
+        p('Rep',  'Repeats',        'delay_repeats',      'track', 0,    16,  0, fmtPlain, 16),
         p('Vfb',  'Vel Feedback',   'delay_vel_fb',       'track', -127, 127, 0, fmtSign ),
-        p('Pfb',  'Pitch Feedback', 'delay_pitch_fb',     'track', -24,  24,  0, fmtSign ),
+        p('Pfb',  'Pitch Feedback', 'delay_pitch_fb',     'track', -24,  24,  0, fmtSign,  16),
         p('Gfb',  'Gate Feedback',  'delay_gate_fb',      'track', -100, 100, 0, fmtSign ),
         p('Clk',  'Clock Feedback', 'delay_clock_fb',     'track', -100, 100, 0, fmtSign ),
         p('Rnd',  'Pitch Random',   'delay_pitch_random', 'track', 0,    1,   0, fmtBool ),
@@ -2622,10 +2622,10 @@ globalThis.onMidiMessageInternal = function (data) {
                         host_module_set_param(pfx + '_set_notes', heldStepNotes.join(' '));
                 }
             } else if (knobIdx === 1) {
-                /* K2 Pitch: shift each note ±1 scale degree (or ±1 semitone if scale-aware off), sens=6 */
+                /* K2 Pitch: shift each note ±1 scale degree (or ±1 semitone if scale-aware off), sens=16 */
                 knobAccum[knobIdx] = (dir === knobLastDir[knobIdx]) ? knobAccum[knobIdx] + 1 : 1;
                 knobLastDir[knobIdx] = dir;
-                if (knobAccum[knobIdx] >= 6) {
+                if (knobAccum[knobIdx] >= 16) {
                     knobAccum[knobIdx] = 0;
                     heldStepNotes = heldStepNotes.map(function(n) {
                         return scaleNudgeNote(n, dir, padKey, padScale);
@@ -2646,12 +2646,17 @@ globalThis.onMidiMessageInternal = function (data) {
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param(pfx + '_vel', String(stepEditVel));
             } else {
-                /* K5 Nudge: tick offset ±(TPS-1) */
-                { const _acN = effectiveClip(activeTrack);
-                  const _tpsN1 = (clipTPS[activeTrack][_acN] || 24) - 1;
-                  stepEditNudge = Math.max(-_tpsN1, Math.min(_tpsN1, stepEditNudge + dir)); }
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param(pfx + '_nudge', String(stepEditNudge));
+                /* K5 Nudge: tick offset ±(TPS-1), sens=16 */
+                knobAccum[knobIdx] = (dir === knobLastDir[knobIdx]) ? knobAccum[knobIdx] + 1 : 1;
+                knobLastDir[knobIdx] = dir;
+                if (knobAccum[knobIdx] >= 16) {
+                    knobAccum[knobIdx] = 0;
+                    const _acN = effectiveClip(activeTrack);
+                    const _tpsN1 = (clipTPS[activeTrack][_acN] || 24) - 1;
+                    stepEditNudge = Math.max(-_tpsN1, Math.min(_tpsN1, stepEditNudge + dir));
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param(pfx + '_nudge', String(stepEditNudge));
+                }
             }
             return;
         }
