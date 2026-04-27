@@ -892,7 +892,7 @@ function drawGlobalMenu() {
         valueX: 76,
         valueAlignRight: true,
         prioritizeSelectedValue: true,
-        selectedMinLabelChars: 9,
+        selectedMinLabelChars: 5,
         getLabel: function(item) { return item ? (item.label || '') : ''; },
         getValue: function(item, index) {
             if (!item) return '';
