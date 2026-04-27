@@ -26,6 +26,8 @@ Phases 0–4, 5a–5z-e, unquantized-recording A–L, Post-A–L (complete): ful
 
 **code-organization**: sens=16 baseline for knobs, fine-tuned per-knob · `dsp/seq8_set_param.c` via `#include` (single translation unit) · `ui_constants.mjs` (ES module) for constants/palette/fmt/MCUFONT.
 
+**undo/redo**: 1-level undo/redo via hardware Undo button (CC 56); Shift+Undo = redo. DSP owns two snapshot buffers (`undo_clips[]`/`redo_clips[]`, NUM_TRACKS slots each, ~107KB per buffer). `undo_begin_single(t,c)` / `undo_begin_row(row_c)` snapshot before: step clear, clip clear/clear_keep, pfx_reset, clip copy, row copy, row clear, recording arm (both count-in and direct). `apply_clip_restore` handles recording disarm (covers `record_armed`, `queued_clip` arm, and `count_in_ticks` cancellation), memcpy restore, `clip_migrate_to_notes`, `pfx_sync_from_clip`. `undo_restore`/`redo_restore` set_params do the swap and call `seq8_save_state`. JS: `undoAvailable`/`redoAvailable` flags; SEQ ARP (JS-only bank 4) has a parallel `undoSeqArpSnapshot`/`redoSeqArpSnapshot`. After restore: `pendingDspSync=5` + `refreshPerClipBankParams` for all tracks. OLED flash on undo/redo/nothing-to-undo/nothing-to-redo.
+
 ## What's Built
 
 **Transport**: Play/Stop. Shift+Play: playing → `deactivate_all`; stopped → `panic`. Delete+Play = panic. **Do not use per-track `tN_deactivate` for bulk clearing** — DSP processes one per audio callback; pollDSP restores stale state between calls. BPM owned by SEQ8 after init; `set_param("bpm")` updates `tick_delta` + `cached_bpm`.
@@ -71,7 +73,7 @@ Phases 0–4, 5a–5z-e, unquantized-recording A–L, Post-A–L (complete): ful
 
 1. **Scale-aware key/scale changes** — global option: changing Key/Scale transposes all clip notes to fit new scale. Design TBD.
 2. **Step/note editing fixes** — see pending fixes in planning doc.
-3. MIDI Delay Rnd refinement · 4. Full instance reset · 5. Undo/Redo (3 levels) · 6. Drum mode · 7. State snapshots (16 slots) · 8. Arpeggiator · 9. Swing (wire stub) · 10. MIDI clock sync
+3. MIDI Delay Rnd refinement · 4. Full instance reset · 5. Drum mode · 6. State snapshots (16 slots) · 7. Arpeggiator · 8. Swing (wire stub) · 9. MIDI clock sync
 
 ## Per-set state
 
