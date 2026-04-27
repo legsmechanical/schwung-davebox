@@ -294,6 +294,11 @@ typedef struct {
     int32_t  count_in_ticks;        /* remaining ticks; 0 = inactive */
     uint8_t  count_in_track;        /* track to arm for recording on fire */
 
+    /* Metronome: clicks on quarter notes while recording/count-in is active */
+    uint8_t  metro_on;              /* 0=off, 1=on */
+    uint8_t  metro_vol;             /* 0-100, default 80 */
+    uint16_t metro_beat_count;      /* monotonic counter; incremented on each quarter-note beat */
+
     /* Print mode: bake chain output into step data */
     uint8_t  printing;
 
@@ -559,6 +564,8 @@ static void seq8_save_state(seq8_instance_t *inst) {
     fprintf(fp, ",\"iv\":%d",  (int)inst->input_vel);
     fprintf(fp, ",\"iq\":%d",  (int)inst->inp_quant);
     fprintf(fp, ",\"mic\":%d", (int)inst->midi_in_channel);
+    if (inst->metro_on)        fprintf(fp, ",\"metro_on\":1");
+    if (inst->metro_vol != 80) fprintf(fp, ",\"metro_vol\":%d", (int)inst->metro_vol);
     fprintf(fp, "}");
     fclose(fp);
 }
@@ -751,6 +758,8 @@ static void seq8_load_state(seq8_instance_t *inst) {
     inst->input_vel      = (uint8_t)clamp_i(json_get_int(buf, "iv",  0), 0, 127);
     inst->inp_quant      = (uint8_t)(json_get_int(buf, "iq", 0) != 0);
     inst->midi_in_channel = (uint8_t)clamp_i(json_get_int(buf, "mic", 0), 0, 16);
+    inst->metro_on  = (uint8_t)(json_get_int(buf, "metro_on",  0) != 0);
+    inst->metro_vol = (uint8_t)clamp_i(json_get_int(buf, "metro_vol", 80), 0, 100);
     free(buf);
     /* Build step arrays from loaded notes[] for display/edit compat */
     for (t = 0; t < NUM_TRACKS; t++)
@@ -1437,6 +1446,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     inst->pad_key      = 9;   /* A */
     inst->pad_scale    = 1;   /* Minor */
     inst->launch_quant = 0;   /* Now */
+    inst->metro_vol    = 80;
     strncpy(inst->state_path, SEQ8_STATE_PATH_FALLBACK, sizeof(inst->state_path) - 1);
 
     /* Resolve per-set state path from active_set.txt */
@@ -1677,6 +1687,10 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         return snprintf(out, out_len, "%d", inst ? (int)inst->input_vel : 0);
     if (!strcmp(key, "midi_in_channel"))
         return snprintf(out, out_len, "%d", inst ? (int)inst->midi_in_channel : 0);
+    if (!strcmp(key, "metro_on"))
+        return snprintf(out, out_len, "%d", inst ? (int)inst->metro_on : 0);
+    if (!strcmp(key, "metro_vol"))
+        return snprintf(out, out_len, "%d", inst ? (int)inst->metro_vol : 80);
     if (!strcmp(key, "launch_quant"))
         return snprintf(out, out_len, "%d", inst ? (int)inst->launch_quant : 0);
     if (!strcmp(key, "version"))
@@ -1727,12 +1741,12 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
     }
 
     /* state_snapshot: single call returning all poll-loop values.
-     * Format: "playing cs0..cs7 ac0..ac7 qc0..qc7 count_in cp0..cp7 wr0..wr7 ps0..ps7 flash_eighth flash_sixteenth"
-     * 52 values total. Replaces individual get_param calls in pollDSP(). */
+     * Format: "playing cs0..cs7 ac0..ac7 qc0..qc7 count_in cp0..cp7 wr0..wr7 ps0..ps7 flash_eighth flash_sixteenth metro_beat_count"
+     * 53 values total. Replaces individual get_param calls in pollDSP(). */
     if (!strcmp(key, "state_snapshot")) {
         if (!inst) return snprintf(out, out_len,
             "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -1 -1 -1 -1 -1 -1 -1 -1 0"
-            " 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0");
+            " 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0");
         int t;
         int pos = 0;
         pos += snprintf(out + pos, (size_t)(out_len - pos), "%d", (int)inst->playing);
@@ -1752,6 +1766,7 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
             pos += snprintf(out + pos, (size_t)(out_len - pos), " %d", (int)inst->tracks[t].pending_page_stop);
         pos += snprintf(out + pos, (size_t)(out_len - pos), " %d", (int)((inst->global_tick / 2) % 2));
         pos += snprintf(out + pos, (size_t)(out_len - pos), " %d", (int)(inst->global_tick % 2));
+        pos += snprintf(out + pos, (size_t)(out_len - pos), " %d", (int)inst->metro_beat_count);
         return pos;
     }
 
@@ -2018,7 +2033,16 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
             inst->tick_accum += inst->tick_delta;
             while (inst->tick_accum >= inst->tick_threshold && inst->count_in_ticks > 0) {
                 inst->tick_accum -= inst->tick_threshold;
-                inst->count_in_ticks--;
+                if (inst->metro_on) {
+                    int old_q = (int)((inst->count_in_ticks - 1) / PPQN);
+                    inst->count_in_ticks--;
+                    if (inst->count_in_ticks > 0) {
+                        int new_q = (int)((inst->count_in_ticks - 1) / PPQN);
+                        if (new_q != old_q) inst->metro_beat_count++;
+                    }
+                } else {
+                    inst->count_in_ticks--;
+                }
             }
             if (inst->count_in_ticks == 0) {
                 inst->tick_accum          = 0;
@@ -2048,6 +2072,13 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
     inst->tick_accum += inst->tick_delta;
     while (inst->tick_accum >= inst->tick_threshold) {
         inst->tick_accum -= inst->tick_threshold;
+
+        /* Metro beat: fire on every quarter note (4 master steps) while any track is recording */
+        if (inst->metro_on && inst->master_tick_in_step == 0 && inst->global_tick % 4 == 0) {
+            int _tt;
+            for (_tt = 0; _tt < NUM_TRACKS; _tt++)
+                if (inst->tracks[_tt].recording) { inst->metro_beat_count++; break; }
+        }
 
         for (t = 0; t < NUM_TRACKS; t++) {
             seq8_track_t *tr = &inst->tracks[t];

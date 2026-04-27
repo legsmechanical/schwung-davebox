@@ -272,6 +272,25 @@ function buildGlobalMenuItems() {
             options: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16],
             format: function(v) { return v === 0 ? 'All' : String(v); }
         }),
+        createToggle('Metro', {
+            get: function() { return metronomeOn; },
+            set: function(v) {
+                metronomeOn = !!v;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('metro_on', metronomeOn ? '1' : '0');
+            },
+            onLabel: 'On', offLabel: 'Off'
+        }),
+        createValue('Metro Vol', {
+            get: function() { return metronomeVol; },
+            set: function(v) {
+                metronomeVol = v | 0;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('metro_vol', String(metronomeVol));
+            },
+            min: 0, max: 100, step: 1,
+            format: function(v) { return String(v | 0) + '%'; }
+        }),
         createAction('Quit', function() {
             removeFlagsWrap();
             ledInitComplete = false;
@@ -463,8 +482,15 @@ let seqLastStep        = -1;   /* last step index queried for seqActiveNotes */
 let seqLastClip        = -1;   /* last clip index queried for seqActiveNotes */
 let seqNoteOnClipTick  = -1;   /* clip tick when current seq notes started; -1 = no active note */
 let seqNoteGateTicks   = 0;    /* gate length in ticks for current seq notes */
-let deleteHeld         = false; /* true while Delete (CC 119) is held */
-let muteHeld           = false; /* true while Mute (CC 88) is held */
+let deleteHeld            = false; /* true while Delete (CC 119) is held */
+let muteHeld              = false; /* true while Mute (CC 88) is held */
+let muteUsedAsModifier    = false; /* set true when Mute+X compound; suppresses mute toggle on release */
+
+/* Metronome */
+let metronomeOn      = false;
+let metronomeVol     = 80;
+let metroPrevBeat    = 0;    /* last metro_beat_count seen from DSP */
+let metroNoteOffTick = -1;   /* tick when to send note-off for last metro click */
 let copyHeld           = false; /* true while Copy (CC 60) is held */
 let copySrc            = null;  /* {kind:'clip',track,clip} | {kind:'row',row} | null */
 let lastSoloBlink      = null;  /* last blink state for solo dirty detection */
@@ -598,6 +624,14 @@ function showActionPopup(...lines) {
     actionPopupLines   = lines;
     actionPopupEndTick = tickCount + ACTION_POPUP_TICKS;
     screenDirty = true;
+}
+
+function playMetronomeClick() {
+    const vel = Math.max(1, Math.round(metronomeVol * 127 / 100));
+    if (typeof move_midi_inject_to_move === 'function') {
+        move_midi_inject_to_move([0x09, 0x90, 108, vel]);
+        metroNoteOffTick = tickCount + 2;
+    }
 }
 
 /* Clear all steps in a clip (single atomic DSP write). */
@@ -1023,7 +1057,7 @@ function pollDSP() {
     const snap = host_module_get_param('state_snapshot');
     if (!snap) return;
     const v = snap.split(' ');
-    if (v.length < 52) return;
+    if (v.length < 53) return;
     playing = (v[0] === '1');
     for (let t = 0; t < NUM_TRACKS; t++) {
         const newStep = parseInt(v[1 + t], 10) | 0;
@@ -1046,6 +1080,11 @@ function pollDSP() {
     }
     flashEighth    = (v[50] === '1');
     flashSixteenth = (v[51] === '1');
+    const _beatCount = parseInt(v[52], 10) | 0;
+    if (_beatCount !== metroPrevBeat) {
+        metroPrevBeat = _beatCount;
+        playMetronomeClick();
+    }
 
     /* SeqFollow: auto-page activeTrack to follow playhead */
     if (playing) {
@@ -1895,6 +1934,10 @@ function syncClipsFromDsp() {
     if (iqp !== null && iqp !== undefined) inpQuant = iqp === '1';
     const micp = host_module_get_param('midi_in_channel');
     if (micp !== null && micp !== undefined) midiInChannel = parseInt(micp, 10) | 0;
+    const monRaw = host_module_get_param('metro_on');
+    if (monRaw !== null && monRaw !== undefined) metronomeOn = monRaw === '1';
+    const mvolRaw = host_module_get_param('metro_vol');
+    if (mvolRaw !== null && mvolRaw !== undefined) metronomeVol = parseInt(mvolRaw, 10) | 0;
 }
 
 function syncMuteSoloFromDsp() {
@@ -1978,6 +2021,13 @@ globalThis.init = function () {
 
 globalThis.tick = function () {
     tickCount++;
+
+    /* Metro note-off */
+    if (metroNoteOffTick >= 0 && tickCount >= metroNoteOffTick) {
+        metroNoteOffTick = -1;
+        if (typeof move_midi_inject_to_move === 'function')
+            move_midi_inject_to_move([0x09, 0x80, 108, 0]);
+    }
 
     /* Flush live note batches: offs first, then ons; one set_param per track so no coalescing.
      * Defer for 1 tick after any step button event so the step set_param clears its audio
@@ -2427,6 +2477,7 @@ globalThis.onMidiMessageInternal = function (data) {
 
         if (d1 === MoveMute) {
             muteHeld = d2 === 127;
+            if (d2 === 127) muteUsedAsModifier = false;
             if (sessionView) invalidateLEDCache();
         }
 
@@ -2579,11 +2630,17 @@ globalThis.onMidiMessageInternal = function (data) {
             screenDirty = true;
         }
 
-        /* Play: toggle transport; Shift+Play = deactivate_all; Delete+Play = panic */
+        /* Play: toggle transport; Shift+Play = deactivate_all; Delete+Play = panic; Mute+Play = toggle metro */
         if (d1 === MovePlay && d2 === 127) {
             if (deleteHeld) {
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('transport', 'panic');
+            } else if (muteHeld) {
+                muteUsedAsModifier = true;
+                metronomeOn = !metronomeOn;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('metro_on', metronomeOn ? '1' : '0');
+                showActionPopup('METRO ' + (metronomeOn ? 'ON' : 'OFF'));
             } else if (shiftHeld) {
                 if (typeof host_module_set_param === 'function') {
                     if (!playing) {
@@ -2637,11 +2694,14 @@ globalThis.onMidiMessageInternal = function (data) {
             }
         }
 
-        /* Mute button: Delete+Mute = clear all (both views); toggle mute/solo on active track (Track View only) */
+        /* Mute button: Delete+Mute = clear all (both views); toggle mute/solo on active track (Track View only).
+         * Press: handle Delete+Mute immediately. Release: toggle mute/solo, but only if Mute was not used as
+         * a modifier key (e.g. Mute+Play = metro toggle). */
         if (d1 === MoveMute && d2 === 127) {
-            if (deleteHeld) {
-                clearAllMuteSolo();
-            } else if (!sessionView) {
+            if (deleteHeld) clearAllMuteSolo();
+        }
+        if (d1 === MoveMute && d2 === 0) {
+            if (!muteUsedAsModifier && !deleteHeld && !sessionView) {
                 if (shiftHeld) setTrackSolo(activeTrack, !trackSoloed[activeTrack]);
                 else           setTrackMute(activeTrack, !trackMuted[activeTrack]);
             }

@@ -32,6 +32,7 @@ echo "Compiling DSP..."
 cp module.json        "dist/${MODULE_ID}/"
 cp ui.js              "dist/${MODULE_ID}/"
 cp ui_constants.mjs   "dist/${MODULE_ID}/"
+cp "MPC Metronome Click 001.wav" "dist/${MODULE_ID}/metro_click.wav"
 
 echo ""
 echo "=== Build Artifacts ==="

@@ -242,10 +242,22 @@ static void set_param(void *instance, const char *key, const char *val) {
         undo_begin_single(inst, track, (int)inst->tracks[track].active_clip);
         inst->count_in_track = (uint8_t)track;
         inst->count_in_ticks = 4 * PPQN;  /* 1 bar; tick_delta already tracks actual BPM */
+        inst->tick_accum     = 0;          /* reset phase so first beat fires on schedule */
+        if (inst->metro_on) inst->metro_beat_count++;  /* beat 1 fires immediately */
         return;
     }
     if (!strcmp(key, "record_count_in_cancel")) {
         inst->count_in_ticks = 0;
+        return;
+    }
+
+    /* --- Metronome --- */
+    if (!strcmp(key, "metro_on")) {
+        inst->metro_on = (uint8_t)(my_atoi(val) != 0);
+        return;
+    }
+    if (!strcmp(key, "metro_vol")) {
+        inst->metro_vol = (uint8_t)clamp_i(my_atoi(val), 0, 100);
         return;
     }
 
