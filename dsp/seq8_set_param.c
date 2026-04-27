@@ -130,10 +130,10 @@ static void set_param(void *instance, const char *key, const char *val) {
             if (inst->playing) {
                 int t;
                 for (t = 0; t < NUM_TRACKS; t++) {
-                    silence_track_notes_v2(inst, &inst->tracks[t]);
-                    inst->tracks[t].pfx.event_count = 0;
                     if (inst->tracks[t].pfx.route == ROUTE_MOVE)
                         silence_active_notes_move(&inst->tracks[t]);
+                    silence_track_notes_v2(inst, &inst->tracks[t]);
+                    inst->tracks[t].pfx.event_count = 0;
                     memset(inst->tracks[t].pfx.active_notes, 0,
                            sizeof(inst->tracks[t].pfx.active_notes));
                     inst->tracks[t].clips[inst->tracks[t].active_clip].clock_shift_pos = 0;
@@ -159,10 +159,10 @@ static void set_param(void *instance, const char *key, const char *val) {
         } else if (!strcmp(val, "panic")) {
             int t;
             for (t = 0; t < NUM_TRACKS; t++) {
-                silence_track_notes_v2(inst, &inst->tracks[t]);
-                inst->tracks[t].pfx.event_count = 0;
                 if (inst->tracks[t].pfx.route == ROUTE_MOVE)
                     silence_active_notes_move(&inst->tracks[t]);
+                silence_track_notes_v2(inst, &inst->tracks[t]);
+                inst->tracks[t].pfx.event_count = 0;
                 memset(inst->tracks[t].pfx.active_notes, 0,
                        sizeof(inst->tracks[t].pfx.active_notes));
                 inst->tracks[t].clips[inst->tracks[t].active_clip].clock_shift_pos = 0;
