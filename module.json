@@ -15,6 +15,6 @@
     "capabilities": {
         "midi_in": true,
         "midi_out": true,
-        "claims_master_knob": true
+        "button_passthrough": [79]
     }
 }

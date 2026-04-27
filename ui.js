@@ -402,7 +402,6 @@ let activeBank     = 0;
 
 /* knobTouched: 0-7 (MoveKnob1Touch-8Touch note numbers), or -1 = none */
 let knobTouched    = -1;
-let masterVolDelta = 0;              /* accumulated CC 79 ticks; drained in tick() */
 
 /* Per-physical-knob sensitivity accumulators.
  * knobAccum[k] counts raw encoder ticks; fires delta when >= pm.sens.
@@ -2104,11 +2103,6 @@ globalThis.tick = function () {
             screenDirty = true;
         }
 
-        if (masterVolDelta !== 0 && typeof host_get_volume === 'function' && typeof host_set_volume === 'function') {
-            host_set_volume(Math.max(0, Math.min(100, host_get_volume() + masterVolDelta)));
-            masterVolDelta = 0;
-        }
-
         if ((tickCount % POLL_INTERVAL) === 0) { pollDSP(); screenDirty = true; }
 
         /* Step hold threshold: once elapsed, close the tap window so release won't toggle.
@@ -2292,16 +2286,6 @@ globalThis.onMidiMessageInternal = function (data) {
     }
 
     if (status === 0xB0) {
-        /* Volume knob (CC 79) — accumulate delta with host acceleration curve; applied in tick(). */
-        if (d1 === 79) {
-            let vd;
-            if (d2 >= 1 && d2 <= 63)        { vd = d2 > 10 ? 5 : d2 > 3 ? 2 : 1; }
-            else if (d2 >= 65 && d2 <= 127) { const s = 128 - d2; vd = s > 10 ? -5 : s > 3 ? -2 : -1; }
-            else                             { vd = 0; }
-            masterVolDelta += vd;
-            return;
-        }
-
         /* CC 3 = jog wheel physical click */
         if (d1 === 3 && d2 === 127 && globalMenuOpen) {
             if (confirmClearSession) {

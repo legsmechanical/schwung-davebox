@@ -12,7 +12,7 @@
 - **JS-only deploy**: `cp ui.js dist/seq8/ui.js && cp ui_constants.mjs dist/seq8/ && ./scripts/install.sh` then reboot. `build.sh` required for DSP changes (also copies all JS).
 - **CLAUDE.md**: update at session end or after a major phase — not after routine task work.
 
-SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move — standalone 8-track MIDI sequencer. No audio. C (DSP) + JavaScript (UI). Background running via tool reconnect.
+SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move — standalone 8-track MIDI sequencer. No audio. C (DSP) + JavaScript (UI). Background running via tool reconnect. `button_passthrough: [79]` — volume knob (CC 79) handled natively by Move; SEQ8 does not intercept it.
 
 ## Build history (on master)
 
