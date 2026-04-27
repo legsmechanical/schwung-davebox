@@ -30,6 +30,8 @@ Phases 0–4 complete: scaffold → single track → 4-track → NoteTwist/play 
 
 **bank-param-LEDs**: Knob LEDs (CC 71-78) in Track View light White when `bankParams[activeTrack][activeBank][k] !== pm.def`. Applies to `PARAM_LED_BANKS = [2,3,4,5]` (NOTE FX, HARMZ, SEQ ARP, MIDI DLY). Session View active-track indicator unchanged. No extra dirty state — computed in `updateTrackLEDs` from existing `bankParams`; `cachedSetButtonLED` deduplicates. Track switch calls `refreshPerClipBankParams` when a per-clip bank is active.
 
+**code-organization**: knob sensitivity audit (sens=16 baseline from clip-resolution knob, fine-tuned per-knob) · DSP split: `set_param` section (1435 lines) extracted to `dsp/seq8_set_param.c` via `#include` trick — single translation unit, no build changes · JS split: hardware constants, palette, TRACK_COLORS, SCALE_NAMES, DELAY_LABELS, TPS_VALUES, fmt functions, MCUFONT, pixelPrint/pixelPrintC extracted to `ui_constants.mjs` (ES module import)
+
 ## What's Built
 
 **Transport**: Play/Stop. Shift+Play: playing → `deactivate_all`; stopped → `panic`. Delete+Play = panic. **Do not use per-track `tN_deactivate` for bulk clearing** — DSP processes one per audio callback; pollDSP restores stale state between calls. BPM owned by SEQ8 after init; `set_param("bpm")` updates `tick_delta` + `cached_bpm`.
@@ -241,11 +243,15 @@ JS sends pitch+vel via set_param on pad press; DSP reads `tick_in_step + current
 ## Build / deploy / debug
 
 ```sh
-./scripts/build.sh && ./scripts/install.sh   # DSP change
-cp ui.js dist/seq8/ui.js && ./scripts/install.sh  # JS-only
+./scripts/build.sh && ./scripts/install.sh   # DSP change (also copies all JS files)
+cp ui.js dist/seq8/ui.js && cp ui_constants.mjs dist/seq8/ && ./scripts/install.sh  # JS-only
 nm -D dist/seq8/dsp.so | grep GLIBC         # verify GLIBC ≤ 2.35
 ssh ableton@move.local "tail -f /data/UserData/schwung/seq8.log"
 ```
+
+**JS file structure**: `ui.js` (main, 3001 lines) + `ui_constants.mjs` (hardware constants, palette, fmt functions, MCUFONT, pixelPrint — 206 lines). Both must be deployed together. `build.sh` copies both automatically. JS-only deploy requires copying both (see above).
+
+**DSP file structure**: `dsp/seq8.c` (2103 lines) includes `dsp/seq8_set_param.c` (1435 lines) via `#include`. Single translation unit — no extern declarations, no build changes. `seq8_set_param.c` covers all `set_param` handlers.
 
 Schwung core: v0.9.7. GLIBC ≤ 2.35. No complex static initializers.
 

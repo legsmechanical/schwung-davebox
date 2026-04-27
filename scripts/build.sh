@@ -29,8 +29,9 @@ echo "Compiling DSP..."
     -I. \
     -lm
 
-cp module.json "dist/${MODULE_ID}/"
-cp ui.js       "dist/${MODULE_ID}/"
+cp module.json        "dist/${MODULE_ID}/"
+cp ui.js              "dist/${MODULE_ID}/"
+cp ui_constants.mjs   "dist/${MODULE_ID}/"
 
 echo ""
 echo "=== Build Artifacts ==="
