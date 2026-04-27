@@ -2048,15 +2048,16 @@ globalThis.tick = function () {
         }
     }
 
-    /* Drain DSP ext_queue: ROUTE_MOVE sequencer notes → external MIDI */
-    if (typeof host_module_get_param === 'function' && typeof move_midi_external_send === 'function') {
+    /* Drain DSP ext_queue: ROUTE_MOVE sequencer notes → Move native instruments */
+    if (typeof host_module_get_param === 'function' && typeof move_midi_inject_to_move === 'function') {
         const eq = host_module_get_param('ext_queue');
         if (eq && eq.length > 0) {
             for (const ev of eq.split(';')) {
                 const p = ev.split(' ');
                 if (p.length === 3) {
                     const s = parseInt(p[0], 10), d1 = parseInt(p[1], 10), d2 = parseInt(p[2], 10);
-                    if (!isNaN(s) && !isNaN(d1) && !isNaN(d2)) move_midi_external_send([s, d1, d2]);
+                    if (!isNaN(s) && !isNaN(d1) && !isNaN(d2))
+                        move_midi_inject_to_move([(s >> 4) & 0x0F, s, d1, d2]);
                 }
             }
         }

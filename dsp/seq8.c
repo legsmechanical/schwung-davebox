@@ -37,7 +37,7 @@
 
 /* MIDI routing: where track output is delivered */
 #define ROUTE_SCHWUNG  0   /* host->midi_send_internal → Schwung active chain */
-#define ROUTE_MOVE     1   /* JS-side external send via move_midi_external_send */
+#define ROUTE_MOVE     1   /* ext_queue → JS move_midi_inject_to_move → Move native tracks */
 
 /* External MIDI queue: DSP buffers ROUTE_MOVE events; JS drains via get_param("ext_queue") */
 #define EXT_QUEUE_SIZE 64
@@ -769,8 +769,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
 /* Send 3-byte MIDI message. Routes on fx->route:
  *   ROUTE_SCHWUNG → midi_send_internal (Schwung chain, immediate)
  *   ROUTE_MOVE    → enqueue in g_inst->ext_queue; JS drains each tick via
- *                   get_param("ext_queue") and sends with move_midi_external_send.
- *                   midi_send_external is never called from the render path. */
+ *                   get_param("ext_queue") and calls move_midi_inject_to_move(). */
 static void pfx_send(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
     if (!g_host) return;
     if (fx->route == ROUTE_MOVE) {
@@ -1475,6 +1474,8 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
         for (c = 0; c < NUM_CLIPS; c++)
             clip_init(&inst->tracks[t].clips[c]);
         pfx_init_defaults(&inst->tracks[t].pfx);
+        /* Default routing: tracks 1-4 → Move (ch 1-4), tracks 5-8 → Schwung (ch 5-8) */
+        if (t < 4) inst->tracks[t].pfx.route = ROUTE_MOVE;
     }
 
     inst->tick_threshold = (uint32_t)(inst->sample_rate * 60.0f);
