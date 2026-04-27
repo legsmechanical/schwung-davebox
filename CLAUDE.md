@@ -35,6 +35,8 @@ Phases 0–4, 5a–5z-e, unquantized-recording A–L, Post-A–L (complete): ful
 
 **route-move-note-offs + step-toggle-fix**: ROUTE_MOVE stop/panic: `silence_track_notes_v2` queues note-offs via `pfx_note_off`, then reschedule `events[].fire_at = sample_counter` — do NOT clear `event_count` — so `pfx_q_fire` drains them from render_block. `pfx_send` from set_param context injects into the SHM ring but does NOT release Move synth voices; only render_block-context inject does. `send_panic` skips ROUTE_MOVE (inject flood loses most packets). Step toggle: `stepOpTick = tickCount` on step press/release prevents live_notes flush from coalescing with toggle set_params in the same audio block.
 
+**metronome**: `metro_on` (0=Off,1=Count,2=On,3=Rec+Ply; default 1) + `metro_vol` + `metro_beat_count` in `seq8_instance_t` · count-in beats: `if (metro_on >= 1) metro_beat_count++` · playback beats: `if (metro_on >= 2)` at bar boundary (`master_tick_in_step==0 && global_tick%4==0`); mode 3 = always, mode 2 = only while any track recording · JS polls `metro_beat_count` change in `pollDSP` → `playMetronomeClick()` via `host_preview_play('/data/UserData/schwung/modules/tools/seq8/metro_click.wav')` · WAV built by `build.sh` Python inline (24-bit stereo → 16-bit mono; `host_preview_play` requires 16-bit PCM) · **Mute+Play** toggles metro off↔last-non-off-mode (via `metronomeOnLast`) · Global Menu item `Metro` = `createEnum` (options 0–3) · no `seq8_save_state` in `metro_on`/`metro_vol` handlers (avoids disk thrash) · persisted: omitted when =1 (default), loaded via `json_get_int(..., 1)`.
+
 **transport-fixes + now-mode + session-focus + ui-polish**: `silence_track_notes_v2` called in stop/panic handlers (was missing `play_pending[]` flush — caused stuck notes with MIDI Delay/Harmonize) · "Now" launch preserves `tick_in_step` continuity across clip switch instead of resetting to 0 (was rewinding up to `tps-1` ticks, causing audible pause + double-note retrigger) · Session View clip pad press always sets `activeTrack` (previously only the new-launch branch did) · `clipTPS[dst]` mirror updated in `copyClip`/`copyRow` before `refreshPerClipBankParams` (was showing stale 1/16 resolution after paste) · `drawTrackRow` draws 1px underline below active track digit (brackets didn't fit in 12px track spacing) · Global Menu: "Clear Sess" action — confirmation dialog (jog toggles No/Yes, jog click confirms, Back cancels); on confirm writes `{"v":0}` to state file + triggers `state_load` for DSP fresh-init; resets JS-only state (SEQ ARP, clipSeqFollow, activeBank, undo snapshots).
 
 **code-organization**: sens=16 baseline for knobs, fine-tuned per-knob · `dsp/seq8_set_param.c` via `#include` (single translation unit) · `ui_constants.mjs` (ES module) for constants/palette/fmt/MCUFONT.
@@ -72,7 +74,7 @@ Phases 0–4, 5a–5z-e, unquantized-recording A–L, Post-A–L (complete): ful
 
 **CLIP bank**: Beat Stretch (K1, sens=16, lock): CW doubles, CCW halves; compress blocked on collision → "COMPRESS LIMIT"; per-touch display label. Clock Shift (K2, sens=8): rotates steps; per-touch signed delta display. Clip Nudge (K3, sens=8): shifts all note_tick_offsets ±1; crosses ±(tps/2) to adjacent step; cumulative display. Clip Resolution (K4, sens=16): normal = proportional rescale (notes+gates scaled, blocked while recording); **Shift+K4 = zoom mode** (absolute note positions fixed, step grid shifts, length adjusts to keep total duration; blocked if new step count > 256 → "NOTES OUT OF RANGE" pop-up). Clip Length (K5, sens=4): steps 1–256. **Seq Follow** (K8, JS-only): per-clip toggle (default ON). When ON, step display auto-pages to follow playhead while playing. When OFF, view stays on user-navigated page. Resets to ON on reboot (not persisted). **Quantize** (NOTE FX K5): render-time `effective_tick_offset = raw * (100-q) / 100`.
 
-**Global menu** (Shift + CC 50): jog navigate, jog click edit, Back exit. Items: BPM (40–250) · Key · Scale · Scale Aware · Launch (Now/1/16/1/8/1/4/1/2/1-bar) · Swing Amt · Swing Res · Input Vel (0=Live, 1–127=fixed) · Inp Quant (ON=snap recording) · MIDI In (All/1–16, channel filter for external USB-A MIDI) · Quit (saves state + calls `host_exit_module`) · **Clear Sess** (confirmation dialog: jog toggles No↔Yes, jog click confirms, Back cancels; writes `{"v":0}` to state file + triggers DSP fresh-init).
+**Global menu** (Shift + CC 50): jog navigate, jog click edit, Back exit. Items: BPM (40–250) · Key · Scale · Scale Aware · Launch (Now/1/16/1/8/1/4/1/2/1-bar) · Swing Amt · Swing Res · Input Vel (0=Live, 1–127=fixed) · Inp Quant (ON=snap recording) · MIDI In (All/1–16, channel filter for external USB-A MIDI) · **Metro** (Off/Count/On/Rec+Ply; `createEnum`; Mute+Play hardware shortcut) · Quit (saves state + calls `host_exit_module`) · **Clear Sess** (confirmation dialog: jog toggles No↔Yes, jog click confirms, Back cancels; writes `{"v":0}` to state file + triggers DSP fresh-init).
 
 **External MIDI routing**: `onMidiMessageExternal` → `activeTrack` (always last Track View focus). Channel filter from MIDI In (0=All). Note-on: `effectiveVelocity`; updates `lastPlayedNote`/`lastPadVelocity`; if armed → `recordNoteOn`. Note-off: via `extHeldNotes` map. Track switch: `extNoteOffAll` before changing track. Step integration: same as pads (replace vs additive based on auto-assign state).
 
@@ -210,6 +212,9 @@ typedef struct {
     uint32_t master_tick_in_step;   /* always 24-tick master clock; drives global_tick + launch-quant */
     uint8_t  scale_aware, input_vel, inp_quant, midi_in_channel, pad_key, pad_scale, launch_quant;
     uint8_t  mute[NUM_TRACKS], solo[NUM_TRACKS];
+    uint8_t  metro_on;       /* 0=Off,1=Count,2=On,3=Rec+Ply. Default 1. Persisted (omitted when=1). */
+    uint8_t  metro_vol;      /* 0–100. Default 80. */
+    uint32_t metro_beat_count; /* JS polls for change → playMetronomeClick() */
     /* + snapshots[16], instance_nonce, state_path, ext_queue */
 } seq8_instance_t;
 ```
@@ -252,7 +257,7 @@ JS sends pitch+vel via set_param on pad press; DSP reads `tick_in_step + current
 
 **DSP**: `midi_send_internal` → Schwung chain. `midi_send_external` → USB-A — **never from render path** (blocking, deadlock risk).
 
-**JS**: `shadow_send_midi_to_dsp` → chain · `move_midi_internal_send` → LEDs/buttons · `move_midi_inject_to_move` → simulates pads · `move_midi_external_send` → USB-A (deferred).
+**JS**: `shadow_send_midi_to_dsp` → chain · `move_midi_internal_send` → LEDs/buttons · `move_midi_inject_to_move` → simulates pads (note range 68–99 only; type 0x09 = LED control, not audio) · `move_midi_external_send` → USB-A (deferred) · `host_preview_play(path)` → plays 16-bit PCM WAV through Move speakers (ignores declared sample rate in header; tool module context only).
 
 ## Build / deploy / debug
 
