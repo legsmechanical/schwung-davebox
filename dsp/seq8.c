@@ -297,6 +297,7 @@ typedef struct {
     /* Metronome: clicks on quarter notes while recording/count-in is active */
     uint8_t  metro_on;              /* 0=off, 1=on */
     uint8_t  metro_vol;             /* 0-100, default 80 */
+    uint8_t  metro_pitch;           /* 0-100; 100=no shift, 0=-24 semitones; selects WAV variant */
     uint16_t metro_beat_count;      /* monotonic counter; incremented on each quarter-note beat */
 
     /* Print mode: bake chain output into step data */
@@ -564,8 +565,9 @@ static void seq8_save_state(seq8_instance_t *inst) {
     fprintf(fp, ",\"iv\":%d",  (int)inst->input_vel);
     fprintf(fp, ",\"iq\":%d",  (int)inst->inp_quant);
     fprintf(fp, ",\"mic\":%d", (int)inst->midi_in_channel);
-    if (inst->metro_on)        fprintf(fp, ",\"metro_on\":1");
-    if (inst->metro_vol != 80) fprintf(fp, ",\"metro_vol\":%d", (int)inst->metro_vol);
+    if (inst->metro_on)          fprintf(fp, ",\"metro_on\":1");
+    if (inst->metro_vol != 80)   fprintf(fp, ",\"metro_vol\":%d", (int)inst->metro_vol);
+    if (inst->metro_pitch != 100) fprintf(fp, ",\"metro_pitch\":%d", (int)inst->metro_pitch);
     fprintf(fp, "}");
     fclose(fp);
 }
@@ -758,8 +760,9 @@ static void seq8_load_state(seq8_instance_t *inst) {
     inst->input_vel      = (uint8_t)clamp_i(json_get_int(buf, "iv",  0), 0, 127);
     inst->inp_quant      = (uint8_t)(json_get_int(buf, "iq", 0) != 0);
     inst->midi_in_channel = (uint8_t)clamp_i(json_get_int(buf, "mic", 0), 0, 16);
-    inst->metro_on  = (uint8_t)(json_get_int(buf, "metro_on",  0) != 0);
-    inst->metro_vol = (uint8_t)clamp_i(json_get_int(buf, "metro_vol", 80), 0, 100);
+    inst->metro_on    = (uint8_t)(json_get_int(buf, "metro_on",    0) != 0);
+    inst->metro_vol   = (uint8_t)clamp_i(json_get_int(buf, "metro_vol",   80), 0, 100);
+    inst->metro_pitch = (uint8_t)clamp_i(json_get_int(buf, "metro_pitch", 100), 0, 100);
     free(buf);
     /* Build step arrays from loaded notes[] for display/edit compat */
     for (t = 0; t < NUM_TRACKS; t++)
@@ -1447,6 +1450,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     inst->pad_scale    = 1;   /* Minor */
     inst->launch_quant = 0;   /* Now */
     inst->metro_vol    = 80;
+    inst->metro_pitch  = 100;
     strncpy(inst->state_path, SEQ8_STATE_PATH_FALLBACK, sizeof(inst->state_path) - 1);
 
     /* Resolve per-set state path from active_set.txt */
@@ -1691,6 +1695,8 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         return snprintf(out, out_len, "%d", inst ? (int)inst->metro_on : 0);
     if (!strcmp(key, "metro_vol"))
         return snprintf(out, out_len, "%d", inst ? (int)inst->metro_vol : 80);
+    if (!strcmp(key, "metro_pitch"))
+        return snprintf(out, out_len, "%d", inst ? (int)inst->metro_pitch : 100);
     if (!strcmp(key, "launch_quant"))
         return snprintf(out, out_len, "%d", inst ? (int)inst->launch_quant : 0);
     if (!strcmp(key, "version"))

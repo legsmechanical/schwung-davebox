@@ -260,6 +260,10 @@ static void set_param(void *instance, const char *key, const char *val) {
         inst->metro_vol = (uint8_t)clamp_i(my_atoi(val), 0, 100);
         return;
     }
+    if (!strcmp(key, "metro_pitch")) {
+        inst->metro_pitch = (uint8_t)clamp_i(my_atoi(val), 0, 100);
+        return;
+    }
 
     /* --- Active track --- */
     if (!strcmp(key, "active_track")) {

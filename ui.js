@@ -291,6 +291,16 @@ function buildGlobalMenuItems() {
             min: 0, max: 100, step: 1,
             format: function(v) { return String(v | 0) + '%'; }
         }),
+        createValue('Metro Pitch', {
+            get: function() { return metroPitch; },
+            set: function(v) {
+                metroPitch = v | 0;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('metro_pitch', String(metroPitch));
+            },
+            min: 0, max: 100, step: 1,
+            format: function(v) { return String(v | 0) + '%'; }
+        }),
         createAction('Quit', function() {
             removeFlagsWrap();
             ledInitComplete = false;
@@ -489,6 +499,7 @@ let muteUsedAsModifier    = false; /* set true when Mute+X compound; suppresses 
 /* Metronome */
 let metronomeOn      = false;
 let metronomeVol     = 80;
+let metroPitch       = 100; /* 0-100; 100=no shift, 0=-24 semitones */
 let metroPrevBeat    = 0;    /* last metro_beat_count seen from DSP */
 let metroNoteOffTick = -1;   /* tick when to send note-off for last metro click */
 let copyHeld           = false; /* true while Copy (CC 60) is held */
@@ -627,9 +638,12 @@ function showActionPopup(...lines) {
 }
 
 function playMetronomeClick() {
-    const vel = Math.max(1, Math.round(metronomeVol * 127 / 100));
-    if (typeof move_midi_inject_to_move === 'function') {
-        move_midi_inject_to_move([0x09, 0x90, 108, vel]);
+    const vel     = Math.max(1, Math.round(metronomeVol * 127 / 100));
+    const semiIdx = Math.round(24 * (100 - metroPitch) / 100);
+    if (typeof host_preview_play === 'function') {
+        host_preview_play('/data/UserData/schwung/modules/tools/seq8/metro_click_' + semiIdx + '.wav');
+    } else if (typeof shadow_send_midi_to_dsp === 'function') {
+        shadow_send_midi_to_dsp([0x90, Math.max(0, 76 - semiIdx), vel]);
         metroNoteOffTick = tickCount + 2;
     }
 }
@@ -1938,6 +1952,8 @@ function syncClipsFromDsp() {
     if (monRaw !== null && monRaw !== undefined) metronomeOn = monRaw === '1';
     const mvolRaw = host_module_get_param('metro_vol');
     if (mvolRaw !== null && mvolRaw !== undefined) metronomeVol = parseInt(mvolRaw, 10) | 0;
+    const mpRaw = host_module_get_param('metro_pitch');
+    if (mpRaw !== null && mpRaw !== undefined) metroPitch = parseInt(mpRaw, 10) | 0;
 }
 
 function syncMuteSoloFromDsp() {
