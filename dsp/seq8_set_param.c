@@ -1576,6 +1576,28 @@ static void set_param(void *instance, const char *key, const char *val) {
             return;
         }
 
+        if (!strcmp(sub, "loop_double_fill")) {
+            clip_t *cl = &tr->clips[tr->active_clip];
+            int len = (int)cl->length;
+            int i;
+            if (len * 2 > SEQ_STEPS) return;
+            undo_begin_single(inst, tidx, (int)tr->active_clip);
+            for (i = 0; i < len; i++) {
+                cl->steps[len + i]           = cl->steps[i];
+                memcpy(cl->step_notes[len + i], cl->step_notes[i], 8);
+                cl->step_note_count[len + i] = cl->step_note_count[i];
+                cl->step_vel[len + i]        = cl->step_vel[i];
+                cl->step_gate[len + i]       = cl->step_gate[i];
+                memcpy(cl->note_tick_offset[len + i], cl->note_tick_offset[i], 8 * sizeof(int16_t));
+            }
+            cl->length = (uint16_t)(len * 2);
+            if (tr->current_step >= cl->length)
+                tr->current_step = (uint16_t)(cl->length - 1);
+            clip_migrate_to_notes(cl);
+            seq8_save_state(inst);
+            return;
+        }
+
         /* Snapshot before full pfx reset */
         if (!strcmp(sub, "pfx_reset"))
             undo_begin_single(inst, tidx, (int)tr->active_clip);
