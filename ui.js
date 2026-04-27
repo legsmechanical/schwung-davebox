@@ -921,10 +921,12 @@ function drainLedInit() {
 const PER_CLIP_BANKS  = [2, 3, 5];
 const PARAM_LED_BANKS = [2, 3, 4, 5]; /* NOTE FX, HARMZ, SEQ ARP, MIDI DLY */
 
-/* Read per-clip bank params from DSP into bankParams for track t. */
+/* Read per-clip bank params from DSP into bankParams for track t.
+ * Reads from clip[active_clip].pfx_params directly — immune to pfx_sync timing. */
 function refreshPerClipBankParams(t) {
     if (typeof host_module_get_param !== 'function') return;
-    const snap = host_module_get_param('t' + t + '_pfx_snapshot');
+    const ac   = trackActiveClip[t];
+    const snap = host_module_get_param('t' + t + '_c' + ac + '_pfx_snapshot');
     if (!snap) return;
     const v = snap.split(' ');
     if (v.length < 17) return;
@@ -934,8 +936,11 @@ function refreshPerClipBankParams(t) {
     for (let k = 0; k < 4; k++) bankParams[t][3][k] = parseInt(v[5 + k], 10) | 0;
     /* MIDI DLY bank (5): K0=dly K1=lvl K2=rep K3=vfb K4=pfb K5=gfb K6=clk K7=rnd */
     for (let k = 0; k < 8; k++) bankParams[t][5][k] = parseInt(v[9 + k], 10) | 0;
-    /* CLIP bank (1): K7=SqFl (JS-only per-clip) */
-    const ac = trackActiveClip[t];
+    /* CLIP bank (1): Res (K3), Len (K4), SqFl (K7) — all per-clip */
+    const tps    = clipTPS[t][ac] || 24;
+    const tpsIdx = TPS_VALUES.indexOf(tps);
+    bankParams[t][1][3] = tpsIdx >= 0 ? tpsIdx : 1;
+    bankParams[t][1][4] = clipLength[t][ac] || 16;
     bankParams[t][1][7] = clipSeqFollow[t][ac] ? 1 : 0;
     screenDirty = true;
 }
@@ -2295,7 +2300,7 @@ globalThis.onMidiMessageInternal = function (data) {
                             extNoteOffAll();
                             handoffRecordingToTrack(next);
                             activeTrack = next;
-                            bankParams[next][1][7] = clipSeqFollow[next][trackActiveClip[next]] ? 1 : 0;
+                            refreshPerClipBankParams(next);
                             computePadNoteMap();
                             seqActiveNotes.clear();
                             seqLastStep = -1;
@@ -3023,7 +3028,7 @@ globalThis.onMidiMessageInternal = function (data) {
                             }
                             handoffRecordingToTrack(t);
                             activeTrack = t;
-                            bankParams[t][1][7] = clipSeqFollow[t][trackActiveClip[t]] ? 1 : 0;
+                            refreshPerClipBankParams(t);
                             sessionView = false;
                             invalidateLEDCache();
                             forceRedraw();
@@ -3049,12 +3054,11 @@ globalThis.onMidiMessageInternal = function (data) {
                             /* Launch clip for this track */
                             handoffRecordingToTrack(t);
                             activeTrack = t;
-                            bankParams[t][1][7] = clipSeqFollow[t][trackActiveClip[t]] ? 1 : 0;
                             if (!playing) {
                                 trackActiveClip[t]  = clipIdx;
                                 trackCurrentPage[t] = 0;
-                                refreshPerClipBankParams(t);
                             }
+                            refreshPerClipBankParams(t);
                             if (typeof host_module_set_param === 'function')
                                 host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
                         }
@@ -3113,13 +3117,11 @@ globalThis.onMidiMessageInternal = function (data) {
                     extNoteOffAll();
                     handoffRecordingToTrack(padIdx);
                     activeTrack = padIdx;
-                    bankParams[padIdx][1][7] = clipSeqFollow[padIdx][trackActiveClip[padIdx]] ? 1 : 0;
+                    refreshPerClipBankParams(padIdx);
                     computePadNoteMap();
                     seqActiveNotes.clear();
                     seqLastStep = -1;
                     seqLastClip = -1;
-                    if (PER_CLIP_BANKS.indexOf(activeBank) >= 0)
-                        refreshPerClipBankParams(padIdx);
                     screenDirty = true;
                 } else if (!shiftHeld) {
                     /* Live note — apply per-track octave shift, clamp 0-127 */
