@@ -79,10 +79,9 @@ Phases 0–4, 5a–5z-e, unquantized-recording A–L, Post-A–L (complete): ful
 
 ## Upcoming tasks
 
-1. **Stuck notes on transport stop with play FX** — hanging notes when MIDI Delay or Harmonize active; DSP stop path does not flush `play_pending[]` or in-flight delay repeats. Needs DSP investigation + full build.
-2. **Scale-aware key/scale changes** — global option: changing Key/Scale transposes all clip notes to fit new scale. Design TBD.
-3. **Step/note editing fixes** — see pending fixes in planning doc.
-4. MIDI Delay Rnd refinement · 5. Full instance reset · 6. Drum mode · 7. State snapshots (16 slots) · 8. Arpeggiator · 9. Swing (wire stub) · 10. MIDI clock sync
+1. **Scale-aware key/scale changes** — global option: changing Key/Scale transposes all clip notes to fit new scale. Design TBD.
+2. **Step/note editing fixes** — see pending fixes in planning doc.
+3. MIDI Delay Rnd refinement · 4. Full instance reset · 5. Drum mode · 6. State snapshots (16 slots) · 7. Arpeggiator · 8. Swing (wire stub) · 9. MIDI clock sync
 
 ## Per-set state
 
