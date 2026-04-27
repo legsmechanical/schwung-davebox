@@ -32,7 +32,27 @@ echo "Compiling DSP..."
 cp module.json        "dist/${MODULE_ID}/"
 cp ui.js              "dist/${MODULE_ID}/"
 cp ui_constants.mjs   "dist/${MODULE_ID}/"
-cp "MPC Metronome Click 001.wav" "dist/${MODULE_ID}/metro_click.wav"
+# Convert to 16-bit mono (host_preview_play requires 16-bit; source is 24-bit stereo)
+python3 - <<'PYEOF'
+import wave, struct, os
+src = "MPC Metronome Click 001.wav"
+dst = "dist/seq8/metro_click.wav"
+with wave.open(src, 'rb') as r:
+    rate, nch, sw, nf = r.getframerate(), r.getnchannels(), r.getsampwidth(), r.getnframes()
+    raw = r.readframes(nf)
+samples = []
+for i in range(0, len(raw), sw * nch):
+    ch_vals = []
+    for ch in range(nch):
+        b = raw[i + ch*sw : i + ch*sw + sw]
+        v = struct.unpack('<i', b + (b'\xff' if b[2] & 0x80 else b'\x00'))[0] >> 8
+        ch_vals.append(v)
+    samples.append(max(-32768, min(32767, sum(ch_vals) // len(ch_vals) >> 8)))
+with wave.open(dst, 'wb') as w:
+    w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate)
+    w.writeframes(struct.pack('<' + 'h' * len(samples), *samples))
+print(f"metro_click.wav: {len(samples)} frames @ {rate} Hz, 16-bit mono")
+PYEOF
 
 echo ""
 echo "=== Build Artifacts ==="
