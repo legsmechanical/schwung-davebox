@@ -72,7 +72,7 @@ static const uint8_t SCALE_SIZES[14] = {7,7,7,7,7,7,7,7,7,5,5,6,6,8};
 #define GATE_TICKS          12
 static const uint16_t TPS_VALUES[6] = {12, 24, 48, 96, 192, 384};
 #define SEQ_STEPS           256   /* max steps per clip (array size) */
-#define SEQ_STEPS_DEFAULT   16    /* default clip length on init     */
+#define SEQ_STEPS_DEFAULT   128   /* default clip length on init (8 pages) */
 #define SEQ_NOTE            60
 #define SEQ_VEL             100
 
