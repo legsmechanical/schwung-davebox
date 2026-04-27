@@ -59,7 +59,7 @@ import {
 } from '/data/UserData/schwung/shared/menu_layout.mjs';
 
 import {
-    MoveNoteSession, MoveCopy, MoveLoop, MoveMainTouch, MoveRec,
+    MoveNoteSession, MoveUndo, MoveLoop, MoveCopy, MoveMainTouch, MoveRec,
     MoveMainButton, MoveMainKnob,
     LED_OFF, LED_STEP_ACTIVE, LED_STEP_CURSOR, SCENE_BTN_FLASH_TICKS,
     LEDS_PER_FRAME, NUM_TRACKS, NUM_CLIPS,
@@ -444,6 +444,14 @@ let copyHeld           = false; /* true while Copy (CC 60) is held */
 let copySrc            = null;  /* {kind:'clip',track,clip} | {kind:'row',row} | null */
 let lastSoloBlink      = null;  /* last blink state for solo dirty detection */
 
+/* Undo/redo availability (mirrors DSP undo_valid/redo_valid; set on every undoable action) */
+let undoAvailable      = false;
+let redoAvailable      = false;
+let undoSeqArpSnapshot = null;  /* null or {track, params[8]} — SEQ ARP (JS-only) for full reset */
+let redoSeqArpSnapshot = null;
+let undoFlashEndTick   = -1;    /* OLED flash deadline for UNDO/REDO/NOTHING TO messages */
+let undoFlashLabel     = '';
+
 /* Per-track mute/solo state (JS mirrors DSP) */
 let trackMuted         = new Array(NUM_TRACKS).fill(false);
 let trackSoloed        = new Array(NUM_TRACKS).fill(false);
@@ -551,6 +559,7 @@ function refreshSeqNotesIfCurrent(t, ac, absIdx) {
 /* Clear all notes from a step and deactivate it (atomic DSP write). */
 function clearStep(t, ac, absIdx) {
     if (typeof host_module_set_param !== 'function') return;
+    undoAvailable = true; redoAvailable = false; undoSeqArpSnapshot = null;
     host_module_set_param('t' + t + '_c' + ac + '_step_' + absIdx + '_clear', '1');
     clipSteps[t][ac][absIdx] = 0;
     if (clipNonEmpty[t][ac]) clipNonEmpty[t][ac] = clipHasContent(t, ac);
@@ -560,6 +569,7 @@ function clearStep(t, ac, absIdx) {
 /* Clear all steps in a clip (single atomic DSP write). */
 function clearClip(t, ac, keepPlaying) {
     if (typeof host_module_set_param !== 'function') return;
+    undoAvailable = true; redoAvailable = false; undoSeqArpSnapshot = null;
     const cmd = (keepPlaying && trackClipPlaying[t] && ac === trackActiveClip[t])
         ? 't' + t + '_c' + ac + '_clear_keep'
         : 't' + t + '_c' + ac + '_clear';
@@ -577,6 +587,7 @@ function clearClip(t, ac, keepPlaying) {
 function copyClip(srcT, srcC, dstT, dstC) {
     if (srcT === dstT && srcC === dstC) return;
     if (typeof host_module_set_param !== 'function') return;
+    undoAvailable = true; redoAvailable = false; undoSeqArpSnapshot = null;
     host_module_set_param('clip_copy', `${srcT} ${srcC} ${dstT} ${dstC}`);
     clipSteps[dstT][dstC] = clipSteps[srcT][srcC].slice();
     clipLength[dstT][dstC] = clipLength[srcT][srcC];
@@ -591,6 +602,7 @@ function copyClip(srcT, srcC, dstT, dstC) {
 function copyRow(srcRow, dstRow) {
     if (srcRow === dstRow) return;
     if (typeof host_module_set_param !== 'function') return;
+    undoAvailable = true; redoAvailable = false; undoSeqArpSnapshot = null;
     host_module_set_param('row_copy', `${srcRow} ${dstRow}`);
     for (let t = 0; t < NUM_TRACKS; t++) {
         clipSteps[t][dstRow] = clipSteps[t][srcRow].slice();
@@ -606,6 +618,7 @@ function copyRow(srcRow, dstRow) {
 /* Copy step src→dst within same clip (single atomic DSP write, JS mirror update). */
 function copyStep(t, ac, srcAbs, dstAbs) {
     if (typeof host_module_set_param !== 'function') return;
+    undoAvailable = true; redoAvailable = false; undoSeqArpSnapshot = null;
     host_module_set_param('t' + t + '_c' + ac + '_step_' + srcAbs + '_copy_to', String(dstAbs));
     clipSteps[t][ac][dstAbs] = clipSteps[t][ac][srcAbs];
     if (clipSteps[t][ac][srcAbs] !== 0) clipNonEmpty[t][ac] = true;
@@ -617,6 +630,7 @@ function copyStep(t, ac, srcAbs, dstAbs) {
 /* Clear all 8 tracks for a scene row (single atomic DSP write, JS mirror update). */
 function clearRow(rowIdx) {
     if (typeof host_module_set_param !== 'function') return;
+    undoAvailable = true; redoAvailable = false; undoSeqArpSnapshot = null;
     host_module_set_param('row_clear', String(rowIdx));
     for (let t = 0; t < NUM_TRACKS; t++) {
         const len = clipLength[t][rowIdx];
@@ -967,6 +981,7 @@ function pollDSP() {
  * set_param per tick — individual per-param sends would be coalesced). */
 function resetFxBanks(t) {
     if (typeof host_module_set_param !== 'function') return;
+    undoAvailable = true; redoAvailable = false;
     host_module_set_param('t' + t + '_pfx_reset', '1');
     const targets = [2, 3, 5]; /* NOTE FX, HARMZ, MIDI DLY */
     for (let bi = 0; bi < targets.length; bi++) {
@@ -1492,6 +1507,12 @@ function drawUI() {
         return;
     }
 
+    /* Undo/redo flash: ~1000ms after Undo or Shift+Undo */
+    if (undoFlashEndTick >= 0) {
+        print(4, 22, undoFlashLabel, 1);
+        return;
+    }
+
     /* Octave overlay: ~1000ms after Up/Down octave shift */
     if (octaveOverlayEndTick >= 0) {
         const ac         = effectiveClip(activeTrack);
@@ -1860,6 +1881,10 @@ globalThis.tick = function () {
             noNoteFlashEndTick = -1;
             screenDirty = true;
         }
+        if (undoFlashEndTick >= 0 && tickCount >= undoFlashEndTick) {
+            undoFlashEndTick = -1;
+            screenDirty = true;
+        }
 
         if (masterVolDelta !== 0 && typeof host_get_volume === 'function' && typeof host_set_volume === 'function') {
             host_set_volume(Math.max(0, Math.min(100, host_get_volume() + masterVolDelta)));
@@ -2072,15 +2097,21 @@ globalThis.onMidiMessageInternal = function (data) {
         }
         if (d1 === 3 && d2 === 127 && shiftHeld && deleteHeld && !sessionView) {
             /* Shift+Delete+jog: full reset — NOTE FX, HARMZ, MIDI DLY, + SEQ ARP */
-            resetFxBanks(activeTrack);
+            const _arpTrack = activeTrack;
+            const _arpParams = Array.from({length: 8}, function(_, k) {
+                const pm = BANKS[4].knobs[k]; return pm ? bankParams[_arpTrack][4][k] : 0;
+            });
+            resetFxBanks(_arpTrack);
             for (let k = 0; k < 8; k++) {
                 const pm = BANKS[4].knobs[k];
-                if (pm) bankParams[activeTrack][4][k] = pm.def;
+                if (pm) bankParams[_arpTrack][4][k] = pm.def;
             }
+            undoSeqArpSnapshot = { track: _arpTrack, params: _arpParams };
             return;
         }
         if (d1 === 3 && d2 === 127 && deleteHeld && !sessionView) {
             resetFxBanks(activeTrack);
+            undoSeqArpSnapshot = null;
             return;
         }
 
@@ -2241,6 +2272,66 @@ globalThis.onMidiMessageInternal = function (data) {
             }
         }
 
+        /* Undo button: press = undo; Shift+Undo = redo */
+        if (d1 === MoveUndo && d2 === 127) {
+            if (shiftHeld) {
+                if (redoAvailable) {
+                    if (redoSeqArpSnapshot) {
+                        const _t = redoSeqArpSnapshot.track;
+                        undoSeqArpSnapshot = { track: _t, params: bankParams[_t][4].slice() };
+                    } else {
+                        undoSeqArpSnapshot = null;
+                    }
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('redo_restore', '1');
+                    if (redoSeqArpSnapshot) {
+                        const { track, params } = redoSeqArpSnapshot;
+                        for (let k = 0; k < 8; k++) {
+                            const pm = BANKS[4].knobs[k];
+                            if (pm) bankParams[track][4][k] = params[k];
+                        }
+                    }
+                    undoAvailable = true;
+                    redoAvailable = false;
+                    pendingDspSync = 5;
+                    for (let _t = 0; _t < NUM_TRACKS; _t++) refreshPerClipBankParams(_t);
+                    undoFlashLabel   = 'REDO';
+                    undoFlashEndTick = tickCount + OCTAVE_OVERLAY_TICKS;
+                } else {
+                    undoFlashLabel   = 'NOTHING TO REDO';
+                    undoFlashEndTick = tickCount + OCTAVE_OVERLAY_TICKS;
+                }
+            } else {
+                if (undoAvailable) {
+                    if (undoSeqArpSnapshot) {
+                        const _t = undoSeqArpSnapshot.track;
+                        redoSeqArpSnapshot = { track: _t, params: bankParams[_t][4].slice() };
+                    } else {
+                        redoSeqArpSnapshot = null;
+                    }
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('undo_restore', '1');
+                    if (undoSeqArpSnapshot) {
+                        const { track, params } = undoSeqArpSnapshot;
+                        for (let k = 0; k < 8; k++) {
+                            const pm = BANKS[4].knobs[k];
+                            if (pm) bankParams[track][4][k] = params[k];
+                        }
+                    }
+                    redoAvailable = true;
+                    undoAvailable = false;
+                    pendingDspSync = 5;
+                    for (let _t = 0; _t < NUM_TRACKS; _t++) refreshPerClipBankParams(_t);
+                    undoFlashLabel   = 'UNDO';
+                    undoFlashEndTick = tickCount + OCTAVE_OVERLAY_TICKS;
+                } else {
+                    undoFlashLabel   = 'NOTHING TO UNDO';
+                    undoFlashEndTick = tickCount + OCTAVE_OVERLAY_TICKS;
+                }
+            }
+            screenDirty = true;
+        }
+
         /* Play: toggle transport; Shift+Play = deactivate_all; Delete+Play = panic */
         if (d1 === MovePlay && d2 === 127) {
             if (deleteHeld) {
@@ -2282,6 +2373,7 @@ globalThis.onMidiMessageInternal = function (data) {
                 countInQuarterTicks = Math.round(196 * 60 / bpm);
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('record_count_in', String(activeTrack));
+                undoAvailable = true; redoAvailable = false; undoSeqArpSnapshot = null;
                 setButtonLED(MoveRec, Red);
             } else {
                 /* Playing → arm immediately with no count-in */
@@ -2294,6 +2386,7 @@ globalThis.onMidiMessageInternal = function (data) {
                 setButtonLED(MoveRec, Red);
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('t' + activeTrack + '_recording', '1');
+                undoAvailable = true; redoAvailable = false; undoSeqArpSnapshot = null;
             }
         }
 

@@ -18,8 +18,9 @@ import {
 
 /* CC 50 = Note/Session toggle (three-bar button left of track buttons). */
 export const MoveNoteSession     = 50;
-export const MoveCopy            = 60;  /* Copy modifier button (CC) */
+export const MoveUndo            = 56;  /* Undo button (CC); Shift+Undo = redo */
 export const MoveLoop            = 58;
+export const MoveCopy            = 60;  /* Copy modifier button (CC) */
 export const MoveMainTouch       = 9;   /* jog wheel capacitive touch */
 export const MoveRec             = 86;  /* Record button + LED (CC) */
 export const MoveMainButton      = 3;   /* jog wheel click (CC, fires as 0xB0 d1=3) */
