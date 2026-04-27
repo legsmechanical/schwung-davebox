@@ -590,6 +590,22 @@ function clearClip(t, ac, keepPlaying) {
     }
 }
 
+/* Full factory reset: clip_init on DSP + JS mirror cleared. Track View only. */
+function hardResetClip(t, ac) {
+    if (typeof host_module_set_param !== 'function') return;
+    undoAvailable = true; redoAvailable = false; undoSeqArpSnapshot = null;
+    host_module_set_param('t' + t + '_c' + ac + '_hard_reset', '1');
+    const defaultLen = 16;
+    for (let s = 0; s < NUM_STEPS; s++) clipSteps[t][ac][s] = 0;
+    clipLength[t][ac] = defaultLen;
+    clipNonEmpty[t][ac] = false;
+    clipTPS[t][ac] = 24;
+    if (ac === trackActiveClip[t]) {
+        seqActiveNotes.clear(); seqLastStep = -1; seqNoteOnClipTick = -1;
+        resetPerClipBankParamsToDefault(t);
+    }
+}
+
 /* Copy clip src→dst (single atomic DSP write, JS mirror update). */
 function copyClip(srcT, srcC, dstT, dstC) {
     if (srcT === dstT && srcC === dstC) return;
@@ -2474,6 +2490,11 @@ globalThis.onMidiMessageInternal = function (data) {
                         showActionPopup('PASTED');
                     }
                 }
+            } else if (shiftHeld && deleteHeld && !sessionView) {
+                /* Shift+Delete+clip (Track View only): full factory reset */
+                hardResetClip(activeTrack, clipIdx);
+                forceRedraw();
+                showActionPopup('CLIP', 'CLEARED');
             } else if (deleteHeld) {
                 if (sessionView) {
                     /* Delete + scene row button (Session View): clear all 8 clips in that row */

@@ -967,6 +967,19 @@ static void set_param(void *instance, const char *key, const char *val) {
                 seq8_save_state(inst);
                 return;
             }
+            if (!strncmp(p, "_hard_reset", 11) && p[11] == '\0') {
+                /* tN_cC_hard_reset — full factory reset: undo snapshot, silence, clip_init */
+                undo_begin_single(inst, tidx, cidx);
+                silence_track_notes_v2(inst, tr);
+                clip_init(cl);
+                if ((int)tr->active_clip == cidx)
+                    pfx_sync_from_clip(tr);
+                tr->rec_pending_count = 0;
+                tr->recording = 0;
+                if (tr->queued_clip == cidx) tr->queued_clip = -1;
+                seq8_save_state(inst);
+                return;
+            }
             return;
         }
 
