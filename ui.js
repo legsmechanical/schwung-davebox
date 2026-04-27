@@ -621,6 +621,30 @@ function copyClip(srcT, srcC, dstT, dstC) {
     }
 }
 
+/* Cut clip: copy src→dst then hard-reset src (single atomic DSP write, JS mirror update). */
+function cutClip(srcT, srcC, dstT, dstC) {
+    if (srcT === dstT && srcC === dstC) return;
+    if (typeof host_module_set_param !== 'function') return;
+    undoAvailable = true; redoAvailable = false; undoSeqArpSnapshot = null;
+    host_module_set_param('clip_cut', `${srcT} ${srcC} ${dstT} ${dstC}`);
+    clipSteps[dstT][dstC] = clipSteps[srcT][srcC].slice();
+    clipLength[dstT][dstC] = clipLength[srcT][srcC];
+    clipNonEmpty[dstT][dstC] = clipNonEmpty[srcT][srcC];
+    clipTPS[dstT][dstC] = clipTPS[srcT][srcC];
+    if (dstC === trackActiveClip[dstT]) {
+        seqActiveNotes.clear(); seqLastStep = -1;
+        refreshPerClipBankParams(dstT);
+    }
+    for (let s = 0; s < NUM_STEPS; s++) clipSteps[srcT][srcC][s] = 0;
+    clipLength[srcT][srcC] = 16;
+    clipNonEmpty[srcT][srcC] = false;
+    clipTPS[srcT][srcC] = 24;
+    if (srcC === trackActiveClip[srcT]) {
+        seqActiveNotes.clear(); seqLastStep = -1; seqNoteOnClipTick = -1;
+        resetPerClipBankParamsToDefault(srcT);
+    }
+}
+
 /* Copy all 8 tracks for a scene row (single atomic DSP write, JS mirror update). */
 function copyRow(srcRow, dstRow) {
     if (srcRow === dstRow) return;
@@ -634,6 +658,32 @@ function copyRow(srcRow, dstRow) {
         if (dstRow === trackActiveClip[t]) {
             seqActiveNotes.clear(); seqLastStep = -1;
             refreshPerClipBankParams(t);
+        }
+    }
+}
+
+/* Cut row: copy all tracks src→dst then hard-reset src (single atomic DSP write, JS mirror update). */
+function cutRow(srcRow, dstRow) {
+    if (srcRow === dstRow) return;
+    if (typeof host_module_set_param !== 'function') return;
+    undoAvailable = true; redoAvailable = false; undoSeqArpSnapshot = null;
+    host_module_set_param('row_cut', `${srcRow} ${dstRow}`);
+    for (let t = 0; t < NUM_TRACKS; t++) {
+        clipSteps[t][dstRow] = clipSteps[t][srcRow].slice();
+        clipLength[t][dstRow] = clipLength[t][srcRow];
+        clipNonEmpty[t][dstRow] = clipNonEmpty[t][srcRow];
+        clipTPS[t][dstRow] = clipTPS[t][srcRow];
+        if (dstRow === trackActiveClip[t]) {
+            seqActiveNotes.clear(); seqLastStep = -1;
+            refreshPerClipBankParams(t);
+        }
+        for (let s = 0; s < NUM_STEPS; s++) clipSteps[t][srcRow][s] = 0;
+        clipLength[t][srcRow] = 16;
+        clipNonEmpty[t][srcRow] = false;
+        clipTPS[t][srcRow] = 24;
+        if (srcRow === trackActiveClip[t]) {
+            seqActiveNotes.clear(); seqLastStep = -1; seqNoteOnClipTick = -1;
+            resetPerClipBankParamsToDefault(t);
         }
     }
 }
@@ -1319,8 +1369,8 @@ function updateSessionLEDs() {
             }
             /* Copy source blink: JS-side timer (transport-independent) */
             if (copySrc) {
-                const isSrcClip = copySrc.kind === 'clip' && copySrc.track === t && copySrc.clip === sceneIdx;
-                const isSrcRow  = copySrc.kind === 'row'  && copySrc.row === sceneIdx;
+                const isSrcClip = (copySrc.kind === 'clip' || copySrc.kind === 'cut_clip') && copySrc.track === t && copySrc.clip === sceneIdx;
+                const isSrcRow  = (copySrc.kind === 'row'  || copySrc.kind === 'cut_row')  && copySrc.row === sceneIdx;
                 if (isSrcClip || isSrcRow) color = (Math.floor(tickCount / 24) % 2) ? White : LED_OFF;
             }
             cachedSetLED(note, color);
@@ -1368,8 +1418,8 @@ function updateTrackLEDs() {
         }
         /* Copy source blink: JS-side timer (transport-independent) */
         if (copySrc) {
-            const isSrcRow  = copySrc.kind === 'row'  && copySrc.row === sceneIdx;
-            const isSrcClip = copySrc.kind === 'clip' && copySrc.track === activeTrack && copySrc.clip === sceneIdx;
+            const isSrcRow  = (copySrc.kind === 'row'  || copySrc.kind === 'cut_row')  && copySrc.row === sceneIdx;
+            const isSrcClip = (copySrc.kind === 'clip' || copySrc.kind === 'cut_clip') && copySrc.track === activeTrack && copySrc.clip === sceneIdx;
             if (isSrcRow || isSrcClip) color = (Math.floor(tickCount / 24) % 2) ? White : LED_OFF;
         }
         cachedSetButtonLED(40 + idx, color);
@@ -2463,32 +2513,49 @@ globalThis.onMidiMessageInternal = function (data) {
                 if (copySrc && copySrc.kind === 'step') {
                     /* step copy in progress: swallow track/scene buttons — don't mix copy types */
                 } else if (sessionView) {
-                    /* Copy: row-to-row gesture */
+                    /* Copy/Cut: row-to-row gesture */
                     if (!copySrc) {
-                        copySrc = { kind: 'row', row: clipIdx };
+                        copySrc = shiftHeld
+                            ? { kind: 'cut_row', row: clipIdx }
+                            : { kind: 'row', row: clipIdx };
                         invalidateLEDCache();
-                        showActionPopup('COPIED');
+                        showActionPopup(shiftHeld ? 'CUT' : 'COPIED');
                     } else if (copySrc.kind === 'row') {
                         copyRow(copySrc.row, clipIdx);
                         copySrc = null;
                         invalidateLEDCache();
                         forceRedraw();
                         showActionPopup('PASTED');
-                    }
-                    /* copySrc.kind === 'clip': swallow — don't mix copy types */
-                } else {
-                    /* Track View: clip-within-track gesture via track button */
-                    if (!copySrc) {
-                        copySrc = { kind: 'clip', track: activeTrack, clip: clipIdx };
+                    } else if (copySrc.kind === 'cut_row') {
+                        cutRow(copySrc.row, clipIdx);
+                        copySrc = null;
                         invalidateLEDCache();
-                        showActionPopup('COPIED');
+                        forceRedraw();
+                        showActionPopup('PASTED');
+                    }
+                    /* clip/cut_clip kinds: swallow — don't mix copy types */
+                } else {
+                    /* Track View: clip copy/cut via track button */
+                    if (!copySrc) {
+                        copySrc = shiftHeld
+                            ? { kind: 'cut_clip', track: activeTrack, clip: clipIdx }
+                            : { kind: 'clip', track: activeTrack, clip: clipIdx };
+                        invalidateLEDCache();
+                        showActionPopup(shiftHeld ? 'CUT' : 'COPIED');
                     } else if (copySrc.kind === 'clip') {
                         copyClip(copySrc.track, copySrc.clip, activeTrack, clipIdx);
                         copySrc = null;
                         invalidateLEDCache();
                         forceRedraw();
                         showActionPopup('PASTED');
+                    } else if (copySrc.kind === 'cut_clip') {
+                        cutClip(copySrc.track, copySrc.clip, activeTrack, clipIdx);
+                        copySrc = null;
+                        invalidateLEDCache();
+                        forceRedraw();
+                        showActionPopup('PASTED');
                     }
+                    /* row/cut_row kinds: swallow — don't mix copy types */
                 }
             } else if (shiftHeld && deleteHeld) {
                 if (sessionView) {
@@ -2850,17 +2917,25 @@ globalThis.onMidiMessageInternal = function (data) {
                         if (copySrc && copySrc.kind === 'step') {
                             /* step copy in progress: swallow */
                         } else if (!copySrc) {
-                            copySrc = { kind: 'clip', track: t, clip: clipIdx };
+                            copySrc = shiftHeld
+                                ? { kind: 'cut_clip', track: t, clip: clipIdx }
+                                : { kind: 'clip', track: t, clip: clipIdx };
                             invalidateLEDCache();
-                            showActionPopup('COPIED');
+                            showActionPopup(shiftHeld ? 'CUT' : 'COPIED');
                         } else if (copySrc.kind === 'clip') {
                             copyClip(copySrc.track, copySrc.clip, t, clipIdx);
                             copySrc = null;
                             invalidateLEDCache();
                             forceRedraw();
                             showActionPopup('PASTED');
+                        } else if (copySrc.kind === 'cut_clip') {
+                            cutClip(copySrc.track, copySrc.clip, t, clipIdx);
+                            copySrc = null;
+                            invalidateLEDCache();
+                            forceRedraw();
+                            showActionPopup('PASTED');
                         }
-                        /* copySrc.kind === 'row': swallow — don't mix copy types */
+                        /* row/cut_row kinds: swallow — don't mix copy types */
                     } else if (shiftHeld && deleteHeld) {
                         /* Shift+Delete + clip pad (Session View): hard reset that clip */
                         const clipIdx = sceneRow + row;

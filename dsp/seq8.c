@@ -331,15 +331,17 @@ typedef struct {
     /* External MIDI channel filter: 0=All, 1-16=specific channel */
     uint8_t midi_in_channel;
 
-    /* 1-level undo/redo: up to NUM_TRACKS clip snapshots per operation */
-    clip_t  undo_clips[NUM_TRACKS];
-    uint8_t undo_clip_tracks[NUM_TRACKS];
-    uint8_t undo_clip_indices[NUM_TRACKS];
+    /* 1-level undo/redo: up to UNDO_MAX_CLIPS clip snapshots per operation.
+     * Row cut+paste needs 8 src + 8 dst = 16 slots. */
+#define UNDO_MAX_CLIPS (NUM_TRACKS * 2)
+    clip_t  undo_clips[UNDO_MAX_CLIPS];
+    uint8_t undo_clip_tracks[UNDO_MAX_CLIPS];
+    uint8_t undo_clip_indices[UNDO_MAX_CLIPS];
     uint8_t undo_clip_count;
     uint8_t undo_valid;
-    clip_t  redo_clips[NUM_TRACKS];
-    uint8_t redo_clip_tracks[NUM_TRACKS];
-    uint8_t redo_clip_indices[NUM_TRACKS];
+    clip_t  redo_clips[UNDO_MAX_CLIPS];
+    uint8_t redo_clip_tracks[UNDO_MAX_CLIPS];
+    uint8_t redo_clip_indices[UNDO_MAX_CLIPS];
     uint8_t redo_clip_count;
     uint8_t redo_valid;
 } seq8_instance_t;
@@ -1545,6 +1547,35 @@ static void undo_begin_row(seq8_instance_t *inst, int row_c) {
         inst->undo_clip_tracks[t]  = (uint8_t)t;
         inst->undo_clip_indices[t] = (uint8_t)row_c;
         memcpy(&inst->undo_clips[t], &inst->tracks[t].clips[row_c], sizeof(clip_t));
+    }
+    inst->undo_valid = 1;
+    inst->redo_valid = 0;
+}
+
+/* Snapshot two clips (src + dst) for cut operations — restores both on undo. */
+static void undo_begin_clip_pair(seq8_instance_t *inst, int srcT, int srcC, int dstT, int dstC) {
+    inst->undo_clip_count      = 2;
+    inst->undo_clip_tracks[0]  = (uint8_t)srcT;
+    inst->undo_clip_indices[0] = (uint8_t)srcC;
+    memcpy(&inst->undo_clips[0], &inst->tracks[srcT].clips[srcC], sizeof(clip_t));
+    inst->undo_clip_tracks[1]  = (uint8_t)dstT;
+    inst->undo_clip_indices[1] = (uint8_t)dstC;
+    memcpy(&inst->undo_clips[1], &inst->tracks[dstT].clips[dstC], sizeof(clip_t));
+    inst->undo_valid = 1;
+    inst->redo_valid = 0;
+}
+
+/* Snapshot two full rows (src + dst, 16 clips) for row cut operations. */
+static void undo_begin_row_pair(seq8_instance_t *inst, int srcRow, int dstRow) {
+    int t;
+    inst->undo_clip_count = NUM_TRACKS * 2;
+    for (t = 0; t < NUM_TRACKS; t++) {
+        inst->undo_clip_tracks[t]  = (uint8_t)t;
+        inst->undo_clip_indices[t] = (uint8_t)srcRow;
+        memcpy(&inst->undo_clips[t], &inst->tracks[t].clips[srcRow], sizeof(clip_t));
+        inst->undo_clip_tracks[t + NUM_TRACKS]  = (uint8_t)t;
+        inst->undo_clip_indices[t + NUM_TRACKS] = (uint8_t)dstRow;
+        memcpy(&inst->undo_clips[t + NUM_TRACKS], &inst->tracks[t].clips[dstRow], sizeof(clip_t));
     }
     inst->undo_valid = 1;
     inst->redo_valid = 0;

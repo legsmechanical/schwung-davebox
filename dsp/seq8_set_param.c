@@ -452,6 +452,88 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
 
+    if (!strcmp(key, "clip_cut")) {
+        /* clip_cut "srcT srcC dstT dstC" — copy src→dst then hard-reset src; atomic undo */
+        const char *p = val;
+        int nums[4], i;
+        for (i = 0; i < 4; i++) {
+            while (*p == ' ') p++;
+            nums[i] = 0;
+            while (*p >= '0' && *p <= '9') nums[i] = nums[i]*10 + (*p++ - '0');
+        }
+        {
+            int srcT = clamp_i(nums[0], 0, NUM_TRACKS-1);
+            int srcC = clamp_i(nums[1], 0, NUM_CLIPS-1);
+            int dstT = clamp_i(nums[2], 0, NUM_TRACKS-1);
+            int dstC = clamp_i(nums[3], 0, NUM_CLIPS-1);
+            if (srcT == dstT && srcC == dstC) return;
+            seq8_track_t *srcTr = &inst->tracks[srcT];
+            seq8_track_t *dstTr = &inst->tracks[dstT];
+            clip_t *src = &srcTr->clips[srcC];
+            clip_t *dst = &dstTr->clips[dstC];
+            undo_begin_clip_pair(inst, srcT, srcC, dstT, dstC);
+            dst->length         = src->length;
+            dst->ticks_per_step = src->ticks_per_step;
+            dst->pfx_params     = src->pfx_params;
+            memcpy(dst->steps,            src->steps,            SEQ_STEPS);
+            memcpy(dst->step_notes,       src->step_notes,       SEQ_STEPS * 8);
+            memcpy(dst->step_note_count,  src->step_note_count,  SEQ_STEPS);
+            memcpy(dst->step_vel,         src->step_vel,         SEQ_STEPS);
+            memcpy(dst->step_gate,        src->step_gate,        SEQ_STEPS * sizeof(uint16_t));
+            memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
+            dst->active = src->active;
+            clip_migrate_to_notes(dst);
+            if ((int)dstTr->active_clip == dstC) pfx_sync_from_clip(dstTr);
+            silence_track_notes_v2(inst, srcTr);
+            clip_init(src);
+            if ((int)srcTr->active_clip == srcC) pfx_sync_from_clip(srcTr);
+            srcTr->rec_pending_count = 0;
+            srcTr->recording = 0;
+            if (srcTr->queued_clip == srcC) srcTr->queued_clip = -1;
+            seq8_save_state(inst);
+        }
+        return;
+    }
+
+    if (!strcmp(key, "row_cut")) {
+        /* row_cut "srcRow dstRow" — copy all tracks src→dst then hard-reset src; atomic undo */
+        const char *p = val;
+        int srcRow = 0, dstRow = 0, t;
+        while (*p == ' ') p++;
+        while (*p >= '0' && *p <= '9') srcRow = srcRow*10 + (*p++ - '0');
+        while (*p == ' ') p++;
+        while (*p >= '0' && *p <= '9') dstRow = dstRow*10 + (*p++ - '0');
+        srcRow = clamp_i(srcRow, 0, NUM_CLIPS-1);
+        dstRow = clamp_i(dstRow, 0, NUM_CLIPS-1);
+        if (srcRow == dstRow) return;
+        undo_begin_row_pair(inst, srcRow, dstRow);
+        for (t = 0; t < NUM_TRACKS; t++) {
+            seq8_track_t *tr = &inst->tracks[t];
+            clip_t *src = &tr->clips[srcRow];
+            clip_t *dst = &tr->clips[dstRow];
+            dst->length         = src->length;
+            dst->ticks_per_step = src->ticks_per_step;
+            dst->pfx_params     = src->pfx_params;
+            memcpy(dst->steps,            src->steps,            SEQ_STEPS);
+            memcpy(dst->step_notes,       src->step_notes,       SEQ_STEPS * 8);
+            memcpy(dst->step_note_count,  src->step_note_count,  SEQ_STEPS);
+            memcpy(dst->step_vel,         src->step_vel,         SEQ_STEPS);
+            memcpy(dst->step_gate,        src->step_gate,        SEQ_STEPS * sizeof(uint16_t));
+            memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
+            dst->active = src->active;
+            clip_migrate_to_notes(dst);
+            if ((int)tr->active_clip == dstRow) pfx_sync_from_clip(tr);
+            silence_track_notes_v2(inst, tr);
+            clip_init(src);
+            if ((int)tr->active_clip == srcRow) pfx_sync_from_clip(tr);
+            tr->rec_pending_count = 0;
+            tr->recording = 0;
+            if (tr->queued_clip == srcRow) tr->queued_clip = -1;
+        }
+        seq8_save_state(inst);
+        return;
+    }
+
     if (!strcmp(key, "row_clear")) {
         int rowIdx = clamp_i(my_atoi(val), 0, NUM_CLIPS-1);
         int t, i;
