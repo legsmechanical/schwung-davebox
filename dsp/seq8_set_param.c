@@ -181,6 +181,7 @@ static void set_param(void *instance, const char *key, const char *val) {
     /* --- DSP-side count-in --- */
     if (!strcmp(key, "record_count_in")) {
         int track = clamp_i(my_atoi(val), 0, NUM_TRACKS - 1);
+        undo_begin_single(inst, track, (int)inst->tracks[track].active_clip);
         inst->count_in_track = (uint8_t)track;
         inst->count_in_ticks = 4 * PPQN;  /* 1 bar; tick_delta already tracks actual BPM */
         return;
@@ -402,6 +403,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             clip_t *src = &inst->tracks[srcT].clips[srcC];
             clip_t *dst = &inst->tracks[dstT].clips[dstC];
             if (srcT == dstT && srcC == dstC) return;
+            undo_begin_single(inst, dstT, dstC);
             dst->length        = src->length;
             dst->ticks_per_step = src->ticks_per_step;
             dst->pfx_params    = src->pfx_params;
@@ -429,6 +431,7 @@ static void set_param(void *instance, const char *key, const char *val) {
         srcRow = clamp_i(srcRow, 0, NUM_CLIPS-1);
         dstRow = clamp_i(dstRow, 0, NUM_CLIPS-1);
         if (srcRow == dstRow) return;
+        undo_begin_row(inst, dstRow);
         for (t = 0; t < NUM_TRACKS; t++) {
             clip_t *src = &inst->tracks[t].clips[srcRow];
             clip_t *dst = &inst->tracks[t].clips[dstRow];
@@ -452,6 +455,7 @@ static void set_param(void *instance, const char *key, const char *val) {
     if (!strcmp(key, "row_clear")) {
         int rowIdx = clamp_i(my_atoi(val), 0, NUM_CLIPS-1);
         int t, i;
+        undo_begin_row(inst, rowIdx);
         for (t = 0; t < NUM_TRACKS; t++) {
             seq8_track_t *tr = &inst->tracks[t];
             clip_t *cl = &tr->clips[rowIdx];
@@ -485,6 +489,44 @@ static void set_param(void *instance, const char *key, const char *val) {
                 tr->queued_clip = -1;
             }
         }
+        seq8_save_state(inst);
+        return;
+    }
+
+    if (!strcmp(key, "undo_restore")) {
+        int i;
+        if (!inst->undo_valid) return;
+        inst->redo_clip_count = inst->undo_clip_count;
+        memcpy(inst->redo_clip_tracks,  inst->undo_clip_tracks,  inst->undo_clip_count);
+        memcpy(inst->redo_clip_indices, inst->undo_clip_indices, inst->undo_clip_count);
+        for (i = 0; i < (int)inst->undo_clip_count; i++) {
+            int t = (int)inst->undo_clip_tracks[i], c = (int)inst->undo_clip_indices[i];
+            memcpy(&inst->redo_clips[i], &inst->tracks[t].clips[c], sizeof(clip_t));
+        }
+        inst->redo_valid = 1;
+        apply_clip_restore(inst, inst->undo_clips,
+                           inst->undo_clip_tracks, inst->undo_clip_indices,
+                           inst->undo_clip_count);
+        inst->undo_valid = 0;
+        seq8_save_state(inst);
+        return;
+    }
+
+    if (!strcmp(key, "redo_restore")) {
+        int i;
+        if (!inst->redo_valid) return;
+        inst->undo_clip_count = inst->redo_clip_count;
+        memcpy(inst->undo_clip_tracks,  inst->redo_clip_tracks,  inst->redo_clip_count);
+        memcpy(inst->undo_clip_indices, inst->redo_clip_indices, inst->redo_clip_count);
+        for (i = 0; i < (int)inst->redo_clip_count; i++) {
+            int t = (int)inst->redo_clip_tracks[i], c = (int)inst->redo_clip_indices[i];
+            memcpy(&inst->undo_clips[i], &inst->tracks[t].clips[c], sizeof(clip_t));
+        }
+        inst->undo_valid = 1;
+        apply_clip_restore(inst, inst->redo_clips,
+                           inst->redo_clip_tracks, inst->redo_clip_indices,
+                           inst->redo_clip_count);
+        inst->redo_valid = 0;
         seq8_save_state(inst);
         return;
     }
@@ -695,6 +737,7 @@ static void set_param(void *instance, const char *key, const char *val) {
 
                 if (!strcmp(q, "_clear")) {
                     /* tN_cC_step_S_clear — atomically deactivate step and wipe all step data */
+                    undo_begin_single(inst, tidx, cidx);
                     cl->steps[sidx] = 0;
                     memset(cl->step_notes[sidx], 0, 8);
                     cl->step_note_count[sidx] = 0;
@@ -801,6 +844,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                     int dstStep = clamp_i(my_atoi(val), 0, (int)cl->length - 1);
                     if (dstStep == sidx) return;
                     if (cl->step_note_count[sidx] == 0) return;
+                    undo_begin_single(inst, tidx, cidx);
                     memcpy(cl->step_notes[dstStep], cl->step_notes[sidx], 8);
                     memcpy(cl->note_tick_offset[dstStep], cl->note_tick_offset[sidx], 8 * sizeof(int16_t));
                     cl->step_note_count[dstStep] = cl->step_note_count[sidx];
@@ -860,6 +904,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             if (!strncmp(p, "_clear", 6) && p[6] == '\0') {
                 /* tN_cC_clear — atomically wipe all steps in clip */
                 int i;
+                undo_begin_single(inst, tidx, cidx);
                 for (i = 0; i < SEQ_STEPS; i++) {
                     cl->steps[i] = 0;
                     memset(cl->step_notes[i], 0, 8);
@@ -896,6 +941,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             if (!strncmp(p, "_clear_keep", 11) && p[11] == '\0') {
                 /* tN_cC_clear_keep — wipe all steps, preserve playback state */
                 int i;
+                undo_begin_single(inst, tidx, cidx);
                 for (i = 0; i < SEQ_STEPS; i++) {
                     cl->steps[i] = 0;
                     memset(cl->step_notes[i], 0, 8);
@@ -969,6 +1015,8 @@ static void set_param(void *instance, const char *key, const char *val) {
         if (!strcmp(sub, "recording")) {
             int rv = my_atoi(val);
             if (rv) {
+                int snap_clip = (tr->queued_clip >= 0) ? (int)tr->queued_clip : (int)tr->active_clip;
+                undo_begin_single(inst, tidx, snap_clip);
                 /* Fresh recording session: clear pass mask so existing notes play back */
                 memset(tr->live_recorded_steps, 0, 32);
                 if (tr->clip_playing) {
@@ -1427,6 +1475,9 @@ static void set_param(void *instance, const char *key, const char *val) {
             return;
         }
 
+        /* Snapshot before full pfx reset */
+        if (!strcmp(sub, "pfx_reset"))
+            undo_begin_single(inst, tidx, (int)tr->active_clip);
         /* All play effects params */
         pfx_set(inst, tr, sub, val);
         return;
