@@ -5,6 +5,7 @@ RUN apt-get update && apt-get install -y \
     binutils-aarch64-linux-gnu \
     make \
     file \
+    python3 \
     && rm -rf /var/lib/apt/lists/*
 
 ENV CROSS_PREFIX=aarch64-linux-gnu-
