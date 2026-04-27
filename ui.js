@@ -512,6 +512,7 @@ let recordBpm    = 120; /* BPM cached at record arm time */
 let currentSetUuid   = '';        /* UUID of the active Move set; polled in tick() for change detection */
 let lastDspInstanceId = '';       /* DSP instance_nonce from last poll; change = hot-reload detected */
 const pendingLiveNotes = Array.from({length: NUM_TRACKS}, () => []);  /* buffered live notes flushed each tick */
+let stepOpTick = -99;  /* tickCount of last step button event; live_notes flush defers 1 tick after */
 
 let pendingSetLoad   = false;     /* true when set changed during init() but same DSP instance: save old, load new */
 let pendingDspSync   = 0;         /* ticks remaining before deferred syncClipsFromDsp() after set change */
@@ -1979,15 +1980,19 @@ globalThis.init = function () {
 globalThis.tick = function () {
     tickCount++;
 
-    /* Flush live note batches: offs first, then ons; one set_param per track so no coalescing. */
-    for (let _t = 0; _t < NUM_TRACKS; _t++) {
-        if (pendingLiveNotes[_t].length === 0) continue;
-        const evts = pendingLiveNotes[_t];
-        pendingLiveNotes[_t] = [];
-        const parts = [];
-        for (const e of evts) if (e.isOff)  parts.push('off ' + e.pitch);
-        for (const e of evts) if (!e.isOff) parts.push('on '  + e.pitch + ' ' + e.vel);
-        host_module_set_param('t' + _t + '_live_notes', parts.join(' '));
+    /* Flush live note batches: offs first, then ons; one set_param per track so no coalescing.
+     * Defer for 1 tick after any step button event so the step set_param clears its audio
+     * block before live_notes fires — otherwise live_notes can overwrite step toggles. */
+    if (tickCount > stepOpTick + 1) {
+        for (let _t = 0; _t < NUM_TRACKS; _t++) {
+            if (pendingLiveNotes[_t].length === 0) continue;
+            const evts = pendingLiveNotes[_t];
+            pendingLiveNotes[_t] = [];
+            const parts = [];
+            for (const e of evts) if (e.isOff)  parts.push('off ' + e.pitch);
+            for (const e of evts) if (!e.isOff) parts.push('on '  + e.pitch + ' ' + e.vel);
+            host_module_set_param('t' + _t + '_live_notes', parts.join(' '));
+        }
     }
 
     /* Set change detected in init(): send UUID so DSP constructs path and loads. */
@@ -2994,6 +2999,7 @@ globalThis.onMidiMessageInternal = function (data) {
 
     /* Step buttons: notes 16-31, note-on only */
     if ((status & 0xF0) === 0x90 && d1 >= 16 && d1 <= 31 && d2 > 0) {
+        stepOpTick = tickCount;
         const idx = d1 - 16;
         if (sessionView) {
             if (muteHeld) {
@@ -3308,6 +3314,7 @@ globalThis.onMidiMessageInternal = function (data) {
     if ((status & 0xF0) === 0x80 || ((status & 0xF0) === 0x90 && d2 === 0)) {
         /* Step button release: tap-toggle if within threshold, always exit step edit */
         if (d1 >= 16 && d1 <= 31) {
+            stepOpTick = tickCount;
             const btn = d1 - 16;
             if (btn === heldStepBtn) {
                 if (stepBtnPressedTick[btn] >= 0) {
