@@ -12,6 +12,7 @@
 - **JS-only deploy**: `cp ui.js dist/seq8/ui.js && cp ui_constants.mjs dist/seq8/ && ./scripts/install.sh` then restart. `build.sh` required for DSP changes (also copies all JS).
 - **Restart Move** (required after every deploy): `ssh root@move.local "for name in MoveOriginal Move MoveLauncher MoveMessageDisplay shadow_ui schwung link-subscriber display-server schwung-manager; do pids=\$(pidof \$name 2>/dev/null || true); [ -n \"\$pids\" ] && kill -9 \$pids 2>/dev/null || true; done && /etc/init.d/move start >/dev/null 2>&1"` — kills all Move/Schwung processes and lets init restart them.
 - **CLAUDE.md**: update at session end or after a major phase — not after routine task work.
+- **State version bump**: wipe all SEQ8 states on device before deploying (`find /data/UserData/schwung/set_state -name 'seq8-state.json' -exec rm {} \;`) so testing starts from clean state.
 
 SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move — standalone 8-track MIDI sequencer. No audio. C (DSP) + JavaScript (UI). Background running via tool reconnect. `button_passthrough: [79]` — volume knob (CC 79) handled natively by Move; SEQ8 does not intercept it.
 
