@@ -1529,6 +1529,20 @@ function updateStepLEDs() {
         const base = page * 16;
         const len  = drumLaneLength[t];
 
+        if (loopHeld) {
+            const pagesInUse = Math.max(1, Math.ceil(len / 16));
+            const blink = Math.floor(tickCount / 24) % 2;
+            for (let i = 0; i < 16; i++) {
+                if (i >= pagesInUse) { setLED(16 + i, DarkGrey); continue; }
+                let hasNotes = false;
+                for (let s = i * 16; s < (i + 1) * 16; s++) {
+                    if (ls[s] === '1') { hasNotes = true; break; }
+                }
+                setLED(16 + i, hasNotes ? (blink ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t]) : TRACK_COLORS[t]);
+            }
+            return;
+        }
+
         for (let i = 0; i < 16; i++) {
             const absStep = base + i;
             let color;
