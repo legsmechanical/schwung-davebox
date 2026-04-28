@@ -3806,6 +3806,28 @@ globalThis.onMidiMessageInternal = function (data) {
             if (d1 >= TRACK_PAD_BASE && d1 < TRACK_PAD_BASE + 32) {
                 const padIdx = d1 - TRACK_PAD_BASE;
 
+                /* Drum Pad Clear: Shift+Delete+lane pad — full factory reset of drum lane */
+                if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM && shiftHeld && deleteHeld) {
+                    const t    = activeTrack;
+                    const lane = drumPadToLane(padIdx);
+                    if (lane >= 0 && lane < DRUM_LANES) {
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + t + '_l' + lane + '_hard_reset', '1');
+                        activeDrumLane[t] = lane;
+                        drumLaneNote[t][lane] = DRUM_BASE_NOTE + lane;
+                        drumLaneLength[t]     = 16;
+                        for (let s = 0; s < 256; s++) drumLaneSteps[t][lane][s] = '0';
+                        drumLaneHasNotes[t][lane] = false;
+                        const ac = trackActiveClip[t];
+                        drumClipNonEmpty[t][ac] = false;
+                        for (let ol = 0; ol < DRUM_LANES; ol++) {
+                            if (drumLaneHasNotes[t][ol]) { drumClipNonEmpty[t][ac] = true; break; }
+                        }
+                        showActionPopup('PAD CLEARED');
+                        forceRedraw();
+                    }
+                    return;
+                }
                 /* Drum mode pad handling */
                 if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM && !shiftHeld) {
                     const t = activeTrack;

@@ -1278,6 +1278,16 @@ static void set_param(void *instance, const char *key, const char *val) {
                 return;
             }
 
+            if (!strcmp(p2, "_hard_reset")) {
+                /* tN_lL_hard_reset — full factory reset: clip_init + default midi_note/length/tps */
+                clip_init(dlc);
+                dlane->midi_note                  = (uint8_t)(DRUM_BASE_NOTE + lane_idx);
+                tr->drum_current_step[lane_idx]   = 0;
+                tr->drum_tick_in_step[lane_idx]   = 0;
+                seq8_save_state(inst);
+                return;
+            }
+
             /* tN_lL_step_S_toggle  val="vel"
              * Empty step: add lane note, activate. Active: deactivate. Inactive-with-note: reactivate. */
             if (!strncmp(p2, "_step_", 6)) {
