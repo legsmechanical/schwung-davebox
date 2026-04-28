@@ -1988,6 +1988,12 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                 return snprintf(out, out_len, "%d", (int)cl->length);
             if (!strncmp(p, "_active", 7))
                 return snprintf(out, out_len, "%d", (int)cl->active);
+            if (!strncmp(p, "_drum_has_content", 17)) {
+                int dl, any = 0;
+                for (dl = 0; dl < DRUM_LANES && !any; dl++)
+                    if (tr->drum_clips[cidx].lanes[dl].clip.note_count > 0) any = 1;
+                return snprintf(out, out_len, "%d", any);
+            }
             if (!strncmp(p, "_tps", 4))
                 return snprintf(out, out_len, "%d", (int)cl->ticks_per_step);
             if (!strncmp(p, "_pfx_snapshot", 13)) {

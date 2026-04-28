@@ -410,6 +410,8 @@ let drumLastVelZone   = new Array(NUM_TRACKS).fill(12); /* last selected velocit
 let drumLaneLength    = new Array(NUM_TRACKS).fill(16); /* active lane clip length */
 let drumStepPage      = new Array(NUM_TRACKS).fill(0);  /* current view page for drum step buttons */
 let drumCurrentStep   = new Array(NUM_TRACKS).fill(-1); /* playhead step of active lane */
+/* drumClipNonEmpty[t][c] — true if any lane in drum clip c of track t has content */
+let drumClipNonEmpty  = Array.from({length: NUM_TRACKS}, () => new Array(NUM_CLIPS).fill(false));
 let trackActiveClip     = new Array(NUM_TRACKS).fill(0);
 let lastDspActiveClip   = new Array(NUM_TRACKS).fill(0);
 let trackQueuedClip  = new Array(NUM_TRACKS).fill(-1);
@@ -1007,6 +1009,15 @@ function drumVelZoneToVelocity(zone) {
     return Math.round((zone + 1) * 127 / 16);
 }
 
+/** Sync drumClipNonEmpty[t] for all clips — called on track switch and state load. */
+function syncDrumClipContent(t) {
+    if (typeof host_module_get_param !== 'function') return;
+    for (let c = 0; c < NUM_CLIPS; c++) {
+        const raw = host_module_get_param('t' + t + '_c' + c + '_drum_has_content');
+        drumClipNonEmpty[t][c] = raw === '1';
+    }
+}
+
 /** MIDI note number → display string e.g. "C3 / 60" */
 function drumNoteLabel(midiNote) {
     const oct  = Math.floor(midiNote / 12) - 2;
@@ -1384,6 +1395,7 @@ function applyBankParam(t, bankIdx, knobIdx, val) {
         if (pm.dspKey === 'pad_mode' && val === PAD_MODE_DRUM) {
             syncDrumLanesMeta(t);
             syncDrumLaneSteps(t, activeDrumLane[t]);
+            syncDrumClipContent(t);
         }
         if (pm.dspKey === 'clip_length') {
             const ac = trackActiveClip[t];
@@ -1555,18 +1567,24 @@ function updateStepLEDs() {
     }
 }
 
+function trackClipHasContent(t, sceneIdx) {
+    return bankParams[t][0][2] === PAD_MODE_DRUM
+        ? drumClipNonEmpty[t][sceneIdx]
+        : clipNonEmpty[t][sceneIdx];
+}
+
 function groupHasContent(group) {
     for (let row = 0; row < 4; row++) {
         const sceneIdx = group * 4 + row;
         for (let t = 0; t < NUM_TRACKS; t++)
-            if (clipNonEmpty[t][sceneIdx]) return true;
+            if (trackClipHasContent(t, sceneIdx)) return true;
     }
     return false;
 }
 
 function sceneNonEmpty(sceneIdx) {
     for (let t = 0; t < NUM_TRACKS; t++)
-        if (clipNonEmpty[t][sceneIdx]) return true;
+        if (trackClipHasContent(t, sceneIdx)) return true;
     return false;
 }
 
@@ -1598,7 +1616,7 @@ function sceneAnyPlaying(sceneIdx) {
 function sceneAllQueued(sceneIdx) {
     let hasAny = false;
     for (let t = 0; t < NUM_TRACKS; t++) {
-        if (!clipNonEmpty[t][sceneIdx]) continue;
+        if (!trackClipHasContent(t, sceneIdx)) continue;
         hasAny = true;
         const isQueued = (trackQueuedClip[t] === sceneIdx) ||
                          (trackPendingPageStop[t] && trackActiveClip[t] === sceneIdx);
@@ -1661,10 +1679,13 @@ function updateSessionLEDs() {
             const isPendingStop = trackPendingPageStop[t] && isActiveClip;
             const isQueued      = trackQueuedClip[t] === sceneIdx;
             const isWillRelaunch = trackWillRelaunch[t] && isActiveClip;
+            const isDrumTrack = bankParams[t][0][2] === PAD_MODE_DRUM;
+            const hasContent  = isDrumTrack ? drumClipNonEmpty[t][sceneIdx] : clipNonEmpty[t][sceneIdx];
+            const hasActive   = isDrumTrack ? hasContent : clipHasActiveNotes(t, sceneIdx);
             let color;
-            if (!clipNonEmpty[t][sceneIdx]) {
+            if (!hasContent) {
                 color = LED_OFF;
-            } else if (!clipHasActiveNotes(t, sceneIdx)) {
+            } else if (!hasActive) {
                 color = DarkGrey;
             } else if (isPlaying && isPendingStop) {
                 color = (!playing || flashSixteenth) ? TRACK_DIM_COLORS[t] : LED_OFF;
@@ -1754,9 +1775,9 @@ function updateTrackLEDs() {
                 color = slowPulse ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
             } else if (isFocused) {
                 color = TRACK_COLORS[t];
-            } else if (!clipNonEmpty[t][sceneIdx]) {
+            } else if (!trackClipHasContent(t, sceneIdx)) {
                 color = LED_OFF;
-            } else if (!clipHasActiveNotes(t, sceneIdx)) {
+            } else if (bankParams[t][0][2] !== PAD_MODE_DRUM && !clipHasActiveNotes(t, sceneIdx)) {
                 color = DarkGrey;
             } else {
                 color = TRACK_DIM_COLORS[t];
@@ -2142,6 +2163,12 @@ function syncClipsFromDsp() {
         const po = host_module_get_param('t' + t + '_pad_octave');
         if (po !== null && po !== undefined) padOctave[t] = parseInt(po, 10) | 0;
         for (let b = 0; b < 8; b++) readBankParams(t, b);
+        /* Drum track: sync clip content flags and active lane data */
+        if (bankParams[t][0][2] === PAD_MODE_DRUM) {
+            syncDrumClipContent(t);
+            syncDrumLanesMeta(t);
+            syncDrumLaneSteps(t, activeDrumLane[t]);
+        }
     }
     const kp = host_module_get_param('key');
     if (kp !== null && kp !== undefined) padKey   = parseInt(kp, 10) | 0;
@@ -3452,6 +3479,9 @@ globalThis.onMidiMessageInternal = function (data) {
                     for (let s = 0; s < 256; s++) drumLaneSteps[t][lane][s] = raw[s] || '0';
                     drumLaneHasNotes[t][lane] = raw.indexOf('1') >= 0 || raw.indexOf('2') >= 0;
                 }
+                const ac = trackActiveClip[t];
+                const hcRaw = host_module_get_param('t' + t + '_c' + ac + '_drum_has_content');
+                drumClipNonEmpty[t][ac] = hcRaw === '1';
             }
             forceRedraw();
         } else if (!shiftHeld) {
@@ -3727,6 +3757,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     if (bankParams[padIdx][0][2] === PAD_MODE_DRUM) {
                         syncDrumLanesMeta(padIdx);
                         syncDrumLaneSteps(padIdx, activeDrumLane[padIdx]);
+                        syncDrumClipContent(padIdx);
                     }
                     screenDirty = true;
                 } else if (!shiftHeld) {
