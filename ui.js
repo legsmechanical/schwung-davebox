@@ -1171,6 +1171,10 @@ function pollDSP() {
             if (newClip !== lastDspActiveClip[t]) {
                 lastDspActiveClip[t] = newClip;
                 refreshPerClipBankParams(t);
+                if (bankParams[t][0][2] === PAD_MODE_DRUM) {
+                    syncDrumLanesMeta(t);
+                    syncDrumLaneSteps(t, activeDrumLane[t]);
+                }
             }
         }
         trackQueuedClip[t]  = parseInt(v[17 + t], 10) | 0;
@@ -3207,6 +3211,10 @@ globalThis.onMidiMessageInternal = function (data) {
                         trackActiveClip[t]  = clipIdx;
                         trackCurrentPage[t] = 0;
                         refreshPerClipBankParams(t);
+                        if (bankParams[t][0][2] === PAD_MODE_DRUM) {
+                            syncDrumLanesMeta(t);
+                            syncDrumLaneSteps(t, activeDrumLane[t]);
+                        }
                     }
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
