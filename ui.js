@@ -2148,7 +2148,6 @@ function drawUI() {
     } else if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {
         /* Drum Track View — idle state */
         const t         = activeTrack;
-        const ac        = effectiveClip(t);
         const lane      = activeDrumLane[t];
         const pg        = drumLanePage[t];
         const note      = drumLaneNote[t][lane];
@@ -2156,8 +2155,8 @@ function drawUI() {
         const name      = NOTE_KEYS[note % 12];
         const bankGroup = pg === 0 ? 'Bank A' : 'Bank B';
         const bankName  = activeBank === 1 ? 'SEQ' : BANKS[activeBank].name;
-        print(4, 10, SCENE_LETTERS[ac] + '  Pad: ' + name + oct + ' (' + note + ')', 1);
-        print(4, 22, bankGroup + '  KNOB:[' + bankName + ']', 1);
+        print(4, 10, 'KNOB:[' + bankName + ']', 1);
+        print(4, 22, bankGroup + '  Pad: ' + name + oct + ' (' + note + ')', 1);
         drawTrackRow(34);
         let drumLine4 = '';
         for (let _t = 0; _t < NUM_TRACKS; _t++) {
@@ -2168,11 +2167,9 @@ function drawUI() {
         drawDrumPositionBar(t);
     } else {
         /* State 4: normal Track View */
-        const ac         = effectiveClip(activeTrack);
         const recTag = (recordArmed && !recordCountingIn && recordArmedTrack === activeTrack)
             ? ' REC' : '';
-        print(4, 10, SCENE_LETTERS[ac], 1);
-        print(4, 22, 'KNOB: [' + BANKS[activeBank].name + ']' + recTag, 1);
+        print(4, 10, 'KNOB: [' + BANKS[activeBank].name + ']' + recTag, 1);
         drawTrackRow(34);
         let line4 = '';
         for (let t = 0; t < NUM_TRACKS; t++) {
