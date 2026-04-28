@@ -100,7 +100,7 @@ const BANKS = [
     { name: 'TRACK', knobs: [
         p('Ch',   'MIDI Channel', 'channel',  'track', 1, 16, 1, fmtPlain, 6),
         p('Rte',  'Route',        'route',    'track', 0, 1,  0, fmtRoute),
-        p('Mode', 'Track Mode',   'pad_mode', 'track', 0, 1,  0, function(v) { return v ? 'Drum' : 'Keys'; }, 32),
+        p('Mode', 'Track Mode',   'pad_mode', 'track', 0, 1,  0, function(v) { return v ? 'Drums' : 'Keys'; }, 32),
         _X, _X, _X, _X, _X,
     ]},
     /* 1 — CLIP (pad 93) — Beat Stretch, Clock Shift, Nudge, Resolution, Length, (stubs) */
