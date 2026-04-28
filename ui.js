@@ -2139,17 +2139,22 @@ function drawUI() {
 
     } else if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {
         /* Drum Track View — idle state */
-        const t    = activeTrack;
-        const ac   = effectiveClip(t);
-        const lane = activeDrumLane[t];
-        const pg   = drumLanePage[t];
-        const note = drumLaneNote[t][lane];
-        const oct  = Math.floor(note / 12) - 2;
-        const name = NOTE_KEYS[note % 12];
-        print(4, 10, 'TR' + (t + 1) + ' \xb7 ' + SCENE_LETTERS[ac] + '  DRUM', 1);
-        print(4, 22, 'LN ' + (lane + 1) + ':  ' + name + oct + ' / ' + note, 1);
-        print(4, 34, 'PG ' + (pg + 1) + '/2   Up/Dn = page', 1);
+        const t          = activeTrack;
+        const ac         = effectiveClip(t);
+        const lane       = activeDrumLane[t];
+        const pg         = drumLanePage[t];
+        const note       = drumLaneNote[t][lane];
+        const oct        = Math.floor(note / 12) - 2;
+        const name       = NOTE_KEYS[note % 12];
+        const totalPages = Math.max(1, Math.ceil(drumLaneLength[t] / 16));
+        const curPage    = drumStepPage[t];
+        const bankGroup  = pg === 0 ? 'Bank A' : 'Bank B';
+        const bankName   = activeBank === 1 ? 'SEQ' : BANKS[activeBank].name;
+        print(4, 10, SCENE_LETTERS[ac] + ' \xb7 LN ' + (lane + 1) + '  PG ' + (curPage + 1) + '/' + totalPages, 1);
+        print(4, 22, 'PAD: ' + name + oct + ' (' + note + ')', 1);
+        print(4, 34, bankGroup + '  KNOB:[' + bankName + ']', 1);
         drawTrackRow(46);
+        drawDrumPositionBar(t);
     } else {
         /* State 4: normal Track View */
         const ac         = effectiveClip(activeTrack);
@@ -2199,6 +2204,37 @@ function drawPositionBar(t) {
     if (playing && trackClipPlaying[t] && cs >= 0) {
         const totalSteps = Math.max(1, clipLength[t][ac]);
         const dotX = Math.floor(cs * 128 / totalSteps);
+        const viewSegStart = startX + viewPage * (segW + segGap);
+        const onSolid = dotX >= viewSegStart && dotX < viewSegStart + segW;
+        fill_rect(dotX, barY, 1, barH, onSolid ? 0 : 1);
+    }
+}
+
+function drawDrumPositionBar(t) {
+    const len        = drumLaneLength[t];
+    const totalPages = Math.max(1, Math.ceil(len / 16));
+    const viewPage   = Math.min(drumStepPage[t], totalPages - 1);
+    const cs         = drumCurrentStep[t];
+    const playPage   = (playing && trackClipPlaying[t] && cs >= 0)
+                     ? Math.min(Math.floor(cs / 16), totalPages - 1) : -1;
+    const barY = 57, barH = 5, segGap = 1;
+    const segW   = Math.max(2, Math.floor((120 - (totalPages - 1) * segGap) / totalPages));
+    const startX = 4;
+    for (let pg = 0; pg < totalPages; pg++) {
+        const x = startX + pg * (segW + segGap);
+        if (pg === viewPage) {
+            fill_rect(x, barY, segW, barH, 1);
+        } else if (pg === playPage) {
+            fill_rect(x, barY, segW, 1, 1);
+            fill_rect(x, barY + barH - 1, segW, 1, 1);
+            fill_rect(x, barY, 1, barH, 1);
+            fill_rect(x + segW - 1, barY, 1, barH, 1);
+        } else {
+            fill_rect(x, barY + barH - 1, segW, 1, 1);
+        }
+    }
+    if (playing && trackClipPlaying[t] && cs >= 0) {
+        const dotX = Math.floor(cs * 128 / Math.max(1, len));
         const viewSegStart = startX + viewPage * (segW + segGap);
         const onSolid = dotX >= viewSegStart && dotX < viewSegStart + segW;
         fill_rect(dotX, barY, 1, barH, onSolid ? 0 : 1);
