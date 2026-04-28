@@ -576,6 +576,8 @@ let uiDefaultsApplyAfterSync = false; /* apply first-run defaults after pendingD
 let pendingStepsReread      = 0;  /* ticks remaining before _steps re-read after _reassign */
 let pendingStepsRereadTrack = 0;
 let pendingStepsRereadClip  = 0;
+let pendingDrumResync       = 0;  /* ticks remaining before drum lane steps re-read after clip switch */
+let pendingDrumResyncTrack  = 0;
 
 /* ------------------------------------------------------------------ */
 /* Utility                                                              */
@@ -2425,6 +2427,14 @@ globalThis.tick = function () {
     }
 
     /* Deferred _steps re-read after _reassign: confirm DSP move in JS mirror */
+    if (pendingDrumResync > 0) {
+        pendingDrumResync--;
+        if (pendingDrumResync === 0) {
+            syncDrumLanesMeta(pendingDrumResyncTrack);
+            syncDrumLaneSteps(pendingDrumResyncTrack, activeDrumLane[pendingDrumResyncTrack]);
+            forceRedraw();
+        }
+    }
     if (pendingStepsReread > 0) {
         pendingStepsReread--;
         if (pendingStepsReread === 0) {
@@ -3212,8 +3222,8 @@ globalThis.onMidiMessageInternal = function (data) {
                         trackCurrentPage[t] = 0;
                         refreshPerClipBankParams(t);
                         if (bankParams[t][0][2] === PAD_MODE_DRUM) {
-                            syncDrumLanesMeta(t);
-                            syncDrumLaneSteps(t, activeDrumLane[t]);
+                            pendingDrumResync      = 2;
+                            pendingDrumResyncTrack = t;
                         }
                     }
                     if (typeof host_module_set_param === 'function')
