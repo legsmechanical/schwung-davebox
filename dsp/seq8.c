@@ -2025,6 +2025,17 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                         dlc->step_note_count[sidx] > 0 ? (int)dlc->note_tick_offset[sidx][0] : 0);
                 return -1;
             }
+            if (!strcmp(p2, "_pfx_snapshot")) {
+                clip_pfx_params_t *cp = &dlane->clip.pfx_params;
+                return snprintf(out, out_len,
+                    "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d",
+                    cp->octave_shift, cp->note_offset, cp->gate_time,
+                    cp->velocity_offset, cp->quantize,
+                    cp->unison, cp->octaver, cp->harmonize_1, cp->harmonize_2,
+                    cp->delay_time_idx, cp->delay_level, cp->repeat_times,
+                    cp->fb_velocity, cp->fb_note, cp->fb_gate_time,
+                    cp->fb_clock, cp->fb_note_random);
+            }
             return -1;
         }
         if (!strcmp(sub, "clock_shift_pos"))

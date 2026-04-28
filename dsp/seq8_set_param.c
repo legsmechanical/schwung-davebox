@@ -2,12 +2,11 @@
 /* set_param helpers                                                    */
 /* ------------------------------------------------------------------ */
 
-/* Apply a play-effects key/value to a specific track's pfx and to the
- * active clip's pfx_params (so params persist per-clip across switches). */
+/* Apply a play-effects key/value to a track's live pfx and to a caller-supplied
+ * pfx_params (melodic: active clip; drum: specific lane). */
 static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
-                    const char *key, const char *val) {
-    play_fx_t         *fx = &tr->pfx;
-    clip_pfx_params_t *cp = &tr->clips[tr->active_clip].pfx_params;
+                    clip_pfx_params_t *cp, const char *key, const char *val) {
+    play_fx_t *fx = &tr->pfx;
 
 #define PFX_SET_BOTH(fx_field, cp_field, lo, hi) \
     { int _v = clamp_i(my_atoi(val), (lo), (hi)); fx->fx_field = _v; cp->cp_field = _v; }
@@ -1679,6 +1678,27 @@ static void set_param(void *instance, const char *key, const char *val) {
 
             /* tN_lL_step_S_toggle  val="vel"
              * Empty step: add lane note, activate. Active: deactivate. Inactive-with-note: reactivate. */
+            if (!strcmp(p2, "_pfx_set")) {
+                /* val = "pfx_key value" — apply pfx param to this lane's pfx_params */
+                const char *sp = val;
+                char pfx_key[64]; int ki = 0;
+                while (*sp && *sp != ' ' && ki < 63) pfx_key[ki++] = *sp++;
+                pfx_key[ki] = '\0';
+                while (*sp == ' ') sp++;
+                if (!strcmp(pfx_key, "pfx_reset") || !strcmp(pfx_key, "pfx_noteFx_reset") ||
+                    !strcmp(pfx_key, "pfx_harm_reset") || !strcmp(pfx_key, "pfx_delay_reset"))
+                    undo_begin_single(inst, tidx, (int)tr->active_clip);
+                pfx_set(inst, tr, &dlane->clip.pfx_params, pfx_key, sp);
+                seq8_save_state(inst);
+                return;
+            }
+            if (!strcmp(p2, "_pfx_reset")) {
+                undo_begin_single(inst, tidx, (int)tr->active_clip);
+                pfx_set(inst, tr, &dlane->clip.pfx_params, "pfx_reset", "1");
+                seq8_save_state(inst);
+                return;
+            }
+
             if (!strncmp(p2, "_step_", 6)) {
                 const char *q = p2 + 6;
                 int sidx = 0;
@@ -2271,7 +2291,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             !strcmp(sub, "pfx_harm_reset") || !strcmp(sub, "pfx_delay_reset"))
             undo_begin_single(inst, tidx, (int)tr->active_clip);
         /* All play effects params */
-        pfx_set(inst, tr, sub, val);
+        pfx_set(inst, tr, &tr->clips[tr->active_clip].pfx_params, sub, val);
         return;
     }
 }

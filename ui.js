@@ -1153,8 +1153,29 @@ const PARAM_LED_BANKS = [2, 3, 4, 5]; /* NOTE FX, HARMZ, SEQ ARP, MIDI DLY */
 
 /* Read per-clip bank params from DSP into bankParams for track t.
  * Reads from clip[active_clip].pfx_params directly — immune to pfx_sync timing. */
+function refreshDrumLaneBankParams(t, lane) {
+    if (typeof host_module_get_param !== 'function') return;
+    const snap = host_module_get_param('t' + t + '_l' + lane + '_pfx_snapshot');
+    if (!snap) return;
+    const v = snap.split(' ');
+    if (v.length < 17) return;
+    for (let k = 0; k < 5; k++) bankParams[t][2][k] = parseInt(v[k], 10) | 0;
+    for (let k = 0; k < 4; k++) bankParams[t][3][k] = parseInt(v[5 + k], 10) | 0;
+    for (let k = 0; k < 8; k++) bankParams[t][5][k] = parseInt(v[9 + k], 10) | 0;
+    /* DRUM SEQ bank (1): Res (K3), Len (K4) from active-lane meta; SqFl (K7) per-clip */
+    const tpsIdx = TPS_VALUES.indexOf(drumLaneTPS[t]);
+    bankParams[t][1][3] = tpsIdx >= 0 ? tpsIdx : 1;
+    bankParams[t][1][4] = drumLaneLength[t] || 16;
+    bankParams[t][1][7] = clipSeqFollow[t][trackActiveClip[t]] ? 1 : 0;
+    screenDirty = true;
+}
+
 function refreshPerClipBankParams(t) {
     if (typeof host_module_get_param !== 'function') return;
+    if (bankParams[t][0][2] === PAD_MODE_DRUM) {
+        refreshDrumLaneBankParams(t, activeDrumLane[t]);
+        return;
+    }
     const ac   = trackActiveClip[t];
     const snap = host_module_get_param('t' + t + '_c' + ac + '_pfx_snapshot');
     if (!snap) return;
@@ -1355,7 +1376,12 @@ function pollDSP() {
 function resetFxBanks(t) {
     if (typeof host_module_set_param !== 'function') return;
     undoAvailable = true; redoAvailable = false;
-    host_module_set_param('t' + t + '_pfx_reset', '1');
+    if (bankParams[t][0][2] === PAD_MODE_DRUM) {
+        const lane = activeDrumLane[t];
+        host_module_set_param('t' + t + '_l' + lane + '_pfx_reset', '1');
+    } else {
+        host_module_set_param('t' + t + '_pfx_reset', '1');
+    }
     const targets = [2, 3, 5]; /* NOTE FX, HARMZ, MIDI DLY */
     for (let bi = 0; bi < targets.length; bi++) {
         const b = targets[bi];
@@ -1375,7 +1401,12 @@ function resetSingleFxBank(t, bankIdx) {
     const dspCmd = { 2: 'pfx_noteFx_reset', 3: 'pfx_harm_reset', 5: 'pfx_delay_reset' }[bankIdx];
     if (!dspCmd) return;
     undoAvailable = true; redoAvailable = false;
-    host_module_set_param('t' + t + '_' + dspCmd, '1');
+    if (bankParams[t][0][2] === PAD_MODE_DRUM) {
+        const lane = activeDrumLane[t];
+        host_module_set_param('t' + t + '_l' + lane + '_pfx_set', dspCmd + ' 1');
+    } else {
+        host_module_set_param('t' + t + '_' + dspCmd, '1');
+    }
     for (let k = 0; k < 8; k++) {
         const pm = BANKS[bankIdx].knobs[k];
         if (!pm) continue;
@@ -1459,6 +1490,12 @@ function applyBankParam(t, bankIdx, knobIdx, val) {
         else if (pm.dspKey === 'route')              strVal = val ? 'move' : 'schwung';
         else if (pm.dspKey === 'delay_pitch_random') strVal = val ? 'on' : 'off';
         else                                         strVal = String(val);
+        /* Drum mode: pfx banks (2=NOTE FX, 3=HARMZ, 5=MIDI DLY) route to the active lane */
+        if ([2, 3, 5].indexOf(bankIdx) >= 0 && bankParams[t][0][2] === PAD_MODE_DRUM) {
+            const lane = activeDrumLane[t];
+            host_module_set_param('t' + t + '_l' + lane + '_pfx_set', pm.dspKey + ' ' + strVal);
+            return;
+        }
         host_module_set_param('t' + t + '_' + pm.dspKey, strVal);
         /* Switching into drum mode: sync lane metadata */
         if (pm.dspKey === 'pad_mode' && val === PAD_MODE_DRUM) {
@@ -4206,6 +4243,7 @@ globalThis.onMidiMessageInternal = function (data) {
                         for (let ol = 0; ol < DRUM_LANES; ol++) {
                             if (drumLaneHasNotes[t][ol]) { drumClipNonEmpty[t][ac] = true; break; }
                         }
+                        refreshDrumLaneBankParams(t, lane);
                         showActionPopup('PAD CLEARED');
                         forceRedraw();
                     }
@@ -4239,12 +4277,14 @@ globalThis.onMidiMessageInternal = function (data) {
                             for (let ol = 0; ol < DRUM_LANES; ol++) {
                                 if (drumLaneHasNotes[t][ol]) { drumClipNonEmpty[t][ac] = true; break; }
                             }
+                            refreshDrumLaneBankParams(t, lane);
                             showActionPopup('LANE CLEARED');
                             forceRedraw();
                         } else {
-                            /* Lane pad: select lane, sync its steps */
+                            /* Lane pad: select lane, sync its steps and bank params */
                             activeDrumLane[t] = lane;
                             syncDrumLaneSteps(t, lane);
+                            refreshDrumLaneBankParams(t, lane);
                             /* Preview lane note */
                             const vel = drumVelZoneToVelocity(drumLastVelZone[t]);
                             const laneNote = drumLaneNote[t][lane];
