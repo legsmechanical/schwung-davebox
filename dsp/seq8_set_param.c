@@ -1653,6 +1653,30 @@ static void set_param(void *instance, const char *key, const char *val) {
                 return;
             }
 
+            if (!strcmp(p2, "_clip_resolution_zoom")) {
+                if (tr->recording) return;
+                int idx = clamp_i(my_atoi(val), 0, 5);
+                uint16_t new_tps = TPS_VALUES[idx];
+                uint16_t old_tps = dlc->ticks_per_step;
+                if (new_tps == old_tps) return;
+                uint32_t old_ticks = (uint32_t)dlc->length * (uint32_t)old_tps;
+                uint32_t new_len32 = (old_ticks + (uint32_t)new_tps - 1) / (uint32_t)new_tps;
+                if (new_len32 > SEQ_STEPS) return;
+                uint32_t abs_tick = (uint32_t)tr->drum_current_step[lane_idx] * (uint32_t)old_tps
+                                  + tr->drum_tick_in_step[lane_idx];
+                dlc->ticks_per_step = new_tps;
+                dlc->length = (uint16_t)new_len32;
+                tr->drum_current_step[lane_idx] = (uint16_t)(abs_tick / (uint32_t)new_tps);
+                tr->drum_tick_in_step[lane_idx] = abs_tick % (uint32_t)new_tps;
+                if (tr->drum_current_step[lane_idx] >= dlc->length) {
+                    tr->drum_current_step[lane_idx] = (uint16_t)(dlc->length - 1);
+                    tr->drum_tick_in_step[lane_idx] = 0;
+                }
+                clip_build_steps_from_notes(dlc);
+                seq8_save_state(inst);
+                return;
+            }
+
             /* tN_lL_step_S_toggle  val="vel"
              * Empty step: add lane note, activate. Active: deactivate. Inactive-with-note: reactivate. */
             if (!strncmp(p2, "_step_", 6)) {
