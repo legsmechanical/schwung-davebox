@@ -1337,6 +1337,22 @@ function resetFxBanks(t) {
     screenDirty = true;
 }
 
+/* Reset a single real-time FX bank (2=NOTE FX, 3=HARMZ, 5=MIDI DLY) for track t.
+ * bankIdx must be one of [2, 3, 5]; ignores other banks. */
+function resetSingleFxBank(t, bankIdx) {
+    if (typeof host_module_set_param !== 'function') return;
+    const dspCmd = { 2: 'pfx_noteFx_reset', 3: 'pfx_harm_reset', 5: 'pfx_delay_reset' }[bankIdx];
+    if (!dspCmd) return;
+    undoAvailable = true; redoAvailable = false;
+    host_module_set_param('t' + t + '_' + dspCmd, '1');
+    for (let k = 0; k < 8; k++) {
+        const pm = BANKS[bankIdx].knobs[k];
+        if (!pm) continue;
+        bankParams[t][bankIdx][k] = pm.def;
+    }
+    screenDirty = true;
+}
+
 /* ------------------------------------------------------------------ */
 /* Parameter bank: read from DSP and write to DSP                      */
 /* ------------------------------------------------------------------ */
@@ -2059,6 +2075,27 @@ function drawUI() {
     }
 
     if (bank >= 0 && (knobTouched >= 0 || inTimeout)) {
+        const isDrumSeqBank = (bankParams[activeTrack][0][2] === PAD_MODE_DRUM && bank === 1);
+        if (isDrumSeqBank) {
+            /* DRUM SEQ bank overview: K1=Lane Note, K5=Lane Length */
+            const t    = activeTrack;
+            const lane = activeDrumLane[t];
+            const note = drumLaneNote[t][lane];
+            const len  = drumLaneLength[t];
+            const oct  = Math.floor(note / 12) - 2;
+            const name = NOTE_KEYS[note % 12];
+            const drumSeqLabels = ['Note', null, null, null, 'Len', null, null, null];
+            const drumSeqVals   = [name + oct, null, null, null, String(len), null, null, null];
+            print(4, 0, 'DRUM SEQ', 1);
+            for (let k = 0; k < 8; k++) {
+                const colX = 4 + (k % 4) * 30;
+                const rowY = k < 4 ? 12 : 36;
+                const hi   = (knobTouched === k);
+                if (hi) fill_rect(colX, rowY, 24, 24, 1);
+                print(colX, rowY,      col4(drumSeqLabels[k]), hi ? 0 : 1);
+                print(colX, rowY + 12, col4(drumSeqVals[k]),   hi ? 0 : 1);
+            }
+        } else {
         /* Bank overview — 5 rows; touched knob column inverted */
         const knobs = BANKS[bank].knobs;
         const vals  = bankParams[activeTrack][bank];
@@ -2070,6 +2107,7 @@ function drawUI() {
             if (hi) fill_rect(colX, rowY, 24, 24, 1);
             print(colX, rowY,      col4(knobs[k].abbrev), hi ? 0 : 1);
             print(colX, rowY + 12, col4(knobs[k].abbrev ? knobs[k].fmt(vals[k]) : null), hi ? 0 : 1);
+        }
         }
 
     } else if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {
@@ -2702,24 +2740,39 @@ globalThis.onMidiMessageInternal = function (data) {
             return;
         }
         if (d1 === 3 && d2 === 127 && shiftHeld && deleteHeld && !sessionView) {
-            /* Shift+Delete+jog: full reset — NOTE FX, HARMZ, MIDI DLY, + SEQ ARP */
-            const _arpTrack = activeTrack;
-            const _arpParams = Array.from({length: 8}, function(_, k) {
-                const pm = BANKS[4].knobs[k]; return pm ? bankParams[_arpTrack][4][k] : 0;
-            });
-            resetFxBanks(_arpTrack);
-            for (let k = 0; k < 8; k++) {
-                const pm = BANKS[4].knobs[k];
-                if (pm) bankParams[_arpTrack][4][k] = pm.def;
+            if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {
+                /* Drum: Shift+Delete+jog = reset all real-time FX banks */
+                resetFxBanks(activeTrack);
+                showActionPopup('CLIP PARAMS', 'RESET');
+            } else {
+                /* Melodic: full reset — NOTE FX, HARMZ, MIDI DLY, + SEQ ARP */
+                const _arpTrack = activeTrack;
+                const _arpParams = Array.from({length: 8}, function(_, k) {
+                    const pm = BANKS[4].knobs[k]; return pm ? bankParams[_arpTrack][4][k] : 0;
+                });
+                resetFxBanks(_arpTrack);
+                for (let k = 0; k < 8; k++) {
+                    const pm = BANKS[4].knobs[k];
+                    if (pm) bankParams[_arpTrack][4][k] = pm.def;
+                }
+                undoSeqArpSnapshot = { track: _arpTrack, params: _arpParams };
+                showActionPopup('CLIP PARAMS', 'RESET');
             }
-            undoSeqArpSnapshot = { track: _arpTrack, params: _arpParams };
-            showActionPopup('CLIP PARAMS', 'RESET');
             return;
         }
         if (d1 === 3 && d2 === 127 && deleteHeld && !sessionView) {
-            resetFxBanks(activeTrack);
-            undoSeqArpSnapshot = null;
-            showActionPopup('BANK RESET');
+            if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {
+                /* Drum: Delete+jog = reset only the active real-time FX bank */
+                const REAL_TIME_BANKS = [2, 3, 5];
+                if (REAL_TIME_BANKS.indexOf(activeBank) >= 0) {
+                    resetSingleFxBank(activeTrack, activeBank);
+                    showActionPopup('BANK RESET');
+                }
+            } else {
+                resetFxBanks(activeTrack);
+                undoSeqArpSnapshot = null;
+                showActionPopup('BANK RESET');
+            }
             return;
         }
 
@@ -3304,6 +3357,38 @@ globalThis.onMidiMessageInternal = function (data) {
             knobTurnedTick[knobIdx] = tickCount;
             screenDirty = true;
             const bank    = activeBank;
+            /* DRUM SEQ bank (bank 1 in drum mode): K1=Lane Note, K5=Lane Length */
+            if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM && bank === 1 &&
+                (knobIdx === 0 || knobIdx === 4)) {
+                const t    = activeTrack;
+                const lane = activeDrumLane[t];
+                const dir  = (d2 >= 1 && d2 <= 63) ? 1 : -1;
+                if (dir !== knobLastDir[knobIdx]) { knobAccum[knobIdx] = 0; knobLastDir[knobIdx] = dir; }
+                const sens = (knobIdx === 0) ? 2 : 4;
+                knobAccum[knobIdx]++;
+                if (knobAccum[knobIdx] >= sens) {
+                    knobAccum[knobIdx] = 0;
+                    if (knobIdx === 0) {
+                        const nv = Math.max(0, Math.min(127, drumLaneNote[t][lane] + dir));
+                        if (nv !== drumLaneNote[t][lane]) {
+                            drumLaneNote[t][lane] = nv;
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_l' + lane + '_lane_note', String(nv));
+                        }
+                    } else {
+                        const nv = Math.max(1, Math.min(256, drumLaneLength[t] + dir));
+                        if (nv !== drumLaneLength[t]) {
+                            drumLaneLength[t] = nv;
+                            const maxPage = Math.max(0, Math.ceil(nv / 16) - 1);
+                            if (drumStepPage[t] > maxPage) drumStepPage[t] = maxPage;
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_l' + lane + '_clip_length', String(nv));
+                        }
+                    }
+                    screenDirty = true;
+                }
+                return;
+            }
             const pm      = BANKS[bank].knobs[knobIdx];
             if (pm && pm.abbrev && pm.scope !== 'stub' && !knobLocked[knobIdx]) {
                 const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
@@ -3737,16 +3822,32 @@ globalThis.onMidiMessageInternal = function (data) {
                         liveActiveNotes.add(laneNote);
                         screenDirty = true;
                     } else if (lane >= 0 && lane < DRUM_LANES) {
-                        /* Lane pad: select lane, sync its steps */
-                        activeDrumLane[t] = lane;
-                        syncDrumLaneSteps(t, lane);
-                        /* Preview lane note */
-                        const vel = drumVelZoneToVelocity(drumLastVelZone[t]);
-                        const laneNote = drumLaneNote[t][lane];
-                        liveSendNote(t, 0x90, laneNote, vel);
-                        padPitch[padIdx] = laneNote;
-                        liveActiveNotes.add(laneNote);
-                        forceRedraw();
+                        if (deleteHeld) {
+                            /* Delete + lane pad: clear all steps in this lane */
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_l' + lane + '_clear', '1');
+                            activeDrumLane[t] = lane;
+                            for (let s = 0; s < 256; s++) drumLaneSteps[t][lane][s] = '0';
+                            drumLaneHasNotes[t][lane] = false;
+                            const ac = trackActiveClip[t];
+                            drumClipNonEmpty[t][ac] = false;
+                            for (let ol = 0; ol < DRUM_LANES; ol++) {
+                                if (drumLaneHasNotes[t][ol]) { drumClipNonEmpty[t][ac] = true; break; }
+                            }
+                            showActionPopup('LANE CLEARED');
+                            forceRedraw();
+                        } else {
+                            /* Lane pad: select lane, sync its steps */
+                            activeDrumLane[t] = lane;
+                            syncDrumLaneSteps(t, lane);
+                            /* Preview lane note */
+                            const vel = drumVelZoneToVelocity(drumLastVelZone[t]);
+                            const laneNote = drumLaneNote[t][lane];
+                            liveSendNote(t, 0x90, laneNote, vel);
+                            padPitch[padIdx] = laneNote;
+                            liveActiveNotes.add(laneNote);
+                            forceRedraw();
+                        }
                     }
                 } else if (heldStep >= 0 && !shiftHeld) {
                     /* Step edit: tap pad to toggle note assignment for held step */
