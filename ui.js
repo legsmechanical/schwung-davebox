@@ -1460,23 +1460,8 @@ function updateStepLEDs() {
         const base = page * 16;
         const len  = drumLaneLength[t];
 
-        if (loopHeld) {
-            /* Page overview: same as melodic */
-            const pagesInUse = Math.max(1, Math.ceil(len / 16));
-            const blink = Math.floor(tickCount / 24) % 2;
-            for (let i = 0; i < 16; i++) {
-                if (i >= pagesInUse) { setLED(16 + i, DarkGrey); continue; }
-                let hasNotes = false;
-                for (let s = i * 16; s < (i + 1) * 16; s++) {
-                    if (ls[s] && ls[s] !== '0') { hasNotes = true; break; }
-                }
-                setLED(16 + i, hasNotes
-                    ? (blink ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t])
-                    : TRACK_COLORS[t]);
-            }
-            return;
-        }
-
+        /* Drum: show normal step view even while loop held — OOB White LEDs
+         * show the length boundary in real-time as jog adjusts it. */
         for (let i = 0; i < 16; i++) {
             const absStep = base + i;
             let color;
@@ -2015,11 +2000,21 @@ function drawUI() {
 
     /* Loop view: own priority state so screen is fully cleared first */
     if (loopHeld) {
+        if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {
+            const t    = activeTrack;
+            const lane = activeDrumLane[t];
+            const len  = drumLaneLength[t];
+            print(4, 10, 'TR' + (t + 1) + ' \xb7 LN ' + (lane + 1) + '  DRUM', 1);
+            print(4, 22, 'LEN: ' + len + ' STEPS', 1);
+            print(4, 34, 'Jog=\xb11  Btn=set page', 1);
+            drawTrackRow(46);
+        } else {
         const ac_l    = effectiveClip(activeTrack);
         const steps_l = clipLength[activeTrack][ac_l];
         const pages_l = Math.max(1, Math.ceil(steps_l / 16));
         print(4, 22, 'LOOP LEN: ' + steps_l + ' STEPS', 1);
         print(4, 34, pages_l + ' OF 16 PAGES', 1);
+        }
         return;
     }
 
