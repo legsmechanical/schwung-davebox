@@ -1224,6 +1224,14 @@ static void set_param(void *instance, const char *key, const char *val) {
                 dlane->midi_note = (uint8_t)clamp_i(my_atoi(val), 0, 127);
                 return;
             }
+            if (!strcmp(p2, "_clip_length")) {
+                int newlen = clamp_i(my_atoi(val), 1, SEQ_STEPS);
+                dlc->length = (uint16_t)newlen;
+                if (tr->drum_current_step[lane_idx] >= (uint16_t)newlen)
+                    tr->drum_current_step[lane_idx] = 0;
+                seq8_save_state(inst);
+                return;
+            }
 
             /* tN_lL_step_S_toggle  val="vel"
              * Empty step: add lane note, activate. Active: deactivate. Inactive-with-note: reactivate. */
