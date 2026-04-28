@@ -211,22 +211,17 @@ typedef struct {
 /* Drum mode data model                                                */
 /* ------------------------------------------------------------------ */
 
-/* Per-lane, per-clip step data. No pitch (fixed by lane's midi_note). */
+/* One drum lane: single step sequence + pfx. No clip concept — everything is per-lane. */
 typedef struct {
-    uint8_t  steps[SEQ_STEPS];     /* 0=off, 1=on */
-    uint8_t  step_vel[SEQ_STEPS];  /* default SEQ_VEL */
-    uint16_t step_gate[SEQ_STEPS]; /* gate ticks */
-    uint16_t length;               /* 1..256, default 16 */
-    uint16_t ticks_per_step;       /* TPS_VALUES index; default 24 */
-} drum_clip_t;                     /* ~1028 bytes */
-
-/* Per-lane state: 16 clips of step data + one pfx_params shared across clips. */
-typedef struct {
-    drum_clip_t       clips[NUM_CLIPS]; /* per-clip step sequences */
-    clip_pfx_params_t pfx_params;       /* NOTE FX/HARMZ/MIDI DLY; shared across clips */
-    uint8_t           midi_note;        /* fixed MIDI pitch for this lane */
+    uint8_t           steps[SEQ_STEPS];     /* 0=off, 1=on */
+    uint8_t           step_vel[SEQ_STEPS];  /* default SEQ_VEL */
+    uint16_t          step_gate[SEQ_STEPS]; /* gate ticks */
+    uint16_t          length;               /* 1..256, default 16 */
+    uint16_t          ticks_per_step;       /* default TICKS_PER_STEP (24) */
+    clip_pfx_params_t pfx_params;           /* NOTE FX/HARMZ/MIDI DLY */
+    uint8_t           midi_note;            /* fixed MIDI pitch for this lane */
     uint8_t           _pad[3];
-} drum_lane_t;                          /* ~16.6 KB per lane */
+} drum_lane_t;                              /* ~1097 bytes per lane */
 
 /* ------------------------------------------------------------------ */
 /* Clip and track structs                                               */
@@ -1280,25 +1275,19 @@ static void clip_init(clip_t *cl) {
     cl->occ_dirty = 0;
 }
 
-static void drum_clip_init(drum_clip_t *dc) {
-    int s;
-    dc->length        = SEQ_STEPS_DEFAULT;
-    dc->ticks_per_step = TICKS_PER_STEP;
-    for (s = 0; s < SEQ_STEPS; s++) {
-        dc->steps[s]    = 0;
-        dc->step_vel[s] = SEQ_VEL;
-        dc->step_gate[s] = GATE_TICKS;
-    }
-}
-
 static void drum_track_init(seq8_track_t *tr) {
-    int l, c;
+    int l, s;
     for (l = 0; l < DRUM_LANES; l++) {
-        drum_lane_t *lane = &tr->drum_lanes[l];
-        lane->midi_note   = (uint8_t)(DRUM_BASE_NOTE + l);
+        drum_lane_t *lane    = &tr->drum_lanes[l];
+        lane->midi_note      = (uint8_t)(DRUM_BASE_NOTE + l);
+        lane->length         = SEQ_STEPS_DEFAULT;
+        lane->ticks_per_step = TICKS_PER_STEP;
         clip_pfx_params_init(&lane->pfx_params);
-        for (c = 0; c < NUM_CLIPS; c++)
-            drum_clip_init(&lane->clips[c]);
+        for (s = 0; s < SEQ_STEPS; s++) {
+            lane->steps[s]    = 0;
+            lane->step_vel[s] = SEQ_VEL;
+            lane->step_gate[s] = GATE_TICKS;
+        }
     }
 }
 
