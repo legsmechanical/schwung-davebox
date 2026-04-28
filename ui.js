@@ -2155,7 +2155,7 @@ function drawUI() {
         const name      = NOTE_KEYS[note % 12];
         const bankGroup = pg === 0 ? 'Bank A' : 'Bank B';
         const bankName  = activeBank === 1 ? 'SEQ' : BANKS[activeBank].name;
-        print(4, 10, 'KNOB:[' + bankName + ']', 1);
+        print(4, 10, 'KNOB: [' + bankName + ']', 1);
         print(4, 22, bankGroup + '  Pad: ' + name + oct + ' (' + note + ')', 1);
         drawTrackRow(34);
         let drumLine4 = '';
