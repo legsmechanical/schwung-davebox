@@ -410,6 +410,9 @@ let drumLastVelZone   = new Array(NUM_TRACKS).fill(12); /* last selected velocit
 let drumLaneLength    = new Array(NUM_TRACKS).fill(16); /* active lane clip length */
 let drumStepPage      = new Array(NUM_TRACKS).fill(0);  /* current view page for drum step buttons */
 let drumCurrentStep   = new Array(NUM_TRACKS).fill(-1); /* playhead step of active lane */
+/* drumLaneFlashTick[t][l] — tickCount when this lane last fired a hit (for pad flash) */
+let drumLaneFlashTick = Array.from({length: NUM_TRACKS}, () => new Array(DRUM_LANES).fill(-999));
+const DRUM_FLASH_TICKS = 8; /* ~130ms pad flash duration after a drum hit */
 /* drumClipNonEmpty[t][c] — true if any lane in drum clip c of track t has content */
 let drumClipNonEmpty  = Array.from({length: NUM_TRACKS}, () => new Array(NUM_CLIPS).fill(false));
 let trackActiveClip     = new Array(NUM_TRACKS).fill(0);
@@ -1208,6 +1211,19 @@ function pollDSP() {
                 }
             }
         }
+        /* Drum pad flash: poll which lanes are hitting right now (single DSP call bitmask) */
+        if (playing && trackClipPlaying[activeTrack]) {
+            const _maskRaw = host_module_get_param('t' + activeTrack + '_drum_active_lanes');
+            if (_maskRaw !== null) {
+                const _mask = parseInt(_maskRaw, 10) | 0;
+                for (let _fl = 0; _fl < DRUM_LANES; _fl++) {
+                    if (_mask & (1 << _fl)) {
+                        drumLaneFlashTick[activeTrack][_fl] = tickCount;
+                        screenDirty = true;
+                    }
+                }
+            }
+        }
     }
 
     /* SeqFollow: auto-page activeTrack to follow playhead */
@@ -1460,8 +1476,23 @@ function updateStepLEDs() {
         const base = page * 16;
         const len  = drumLaneLength[t];
 
-        /* Drum: show normal step view even while loop held — OOB White LEDs
-         * show the length boundary in real-time as jog adjusts it. */
+        if (loopHeld) {
+            /* Page overview for active drum lane — same layout as melodic */
+            const blink     = Math.floor(tickCount / 24) % 2;
+            const numPages  = Math.max(1, Math.ceil(len / 16));
+            for (let i = 0; i < 16; i++) {
+                if (i >= numPages) { setLED(16 + i, DarkGrey); continue; }
+                let hasNotes = false;
+                for (let s = i * 16; s < (i + 1) * 16; s++) {
+                    if (ls[s] === '1' || ls[s] === '2') { hasNotes = true; break; }
+                }
+                setLED(16 + i, hasNotes
+                    ? (blink ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t])
+                    : TRACK_COLORS[t]);
+            }
+            return;
+        }
+
         for (let i = 0; i < 16; i++) {
             const absStep = base + i;
             let color;
@@ -1666,7 +1697,10 @@ function updateSessionLEDs() {
             const isWillRelaunch = trackWillRelaunch[t] && isActiveClip;
             const isDrumTrack = bankParams[t][0][2] === PAD_MODE_DRUM;
             const hasContent  = isDrumTrack ? drumClipNonEmpty[t][sceneIdx] : clipNonEmpty[t][sceneIdx];
-            const hasActive   = isDrumTrack ? hasContent : clipHasActiveNotes(t, sceneIdx);
+            /* Drum clips show DarkGrey unless actively playing/queued/will-relaunch */
+            const hasActive   = isDrumTrack
+                ? (isPlaying || isQueued || isWillRelaunch)
+                : clipHasActiveNotes(t, sceneIdx);
             let color;
             if (!hasContent) {
                 color = LED_OFF;
@@ -1716,8 +1750,9 @@ function updateTrackLEDs() {
                     const isActive = (lane === selLane);
                     const hasHits  = drumLaneHasNotes[t][lane];
                     const laneNote = drumLaneNote[t][lane];
-                    const sounding = liveActiveNotes.has(laneNote) || seqActiveNotes.has(laneNote);
-                    if (sounding || isActive) color = White;
+                    const sounding = liveActiveNotes.has(laneNote);
+                    const flashing = (tickCount - drumLaneFlashTick[t][lane]) < DRUM_FLASH_TICKS;
+                    if (sounding || isActive || flashing) color = White;
                     else if (hasHits) color = tc;
                     else color = td;
                 } else {
@@ -1762,7 +1797,8 @@ function updateTrackLEDs() {
                 color = TRACK_COLORS[t];
             } else if (!trackClipHasContent(t, sceneIdx)) {
                 color = LED_OFF;
-            } else if (bankParams[t][0][2] !== PAD_MODE_DRUM && !clipHasActiveNotes(t, sceneIdx)) {
+            } else if (bankParams[t][0][2] === PAD_MODE_DRUM || !clipHasActiveNotes(t, sceneIdx)) {
+                /* Drum: non-focused clips always DarkGrey; melodic: DarkGrey if only inactive notes */
                 color = DarkGrey;
             } else {
                 color = TRACK_DIM_COLORS[t];

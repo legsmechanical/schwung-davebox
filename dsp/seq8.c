@@ -1840,6 +1840,18 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
             return snprintf(out, out_len, "%d", (int)tr->pad_octave);
         if (!strcmp(sub, "pad_mode"))
             return snprintf(out, out_len, "%d", (int)tr->pad_mode);
+        if (!strcmp(sub, "drum_active_lanes")) {
+            /* Bitmask of lanes whose current step has an active hit (bit l = lane l). */
+            uint32_t mask = 0;
+            int l;
+            for (l = 0; l < DRUM_LANES; l++) {
+                clip_t *dlc = &tr->drum_clips[tr->active_clip].lanes[l].clip;
+                uint16_t cs = tr->drum_current_step[l];
+                if (dlc->note_count > 0 && cs < SEQ_STEPS && dlc->steps[cs])
+                    mask |= (1u << l);
+            }
+            return snprintf(out, out_len, "%u", mask);
+        }
         /* tN_lL_* — drum lane getters (lane_note, note_count, steps, step_S_*) */
         if (sub[0] == 'l' && sub[1] >= '0' && sub[1] <= '9') {
             int lidx = 0;
