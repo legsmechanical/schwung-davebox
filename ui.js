@@ -2147,32 +2147,28 @@ function drawUI() {
 
     } else if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {
         /* Drum Track View — idle state */
-        const t          = activeTrack;
-        const ac         = effectiveClip(t);
-        const lane       = activeDrumLane[t];
-        const pg         = drumLanePage[t];
-        const note       = drumLaneNote[t][lane];
-        const oct        = Math.floor(note / 12) - 2;
-        const name       = NOTE_KEYS[note % 12];
-        const totalPages = Math.max(1, Math.ceil(drumLaneLength[t] / 16));
-        const curPage    = drumStepPage[t];
-        const bankGroup  = pg === 0 ? 'Bank A' : 'Bank B';
-        const bankName   = activeBank === 1 ? 'SEQ' : BANKS[activeBank].name;
-        print(4, 10, SCENE_LETTERS[ac] + ' \xb7 ' + (lane + 1) + '  PG ' + (curPage + 1) + '/' + totalPages, 1);
-        print(4, 22, 'PAD: ' + name + oct + ' (' + note + ')', 1);
-        print(4, 34, bankGroup + '  KNOB:[' + bankName + ']', 1);
-        drawTrackRow(46);
+        const t         = activeTrack;
+        const ac        = effectiveClip(t);
+        const lane      = activeDrumLane[t];
+        const pg        = drumLanePage[t];
+        const bankGroup = pg === 0 ? 'Bank A' : 'Bank B';
+        const bankName  = activeBank === 1 ? 'SEQ' : BANKS[activeBank].name;
+        print(4, 10, SCENE_LETTERS[ac] + ' \xb7 ' + (lane + 1), 1);
+        print(4, 22, bankGroup + '  KNOB:[' + bankName + ']', 1);
+        drawTrackRow(34);
+        let drumLine4 = '';
+        for (let _t = 0; _t < NUM_TRACKS; _t++) {
+            drumLine4 += SCENE_LETTERS[trackActiveClip[_t]];
+            if (_t < NUM_TRACKS - 1) drumLine4 += ' ';
+        }
+        print(4, 46, drumLine4, 1);
         drawDrumPositionBar(t);
     } else {
         /* State 4: normal Track View */
         const ac         = effectiveClip(activeTrack);
-        const page       = trackCurrentPage[activeTrack];
-        const totalPages = Math.max(1, Math.ceil(clipLength[activeTrack][ac] / 16));
-        /* \xb7 = middle dot · */
-        print(4, 10, 'TR' + (activeTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac] +
-                     '  PG ' + (page + 1) + '/' + totalPages, 1);
         const recTag = (recordArmed && !recordCountingIn && recordArmedTrack === activeTrack)
             ? ' REC' : '';
+        print(4, 10, 'TR' + (activeTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac], 1);
         print(4, 22, 'KNOB: [' + BANKS[activeBank].name + ']' + recTag, 1);
         drawTrackRow(34);
         let line4 = '';
