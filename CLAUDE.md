@@ -4,7 +4,7 @@
 
 ## Session workflow
 
-- **Start of session**: run `~/schwung-docs/update.sh` and report the result. If unsure about a specific platform API or behavior, grep `~/schwung-docs/` rather than assuming.
+- **Start of session**: run `~/schwung-docs/update.sh` and report the result. Read `SESSION_2026-04-28.md` in project root for current drum mode phase status and remaining tasks. If unsure about a specific platform API or behavior, grep `~/schwung-docs/` rather than assuming.
 - **Validate before acting** — read or grep the actual code first. Never act on assumptions.
 - **Commit after each logical change** — work directly on master, one commit per change.
 - **Deploy and verify on device before reporting done** — always build+install and confirm on Move.
@@ -99,7 +99,7 @@ Phases 0–4, 5a–5z-e, unquantized-recording A–L, Post-A–L (complete): ful
 
 ## Upcoming tasks
 
-1. **Drum mode (in progress)** — phases 1–3 done, phase 4 done except step-edit overlay, phase 5 partial (K2/K3 per-lane missing), phase 6 (live recording JS) todo, phase 7 (mode-switch dialogs + DSP convert params) todo, phase 8 partial (UI sidecar activeDrumLane missing). Remaining: step-edit overlay (Vel+Dur in drum), per-lane mute/solo, DRUM SEQ K2/K3 per-lane, live recording (`onMidiMessageExternal` drum routing + pad recording), mode-switch confirmation dialog + `tN_convert_to_drum` / `tN_convert_to_melodic`, sidecar `activeDrumLane[]`.
+1. **Drum mode (in progress)** — phases 1–3 done, phase 4 done except step-edit overlay, phase 5 partial (K2/K3 per-lane missing), phase 6 (live recording JS) todo, phase 7 (mode-switch dialogs + DSP convert params) todo, phase 8 partial (UI sidecar activeDrumLane missing). Remaining: step-edit overlay (Vel+Dur in drum), per-lane mute/solo, DRUM SEQ K2/K3 per-lane, DRUM SEQ Shift+K4 resolution zoom per-lane, pfx banks (NOTE FX/HARMZ/MIDI DLY) wired to selected lane's `pfx_params`, live recording (`onMidiMessageExternal` drum routing + pad recording), mode-switch confirmation dialog + `tN_convert_to_drum` / `tN_convert_to_melodic`, sidecar `activeDrumLane[]`.
 2. **Scale-aware key/scale changes** — global option: changing Key/Scale transposes all clip notes to fit new scale. Design TBD.
 3. **Step/note editing fixes** — see pending fixes in planning doc.
 4. MIDI Delay Rnd refinement · 5. Full instance reset · 6. State snapshots (16 slots) · 7. Arpeggiator · 8. Swing (wire stub) · 9. MIDI clock sync
