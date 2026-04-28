@@ -1342,6 +1342,26 @@ static void set_param(void *instance, const char *key, const char *val) {
                 return;
             }
 
+            if (!strcmp(p2, "_loop_double_fill")) {
+                int len = (int)dlc->length;
+                int i;
+                if (len * 2 > SEQ_STEPS) return;
+                for (i = 0; i < len; i++) {
+                    dlc->steps[len + i]           = dlc->steps[i];
+                    memcpy(dlc->step_notes[len + i], dlc->step_notes[i], 8);
+                    dlc->step_note_count[len + i] = dlc->step_note_count[i];
+                    dlc->step_vel[len + i]        = dlc->step_vel[i];
+                    dlc->step_gate[len + i]       = dlc->step_gate[i];
+                    memcpy(dlc->note_tick_offset[len + i], dlc->note_tick_offset[i], 8 * sizeof(int16_t));
+                }
+                dlc->length = (uint16_t)(len * 2);
+                if (tr->drum_current_step[lane_idx] >= dlc->length)
+                    tr->drum_current_step[lane_idx] = (uint16_t)(dlc->length - 1);
+                clip_migrate_to_notes(dlc);
+                seq8_save_state(inst);
+                return;
+            }
+
             if (!strcmp(p2, "_clip_resolution")) {
                 int idx = clamp_i(my_atoi(val), 0, 5);
                 uint16_t new_tps = TPS_VALUES[idx];

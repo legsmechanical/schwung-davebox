@@ -1238,7 +1238,7 @@ function pollDSP() {
             }
         }
         /* Drum SeqFollow: auto-page to follow playhead */
-        if (playing && trackClipPlaying[activeTrack]) {
+        if (playing && trackClipPlaying[activeTrack] && clipSeqFollow[activeTrack][effectiveClip(activeTrack)]) {
             const _dcs = drumCurrentStep[activeTrack];
             if (_dcs >= 0) {
                 const _newPage = Math.floor(_dcs / 16);
@@ -2962,22 +2962,36 @@ globalThis.onMidiMessageInternal = function (data) {
         /* Loop button (CC 58): hold + step buttons sets clip length */
         if (d1 === MoveLoop && !sessionView) {
             if (d2 === 127 && shiftHeld) {
-                /* Shift+Loop: double-and-fill active clip */
-                const _t  = activeTrack;
-                const _ac = effectiveClip(_t);
-                const _len = clipLength[_t][_ac];
-                if (_len * 2 > 256) {
-                    showActionPopup('CLIP FULL');
+                /* Shift+Loop: double-and-fill active clip or drum lane */
+                const _t = activeTrack;
+                if (bankParams[_t][0][2] === PAD_MODE_DRUM) {
+                    const _l   = activeDrumLane[_t];
+                    const _len = drumLaneLength[_t];
+                    if (_len * 2 > 256) {
+                        showActionPopup('CLIP FULL');
+                    } else {
+                        host_module_set_param('t' + _t + '_l' + _l + '_loop_double_fill', '1');
+                        drumLaneLength[_t] = _len * 2;
+                        pendingDrumResync      = 2;
+                        pendingDrumResyncTrack = _t;
+                        forceRedraw();
+                    }
                 } else {
-                    undoAvailable = true; redoAvailable = false; undoSeqArpSnapshot = null;
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + _t + '_loop_double_fill', '1');
-                    clipLength[_t][_ac] = _len * 2;
-                    pendingStepsReread      = 2;
-                    pendingStepsRereadTrack = _t;
-                    pendingStepsRereadClip  = _ac;
-                    refreshPerClipBankParams(_t);
-                    forceRedraw();
+                    const _ac  = effectiveClip(_t);
+                    const _len = clipLength[_t][_ac];
+                    if (_len * 2 > 256) {
+                        showActionPopup('CLIP FULL');
+                    } else {
+                        undoAvailable = true; redoAvailable = false; undoSeqArpSnapshot = null;
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + _t + '_loop_double_fill', '1');
+                        clipLength[_t][_ac] = _len * 2;
+                        pendingStepsReread      = 2;
+                        pendingStepsRereadTrack = _t;
+                        pendingStepsRereadClip  = _ac;
+                        refreshPerClipBankParams(_t);
+                        forceRedraw();
+                    }
                 }
                 return;
             }
@@ -3153,12 +3167,20 @@ globalThis.onMidiMessageInternal = function (data) {
 
         /* Left/Right: page nav in Track View */
         if ((d1 === MoveLeft || d1 === MoveRight) && d2 === 127 && !sessionView) {
-            const ac         = effectiveClip(activeTrack);
-            const totalPages = Math.max(1, Math.ceil(clipLength[activeTrack][ac] / 16));
-            if (d1 === MoveLeft)
-                trackCurrentPage[activeTrack] = Math.max(0, trackCurrentPage[activeTrack] - 1);
-            else
-                trackCurrentPage[activeTrack] = Math.min(totalPages - 1, trackCurrentPage[activeTrack] + 1);
+            if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {
+                const totalPages = Math.max(1, Math.ceil(drumLaneLength[activeTrack] / 16));
+                if (d1 === MoveLeft)
+                    drumStepPage[activeTrack] = Math.max(0, drumStepPage[activeTrack] - 1);
+                else
+                    drumStepPage[activeTrack] = Math.min(totalPages - 1, drumStepPage[activeTrack] + 1);
+            } else {
+                const ac         = effectiveClip(activeTrack);
+                const totalPages = Math.max(1, Math.ceil(clipLength[activeTrack][ac] / 16));
+                if (d1 === MoveLeft)
+                    trackCurrentPage[activeTrack] = Math.max(0, trackCurrentPage[activeTrack] - 1);
+                else
+                    trackCurrentPage[activeTrack] = Math.min(totalPages - 1, trackCurrentPage[activeTrack] + 1);
+            }
             screenDirty = true;
         }
 
