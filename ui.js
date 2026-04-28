@@ -832,10 +832,6 @@ function flushChordBatch() {}
  * chords (multiple pads hit in the same ~5ms JS tick) are not lost to coalescing. */
 const _recordingNoteTrack = new Map(); /* pitch → track index, for matching note-offs */
 const extHeldNotes = new Map(); /* pitch → {track, recording} — external MIDI held notes */
-/* One refcount per pitch for in-flight ROUTE_MOVE inject echoes. Incremented when a
- * note-on from onMidiMessageExternal will cause a midi_inject_to_move; decremented+dropped
- * when the Move echo arrives back. Prevents cascade: inject → echo → re-inject → ... */
-const _echoOnRefcount = new Uint8Array(128);
 
 function recordNoteOn(pitch, velocity, rt) {
     _recordingNoteTrack.set(pitch, rt);
@@ -3560,16 +3556,16 @@ globalThis.onMidiMessageExternal = function (data) {
 
     const t = activeTrack;
 
+    /* ROUTE_MOVE: Move receives external cable-2 MIDI natively in overtake mode.
+     * Never inject — injecting causes an echo cascade (Move echoes cable-2 back
+     * as cable-2, we re-inject, infinite loop → crash). */
+    const routeIsMove = bankParams[t][0][1] === 1;
+
     if (msgType === 0x90 && d2 > 0) {
-        if (bankParams[t][0][1] === 1) {
-            /* ROUTE_MOVE echo filter: drop if this is an echo of our own inject. */
-            if (_echoOnRefcount[d1] > 0) { _echoOnRefcount[d1]--; return; }
-            _echoOnRefcount[d1]++;
-        }
         const vel = effectiveVelocity(d2);
         lastPlayedNote  = d1;
         lastPadVelocity = vel;
-        liveSendNote(t, 0x90, d1, vel);
+        if (!routeIsMove) liveSendNote(t, 0x90, d1, vel);
         const isRec = recordArmed && !recordCountingIn && t === recordArmedTrack;
         if (isRec) recordNoteOn(d1, vel, t);
         extHeldNotes.set(d1, { track: t, recording: isRec });
@@ -3597,10 +3593,11 @@ globalThis.onMidiMessageExternal = function (data) {
         }
     } else if (msgType === 0x80 || (msgType === 0x90 && d2 === 0)) {
         const info = extHeldNotes.get(d1);
-        liveSendNote(info ? info.track : t, 0x80, d1, 0);
+        const noteTrack = info ? info.track : t;
+        if (bankParams[noteTrack][0][1] !== 1) liveSendNote(noteTrack, 0x80, d1, 0);
         if (info && info.recording) recordNoteOff(d1);
         extHeldNotes.delete(d1);
     } else if (msgType === 0xB0 || msgType === 0xD0 || msgType === 0xA0 || msgType === 0xE0) {
-        liveSendNote(t, msgType, d1, d2);
+        if (!routeIsMove) liveSendNote(t, msgType, d1, d2);
     }
 };
