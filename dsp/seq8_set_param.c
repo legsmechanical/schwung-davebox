@@ -67,6 +67,32 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
         clip_pfx_params_init(cp);
         return;
     }
+    if (!strcmp(key, "pfx_noteFx_reset")) {
+        fx->octave_shift    = 0; cp->octave_shift    = 0;
+        fx->note_offset     = 0; cp->note_offset     = 0;
+        fx->gate_time       = 100; cp->gate_time       = 100;
+        fx->velocity_offset = 0; cp->velocity_offset = 0;
+        fx->quantize        = 0; cp->quantize        = 0;
+        return;
+    }
+    if (!strcmp(key, "pfx_harm_reset")) {
+        fx->unison      = 0; cp->unison      = 0;
+        fx->octaver     = 0; cp->octaver     = 0;
+        fx->harmonize_1 = 0; cp->harmonize_1 = 0;
+        fx->harmonize_2 = 0; cp->harmonize_2 = 0;
+        return;
+    }
+    if (!strcmp(key, "pfx_delay_reset")) {
+        fx->delay_time_idx  = 0; cp->delay_time_idx  = 0;
+        fx->delay_level     = 0; cp->delay_level     = 0;
+        fx->repeat_times    = 0; cp->repeat_times    = 0;
+        fx->fb_velocity     = 0; cp->fb_velocity     = 0;
+        fx->fb_note         = 0; cp->fb_note         = 0;
+        fx->fb_note_random  = 0; cp->fb_note_random  = 0;
+        fx->fb_gate_time    = 0; cp->fb_gate_time    = 0;
+        fx->fb_clock        = 0; cp->fb_clock        = 0;
+        return;
+    }
 
     if (!strcmp(key, "print")) {
         if (!strcmp(val, "1") && !inst->printing) {
@@ -146,6 +172,8 @@ static void set_param(void *instance, const char *key, const char *val) {
                     inst->tracks[t].tick_in_step      = 0;
                     inst->tracks[t].note_active        = 0;
                     inst->tracks[t].pfx.sample_counter = 0;
+                    memset(inst->tracks[t].drum_current_step, 0, sizeof(inst->tracks[t].drum_current_step));
+                    memset(inst->tracks[t].drum_tick_in_step,  0, sizeof(inst->tracks[t].drum_tick_in_step));
                     if (inst->tracks[t].will_relaunch) {
                         inst->tracks[t].clip_playing      = 1;
                         inst->tracks[t].will_relaunch     = 0;
@@ -376,6 +404,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 tr2->next_early_mask     = 0;
                 for (c2 = 0; c2 < NUM_CLIPS; c2++)
                     clip_init(&tr2->clips[c2]);
+                drum_track_init(tr2);
             }
         }
         seq8_load_state(inst);
@@ -1205,7 +1234,108 @@ static void set_param(void *instance, const char *key, const char *val) {
             return;
         }
         if (!strcmp(sub, "pad_mode")) {
-            tr->pad_mode = (uint8_t)clamp_i(my_atoi(val), 0, 0);
+            tr->pad_mode = (uint8_t)clamp_i(my_atoi(val), 0, 1);
+            return;
+        }
+
+        /* tN_lL_* — drum lane setters */
+        if (sub[0] == 'l' && sub[1] >= '0' && sub[1] <= '9') {
+            int lane_idx = 0;
+            const char *p2 = sub + 1;
+            while (*p2 >= '0' && *p2 <= '9') { lane_idx = lane_idx * 10 + (*p2 - '0'); p2++; }
+            if (lane_idx < 0 || lane_idx >= DRUM_LANES) return;
+            drum_lane_t *dlane = &tr->drum_clips[tr->active_clip].lanes[lane_idx];
+            clip_t      *dlc   = &dlane->clip;
+
+            if (!strcmp(p2, "_lane_note")) {
+                dlane->midi_note = (uint8_t)clamp_i(my_atoi(val), 0, 127);
+                return;
+            }
+            if (!strcmp(p2, "_clip_length")) {
+                int newlen = clamp_i(my_atoi(val), 1, SEQ_STEPS);
+                dlc->length = (uint16_t)newlen;
+                if (tr->drum_current_step[lane_idx] >= (uint16_t)newlen)
+                    tr->drum_current_step[lane_idx] = 0;
+                seq8_save_state(inst);
+                return;
+            }
+            if (!strcmp(p2, "_clear")) {
+                /* tN_lL_clear — wipe all steps in this drum lane */
+                int i;
+                for (i = 0; i < SEQ_STEPS; i++) {
+                    dlc->steps[i] = 0;
+                    memset(dlc->step_notes[i], 0, 8);
+                    dlc->step_note_count[i] = 0;
+                    dlc->step_vel[i]  = (uint8_t)SEQ_VEL;
+                    dlc->step_gate[i] = (uint16_t)GATE_TICKS;
+                    memset(dlc->note_tick_offset[i], 0, 8 * sizeof(int16_t));
+                }
+                dlc->active    = 0;
+                dlc->note_count = 0;
+                memset(dlc->notes, 0, sizeof(dlc->notes));
+                dlc->occ_dirty = 1;
+                seq8_save_state(inst);
+                return;
+            }
+
+            /* tN_lL_step_S_toggle  val="vel"
+             * Empty step: add lane note, activate. Active: deactivate. Inactive-with-note: reactivate. */
+            if (!strncmp(p2, "_step_", 6)) {
+                const char *q = p2 + 6;
+                int sidx = 0;
+                while (*q >= '0' && *q <= '9') { sidx = sidx * 10 + (*q++ - '0'); }
+                if (sidx < 0 || sidx >= SEQ_STEPS) return;
+
+                if (!strcmp(q, "_toggle")) {
+                    int vel = clamp_i(my_atoi(val), 1, 127);
+                    if (vel == 0) vel = SEQ_VEL;
+                    if (dlc->step_note_count[sidx] == 0) {
+                        /* Empty: add lane note and activate */
+                        dlc->step_notes[sidx][0]       = dlane->midi_note;
+                        dlc->step_note_count[sidx]      = 1;
+                        dlc->step_vel[sidx]             = (uint8_t)vel;
+                        dlc->step_gate[sidx]            = (uint16_t)GATE_TICKS;
+                        dlc->note_tick_offset[sidx][0]  = 0;
+                        dlc->steps[sidx]                = 1;
+                    } else {
+                        /* Has note: toggle active/inactive */
+                        dlc->steps[sidx] = dlc->steps[sidx] ? 0 : 1;
+                    }
+                    { int i, any = 0;
+                      for (i = 0; i < SEQ_STEPS; i++) if (dlc->steps[i]) { any = 1; break; }
+                      dlc->active = (uint8_t)any; }
+                    clip_migrate_to_notes(dlc);
+                    seq8_save_state(inst);
+                    return;
+                }
+                if (!strcmp(q, "_clear")) {
+                    dlc->steps[sidx]          = 0;
+                    dlc->step_note_count[sidx] = 0;
+                    dlc->step_vel[sidx]        = (uint8_t)SEQ_VEL;
+                    dlc->step_gate[sidx]       = (uint16_t)GATE_TICKS;
+                    memset(dlc->note_tick_offset[sidx], 0, sizeof(dlc->note_tick_offset[sidx]));
+                    { int i, any = 0;
+                      for (i = 0; i < SEQ_STEPS; i++) if (dlc->steps[i]) { any = 1; break; }
+                      dlc->active = (uint8_t)any; }
+                    clip_migrate_to_notes(dlc);
+                    seq8_save_state(inst);
+                    return;
+                }
+                if (!strcmp(q, "_vel")) {
+                    if (dlc->step_note_count[sidx] == 0) return;
+                    dlc->step_vel[sidx] = (uint8_t)clamp_i(my_atoi(val), 0, 127);
+                    clip_migrate_to_notes(dlc);
+                    seq8_save_state(inst);
+                    return;
+                }
+                if (!strcmp(q, "_gate")) {
+                    if (dlc->step_note_count[sidx] == 0) return;
+                    dlc->step_gate[sidx] = (uint16_t)clamp_i(my_atoi(val), 1, 65535);
+                    clip_migrate_to_notes(dlc);
+                    seq8_save_state(inst);
+                    return;
+                }
+            }
             return;
         }
 
@@ -1737,8 +1867,9 @@ static void set_param(void *instance, const char *key, const char *val) {
             return;
         }
 
-        /* Snapshot before full pfx reset */
-        if (!strcmp(sub, "pfx_reset"))
+        /* Snapshot before pfx reset commands */
+        if (!strcmp(sub, "pfx_reset") || !strcmp(sub, "pfx_noteFx_reset") ||
+            !strcmp(sub, "pfx_harm_reset") || !strcmp(sub, "pfx_delay_reset"))
             undo_begin_single(inst, tidx, (int)tr->active_clip);
         /* All play effects params */
         pfx_set(inst, tr, sub, val);

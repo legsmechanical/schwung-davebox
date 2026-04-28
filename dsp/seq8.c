@@ -45,6 +45,13 @@ typedef struct { uint8_t s; uint8_t d1; uint8_t d2; } ext_msg_t;
 
 /* Pad input modes */
 #define PAD_MODE_MELODIC_SCALE  0   /* isomorphic 4ths diatonic layout */
+#define PAD_MODE_DRUM           1   /* 32-lane drum sequencer */
+
+/* Drum mode */
+#define DRUM_LANES          32
+/* Baseline MIDI note for lane 0 — standard Ableton Drum Rack layout.
+ * Lane L plays note (DRUM_BASE_NOTE + L). Verify against live device before shipping. */
+#define DRUM_BASE_NOTE      36
 
 /* Scale-aware play effects: interval tables matching JS SCALE_INTERVALS order */
 static const uint8_t SCALE_IVLS[14][8] = {
@@ -232,6 +239,27 @@ typedef struct {
     uint8_t  occ_dirty;          /* 1 = occ_cache needs recomputation */
 } clip_t;
 
+/* ------------------------------------------------------------------ */
+/* Drum mode data model                                                */
+/* ------------------------------------------------------------------ */
+
+/* One drum lane: a full monophonic melodic clip (all clip machinery reused) plus a
+ * fixed base pitch. All params (length, tps, pfx, gate, vel, nudge) live here — there
+ * are no container-wide params. pfx applies at render time so harmonize/delay can
+ * sound other pitches beyond midi_note. */
+typedef struct {
+    clip_t  clip;       /* full clip_t — notes[], step arrays, length, tps, pfx_params */
+    uint8_t midi_note;  /* base pitch written into every note at step-entry/record time */
+    uint8_t _pad[3];
+} drum_lane_t;          /* sizeof(clip_t) + 4 ≈ 13.7 KB */
+
+/* A drum clip is a container of 32 independent monophonic lanes. It appears and
+ * behaves like a melodic clip for launch, cut/copy/paste, session view, and undo,
+ * but has no container-wide params — everything is per-lane. */
+typedef struct {
+    drum_lane_t lanes[DRUM_LANES];
+} drum_clip_t;          /* DRUM_LANES × ~13.7 KB ≈ 438 KB */
+
 typedef struct {
     uint8_t   channel;              /* MIDI channel 0-3 */
     clip_t    clips[NUM_CLIPS];
@@ -270,6 +298,14 @@ typedef struct {
     uint32_t tick_in_step;
     /* Atomic render-state snapshot for set_param timing reads */
     uint32_t current_clip_tick;     /* current_step * TPS + tick_in_step; written each render tick */
+
+    /* Drum mode: 16 clips, each containing 32 monophonic lanes.
+     * Active when pad_mode == PAD_MODE_DRUM. active_clip/queued_clip/clip_playing
+     * apply to drum_clips[] exactly as they do to clips[] in melodic mode. */
+    drum_clip_t drum_clips[NUM_CLIPS];
+    /* Per-lane render-state tick counters (not persisted; reset on transport play/clip launch). */
+    uint16_t drum_current_step[DRUM_LANES];
+    uint32_t drum_tick_in_step[DRUM_LANES];
 } seq8_track_t;
 #define LRS_SET(tr, s)  ((tr)->live_recorded_steps[(s)>>3] |=  (uint8_t)(1u<<((s)&7)))
 #define LRS_TEST(tr, s) ((tr)->live_recorded_steps[(s)>>3] &   (1u<<((s)&7)))
@@ -472,7 +508,7 @@ static void seq8_save_state(seq8_instance_t *inst) {
     FILE *fp = fopen(inst->state_path, "w");
     if (!fp) return;
     int t, c;
-    fprintf(fp, "{\"v\":13,\"playing\":%d", inst->playing);
+    fprintf(fp, "{\"v\":14,\"playing\":%d", inst->playing);
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
     for (t = 0; t < NUM_TRACKS; t++)
@@ -532,6 +568,38 @@ static void seq8_save_state(seq8_instance_t *inst) {
             }
         }
     }
+    /* Drum lane data (sparse — only drum-mode tracks, only lanes with notes) */
+    for (t = 0; t < NUM_TRACKS; t++) {
+        if (inst->tracks[t].pad_mode != PAD_MODE_DRUM) continue;
+        for (c = 0; c < NUM_CLIPS; c++) {
+            int l;
+            for (l = 0; l < DRUM_LANES; l++) {
+                drum_lane_t *dl = &inst->tracks[t].drum_clips[c].lanes[l];
+                clip_t *dlc = &dl->clip;
+                uint16_t ni;
+                int has_active = 0;
+                for (ni = 0; ni < dlc->note_count; ni++)
+                    if (dlc->notes[ni].active) { has_active = 1; break; }
+                if (!has_active) continue;
+                if (dl->midi_note != (uint8_t)(DRUM_BASE_NOTE + l))
+                    fprintf(fp, ",\"t%dc%dl%d_mn\":%d", t, c, l, (int)dl->midi_note);
+                if (dlc->length != SEQ_STEPS_DEFAULT)
+                    fprintf(fp, ",\"t%dc%dl%d_len\":%d", t, c, l, (int)dlc->length);
+                if (dlc->ticks_per_step != TICKS_PER_STEP)
+                    fprintf(fp, ",\"t%dc%dl%d_tps\":%d", t, c, l, (int)dlc->ticks_per_step);
+                int wrote = 0;
+                for (ni = 0; ni < dlc->note_count; ni++) {
+                    note_t *n = &dlc->notes[ni];
+                    if (!n->active) continue;
+                    if (!wrote) { fprintf(fp, ",\"t%dc%dl%d_n\":\"", t, c, l); wrote = 1; }
+                    fprintf(fp, "%u:%d:%d:%d:%d;",
+                            (unsigned)n->tick, (int)n->pitch,
+                            (int)n->vel, (int)n->gate, (int)n->step_muted);
+                }
+                if (wrote) fputc('"', fp);
+            }
+        }
+    }
     /* Mute/solo state */
     fprintf(fp, ",\"mute\":\"");
     for (t = 0; t < NUM_TRACKS; t++) fputc(inst->mute[t] ? '1' : '0', fp);
@@ -584,12 +652,15 @@ static void seq8_load_state(seq8_instance_t *inst) {
     if (!n) { free(buf); remove(inst->state_path); return; }
     buf[n] = '\0';
 
-    /* Version gate: delete and ignore any state file that isn't v=13. */
-    if (json_get_int(buf, "v", -1) != 13) {
-        free(buf);
-        remove(inst->state_path);
-        seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
-        return;
+    /* Version gate: accept v=13 (no drum data) and v=14 (drum data). */
+    {
+        int sv = json_get_int(buf, "v", -1);
+        if (sv != 13 && sv != 14) {
+            free(buf);
+            remove(inst->state_path);
+            seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
+            return;
+        }
     }
 
     int t, c;
@@ -699,7 +770,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
     /* Per-track: pad_mode (route/channel already loaded above) */
     for (t = 0; t < NUM_TRACKS; t++) {
         snprintf(key, sizeof(key), "t%d_pm", t);
-        inst->tracks[t].pad_mode = (uint8_t)clamp_i(json_get_int(buf, key, 0), 0, 0);
+        inst->tracks[t].pad_mode = (uint8_t)clamp_i(json_get_int(buf, key, 0), 0, 1);
     }
     /* Per-clip play-effect params (sparse — missing keys default to neutral) */
     for (t = 0; t < NUM_TRACKS; t++) {
@@ -741,6 +812,72 @@ static void seq8_load_state(seq8_instance_t *inst) {
             p2->fb_clock        = clamp_i(json_get_int(buf, key,   0),  -100, 100);
         }
     }
+    /* Drum lane data (v=14 only; v=13 files have no drum keys, loops are no-ops) */
+    for (t = 0; t < NUM_TRACKS; t++) {
+        if (inst->tracks[t].pad_mode != PAD_MODE_DRUM) continue;
+        for (c = 0; c < NUM_CLIPS; c++) {
+            int l;
+            for (l = 0; l < DRUM_LANES; l++) {
+                drum_lane_t *dl = &inst->tracks[t].drum_clips[c].lanes[l];
+                clip_t *dlc = &dl->clip;
+                char search[48];
+                snprintf(search, sizeof(search), "\"t%dc%dl%d_n\":\"", t, c, l);
+                if (!strstr(buf, search)) continue;
+                snprintf(key, sizeof(key), "t%dc%dl%d_mn", t, c, l);
+                dl->midi_note = (uint8_t)clamp_i(
+                    json_get_int(buf, key, DRUM_BASE_NOTE + l), 0, 127);
+                snprintf(key, sizeof(key), "t%dc%dl%d_len", t, c, l);
+                dlc->length = (uint16_t)clamp_i(
+                    json_get_int(buf, key, SEQ_STEPS_DEFAULT), 1, SEQ_STEPS);
+                snprintf(key, sizeof(key), "t%dc%dl%d_tps", t, c, l);
+                {
+                    int raw_tps = json_get_int(buf, key, (int)TICKS_PER_STEP);
+                    int vi, valid = 0;
+                    for (vi = 0; vi < 6; vi++)
+                        if (raw_tps == (int)TPS_VALUES[vi]) { valid = 1; break; }
+                    dlc->ticks_per_step = valid ? (uint16_t)raw_tps : TICKS_PER_STEP;
+                }
+                {
+                    const char *p = strstr(buf, search);
+                    p += strlen(search);
+                    uint32_t max_tick = (uint32_t)dlc->length * dlc->ticks_per_step;
+                    while (*p && *p != '"') {
+                        unsigned long tick_val = 0;
+                        while (*p >= '0' && *p <= '9')
+                            tick_val = tick_val * 10 + (unsigned long)(*p++ - '0');
+                        if (*p != ':') { while (*p && *p != ';' && *p != '"') p++; if (*p==';') p++; continue; }
+                        p++;
+                        int pitch_val = 0;
+                        while (*p >= '0' && *p <= '9') pitch_val = pitch_val*10 + (*p++ - '0');
+                        if (*p != ':') { while (*p && *p != ';' && *p != '"') p++; if (*p==';') p++; continue; }
+                        p++;
+                        int vel_val = 0;
+                        while (*p >= '0' && *p <= '9') vel_val = vel_val*10 + (*p++ - '0');
+                        if (*p != ':') { while (*p && *p != ';' && *p != '"') p++; if (*p==';') p++; continue; }
+                        p++;
+                        int gate_val = 0;
+                        while (*p >= '0' && *p <= '9') gate_val = gate_val*10 + (*p++ - '0');
+                        int sm_val = 0;
+                        if (*p == ':') {
+                            p++;
+                            while (*p >= '0' && *p <= '9') sm_val = sm_val*10 + (*p++ - '0');
+                        }
+                        if (*p == ';') p++;
+                        if ((uint32_t)tick_val < max_tick) {
+                            int gmax_ld = SEQ_STEPS * dlc->ticks_per_step;
+                            if (gmax_ld > 65535) gmax_ld = 65535;
+                            int ni_idx = clip_insert_note(dlc, (uint32_t)tick_val,
+                                             (uint16_t)clamp_i(gate_val, 1, gmax_ld),
+                                             (uint8_t)clamp_i(pitch_val, 0, 127),
+                                             (uint8_t)clamp_i(vel_val, 0, 127));
+                            if (ni_idx >= 0 && sm_val)
+                                dlc->notes[ni_idx].step_muted = 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
     /* Global settings */
     inst->pad_key      = (uint8_t)clamp_i(json_get_int(buf, "key",   9), 0, 11);
     inst->pad_scale    = (uint8_t)clamp_i(json_get_int(buf, "scale", 1), 0, 13);
@@ -765,6 +902,15 @@ static void seq8_load_state(seq8_instance_t *inst) {
     for (t = 0; t < NUM_TRACKS; t++)
         for (c = 0; c < NUM_CLIPS; c++)
             clip_build_steps_from_notes(&inst->tracks[t].clips[c]);
+    for (t = 0; t < NUM_TRACKS; t++) {
+        if (inst->tracks[t].pad_mode != PAD_MODE_DRUM) continue;
+        for (c = 0; c < NUM_CLIPS; c++) {
+            int l;
+            for (l = 0; l < DRUM_LANES; l++)
+                clip_build_steps_from_notes(
+                    &inst->tracks[t].drum_clips[c].lanes[l].clip);
+        }
+    }
     /* Sync each track's tr->pfx params from its active clip's pfx_params */
     for (t = 0; t < NUM_TRACKS; t++)
         pfx_sync_from_clip(&inst->tracks[t]);
@@ -1204,25 +1350,28 @@ static void clip_pfx_params_init(clip_pfx_params_t *p) {
 /* Copy per-clip pfx params from active clip into tr->pfx (the render surface).
  * Call this whenever active_clip changes so the render path always sees the
  * correct clip's params via tr->pfx. */
+static void pfx_apply_params(play_fx_t *fx, const clip_pfx_params_t *p) {
+    fx->octave_shift    = p->octave_shift;
+    fx->note_offset     = p->note_offset;
+    fx->gate_time       = p->gate_time;
+    fx->velocity_offset = p->velocity_offset;
+    fx->quantize        = p->quantize;
+    fx->unison          = p->unison;
+    fx->octaver         = p->octaver;
+    fx->harmonize_1     = p->harmonize_1;
+    fx->harmonize_2     = p->harmonize_2;
+    fx->delay_time_idx  = p->delay_time_idx;
+    fx->delay_level     = p->delay_level;
+    fx->repeat_times    = p->repeat_times;
+    fx->fb_velocity     = p->fb_velocity;
+    fx->fb_note         = p->fb_note;
+    fx->fb_note_random  = p->fb_note_random;
+    fx->fb_gate_time    = p->fb_gate_time;
+    fx->fb_clock        = p->fb_clock;
+}
+
 static void pfx_sync_from_clip(seq8_track_t *tr) {
-    const clip_pfx_params_t *p = &tr->clips[tr->active_clip].pfx_params;
-    tr->pfx.octave_shift    = p->octave_shift;
-    tr->pfx.note_offset     = p->note_offset;
-    tr->pfx.gate_time       = p->gate_time;
-    tr->pfx.velocity_offset = p->velocity_offset;
-    tr->pfx.quantize        = p->quantize;
-    tr->pfx.unison          = p->unison;
-    tr->pfx.octaver         = p->octaver;
-    tr->pfx.harmonize_1     = p->harmonize_1;
-    tr->pfx.harmonize_2     = p->harmonize_2;
-    tr->pfx.delay_time_idx  = p->delay_time_idx;
-    tr->pfx.delay_level     = p->delay_level;
-    tr->pfx.repeat_times    = p->repeat_times;
-    tr->pfx.fb_velocity     = p->fb_velocity;
-    tr->pfx.fb_note         = p->fb_note;
-    tr->pfx.fb_note_random  = p->fb_note_random;
-    tr->pfx.fb_gate_time    = p->fb_gate_time;
-    tr->pfx.fb_clock        = p->fb_clock;
+    pfx_apply_params(&tr->pfx, &tr->clips[tr->active_clip].pfx_params);
 }
 
 static void clip_init(clip_t *cl) {
@@ -1246,6 +1395,17 @@ static void clip_init(clip_t *cl) {
     memset(cl->notes, 0, sizeof(cl->notes));
     memset(cl->occ_cache, 0, sizeof(cl->occ_cache));
     cl->occ_dirty = 0;
+}
+
+static void drum_track_init(seq8_track_t *tr) {
+    int c, l;
+    for (c = 0; c < NUM_CLIPS; c++) {
+        for (l = 0; l < DRUM_LANES; l++) {
+            drum_lane_t *lane = &tr->drum_clips[c].lanes[l];
+            clip_init(&lane->clip);
+            lane->midi_note = (uint8_t)(DRUM_BASE_NOTE + l);
+        }
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1478,6 +1638,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
         inst->tracks[t].pad_mode    = PAD_MODE_MELODIC_SCALE;
         for (c = 0; c < NUM_CLIPS; c++)
             clip_init(&inst->tracks[t].clips[c]);
+        drum_track_init(&inst->tracks[t]);
         pfx_init_defaults(&inst->tracks[t].pfx);
         /* Default routing: tracks 1-4 → Move (ch 1-4), tracks 5-8 → Schwung (ch 5-8) */
         if (t < 4) inst->tracks[t].pfx.route = ROUTE_MOVE;
@@ -1498,10 +1659,10 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     {
         char szlog[128];
         snprintf(szlog, sizeof(szlog),
-                 "SEQ8 Phase 5 init: sizeof=%zu get_bpm=%s get_clock_status=%s bpm=%.1f",
+                 "SEQ8 drum-mode init: sizeof_inst=%zu sizeof_drum_clip=%zu get_bpm=%s bpm=%.1f",
                  sizeof(seq8_instance_t),
+                 sizeof(drum_clip_t),
                  (g_host && g_host->get_bpm) ? "ok" : "null",
-                 (g_host && g_host->get_clock_status) ? "ok" : "null",
                  inst->tracks[0].pfx.cached_bpm);
         seq8_ilog(inst, szlog);
     }
@@ -1789,6 +1950,81 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
             return snprintf(out, out_len, "%d", (int)tr->pad_octave);
         if (!strcmp(sub, "pad_mode"))
             return snprintf(out, out_len, "%d", (int)tr->pad_mode);
+        if (!strcmp(sub, "drum_active_lanes")) {
+            /* Bitmask of lanes whose current step has an active hit (bit l = lane l). */
+            uint32_t mask = 0;
+            int l;
+            for (l = 0; l < DRUM_LANES; l++) {
+                clip_t *dlc = &tr->drum_clips[tr->active_clip].lanes[l].clip;
+                uint16_t cs = tr->drum_current_step[l];
+                if (dlc->note_count > 0 && cs < SEQ_STEPS && dlc->steps[cs])
+                    mask |= (1u << l);
+            }
+            return snprintf(out, out_len, "%u", mask);
+        }
+        /* tN_lL_* — drum lane getters (lane_note, note_count, steps, step_S_*) */
+        if (sub[0] == 'l' && sub[1] >= '0' && sub[1] <= '9') {
+            int lidx = 0;
+            const char *p2 = sub + 1;
+            while (*p2 >= '0' && *p2 <= '9') { lidx = lidx * 10 + (*p2 - '0'); p2++; }
+            if (lidx < 0 || lidx >= DRUM_LANES) return -1;
+            drum_lane_t *dlane = &tr->drum_clips[tr->active_clip].lanes[lidx];
+            clip_t      *dlc   = &dlane->clip;
+            if (!strcmp(p2, "_lane_note"))
+                return snprintf(out, out_len, "%d", (int)dlane->midi_note);
+            if (!strcmp(p2, "_note_count"))
+                return snprintf(out, out_len, "%d", (int)dlc->note_count);
+            if (!strcmp(p2, "_length"))
+                return snprintf(out, out_len, "%d", (int)dlc->length);
+            if (!strcmp(p2, "_current_step"))
+                return snprintf(out, out_len, "%d", (int)tr->drum_current_step[lidx]);
+            if (!strcmp(p2, "_steps")) {
+                if (out_len < SEQ_STEPS + 1) return -1;
+                int s;
+                for (s = 0; s < SEQ_STEPS; s++) out[s] = '0';
+                uint16_t ni3;
+                for (ni3 = 0; ni3 < dlc->note_count; ni3++) {
+                    note_t *n = &dlc->notes[ni3];
+                    if (!n->active) continue;
+                    uint16_t sn = note_step(n->tick, dlc->length, dlc->ticks_per_step);
+                    if (sn >= SEQ_STEPS) continue;
+                    if (!n->step_muted)
+                        out[sn] = '1';
+                    else if (out[sn] == '0')
+                        out[sn] = '2';
+                }
+                out[SEQ_STEPS] = '\0';
+                return SEQ_STEPS;
+            }
+            if (!strncmp(p2, "_step_", 6)) {
+                const char *q = p2 + 6;
+                int sidx = 0;
+                while (*q >= '0' && *q <= '9') { sidx = sidx * 10 + (*q++ - '0'); }
+                if (sidx < 0 || sidx >= SEQ_STEPS) return -1;
+                if (*q == '\0')
+                    return snprintf(out, out_len, "%d", (int)dlc->steps[sidx]);
+                if (!strcmp(q, "_notes")) {
+                    int cnt = (int)dlc->step_note_count[sidx];
+                    if (cnt == 0) { out[0] = '\0'; return 0; }
+                    int pos = 0, n;
+                    for (n = 0; n < cnt; n++) {
+                        if (n > 0 && pos < out_len - 1) out[pos++] = ' ';
+                        pos += snprintf(out + pos, (size_t)(out_len - pos),
+                                        "%d", (int)dlc->step_notes[sidx][n]);
+                    }
+                    return pos;
+                }
+                if (!strcmp(q, "_vel"))
+                    return snprintf(out, out_len, "%d", (int)dlc->step_vel[sidx]);
+                if (!strcmp(q, "_gate"))
+                    return snprintf(out, out_len, "%d", (int)dlc->step_gate[sidx]);
+                if (!strcmp(q, "_nudge"))
+                    return snprintf(out, out_len, "%d",
+                        dlc->step_note_count[sidx] > 0 ? (int)dlc->note_tick_offset[sidx][0] : 0);
+                return -1;
+            }
+            return -1;
+        }
         if (!strcmp(sub, "clock_shift_pos"))
             return snprintf(out, out_len, "%d",
                             (int)tr->clips[tr->active_clip].clock_shift_pos);
@@ -1874,6 +2110,12 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                 return snprintf(out, out_len, "%d", (int)cl->length);
             if (!strncmp(p, "_active", 7))
                 return snprintf(out, out_len, "%d", (int)cl->active);
+            if (!strncmp(p, "_drum_has_content", 17)) {
+                int dl, any = 0;
+                for (dl = 0; dl < DRUM_LANES && !any; dl++)
+                    if (tr->drum_clips[cidx].lanes[dl].clip.note_count > 0) any = 1;
+                return snprintf(out, out_len, "%d", any);
+            }
             if (!strncmp(p, "_tps", 4))
                 return snprintf(out, out_len, "%d", (int)cl->ticks_per_step);
             if (!strncmp(p, "_pfx_snapshot", 13)) {
@@ -2054,6 +2296,8 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                     inst->tracks[t].tick_in_step      = 0;
                     inst->tracks[t].note_active        = 0;
                     inst->tracks[t].pfx.sample_counter = 0;
+                    memset(inst->tracks[t].drum_current_step, 0, sizeof(inst->tracks[t].drum_current_step));
+                    memset(inst->tracks[t].drum_tick_in_step,  0, sizeof(inst->tracks[t].drum_tick_in_step));
                     if (inst->tracks[t].will_relaunch) {
                         inst->tracks[t].clip_playing      = 1;
                         inst->tracks[t].will_relaunch     = 0;
@@ -2113,74 +2357,115 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                     inst->global_tick % QUANT_STEPS[inst->launch_quant] == 0) {
                     silence_track_notes_v2(inst, tr);
                     tr->active_clip  = (uint8_t)tr->queued_clip;
-                    pfx_sync_from_clip(tr);
                     tr->queued_clip  = -1;
-                    tr->current_step = 0;
-                    tr->tick_in_step = 0;
                     tr->clip_playing = 1;
+                    if (tr->pad_mode == PAD_MODE_DRUM) {
+                        memset(tr->drum_current_step, 0, sizeof(tr->drum_current_step));
+                        memset(tr->drum_tick_in_step,  0, sizeof(tr->drum_tick_in_step));
+                    } else {
+                        pfx_sync_from_clip(tr);
+                        tr->current_step = 0;
+                        tr->tick_in_step = 0;
+                        cl = &tr->clips[tr->active_clip];
+                    }
                     if (tr->record_armed) {
                         tr->recording    = 1;
                         tr->record_armed = 0;
                     }
-                    cl = &tr->clips[tr->active_clip];
                 }
 
-                /* Page stop: silence at next main clock bar boundary (global_tick % 16).
-                 * Anchored to main clock, not track step page. */
+                /* Page stop: silence at next main clock bar boundary (global_tick % 16). */
                 if (tr->pending_page_stop && inst->global_tick % 16 == 0) {
                     tr->pending_page_stop = 0;
                     tr->clip_playing      = 0;
                     silence_track_notes_v2(inst, tr);
                     if (tr->queued_clip >= 0) {
                         tr->active_clip  = (uint8_t)tr->queued_clip;
-                        pfx_sync_from_clip(tr);
                         tr->queued_clip  = -1;
-                        tr->current_step = 0;
-                        tr->tick_in_step = 0;
                         tr->clip_playing = 1;
+                        if (tr->pad_mode == PAD_MODE_DRUM) {
+                            memset(tr->drum_current_step, 0, sizeof(tr->drum_current_step));
+                            memset(tr->drum_tick_in_step,  0, sizeof(tr->drum_tick_in_step));
+                        } else {
+                            pfx_sync_from_clip(tr);
+                            tr->current_step = 0;
+                            tr->tick_in_step = 0;
+                            cl = &tr->clips[tr->active_clip];
+                        }
                         if (tr->record_armed) {
                             tr->recording    = 1;
                             tr->record_armed = 0;
                         }
-                        cl = &tr->clips[tr->active_clip];
                     }
                 }
             }
 
-            /* Note-centric note-on: scan notes[] for any note whose effective tick
-             * matches current clip tick. Fires at the exact tick regardless of step
-             * boundary — handles both positive offsets (deferred) and negative offsets
-             * (early fire) without a dispatch mask or lookahead. */
-            if (tr->clip_playing && !effective_mute(inst, t)) {
-                uint32_t cct = (uint32_t)tr->current_step * cl->ticks_per_step + tr->tick_in_step;
-                uint16_t ni2;
-                for (ni2 = 0; ni2 < cl->note_count; ni2++) {
-                    note_t *n = &cl->notes[ni2];
-                    if (!n->active || n->suppress_until_wrap || n->step_muted) continue;
-                    if (effective_note_tick(n, cl, tr->pfx.quantize) != cct) continue;
-                    /* Note stealing: if this pitch is already in play_pending, cut it now */
-                    {
-                        int pp;
-                        for (pp = 0; pp < (int)tr->play_pending_count; pp++) {
+            /* Note-on: drum and melodic paths share the same note-firing logic but
+             * drum iterates all 32 lanes, applying each lane's pfx params before scanning. */
+            if (tr->pad_mode == PAD_MODE_DRUM) {
+                if (tr->clip_playing && !effective_mute(inst, t)) {
+                    int l;
+                    for (l = 0; l < DRUM_LANES; l++) {
+                        drum_lane_t *lane = &tr->drum_clips[tr->active_clip].lanes[l];
+                        clip_t      *dlc  = &lane->clip;
+                        if (dlc->note_count == 0) continue;
+                        pfx_apply_params(&tr->pfx, &dlc->pfx_params);
+                        uint32_t cct = (uint32_t)tr->drum_current_step[l] * dlc->ticks_per_step
+                                       + tr->drum_tick_in_step[l];
+                        uint8_t  lane_note = lane->midi_note;
+                        uint16_t ni2;
+                        for (ni2 = 0; ni2 < dlc->note_count; ni2++) {
+                            note_t *n = &dlc->notes[ni2];
+                            if (!n->active || n->suppress_until_wrap || n->step_muted) continue;
+                            if (effective_note_tick(n, dlc, tr->pfx.quantize) != cct) continue;
+                            { int pp; for (pp = 0; pp < (int)tr->play_pending_count; pp++) {
+                                if (tr->play_pending[pp].pitch == lane_note) {
+                                    pfx_note_off(inst, tr, lane_note);
+                                    tr->play_pending[pp] = tr->play_pending[tr->play_pending_count - 1];
+                                    tr->play_pending_count--;
+                                    break;
+                                }
+                            }}
+                            int eff_gate = (int)n->gate * tr->pfx.gate_time / 100;
+                            if (eff_gate < 1) eff_gate = 1;
+                            if (tr->play_pending_count < 32) {
+                                tr->play_pending[tr->play_pending_count].pitch           = lane_note;
+                                tr->play_pending[tr->play_pending_count].ticks_remaining = (uint16_t)eff_gate;
+                                tr->play_pending_count++;
+                                tr->note_active = 1;
+                            }
+                            pfx_note_on(inst, tr, lane_note, n->vel);
+                        }
+                    }
+                }
+            } else {
+                /* Melodic note-centric note-on: scan active clip's notes[]. */
+                if (tr->clip_playing && !effective_mute(inst, t)) {
+                    uint32_t cct = (uint32_t)tr->current_step * cl->ticks_per_step + tr->tick_in_step;
+                    uint16_t ni2;
+                    for (ni2 = 0; ni2 < cl->note_count; ni2++) {
+                        note_t *n = &cl->notes[ni2];
+                        if (!n->active || n->suppress_until_wrap || n->step_muted) continue;
+                        if (effective_note_tick(n, cl, tr->pfx.quantize) != cct) continue;
+                        { int pp; for (pp = 0; pp < (int)tr->play_pending_count; pp++) {
                             if (tr->play_pending[pp].pitch == n->pitch) {
                                 pfx_note_off(inst, tr, n->pitch);
                                 tr->play_pending[pp] = tr->play_pending[tr->play_pending_count - 1];
                                 tr->play_pending_count--;
                                 break;
                             }
+                        }}
+                        int eff_gate = (int)n->gate * tr->pfx.gate_time / 100;
+                        if (eff_gate < 1) eff_gate = 1;
+                        if (tr->play_pending_count < 32) {
+                            int pp_idx = (int)tr->play_pending_count;
+                            tr->play_pending[pp_idx].pitch          = n->pitch;
+                            tr->play_pending[pp_idx].ticks_remaining = (uint16_t)eff_gate;
+                            tr->play_pending_count++;
+                            tr->note_active = 1;
                         }
+                        pfx_note_on(inst, tr, n->pitch, n->vel);
                     }
-                    /* Gate */
-                    int eff_gate = (int)n->gate * tr->pfx.gate_time / 100;
-                    if (eff_gate < 1) eff_gate = 1;
-                    if (tr->play_pending_count < 32) {
-                        int pp_idx = (int)tr->play_pending_count;
-                        tr->play_pending[pp_idx].pitch          = n->pitch;
-                        tr->play_pending[pp_idx].ticks_remaining = (uint16_t)eff_gate;
-                        tr->play_pending_count++;
-                        tr->note_active = 1;
-                    }
-                    pfx_note_on(inst, tr, n->pitch, n->vel);
                 }
             }
         }
@@ -2188,25 +2473,44 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
         /* Per-track tick advance and step advance */
         for (t = 0; t < NUM_TRACKS; t++) {
             seq8_track_t *tr = &inst->tracks[t];
-            clip_t *cl = &tr->clips[tr->active_clip];
-            tr->tick_in_step++;
-            if (tr->tick_in_step >= cl->ticks_per_step) {
-                tr->tick_in_step = 0;
-                if (tr->clip_playing) {
-                    uint16_t ns2 = (uint16_t)((tr->current_step + 1) % cl->length);
-                    if (ns2 == 0) {
-                        /* Clip wrapped: clear suppress_until_wrap on all notes */
-                        uint16_t ni2;
-                        for (ni2 = 0; ni2 < cl->note_count; ni2++)
-                            cl->notes[ni2].suppress_until_wrap = 0;
-                        /* Also clear legacy LRS mask */
-                        memset(tr->live_recorded_steps, 0, 32);
+            if (tr->pad_mode == PAD_MODE_DRUM) {
+                /* Drum: advance per-lane tick counters independently. */
+                int l;
+                for (l = 0; l < DRUM_LANES; l++) {
+                    clip_t *dlc = &tr->drum_clips[tr->active_clip].lanes[l].clip;
+                    tr->drum_tick_in_step[l]++;
+                    if (tr->drum_tick_in_step[l] >= dlc->ticks_per_step) {
+                        tr->drum_tick_in_step[l] = 0;
+                        if (tr->clip_playing) {
+                            uint16_t ns2 = (uint16_t)((tr->drum_current_step[l] + 1) % dlc->length);
+                            if (ns2 == 0) {
+                                uint16_t ni2;
+                                for (ni2 = 0; ni2 < dlc->note_count; ni2++)
+                                    dlc->notes[ni2].suppress_until_wrap = 0;
+                            }
+                            tr->drum_current_step[l] = ns2;
+                        }
                     }
-                    tr->current_step = ns2;
                 }
+            } else {
+                clip_t *cl = &tr->clips[tr->active_clip];
+                tr->tick_in_step++;
+                if (tr->tick_in_step >= cl->ticks_per_step) {
+                    tr->tick_in_step = 0;
+                    if (tr->clip_playing) {
+                        uint16_t ns2 = (uint16_t)((tr->current_step + 1) % cl->length);
+                        if (ns2 == 0) {
+                            uint16_t ni2;
+                            for (ni2 = 0; ni2 < cl->note_count; ni2++)
+                                cl->notes[ni2].suppress_until_wrap = 0;
+                            memset(tr->live_recorded_steps, 0, 32);
+                        }
+                        tr->current_step = ns2;
+                    }
+                }
+                tr->current_clip_tick = (uint32_t)tr->current_step * cl->ticks_per_step
+                                        + tr->tick_in_step;
             }
-            tr->current_clip_tick = (uint32_t)tr->current_step * cl->ticks_per_step
-                                    + tr->tick_in_step;
         }
         /* Master tick advance: drives global_tick and launch-quant boundary */
         inst->master_tick_in_step++;
