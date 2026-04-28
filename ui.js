@@ -2112,7 +2112,15 @@ function drawUI() {
             const tpsIdx = Math.max(0, TPS_VALUES.indexOf(drumLaneTPS[t]));
             const sqfl   = clipSeqFollow[t][ac] ? 1 : 0;
             const drumSeqLabels = ['Stch', 'Shft', 'Ndg', 'Res', 'Len', null, null, 'SqFl'];
-            const drumSeqVals   = [String(len), null, null, fmtRes(tpsIdx), String(len), null, null, fmtBool(sqfl)];
+            const drumSeqVals   = [
+                fmtStretch(bankParams[t][1][0]),
+                fmtSign(bankParams[t][1][1]),
+                fmtSign(bankParams[t][1][2]),
+                fmtRes(tpsIdx),
+                fmtLen(len),
+                null, null,
+                fmtBool(sqfl),
+            ];
             print(4, 0, 'DRUM SEQ', 1);
             for (let k = 0; k < 8; k++) {
                 const colX = 4 + (k % 4) * 30;
@@ -3479,6 +3487,7 @@ globalThis.onMidiMessageInternal = function (data) {
                             drumLaneLength[t] = dir === 1 ? len * 2 : Math.floor(len / 2);
                             const maxPage = Math.max(0, Math.ceil(drumLaneLength[t] / 16) - 1);
                             if (drumStepPage[t] > maxPage) drumStepPage[t] = maxPage;
+                            bankParams[t][1][0] = dir;
                             pendingDrumResync = 2; pendingDrumResyncTrack = t;
                         }
                         screenDirty = true;
@@ -3547,12 +3556,12 @@ globalThis.onMidiMessageInternal = function (data) {
                     return;
                 }
                 if (knobIdx === 7) {
-                    /* K8 = SqFl (seq follow, JS-only, toggle on any turn) */
-                    knobAccum[knobIdx]++;
-                    if (knobAccum[knobIdx] >= 4) {
-                        knobAccum[knobIdx] = 0;
-                        clipSeqFollow[t][ac] = !clipSeqFollow[t][ac];
-                        bankParams[t][1][knobIdx] = clipSeqFollow[t][ac] ? 1 : 0;
+                    /* K8 = SqFl: matches melodic sens=1 — clamp 0/1, only fires on value change */
+                    const _cur = clipSeqFollow[t][ac] ? 1 : 0;
+                    const _nv  = Math.max(0, Math.min(1, _cur + dir));
+                    if (_nv !== _cur) {
+                        clipSeqFollow[t][ac]  = _nv !== 0;
+                        bankParams[t][1][7]   = _nv;
                         screenDirty = true;
                     }
                     return;
