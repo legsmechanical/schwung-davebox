@@ -179,7 +179,7 @@ let midiInChannel = 0;  /* 0=All, 1-16=specific channel */
 
 /* Launch quantization: 0=Now, 1=1/16, 2=1/8, 3=1/4, 4=1/2, 5=1-bar; default 0 */
 let launchQuant = 0;
-let scaleAware  = 0;
+let scaleAware  = 1;
 
 function buildGlobalMenuItems() {
     return [
@@ -313,6 +313,7 @@ function buildGlobalMenuItems() {
 function doClearSession() {
     const sp = uuidToStatePath(currentSetUuid);
     if (typeof host_write_file === 'function') host_write_file(sp, '{"v":0}');
+    if (typeof host_write_file === 'function') host_write_file(uuidToUiStatePath(currentSetUuid), '{"v":0}');
     /* Reset JS-only state not covered by pendingSetLoad */
     activeBank = 0;
     undoSeqArpSnapshot = null;
@@ -327,6 +328,7 @@ function doClearSession() {
     pendingSetLoad  = true;
     globalMenuOpen  = false;
     confirmClearSession = false;
+    showActionPopup('SESSION', 'CLEARED');
 }
 
 /* ------------------------------------------------------------------ */
@@ -492,7 +494,7 @@ let muteUsedAsModifier    = false; /* set true when Mute+X compound; suppresses 
 /* Metronome */
 let metronomeOn      = 1; /* 0=Off,1=Count,2=On,3=Rec+Ply */
 let metronomeOnLast  = 1; /* last non-off mode; restored on Mute+Play toggle-on */
-let metronomeVol     = 80;
+let metronomeVol     = 100;
 let metroPrevBeat    = 0;    /* last metro_beat_count seen from DSP */
 let metroNoteOffTick = -1;   /* tick when to send note-off for last metro click */
 let copyHeld           = false; /* true while Copy (CC 60) is held */
@@ -545,6 +547,8 @@ let stepOpTick = -99;  /* tickCount of last step button event; live_notes flush 
 
 let pendingSetLoad   = false;     /* true when set changed during init() but same DSP instance: save old, load new */
 let pendingDspSync   = 0;         /* ticks remaining before deferred syncClipsFromDsp() after set change */
+let pendingDefaultSetParams  = [];    /* [{key,val}] — drain one per tick after state fully settled */
+let uiDefaultsApplyAfterSync = false; /* apply first-run defaults after pendingDspSync completes */
 let pendingStepsReread      = 0;  /* ticks remaining before _steps re-read after _reassign */
 let pendingStepsRereadTrack = 0;
 let pendingStepsRereadClip  = 0;
@@ -1364,6 +1368,20 @@ function updateStepLEDs() {
         setLED(16 + i, color);
     }
 
+    /* Gate span overlay: dim track color across all steps covered by the held step's gate.
+     * Offset 0 (start step) through fullSteps (end boundary), wrapping within clip. */
+    if (heldStep >= 0 && heldStepNotes.length > 0) {
+        const _spanTps  = clipTPS[activeTrack][effectiveClip(activeTrack)] || 24;
+        const spanFull  = Math.floor(stepEditGate / _spanTps);
+        const dimClr    = TRACK_DIM_COLORS[activeTrack];
+        for (let i = 0; i < 16; i++) {
+            const absStep = base + i;
+            if (absStep >= len) continue;
+            const offset = (absStep - heldStep + len) % len;
+            if (offset <= spanFull) setLED(16 + i, dimClr);
+        }
+    }
+
     /* Gate overlay: K3 (Dur) touched while in step edit — visualize gate length on step buttons.
      * Full steps covered by gate → White; partial step at end → DarkGrey.
      * Only overlays in-bounds steps; steps beyond gate keep their normal color. */
@@ -1901,6 +1919,12 @@ function uuidToStatePath(uuid) {
         : '/data/UserData/schwung/seq8-state.json';
 }
 
+function uuidToUiStatePath(uuid) {
+    return uuid
+        ? '/data/UserData/schwung/set_state/' + uuid + '/seq8-ui-state.json'
+        : '/data/UserData/schwung/seq8-ui-state.json';
+}
+
 function syncClipsFromDsp() {
     if (typeof host_module_get_param !== 'function') return;
     for (let t = 0; t < NUM_TRACKS; t++) {
@@ -2019,6 +2043,43 @@ globalThis.init = function () {
 
     if (!hasInitedOnce) { sessionView = true; hasInitedOnce = true; }
 
+    /* Restore UI state (active track, clip focus, view) from sidecar.
+     * Runs after DSP sync so sidecar overrides stale sync values.
+     * Also applies first-run defaults for scaleAware / metronomeVol when no sidecar exists. */
+    (function () {
+        const uiSp = uuidToUiStatePath(currentSetUuid);
+        let us = null;
+        if (typeof host_read_file === 'function' && typeof host_file_exists === 'function'
+                && host_file_exists(uiSp)) {
+            try { us = JSON.parse(host_read_file(uiSp)); } catch (e) {}
+        }
+        if (us && us.v >= 1) {
+            if (typeof us.at === 'number' && us.at >= 0 && us.at < NUM_TRACKS)
+                activeTrack = us.at;
+            if (Array.isArray(us.ac)) {
+                for (let _t = 0; _t < NUM_TRACKS; _t++) {
+                    const _c = us.ac[_t];
+                    if (typeof _c === 'number' && _c >= 0 && _c < NUM_CLIPS)
+                        trackActiveClip[_t] = _c;
+                }
+            }
+            sessionView = us.sv === 1;
+        } else {
+            /* No sidecar: apply first-run defaults. */
+            scaleAware   = 1;
+            metronomeVol = 100;
+            if (pendingSetLoad) {
+                uiDefaultsApplyAfterSync = true; /* re-apply after state_load re-sync */
+            } else {
+                pendingDefaultSetParams = [
+                    { key: 'scale_aware', val: '1' },
+                    { key: 'metro_vol',   val: '100' },
+                    { key: 'input_vel',   val: '0' }
+                ];
+            }
+        }
+    })();
+
     computePadNoteMap();
 
     ledInitComplete = false;
@@ -2064,6 +2125,13 @@ globalThis.tick = function () {
         host_module_set_param('state_load', currentSetUuid || '');
     }
 
+    /* Drain first-run default set_params one per tick, after state is fully settled. */
+    if (pendingDefaultSetParams.length > 0 && !pendingSetLoad && pendingDspSync === 0
+            && typeof host_module_set_param === 'function') {
+        const _dp = pendingDefaultSetParams.shift();
+        host_module_set_param(_dp.key, _dp.val);
+    }
+
     /* Poll every 100 ticks (~0.5s): detect DSP hot-reload via instance nonce. */
     if ((tickCount % 100) === 0 && typeof host_module_get_param === 'function' &&
             typeof host_module_set_param === 'function') {
@@ -2090,6 +2158,16 @@ globalThis.tick = function () {
                 trackCurrentPage[_t] = Math.max(0, Math.floor(trackCurrentStep[_t] / 16));
             syncClipsFromDsp();
             syncMuteSoloFromDsp();
+            if (uiDefaultsApplyAfterSync) {
+                uiDefaultsApplyAfterSync = false;
+                scaleAware   = 1;
+                metronomeVol = 100;
+                pendingDefaultSetParams = [
+                    { key: 'scale_aware', val: '1' },
+                    { key: 'metro_vol',   val: '100' },
+                    { key: 'input_vel',   val: '0' }
+                ];
+            }
             computePadNoteMap();
             invalidateLEDCache();
             forceRedraw();
@@ -2580,6 +2658,10 @@ globalThis.onMidiMessageInternal = function (data) {
                 clearAllLEDs();
                 for (let _i = 0; _i < 4; _i++) setButtonLED(40 + _i, LED_OFF);
                 if (typeof host_module_set_param === 'function') host_module_set_param('save', '1');
+                if (typeof host_write_file === 'function')
+                    host_write_file(uuidToUiStatePath(currentSetUuid), JSON.stringify({
+                        v: 1, at: activeTrack, ac: trackActiveClip.slice(), sv: sessionView ? 1 : 0
+                    }));
                 if (typeof host_hide_module === 'function') host_hide_module();
             }
         }
@@ -3162,6 +3244,25 @@ globalThis.onMidiMessageInternal = function (data) {
                     stepEditNudge = rn !== null ? parseInt(rn, 10) : 0;
                 }
                 forceRedraw();
+            } else if (heldStepNotes.length > 0) {
+                /* Second step tapped while first is held: set gate to span the distance.
+                 * Clear heldStepBtn press-tick so the first step's release doesn't also tap-toggle. */
+                stepBtnPressedTick[heldStepBtn] = -1;
+                stepWasHeld = true;
+                const ac_tap     = effectiveClip(activeTrack);
+                const tappedStep = trackCurrentPage[activeTrack] * 16 + idx;
+                if (tappedStep !== heldStep) {
+                    const len     = clipLength[activeTrack][ac_tap];
+                    const tps     = clipTPS[activeTrack][ac_tap] || 24;
+                    const dist    = tappedStep > heldStep
+                        ? tappedStep - heldStep
+                        : len - heldStep + tappedStep;
+                    const newGate = Math.max(1, Math.min(dist * tps, 65535));
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + activeTrack + '_c' + ac_tap + '_step_' + heldStep + '_gate', String(newGate));
+                    stepEditGate = newGate;
+                    forceRedraw();
+                }
             }
         }
     }
