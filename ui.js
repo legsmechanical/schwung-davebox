@@ -1552,6 +1552,34 @@ function updateStepLEDs() {
             else                                   color = LED_OFF;
             setLED(16 + i, color);
         }
+        /* Gate span overlay: dim track color across steps covered by held step's gate */
+        if (heldStep >= 0 && heldStepNotes.length > 0) {
+            const _sTps  = drumLaneTPS[t] || 24;
+            const _sSpan = Math.floor(stepEditGate / _sTps);
+            const _sDim  = TRACK_DIM_COLORS[t];
+            for (let i = 0; i < 16; i++) {
+                const absStep = base + i;
+                if (absStep >= len) continue;
+                const offset = (absStep - heldStep + len) % len;
+                if (offset <= _sSpan) setLED(16 + i, _sDim);
+            }
+        }
+        /* Gate overlay: K3 (Dur) touched in drum step edit — White=full, DarkGrey=partial */
+        if (heldStep >= 0 && knobTouched === 2 && heldStepNotes.length > 0) {
+            const _dTps      = drumLaneTPS[t] || 24;
+            const _fullSteps = Math.floor(stepEditGate / _dTps);
+            const _partTicks = stepEditGate % _dTps;
+            for (let i = 0; i < 16; i++) {
+                const absStep = base + i;
+                if (absStep >= len) continue;
+                const offset = (absStep - heldStep + len) % len;
+                if (offset < _fullSteps) {
+                    setLED(16 + i, White);
+                } else if (offset === _fullSteps && _partTicks > 0) {
+                    setLED(16 + i, DarkGrey);
+                }
+            }
+        }
         return;
     }
 
@@ -2041,6 +2069,35 @@ function drawUI() {
 
     /* Step edit: show assigned notes and step identity */
     if (heldStep >= 0) {
+        if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {
+            /* Drum step edit: same 5-column layout; Dur (K3) + Vel (K4) active; Oct/Pit/Ndg inactive */
+            const t      = activeTrack;
+            const lane   = activeDrumLane[t];
+            print(4, 10, 'TR' + (t + 1) + ' \xb7 LN ' + (lane + 1) + '  S' + (heldStep + 1), 1);
+            if (heldStepNotes.length > 0) {
+                print(2,  23, 'Oct', 1);
+                print(27, 23, 'Pit', 1);
+                pixelPrintC(25, 36, midiNoteName(drumLaneNote[t][lane]), 1);
+                const RHS_LABELS = ['Dur', 'Vel', 'Ndg'];
+                const RHS_VALS   = [
+                    (stepEditGate / (drumLaneTPS[t] || 24)).toFixed(2),
+                    String(stepEditVel),
+                    '-'
+                ];
+                const RHS_X = [52, 77, 102];
+                for (let i = 0; i < 3; i++) {
+                    const hi = (i < 2) && (knobTouched === i + 2);
+                    if (hi) fill_rect(RHS_X[i], 20, 23, 24, 1);
+                    print(RHS_X[i], 23, RHS_LABELS[i], hi ? 0 : 1);
+                    pixelPrintC(RHS_X[i] + 11, 36, RHS_VALS[i], hi ? 0 : 1);
+                }
+            } else {
+                print(4, 22, 'STEP EDIT', 1);
+                print(4, 34, '(empty)', 1);
+            }
+            drawTrackRow(46);
+            return;
+        }
         const ac        = effectiveClip(activeTrack);
         const stepLabel = 'S' + (heldStep + 1);
         const header    = 'TR' + (activeTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac] + '  ' + stepLabel;
@@ -2654,7 +2711,24 @@ globalThis.tick = function () {
                 (tickCount - stepBtnPressedTick[heldStepBtn]) >= STEP_HOLD_TICKS) {
             stepBtnPressedTick[heldStepBtn] = -1;
             stepWasHeld = true;
-            if (stepWasEmpty && heldStepNotes.length === 0 && typeof host_module_set_param === 'function') {
+            if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {
+                /* Drum: auto-assign empty step so knobs work immediately */
+                if (stepWasEmpty && heldStepNotes.length === 0 && typeof host_module_set_param === 'function') {
+                    const t    = activeTrack;
+                    const lane = activeDrumLane[t];
+                    host_module_set_param('t' + t + '_l' + lane + '_step_' + heldStep + '_toggle', String(stepEditVel));
+                    drumLaneSteps[t][lane][heldStep] = '1';
+                    drumLaneHasNotes[t][lane] = true;
+                    heldStepNotes = [drumLaneNote[t][lane]];
+                    if (typeof host_module_get_param === 'function') {
+                        const rv = host_module_get_param('t' + t + '_l' + lane + '_step_' + heldStep + '_vel');
+                        const rg = host_module_get_param('t' + t + '_l' + lane + '_step_' + heldStep + '_gate');
+                        stepEditVel  = rv !== null ? parseInt(rv, 10) : stepEditVel;
+                        stepEditGate = rg !== null ? parseInt(rg, 10) : (drumLaneTPS[t] || 24);
+                    }
+                }
+                screenDirty = true;
+            } else if (stepWasEmpty && heldStepNotes.length === 0 && typeof host_module_set_param === 'function') {
                 const ac_h = effectiveClip(activeTrack);
                 const assignNote = lastPlayedNote >= 0 ? lastPlayedNote : defaultStepNote();
                 const assignVel  = effectiveVelocity(lastPadVelocity);
@@ -3422,6 +3496,28 @@ globalThis.onMidiMessageInternal = function (data) {
             }
         }
 
+        /* Drum step edit: K3 (Dur) + K4 (Vel) active; K1/K2/K5 swallowed but inactive */
+        if (heldStep >= 0 && heldStepNotes.length > 0 && d1 >= 71 && d1 <= 75 &&
+                bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {
+            const knobIdx = d1 - 71;
+            const dir     = (d2 >= 1 && d2 <= 63) ? 1 : -1;
+            const t       = activeTrack;
+            const lane    = activeDrumLane[t];
+            knobTouched          = knobIdx;
+            knobTurnedTick[knobIdx] = tickCount;
+            screenDirty = true;
+            if (knobIdx === 2) {
+                const _gmaxD = Math.min(65535, 256 * (drumLaneTPS[t] || 24));
+                stepEditGate = Math.max(1, Math.min(_gmaxD, stepEditGate + dir * 6));
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + t + '_l' + lane + '_step_' + heldStep + '_gate', String(stepEditGate));
+            } else if (knobIdx === 3) {
+                stepEditVel = Math.max(0, Math.min(127, stepEditVel + dir));
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + t + '_l' + lane + '_step_' + heldStep + '_vel', String(stepEditVel));
+            }
+            return;
+        }
         /* Step edit overlay: K1-K5 intercept per-step params while a step is held and active */
         if (heldStep >= 0 && heldStepNotes.length > 0 && d1 >= 71 && d1 <= 75) {
             const knobIdx = d1 - 71;
@@ -3556,17 +3652,40 @@ globalThis.onMidiMessageInternal = function (data) {
                     return;
                 }
                 if (knobIdx === 3) {
-                    /* K4 = Res (clip_resolution, sens=16) */
+                    /* K4 = Res (normal=proportional rescale; Shift=zoom, sens=16) */
                     knobAccum[knobIdx]++;
                     if (knobAccum[knobIdx] >= 16) {
                         knobAccum[knobIdx] = 0;
                         const curIdx = Math.max(0, TPS_VALUES.indexOf(drumLaneTPS[t]));
                         const nv = Math.max(0, Math.min(5, curIdx + dir));
                         if (nv !== curIdx) {
-                            drumLaneTPS[t] = TPS_VALUES[nv];
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + t + '_l' + lane + '_clip_resolution', String(nv));
-                            pendingDrumResync = 2; pendingDrumResyncTrack = t;
+                            if (shiftHeld) {
+                                /* Zoom: absolute note positions fixed, step grid shifts, length adjusts */
+                                const newTps = TPS_VALUES[nv];
+                                const newLen = Math.ceil(drumLaneLength[t] * drumLaneTPS[t] / newTps);
+                                if (newLen > 256) {
+                                    showActionPopup('NOTES OUT', 'OF RANGE');
+                                    forceRedraw();
+                                } else if (heldStep >= 0) {
+                                    /* blocked during step edit */
+                                } else {
+                                    drumLaneTPS[t]    = newTps;
+                                    drumLaneLength[t] = newLen;
+                                    bankParams[t][1][knobIdx] = nv;
+                                    const maxPage = Math.max(0, Math.ceil(newLen / 16) - 1);
+                                    if (drumStepPage[t] > maxPage) drumStepPage[t] = maxPage;
+                                    if (typeof host_module_set_param === 'function')
+                                        host_module_set_param('t' + t + '_l' + lane + '_clip_resolution_zoom', String(nv));
+                                    pendingDrumLaneResync = 2; pendingDrumLaneResyncTrack = t; pendingDrumLaneResyncLane = lane;
+                                    forceRedraw();
+                                }
+                            } else {
+                                drumLaneTPS[t] = TPS_VALUES[nv];
+                                bankParams[t][1][knobIdx] = nv;
+                                if (typeof host_module_set_param === 'function')
+                                    host_module_set_param('t' + t + '_l' + lane + '_clip_resolution', String(nv));
+                                pendingDrumResync = 2; pendingDrumResyncTrack = t;
+                            }
                         }
                         screenDirty = true;
                     }
@@ -3835,32 +3954,52 @@ globalThis.onMidiMessageInternal = function (data) {
             forceRedraw();
             }
         } else if (!shiftHeld && bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {
-            /* Drum mode: step button taps toggle hit in active lane.
-             * No inactive-with-notes state: turning off clears all step data. */
+            /* Drum mode: tap toggles hit; hold enters step edit (Dur/Vel).
+             * Press records time and state; toggle/clear deferred to release. */
             const t       = activeTrack;
             const lane    = activeDrumLane[t];
             const absStep = drumStepPage[t] * 16 + idx;
-            const cur     = drumLaneSteps[t][lane][absStep];
-            if (typeof host_module_set_param === 'function') {
+            stepBtnPressedTick[idx] = tickCount;
+            if (heldStep < 0) {
+                heldStepBtn = idx;
+                heldStep    = absStep;
+                const cur   = drumLaneSteps[t][lane][absStep];
                 if (cur === '1') {
-                    host_module_set_param('t' + t + '_l' + lane + '_step_' + absStep + '_clear', '1');
+                    stepWasEmpty  = false;
+                    heldStepNotes = [drumLaneNote[t][lane]];
+                    const rv = typeof host_module_get_param === 'function'
+                        ? host_module_get_param('t' + t + '_l' + lane + '_step_' + absStep + '_vel') : null;
+                    const rg = typeof host_module_get_param === 'function'
+                        ? host_module_get_param('t' + t + '_l' + lane + '_step_' + absStep + '_gate') : null;
+                    stepEditVel   = rv !== null ? parseInt(rv, 10) : 100;
+                    stepEditGate  = rg !== null ? parseInt(rg, 10) : (drumLaneTPS[t] || 24);
+                    stepEditNudge = 0;
                 } else {
-                    const vel = drumVelZoneToVelocity(drumLastVelZone[t]);
-                    host_module_set_param('t' + t + '_l' + lane + '_step_' + absStep + '_toggle', String(vel));
+                    stepWasEmpty  = true;
+                    heldStepNotes = [];
+                    stepEditVel   = drumVelZoneToVelocity(drumLastVelZone[t]);
+                    stepEditGate  = drumLaneTPS[t] || 24;
+                    stepEditNudge = 0;
+                }
+                forceRedraw();
+            } else if (heldStepNotes.length > 0) {
+                /* Second step tapped while first is held: set gate to span the distance */
+                stepBtnPressedTick[heldStepBtn] = -1;
+                stepWasHeld = true;
+                const tappedStep = drumStepPage[t] * 16 + idx;
+                if (tappedStep !== heldStep) {
+                    const len     = drumLaneLength[t];
+                    const tps     = drumLaneTPS[t] || 24;
+                    const dist    = tappedStep > heldStep
+                        ? tappedStep - heldStep
+                        : len - heldStep + tappedStep;
+                    const newGate = Math.max(1, Math.min(dist * tps, 65535));
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_l' + lane + '_step_' + heldStep + '_gate', String(newGate));
+                    stepEditGate = newGate;
+                    forceRedraw();
                 }
             }
-            /* Read back and update JS cache */
-            if (typeof host_module_get_param === 'function') {
-                const raw = host_module_get_param('t' + t + '_l' + lane + '_steps');
-                if (raw) {
-                    for (let s = 0; s < 256; s++) drumLaneSteps[t][lane][s] = raw[s] || '0';
-                    drumLaneHasNotes[t][lane] = raw.indexOf('1') >= 0;
-                }
-                const ac = trackActiveClip[t];
-                const hcRaw = host_module_get_param('t' + t + '_c' + ac + '_drum_has_content');
-                drumClipNonEmpty[t][ac] = hcRaw === '1';
-            }
-            forceRedraw();
         } else if (!shiftHeld) {
             /* Record press time for tap detection on release.
              * Enter step edit immediately — tap vs hold decided on release. */
@@ -4210,6 +4349,33 @@ globalThis.onMidiMessageInternal = function (data) {
             stepOpTick = tickCount;
             const btn = d1 - 16;
             if (btn === heldStepBtn) {
+                if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {
+                    /* Drum step release: tap toggles, hold-release just exits */
+                    const t    = activeTrack;
+                    const lane = activeDrumLane[t];
+                    if (stepBtnPressedTick[btn] >= 0) {
+                        stepBtnPressedTick[btn] = -1;
+                        if (stepWasEmpty) {
+                            /* Empty step tapped: assign now with current velocity */
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_l' + lane + '_step_' + heldStep + '_toggle', String(stepEditVel));
+                            drumLaneSteps[t][lane][heldStep] = '1';
+                            drumLaneHasNotes[t][lane] = true;
+                        } else {
+                            /* Occupied step tapped: clear it */
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_l' + lane + '_step_' + heldStep + '_clear', '1');
+                            drumLaneSteps[t][lane][heldStep] = '0';
+                            drumLaneHasNotes[t][lane] = drumLaneSteps[t][lane].some(c => c !== '0');
+                        }
+                        if (typeof host_module_get_param === 'function') {
+                            const ac = trackActiveClip[t];
+                            const hcRaw = host_module_get_param('t' + t + '_c' + ac + '_drum_has_content');
+                            drumClipNonEmpty[t][ac] = hcRaw === '1';
+                        }
+                    }
+                    /* Hold release: no nudge reassign for drum — just exit */
+                } else {
                 if (stepBtnPressedTick[btn] >= 0) {
                     /* Quick release within threshold — commit as tap toggle */
                     const ac_t   = effectiveClip(activeTrack);
@@ -4261,6 +4427,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     pendingStepsRereadTrack = activeTrack;
                     pendingStepsRereadClip  = ac_ra;
                 }
+                } /* end melodic branch */
                 /* Always exit step edit on release of the held button */
                 heldStepBtn   = -1;
                 heldStep      = -1;
