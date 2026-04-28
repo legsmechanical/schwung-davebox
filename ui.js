@@ -2151,9 +2151,12 @@ function drawUI() {
         const ac        = effectiveClip(t);
         const lane      = activeDrumLane[t];
         const pg        = drumLanePage[t];
+        const note      = drumLaneNote[t][lane];
+        const oct       = Math.floor(note / 12) - 2;
+        const name      = NOTE_KEYS[note % 12];
         const bankGroup = pg === 0 ? 'Bank A' : 'Bank B';
         const bankName  = activeBank === 1 ? 'SEQ' : BANKS[activeBank].name;
-        print(4, 10, SCENE_LETTERS[ac] + ' \xb7 ' + (lane + 1), 1);
+        print(4, 10, SCENE_LETTERS[ac] + '  Pad: ' + name + oct + ' (' + note + ')', 1);
         print(4, 22, bankGroup + '  KNOB:[' + bankName + ']', 1);
         drawTrackRow(34);
         let drumLine4 = '';
@@ -2168,7 +2171,7 @@ function drawUI() {
         const ac         = effectiveClip(activeTrack);
         const recTag = (recordArmed && !recordCountingIn && recordArmedTrack === activeTrack)
             ? ' REC' : '';
-        print(4, 10, 'TR' + (activeTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac], 1);
+        print(4, 10, SCENE_LETTERS[ac], 1);
         print(4, 22, 'KNOB: [' + BANKS[activeBank].name + ']' + recTag, 1);
         drawTrackRow(34);
         let line4 = '';

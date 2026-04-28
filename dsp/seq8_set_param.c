@@ -1649,7 +1649,6 @@ static void set_param(void *instance, const char *key, const char *val) {
                 }
                 dlc->nudge_pos += (int16_t)dir;
                 clip_migrate_to_notes(dlc);
-                seq8_save_state(inst);
                 return;
             }
 
