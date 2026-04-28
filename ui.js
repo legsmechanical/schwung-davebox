@@ -1498,23 +1498,6 @@ function updateStepLEDs() {
         const base = page * 16;
         const len  = drumLaneLength[t];
 
-        if (loopHeld) {
-            /* Page overview for active drum lane — same layout as melodic */
-            const blink     = Math.floor(tickCount / 24) % 2;
-            const numPages  = Math.max(1, Math.ceil(len / 16));
-            for (let i = 0; i < 16; i++) {
-                if (i >= numPages) { setLED(16 + i, DarkGrey); continue; }
-                let hasNotes = false;
-                for (let s = i * 16; s < (i + 1) * 16; s++) {
-                    if (ls[s] === '1' || ls[s] === '2') { hasNotes = true; break; }
-                }
-                setLED(16 + i, hasNotes
-                    ? (blink ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t])
-                    : TRACK_COLORS[t]);
-            }
-            return;
-        }
-
         for (let i = 0; i < 16; i++) {
             const absStep = base + i;
             let color;
@@ -3814,7 +3797,6 @@ globalThis.onMidiMessageInternal = function (data) {
                         if (typeof host_module_set_param === 'function')
                             host_module_set_param('t' + t + '_l' + lane + '_hard_reset', '1');
                         activeDrumLane[t] = lane;
-                        drumLaneNote[t][lane] = DRUM_BASE_NOTE + lane;
                         drumLaneLength[t]     = 16;
                         for (let s = 0; s < 256; s++) drumLaneSteps[t][lane][s] = '0';
                         drumLaneHasNotes[t][lane] = false;
