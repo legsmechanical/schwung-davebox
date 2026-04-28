@@ -1865,9 +1865,17 @@ function updateTrackLEDs() {
                     const laneNote = drumLaneNote[t][lane];
                     const sounding = liveActiveNotes.has(laneNote);
                     const flashing = (tickCount - drumLaneFlashTick[t][lane]) < DRUM_FLASH_TICKS;
-                    if (sounding || isActive || flashing) color = White;
-                    else if (hasHits) color = tc;
-                    else color = td;
+                    if (sounding) {
+                        color = White;
+                    } else if (isActive) {
+                        color = (playing && hasHits && blink) ? tc : White;
+                    } else if (flashing) {
+                        color = tc;
+                    } else if (hasHits) {
+                        color = playing ? (blink ? tc : td) : tc;
+                    } else {
+                        color = td;
+                    }
                 } else {
                     const zone = row * 4 + (col - 4);
                     color = (zone === velZone) ? White : DarkGrey;
@@ -2107,38 +2115,33 @@ function drawUI() {
     /* Step edit: show assigned notes and step identity */
     if (heldStep >= 0) {
         if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {
-            /* Drum step edit: same 5-column layout; Dur (K3) + Vel (K4) active; Oct/Pit/Ndg inactive */
-            const t      = activeTrack;
-            const lane   = activeDrumLane[t];
-            print(4, 10, 'TR' + (t + 1) + ' \xb7 LN ' + (lane + 1) + '  S' + (heldStep + 1), 1);
+            /* Drum step edit: 3-column Dur/Vel/Ndg; lane note in top bar */
+            const t    = activeTrack;
+            const lane = activeDrumLane[t];
+            const note = drumLaneNote[t][lane];
+            print(4, 10, midiNoteName(note) + '  ' + note, 1);
             if (heldStepNotes.length > 0) {
-                print(2,  23, 'Oct', 1);
-                print(27, 23, 'Pit', 1);
-                pixelPrintC(25, 36, midiNoteName(drumLaneNote[t][lane]), 1);
-                const RHS_LABELS = ['Dur', 'Vel', 'Ndg'];
-                const RHS_VALS   = [
-                    (stepEditGate / (drumLaneTPS[t] || 24)).toFixed(2),
+                const tps   = drumLaneTPS[t] || 24;
+                const LABELS = ['Dur', 'Vel', 'Ndg'];
+                const VALS   = [
+                    (stepEditGate / tps).toFixed(2),
                     String(stepEditVel),
-                    '-'
+                    (stepEditNudge >= 0 ? '+' : '') + String(stepEditNudge)
                 ];
-                const RHS_X = [52, 77, 102];
+                const COL_X = [13, 51, 89];
                 for (let i = 0; i < 3; i++) {
-                    const hi = (i < 2) && (knobTouched === i + 2);
-                    if (hi) fill_rect(RHS_X[i], 20, 23, 24, 1);
-                    print(RHS_X[i], 23, RHS_LABELS[i], hi ? 0 : 1);
-                    pixelPrintC(RHS_X[i] + 11, 36, RHS_VALS[i], hi ? 0 : 1);
+                    const hi = (knobTouched === i + 2);
+                    if (hi) fill_rect(COL_X[i], 21, 25, 30, 1);
+                    print(COL_X[i], 27, LABELS[i], hi ? 0 : 1);
+                    print(COL_X[i], 40, VALS[i], hi ? 0 : 1);
                 }
             } else {
                 print(4, 22, 'STEP EDIT', 1);
                 print(4, 34, '(empty)', 1);
             }
-            drawTrackRow(46);
             return;
         }
         const ac        = effectiveClip(activeTrack);
-        const stepLabel = 'S' + (heldStep + 1);
-        const header    = 'TR' + (activeTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac] + '  ' + stepLabel;
-        print(4, 10, header, 1);
         if (heldStepNotes.length > 0) {
             /* Oct+Pit share a merged block; one note value centered under both labels */
             const root = heldStepNotes[0];
@@ -2168,7 +2171,6 @@ function drawUI() {
             print(4, 22, 'STEP EDIT', 1);
             print(4, 34, '(empty)', 1);
         }
-        drawTrackRow(46);
         return;
     }
 
@@ -2183,11 +2185,13 @@ function drawUI() {
             print(4, 34, 'Jog=\xb11  Btn=set page', 1);
             drawTrackRow(46);
         } else {
-        const ac_l    = effectiveClip(activeTrack);
-        const steps_l = clipLength[activeTrack][ac_l];
-        const pages_l = Math.max(1, Math.ceil(steps_l / 16));
-        print(4, 22, 'LOOP LEN: ' + steps_l + ' STEPS', 1);
-        print(4, 34, pages_l + ' OF 16 PAGES', 1);
+            const ac_l    = effectiveClip(activeTrack);
+            const steps_l = clipLength[activeTrack][ac_l];
+            const pages_l = Math.max(1, Math.ceil(steps_l / 16));
+            print(4, 10, 'TR' + (activeTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac_l] + '  LOOP', 1);
+            print(4, 22, 'LEN: ' + steps_l + ' STEPS', 1);
+            print(4, 34, pages_l + ' OF 16 PAGES', 1);
+            drawTrackRow(46);
         }
         return;
     }
@@ -2760,8 +2764,10 @@ globalThis.tick = function () {
                     if (typeof host_module_get_param === 'function') {
                         const rv = host_module_get_param('t' + t + '_l' + lane + '_step_' + heldStep + '_vel');
                         const rg = host_module_get_param('t' + t + '_l' + lane + '_step_' + heldStep + '_gate');
-                        stepEditVel  = rv !== null ? parseInt(rv, 10) : stepEditVel;
-                        stepEditGate = rg !== null ? parseInt(rg, 10) : (drumLaneTPS[t] || 24);
+                        const rn = host_module_get_param('t' + t + '_l' + lane + '_step_' + heldStep + '_nudge');
+                        stepEditVel   = rv !== null ? parseInt(rv, 10) : stepEditVel;
+                        stepEditGate  = rg !== null ? parseInt(rg, 10) : (drumLaneTPS[t] || 24);
+                        stepEditNudge = rn !== null ? parseInt(rn, 10) : 0;
                     }
                 }
                 screenDirty = true;
@@ -3533,7 +3539,7 @@ globalThis.onMidiMessageInternal = function (data) {
             }
         }
 
-        /* Drum step edit: K3 (Dur) + K4 (Vel) active; K1/K2/K5 swallowed but inactive */
+        /* Drum step edit: K3 (Dur) + K4 (Vel) + K5 (Ndg); K1/K2 swallowed */
         if (heldStep >= 0 && heldStepNotes.length > 0 && d1 >= 71 && d1 <= 75 &&
                 bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {
             const knobIdx = d1 - 71;
@@ -3552,6 +3558,16 @@ globalThis.onMidiMessageInternal = function (data) {
                 stepEditVel = Math.max(0, Math.min(127, stepEditVel + dir));
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('t' + t + '_l' + lane + '_step_' + heldStep + '_vel', String(stepEditVel));
+            } else if (knobIdx === 4) {
+                knobAccum[knobIdx] = (dir === knobLastDir[knobIdx]) ? knobAccum[knobIdx] + 1 : 1;
+                knobLastDir[knobIdx] = dir;
+                if (knobAccum[knobIdx] >= 16) {
+                    knobAccum[knobIdx] = 0;
+                    const _tpsN1 = (drumLaneTPS[t] || 24) - 1;
+                    stepEditNudge = Math.max(-_tpsN1, Math.min(_tpsN1, stepEditNudge + dir));
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_l' + lane + '_step_' + heldStep + '_nudge', String(stepEditNudge));
+                }
             }
             return;
         }
@@ -4008,9 +4024,11 @@ globalThis.onMidiMessageInternal = function (data) {
                         ? host_module_get_param('t' + t + '_l' + lane + '_step_' + absStep + '_vel') : null;
                     const rg = typeof host_module_get_param === 'function'
                         ? host_module_get_param('t' + t + '_l' + lane + '_step_' + absStep + '_gate') : null;
+                    const rn = typeof host_module_get_param === 'function'
+                        ? host_module_get_param('t' + t + '_l' + lane + '_step_' + absStep + '_nudge') : null;
                     stepEditVel   = rv !== null ? parseInt(rv, 10) : 100;
                     stepEditGate  = rg !== null ? parseInt(rg, 10) : (drumLaneTPS[t] || 24);
-                    stepEditNudge = 0;
+                    stepEditNudge = rn !== null ? parseInt(rn, 10) : 0;
                 } else {
                     stepWasEmpty  = true;
                     heldStepNotes = [];
@@ -4259,10 +4277,16 @@ globalThis.onMidiMessageInternal = function (data) {
                         drumLastVelZone[t] = velZone;
                         const vel = drumVelZoneToVelocity(velZone);
                         lastPadVelocity = vel;
-                        const laneNote = drumLaneNote[t][activeDrumLane[t]];
+                        const lane_vp  = activeDrumLane[t];
+                        const laneNote = drumLaneNote[t][lane_vp];
                         liveSendNote(t, 0x90, laneNote, vel);
                         padPitch[padIdx] = laneNote;
                         liveActiveNotes.add(laneNote);
+                        if (heldStep >= 0 && heldStepNotes.length > 0) {
+                            stepEditVel = vel;
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_l' + lane_vp + '_step_' + heldStep + '_vel', String(vel));
+                        }
                         screenDirty = true;
                     } else if (lane >= 0 && lane < DRUM_LANES) {
                         if (deleteHeld) {

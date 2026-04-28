@@ -731,6 +731,18 @@ static void set_param(void *instance, const char *key, const char *val) {
                 pfx_sync_from_clip(tr);
                 if (tr->tick_in_step >= tr->clips[new_cidx].ticks_per_step)
                     tr->tick_in_step = 0;
+                if (tr->pad_mode == PAD_MODE_DRUM) {
+                    int dl;
+                    for (dl = 0; dl < DRUM_LANES; dl++) {
+                        drum_lane_t *dln = &tr->drum_clips[new_cidx].lanes[dl];
+                        uint16_t dllen = dln->clip.length > 0 ? dln->clip.length : 1;
+                        uint16_t dltps = dln->clip.ticks_per_step > 0 ? dln->clip.ticks_per_step : 24;
+                        if (tr->drum_current_step[dl] >= dllen)
+                            tr->drum_current_step[dl] = (uint16_t)(tr->drum_current_step[dl] % dllen);
+                        if (tr->drum_tick_in_step[dl] >= (uint32_t)dltps)
+                            tr->drum_tick_in_step[dl] = 0;
+                    }
+                }
                 tr->clip_playing     = 1;
                 tr->queued_clip      = -1;
                 tr->pending_page_stop = 0;
@@ -1750,6 +1762,20 @@ static void set_param(void *instance, const char *key, const char *val) {
                 if (!strcmp(q, "_gate")) {
                     if (dlc->step_note_count[sidx] == 0) return;
                     dlc->step_gate[sidx] = (uint16_t)clamp_i(my_atoi(val), 1, 65535);
+                    clip_migrate_to_notes(dlc);
+                    seq8_save_state(inst);
+                    return;
+                }
+                if (!strcmp(q, "_nudge")) {
+                    if (dlc->step_note_count[sidx] == 0) return;
+                    { int tps_m1 = dlc->ticks_per_step - 1;
+                    int new_val = clamp_i(my_atoi(val), -tps_m1, tps_m1);
+                    int delta = new_val - (int)dlc->note_tick_offset[sidx][0];
+                    int ni;
+                    for (ni = 0; ni < (int)dlc->step_note_count[sidx]; ni++) {
+                        int o = (int)dlc->note_tick_offset[sidx][ni] + delta;
+                        dlc->note_tick_offset[sidx][ni] = (int16_t)clamp_i(o, -tps_m1, tps_m1);
+                    } }
                     clip_migrate_to_notes(dlc);
                     seq8_save_state(inst);
                     return;
