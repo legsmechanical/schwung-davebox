@@ -1211,6 +1211,19 @@ static void set_param(void *instance, const char *key, const char *val) {
             return;
         }
 
+        /* tN_lL_lane_note — set the MIDI note for drum lane L of the active clip */
+        if (sub[0] == 'l' && sub[1] >= '0' && sub[1] <= '9') {
+            const char *p2 = sub + 1;
+            while (*p2 >= '0' && *p2 <= '9') p2++;
+            if (!strcmp(p2, "_lane_note")) {
+                int lane_idx = my_atoi(sub + 1);
+                if (lane_idx < 0 || lane_idx >= DRUM_LANES) return;
+                tr->drum_clips[tr->active_clip].lanes[lane_idx].midi_note =
+                    (uint8_t)clamp_i(my_atoi(val), 0, 127);
+            }
+            return;
+        }
+
         if (!strcmp(sub, "recording")) {
             int rv = my_atoi(val);
             if (rv) {

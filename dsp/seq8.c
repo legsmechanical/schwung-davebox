@@ -1840,6 +1840,16 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
             return snprintf(out, out_len, "%d", (int)tr->pad_octave);
         if (!strcmp(sub, "pad_mode"))
             return snprintf(out, out_len, "%d", (int)tr->pad_mode);
+        /* tN_lL_lane_note — MIDI note for drum lane L of the active clip */
+        if (sub[0] == 'l' && sub[1] >= '0' && sub[1] <= '9') {
+            int lidx = my_atoi(sub + 1);
+            const char *p2 = sub + 1;
+            while (*p2 >= '0' && *p2 <= '9') p2++;
+            if (!strcmp(p2, "_lane_note") && lidx >= 0 && lidx < DRUM_LANES)
+                return snprintf(out, out_len, "%d",
+                    (int)tr->drum_clips[tr->active_clip].lanes[lidx].midi_note);
+            return -1;
+        }
         if (!strcmp(sub, "clock_shift_pos"))
             return snprintf(out, out_len, "%d",
                             (int)tr->clips[tr->active_clip].clock_shift_pos);
@@ -2215,19 +2225,21 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 if (tr->clip_playing && !effective_mute(inst, t)) {
                     int l;
                     for (l = 0; l < DRUM_LANES; l++) {
-                        clip_t *dlc = &tr->drum_clips[tr->active_clip].lanes[l].clip;
+                        drum_lane_t *lane = &tr->drum_clips[tr->active_clip].lanes[l];
+                        clip_t      *dlc  = &lane->clip;
                         if (dlc->note_count == 0) continue;
                         pfx_apply_params(&tr->pfx, &dlc->pfx_params);
                         uint32_t cct = (uint32_t)tr->drum_current_step[l] * dlc->ticks_per_step
                                        + tr->drum_tick_in_step[l];
+                        uint8_t  lane_note = lane->midi_note;
                         uint16_t ni2;
                         for (ni2 = 0; ni2 < dlc->note_count; ni2++) {
                             note_t *n = &dlc->notes[ni2];
                             if (!n->active || n->suppress_until_wrap || n->step_muted) continue;
                             if (effective_note_tick(n, dlc, tr->pfx.quantize) != cct) continue;
                             { int pp; for (pp = 0; pp < (int)tr->play_pending_count; pp++) {
-                                if (tr->play_pending[pp].pitch == n->pitch) {
-                                    pfx_note_off(inst, tr, n->pitch);
+                                if (tr->play_pending[pp].pitch == lane_note) {
+                                    pfx_note_off(inst, tr, lane_note);
                                     tr->play_pending[pp] = tr->play_pending[tr->play_pending_count - 1];
                                     tr->play_pending_count--;
                                     break;
@@ -2236,12 +2248,12 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                             int eff_gate = (int)n->gate * tr->pfx.gate_time / 100;
                             if (eff_gate < 1) eff_gate = 1;
                             if (tr->play_pending_count < 32) {
-                                tr->play_pending[tr->play_pending_count].pitch           = n->pitch;
+                                tr->play_pending[tr->play_pending_count].pitch           = lane_note;
                                 tr->play_pending[tr->play_pending_count].ticks_remaining = (uint16_t)eff_gate;
                                 tr->play_pending_count++;
                                 tr->note_active = 1;
                             }
-                            pfx_note_on(inst, tr, n->pitch, n->vel);
+                            pfx_note_on(inst, tr, lane_note, n->vel);
                         }
                     }
                 }
