@@ -3566,9 +3566,16 @@ globalThis.onMidiMessageExternal = function (data) {
         lastPlayedNote  = d1;
         lastPadVelocity = vel;
         if (!routeIsMove) liveSendNote(t, 0x90, d1, vel);
-        const isRec = recordArmed && !recordCountingIn && t === recordArmedTrack;
+        /* ROUTE_MOVE: sequencer inject echoes come back here on cable-2. Skip recording
+         * for pitches the sequencer is already playing — those are echoes, not keyboard input.
+         * Preserve any existing recording-active entry so the keyboard gate isn't overwritten. */
+        const isSeqEcho = routeIsMove && seqActiveNotes.has(d1);
+        const isRec = !isSeqEcho && recordArmed && !recordCountingIn && t === recordArmedTrack;
         if (isRec) recordNoteOn(d1, vel, t);
-        extHeldNotes.set(d1, { track: t, recording: isRec });
+        const prevInfo = extHeldNotes.get(d1);
+        if (!prevInfo || !prevInfo.recording || !isSeqEcho) {
+            extHeldNotes.set(d1, { track: t, recording: isRec });
+        }
         if (heldStep >= 0 && !shiftHeld && !sessionView) {
             const ac = effectiveClip(t);
             if (typeof host_module_set_param === 'function')
