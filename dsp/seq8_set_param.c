@@ -1304,6 +1304,7 @@ static void set_param(void *instance, const char *key, const char *val) {
 
             if (!strcmp(p2, "_lane_note")) {
                 dlane->midi_note = (uint8_t)clamp_i(my_atoi(val), 0, 127);
+                seq8_save_state(inst);
                 return;
             }
             if (!strcmp(p2, "_clip_length")) {

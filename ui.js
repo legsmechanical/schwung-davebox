@@ -65,7 +65,7 @@ import {
     LEDS_PER_FRAME, NUM_TRACKS, NUM_CLIPS,
     FLAG_JUMP_TO_OVERTAKE, FLAG_JUMP_TO_TOOLS, SEQ8_NAV_FLAGS, NUM_STEPS,
     TRACK_COLORS, TRACK_DIM_COLORS, SCENE_LETTERS, TRACK_PAD_BASE, TOP_PAD_BASE,
-    TPS_VALUES, NOTE_KEYS, SCALE_NAMES, DELAY_LABELS,
+    TPS_VALUES, NOTE_KEYS, SCALE_NAMES, SCALE_DISPLAY, DELAY_LABELS,
     fmtSign, fmtStretch, fmtLen, fmtRes, fmtPct, fmtNote, fmtPages, fmtUnis,
     fmtDly, fmtBool, fmtRoute, fmtPlain, fmtNA,
     col4, parseActionRaw, MCUFONT, pixelPrint, pixelPrintC
@@ -76,8 +76,7 @@ import {
 /* ------------------------------------------------------------------ */
 
 function bankHeader(bankIdx) {
-    const n = BANKS[bankIdx].name;
-    return '[' + (n + '          ').slice(0, 10) + ']';
+    return '[ ' + BANKS[bankIdx].name + ' ]';
 }
 
 /* p(abbrev, fullName, dspKey, scope, min, max, defaultVal, fmtFn, sens, actionSuffix, lock)
@@ -471,8 +470,6 @@ const STRETCH_BLOCKED_TICKS = 294;  /* ~1500ms at 196Hz */
 let noNoteFlashEndTick = -1;         /* tickCount deadline for NO NOTE flash; -1 = inactive */
 const NO_NOTE_FLASH_TICKS = 118;     /* ~600ms at 196Hz */
 let trackOctave = new Array(NUM_TRACKS).fill(0);  /* per-track live pad octave shift, -4..+4 */
-let octaveOverlayEndTick = -1;                    /* tickCount deadline for octave overlay; -1 = inactive */
-const OCTAVE_OVERLAY_TICKS = 196;                 /* ~1000ms at 196Hz */
 const KNOB_TURN_HIGHLIGHT_TICKS = 120;            /* ~600ms at 196Hz — highlight after turn without touch */
 let actionPopupEndTick = -1;   /* tickCount deadline for action confirmation pop-up; -1 = inactive */
 let actionPopupLines   = [];   /* 1 or 2 strings to display */
@@ -1944,21 +1941,36 @@ function drawSessionOverview() {
     }
 }
 
-/* Track-number row: muted=inverted, soloed=blink, normal=white.
- * Each track number is 1 char (6px) at x = 4 + t*12. */
+/* Track-number row: active track has a box (1px border + 1px pad around number).
+ * Muted = inverted. Soloed = blink. */
 function drawTrackRow(y) {
     const soloBlinkOn = Math.floor(tickCount / 24) % 2 === 0;
     for (let _t = 0; _t < NUM_TRACKS; _t++) {
-        const x = 4 + _t * 12;
+        const cx = _t * 16 + 5;
+        const bx = _t * 16 + 3;
+        const by = y - 2;
+        const bw = 10, bh = 12;
+        const isActive = (_t === activeTrack);
         if (trackMuted[_t]) {
-            fill_rect(x, y - 1, 6, 9, 1);
-            print(x, y, String(_t + 1), 0);
+            fill_rect(bx, by, bw, bh, 1);
+            print(cx, y, String(_t + 1), 0);
         } else if (trackSoloed[_t]) {
-            if (soloBlinkOn) print(x, y, String(_t + 1), 1);
+            if (soloBlinkOn) print(cx, y, String(_t + 1), 1);
+            if (isActive) {
+                fill_rect(bx, by,      bw, 1,  1);
+                fill_rect(bx, by+bh-1, bw, 1,  1);
+                fill_rect(bx, by,      1,  bh, 1);
+                fill_rect(bx+bw-1, by, 1,  bh, 1);
+            }
         } else {
-            print(x, y, String(_t + 1), 1);
+            print(cx, y, String(_t + 1), 1);
+            if (isActive) {
+                fill_rect(bx, by,      bw, 1,  1);
+                fill_rect(bx, by+bh-1, bw, 1,  1);
+                fill_rect(bx, by,      1,  bh, 1);
+                fill_rect(bx+bw-1, by, 1,  bh, 1);
+            }
         }
-        if (_t === activeTrack) fill_rect(x, y + 8, 6, 1, 1);
     }
 }
 
@@ -1980,12 +1992,8 @@ function drawUI() {
         print(4, 10, 'SESSION  GRP ' + (Math.floor(sceneRow / 4) + 1), 1);
         print(4, 22, SCENE_LETTERS[base] + '-' + SCENE_LETTERS[base + 3], 1);
         drawTrackRow(34);
-        let line4 = '';
-        for (let t = 0; t < NUM_TRACKS; t++) {
-            line4 += SCENE_LETTERS[trackActiveClip[t]];
-            if (t < NUM_TRACKS - 1) line4 += ' ';
-        }
-        print(4, 46, line4, 1);
+        for (let t = 0; t < NUM_TRACKS; t++)
+            print(t * 16 + 5, 46, SCENE_LETTERS[trackActiveClip[t]], 1);
         return;
     }
 
@@ -2028,20 +2036,6 @@ function drawUI() {
     if (noNoteFlashEndTick >= 0) {
         print(4, 22, 'NO NOTE', 1);
         print(4, 34, 'Play a pad first', 1);
-        return;
-    }
-
-    /* Octave overlay: ~1000ms after Up/Down octave shift */
-    if (octaveOverlayEndTick >= 0) {
-        const ac         = effectiveClip(activeTrack);
-        const page       = trackCurrentPage[activeTrack];
-        const totalPages = Math.max(1, Math.ceil(clipLength[activeTrack][ac] / 16));
-        const oct        = trackOctave[activeTrack];
-        print(4, 10, 'TR' + (activeTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac] +
-                     '  PG ' + (page + 1) + '/' + totalPages, 1);
-        print(4, 22, 'KNOB: [' + BANKS[activeBank].name + ']', 1);
-        print(4, 34, 'Octave: ' + (oct > 0 ? '+' + oct : String(oct)), 1);
-        drawTrackRow(46);
         return;
     }
 
@@ -2124,7 +2118,7 @@ function drawUI() {
                 null, null,
                 fmtBool(sqfl),
             ];
-            print(4, 0, 'DRUM SEQ', 1);
+            print(4, 0, '[ DRUM SEQ ]', 1);
             for (let k = 0; k < 8; k++) {
                 const colX = 4 + (k % 4) * 30;
                 const rowY = k < 4 ? 12 : 36;
@@ -2133,6 +2127,46 @@ function drawUI() {
                 print(colX, rowY,      col4(drumSeqLabels[k]), hi ? 0 : 1);
                 print(colX, rowY + 12, col4(drumSeqVals[k]),   hi ? 0 : 1);
             }
+        } else if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM && bank === 2) {
+        /* Drum NOTE FX bank overview */
+        const t       = activeTrack;
+        const lane    = activeDrumLane[t];
+        const note    = drumLaneNote[t][lane];
+        const noteStr = midiNoteName(note) + ' ' + note;
+        const knobs   = BANKS[bank].knobs;
+        const vals    = bankParams[t][bank];
+        const hiLane  = (knobTouched === 6 || knobTouched === 7);
+
+        print(4, 0, '[ NOTE/NOTEFX ]', 1);
+
+        /* K1-K6 (k=0..5): normal grid render */
+        for (let k = 0; k < 6; k++) {
+            const colX = 4 + (k % 4) * 30;
+            const rowY = k < 4 ? 12 : 36;
+            const hi   = (knobTouched === k);
+            if (hi) fill_rect(colX, rowY, 24, 24, 1);
+            print(colX, rowY,      col4(knobs[k].abbrev), hi ? 0 : 1);
+            print(colX, rowY + 12, col4(knobs[k].abbrev ? knobs[k].fmt(vals[k]) : null), hi ? 0 : 1);
+        }
+
+        /* K7+K8 (k=6,7): merged lane-note block in bottom-right corner.
+         * Oct and Smt set the lane's MIDI note (not a real-time processor) —
+         * boxed to distinguish them from the effect params above. */
+        const LX = 64, LY = 36, LW = 54, LH = 24;
+        if (hiLane) {
+            fill_rect(LX, LY, LW, LH, 1);
+        } else {
+            fill_rect(LX,        LY,        LW, 1,  1);  /* top    */
+            fill_rect(LX,        LY+LH-1,   LW, 1,  1);  /* bottom */
+            fill_rect(LX,        LY,        1,  LH, 1);  /* left   */
+            fill_rect(LX+LW-1,   LY,        1,  LH, 1);  /* right  */
+        }
+        const lc = hiLane ? 0 : 1;
+        print(LX + Math.floor((LW/2 - 18) / 2),              LY + 1, 'Oct', lc);
+        print(LX + Math.floor(LW/2) + Math.floor((LW/2 - 24) / 2), LY + 1, 'Note', lc);
+        const noteX = LX + Math.floor((LW - noteStr.length * 6) / 2);
+        print(noteX, LY + 13, noteStr, lc);
+
         } else {
         /* Bank overview — 5 rows; touched knob column inverted */
         const knobs = BANKS[bank].knobs;
@@ -2156,30 +2190,30 @@ function drawUI() {
         const note      = drumLaneNote[t][lane];
         const oct       = Math.floor(note / 12) - 2;
         const name      = NOTE_KEYS[note % 12];
-        const bankGroup = pg === 0 ? 'Bank A' : 'Bank B';
-        const bankName  = activeBank === 1 ? 'SEQ' : activeBank === 2 ? 'Note/NoteFX' : BANKS[activeBank].name;
-        print(4, 10, 'KNOB: [' + bankName + ']', 1);
-        print(4, 22, bankGroup + '  Pad: ' + name + oct + ' (' + note + ')', 1);
+        const bankGroup = pg === 0 ? 'Bank: A' : 'Bank: B';
+        const bankName  = activeBank === 1 ? 'DRUM SEQ' : activeBank === 2 ? 'NOTE/NOTEFX' : BANKS[activeBank].name;
+        print(4, 0,  'Knob: [ ' + bankName + ' ]', 1);
+        print(4, 10, bankGroup + '  Pad: ' + name + oct + ' (' + note + ')', 1);
         drawTrackRow(34);
-        let drumLine4 = '';
-        for (let _t = 0; _t < NUM_TRACKS; _t++) {
-            drumLine4 += SCENE_LETTERS[trackActiveClip[_t]];
-            if (_t < NUM_TRACKS - 1) drumLine4 += ' ';
-        }
-        print(4, 46, drumLine4, 1);
+        for (let _t = 0; _t < NUM_TRACKS; _t++)
+            print(_t * 16 + 5, 46, SCENE_LETTERS[trackActiveClip[_t]], 1);
         drawDrumPositionBar(t);
     } else {
         /* State 4: normal Track View */
-        const recTag = (recordArmed && !recordCountingIn && recordArmedTrack === activeTrack)
+        const recTag  = (recordArmed && !recordCountingIn && recordArmedTrack === activeTrack)
             ? ' REC' : '';
-        print(4, 10, 'KNOB: [' + BANKS[activeBank].name + ']' + recTag, 1);
+        const oct     = trackOctave[activeTrack];
+        const octStr  = 'Oct: ' + (oct >= 0 ? '+' : '') + oct;
+        const keyScl  = NOTE_KEYS[padKey] + ' ' + (SCALE_DISPLAY[padScale] || '?');
+        const CHAR_W  = 6;
+        const keySclX = 128 - 4 - keyScl.length * CHAR_W;
+        print(4, 0,  'Knob: [ ' + BANKS[activeBank].name + ' ]' + recTag, 1);
+        print(4, 10, octStr, 1);
+        print(keySclX, 10, keyScl, 1);
+        if (scaleAware) fill_rect(keySclX, 18, keyScl.length * CHAR_W, 1, 1);
         drawTrackRow(34);
-        let line4 = '';
-        for (let t = 0; t < NUM_TRACKS; t++) {
-            line4 += SCENE_LETTERS[trackActiveClip[t]];
-            if (t < NUM_TRACKS - 1) line4 += ' ';
-        }
-        print(4, 46, line4, 1);
+        for (let t = 0; t < NUM_TRACKS; t++)
+            print(t * 16 + 5, 46, SCENE_LETTERS[trackActiveClip[t]], 1);
         drawPositionBar(activeTrack);
     }
 }
@@ -2605,10 +2639,6 @@ globalThis.tick = function () {
         if (knobTouched >= 0 && knobTurnedTick[knobTouched] >= 0 &&
                 (tickCount - knobTurnedTick[knobTouched]) >= KNOB_TURN_HIGHLIGHT_TICKS) {
             knobTouched = -1;
-            screenDirty = true;
-        }
-        if (octaveOverlayEndTick >= 0 && tickCount >= octaveOverlayEndTick) {
-            octaveOverlayEndTick = -1;
             screenDirty = true;
         }
         if (noNoteFlashEndTick >= 0 && tickCount >= noNoteFlashEndTick) {
@@ -3259,7 +3289,6 @@ globalThis.onMidiMessageInternal = function (data) {
                 forceRedraw();
             } else {
             trackOctave[activeTrack] = Math.min(4, trackOctave[activeTrack] + 1);
-            octaveOverlayEndTick = tickCount + OCTAVE_OVERLAY_TICKS;
             screenDirty = true;
             if (heldStep >= 0) forceRedraw();
             }
@@ -3272,7 +3301,6 @@ globalThis.onMidiMessageInternal = function (data) {
                 forceRedraw();
             } else {
             trackOctave[activeTrack] = Math.max(-4, trackOctave[activeTrack] - 1);
-            octaveOverlayEndTick = tickCount + OCTAVE_OVERLAY_TICKS;
             screenDirty = true;
             if (heldStep >= 0) forceRedraw();
             }
@@ -3578,18 +3606,17 @@ globalThis.onMidiMessageInternal = function (data) {
                 }
                 return; /* K6, K7 = stub */
             }
-            /* Drum NOTE FX bank: K6 (lane oct) and K7 (lane semitone) override stubs */
+            /* Drum NOTE FX bank: K7 (lane oct, coarse ±12) and K8 (lane note, fine ±1) */
             if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM && bank === 2 &&
-                    (knobIdx === 5 || knobIdx === 6)) {
+                    (knobIdx === 6 || knobIdx === 7)) {
                 const t    = activeTrack;
                 const lane = activeDrumLane[t];
                 const dir  = (d2 >= 1 && d2 <= 63) ? 1 : -1;
-                const sens = knobIdx === 5 ? 4 : 2;
                 if (dir !== knobLastDir[knobIdx]) { knobAccum[knobIdx] = 0; knobLastDir[knobIdx] = dir; }
                 knobAccum[knobIdx]++;
-                if (knobAccum[knobIdx] >= sens) {
+                if (knobAccum[knobIdx] >= 16) {
                     knobAccum[knobIdx] = 0;
-                    const delta = knobIdx === 5 ? dir * 12 : dir;
+                    const delta = knobIdx === 6 ? dir * 12 : dir;
                     const nv = Math.max(0, Math.min(127, drumLaneNote[t][lane] + delta));
                     if (nv !== drumLaneNote[t][lane]) {
                         drumLaneNote[t][lane] = nv;

@@ -65,6 +65,11 @@ export const SCALE_NAMES = [
     'Locrian', 'Harmonic Minor', 'Melodic Minor',
     'Pentatonic Major', 'Pentatonic Minor', 'Blues', 'Whole Tone', 'Diminished'
 ];
+export const SCALE_DISPLAY = [
+    'Major', 'Minor', 'Dorian', 'Phrygian', 'Lydian', 'Mixolydian',
+    'Locrian', 'H Minor', 'M Minor', 'Pent Major', 'Pent Minor',
+    'Blues', 'Whole Tone', 'Diminished'
+];
 export const DELAY_LABELS = ['---','1/64','1/32','16T','1/16','8T','1/8','4T','1/4','1/2','1/1'];
 
 export function fmtSign(v)    { return (v >= 0 ? '+' : '') + v; }
