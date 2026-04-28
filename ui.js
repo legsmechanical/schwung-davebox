@@ -2150,7 +2150,7 @@ function drawUI() {
         const curPage    = drumStepPage[t];
         const bankGroup  = pg === 0 ? 'Bank A' : 'Bank B';
         const bankName   = activeBank === 1 ? 'SEQ' : BANKS[activeBank].name;
-        print(4, 10, SCENE_LETTERS[ac] + ' \xb7 LN ' + (lane + 1) + '  PG ' + (curPage + 1) + '/' + totalPages, 1);
+        print(4, 10, SCENE_LETTERS[ac] + ' \xb7 ' + (lane + 1) + '  PG ' + (curPage + 1) + '/' + totalPages, 1);
         print(4, 22, 'PAD: ' + name + oct + ' (' + note + ')', 1);
         print(4, 34, bankGroup + '  KNOB:[' + bankName + ']', 1);
         drawTrackRow(46);
