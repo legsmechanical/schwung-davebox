@@ -1697,9 +1697,8 @@ function updateSessionLEDs() {
             const isWillRelaunch = trackWillRelaunch[t] && isActiveClip;
             const isDrumTrack = bankParams[t][0][2] === PAD_MODE_DRUM;
             const hasContent  = isDrumTrack ? drumClipNonEmpty[t][sceneIdx] : clipNonEmpty[t][sceneIdx];
-            /* Drum clips show DarkGrey unless actively playing/queued/will-relaunch */
             const hasActive   = isDrumTrack
-                ? (isPlaying || isQueued || isWillRelaunch)
+                ? drumClipNonEmpty[t][sceneIdx]
                 : clipHasActiveNotes(t, sceneIdx);
             let color;
             if (!hasContent) {
@@ -1797,8 +1796,7 @@ function updateTrackLEDs() {
                 color = TRACK_COLORS[t];
             } else if (!trackClipHasContent(t, sceneIdx)) {
                 color = LED_OFF;
-            } else if (bankParams[t][0][2] === PAD_MODE_DRUM || !clipHasActiveNotes(t, sceneIdx)) {
-                /* Drum: non-focused clips always DarkGrey; melodic: DarkGrey if only inactive notes */
+            } else if (bankParams[t][0][2] !== PAD_MODE_DRUM && !clipHasActiveNotes(t, sceneIdx)) {
                 color = DarkGrey;
             } else {
                 color = TRACK_DIM_COLORS[t];

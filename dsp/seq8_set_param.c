@@ -378,6 +378,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 tr2->next_early_mask     = 0;
                 for (c2 = 0; c2 < NUM_CLIPS; c2++)
                     clip_init(&tr2->clips[c2]);
+                drum_track_init(tr2);
             }
         }
         seq8_load_state(inst);
