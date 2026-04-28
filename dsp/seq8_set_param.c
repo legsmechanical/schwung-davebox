@@ -1365,7 +1365,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                          ni2 < cl->note_count; ni2--) {
                         note_t *n = &cl->notes[ni2];
                         if (n->active && n->pitch == (uint8_t)pitch
-                                && n->suppress_until_wrap && n->tick == on_tick) {
+                                && n->tick == on_tick) {
                             n->gate = (uint16_t)gate_ticks;
                             break;
                         }

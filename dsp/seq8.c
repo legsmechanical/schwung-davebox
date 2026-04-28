@@ -1309,7 +1309,7 @@ static void finalize_pending_notes(clip_t *cl, seq8_track_t *tr) {
         for (ni = (cl->note_count > 0 ? cl->note_count - 1 : 0);
              ni < cl->note_count; ni--) {
             note_t *n = &cl->notes[ni];
-            if (n->active && n->suppress_until_wrap
+            if (n->active
                     && n->pitch == tr->rec_pending[ri].pitch
                     && n->tick  == on_tick) {
                 n->gate = (uint16_t)gate_ticks;
