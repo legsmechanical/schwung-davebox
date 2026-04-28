@@ -1211,15 +1211,77 @@ static void set_param(void *instance, const char *key, const char *val) {
             return;
         }
 
-        /* tN_lL_lane_note — set the MIDI note for drum lane L of the active clip */
+        /* tN_lL_* — drum lane setters */
         if (sub[0] == 'l' && sub[1] >= '0' && sub[1] <= '9') {
+            int lane_idx = 0;
             const char *p2 = sub + 1;
-            while (*p2 >= '0' && *p2 <= '9') p2++;
+            while (*p2 >= '0' && *p2 <= '9') { lane_idx = lane_idx * 10 + (*p2 - '0'); p2++; }
+            if (lane_idx < 0 || lane_idx >= DRUM_LANES) return;
+            drum_lane_t *dlane = &tr->drum_clips[tr->active_clip].lanes[lane_idx];
+            clip_t      *dlc   = &dlane->clip;
+
             if (!strcmp(p2, "_lane_note")) {
-                int lane_idx = my_atoi(sub + 1);
-                if (lane_idx < 0 || lane_idx >= DRUM_LANES) return;
-                tr->drum_clips[tr->active_clip].lanes[lane_idx].midi_note =
-                    (uint8_t)clamp_i(my_atoi(val), 0, 127);
+                dlane->midi_note = (uint8_t)clamp_i(my_atoi(val), 0, 127);
+                return;
+            }
+
+            /* tN_lL_step_S_toggle  val="vel"
+             * Empty step: add lane note, activate. Active: deactivate. Inactive-with-note: reactivate. */
+            if (!strncmp(p2, "_step_", 6)) {
+                const char *q = p2 + 6;
+                int sidx = 0;
+                while (*q >= '0' && *q <= '9') { sidx = sidx * 10 + (*q++ - '0'); }
+                if (sidx < 0 || sidx >= SEQ_STEPS) return;
+
+                if (!strcmp(q, "_toggle")) {
+                    int vel = clamp_i(my_atoi(val), 1, 127);
+                    if (vel == 0) vel = SEQ_VEL;
+                    if (dlc->step_note_count[sidx] == 0) {
+                        /* Empty: add lane note and activate */
+                        dlc->step_notes[sidx][0]       = dlane->midi_note;
+                        dlc->step_note_count[sidx]      = 1;
+                        dlc->step_vel[sidx]             = (uint8_t)vel;
+                        dlc->step_gate[sidx]            = (uint16_t)GATE_TICKS;
+                        dlc->note_tick_offset[sidx][0]  = 0;
+                        dlc->steps[sidx]                = 1;
+                    } else {
+                        /* Has note: toggle active/inactive */
+                        dlc->steps[sidx] = dlc->steps[sidx] ? 0 : 1;
+                    }
+                    { int i, any = 0;
+                      for (i = 0; i < SEQ_STEPS; i++) if (dlc->steps[i]) { any = 1; break; }
+                      dlc->active = (uint8_t)any; }
+                    clip_migrate_to_notes(dlc);
+                    seq8_save_state(inst);
+                    return;
+                }
+                if (!strcmp(q, "_clear")) {
+                    dlc->steps[sidx]          = 0;
+                    dlc->step_note_count[sidx] = 0;
+                    dlc->step_vel[sidx]        = (uint8_t)SEQ_VEL;
+                    dlc->step_gate[sidx]       = (uint16_t)GATE_TICKS;
+                    memset(dlc->note_tick_offset[sidx], 0, sizeof(dlc->note_tick_offset[sidx]));
+                    { int i, any = 0;
+                      for (i = 0; i < SEQ_STEPS; i++) if (dlc->steps[i]) { any = 1; break; }
+                      dlc->active = (uint8_t)any; }
+                    clip_migrate_to_notes(dlc);
+                    seq8_save_state(inst);
+                    return;
+                }
+                if (!strcmp(q, "_vel")) {
+                    if (dlc->step_note_count[sidx] == 0) return;
+                    dlc->step_vel[sidx] = (uint8_t)clamp_i(my_atoi(val), 0, 127);
+                    clip_migrate_to_notes(dlc);
+                    seq8_save_state(inst);
+                    return;
+                }
+                if (!strcmp(q, "_gate")) {
+                    if (dlc->step_note_count[sidx] == 0) return;
+                    dlc->step_gate[sidx] = (uint16_t)clamp_i(my_atoi(val), 1, 65535);
+                    clip_migrate_to_notes(dlc);
+                    seq8_save_state(inst);
+                    return;
+                }
             }
             return;
         }

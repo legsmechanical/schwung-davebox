@@ -1840,14 +1840,65 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
             return snprintf(out, out_len, "%d", (int)tr->pad_octave);
         if (!strcmp(sub, "pad_mode"))
             return snprintf(out, out_len, "%d", (int)tr->pad_mode);
-        /* tN_lL_lane_note — MIDI note for drum lane L of the active clip */
+        /* tN_lL_* — drum lane getters (lane_note, note_count, steps, step_S_*) */
         if (sub[0] == 'l' && sub[1] >= '0' && sub[1] <= '9') {
-            int lidx = my_atoi(sub + 1);
+            int lidx = 0;
             const char *p2 = sub + 1;
-            while (*p2 >= '0' && *p2 <= '9') p2++;
-            if (!strcmp(p2, "_lane_note") && lidx >= 0 && lidx < DRUM_LANES)
-                return snprintf(out, out_len, "%d",
-                    (int)tr->drum_clips[tr->active_clip].lanes[lidx].midi_note);
+            while (*p2 >= '0' && *p2 <= '9') { lidx = lidx * 10 + (*p2 - '0'); p2++; }
+            if (lidx < 0 || lidx >= DRUM_LANES) return -1;
+            drum_lane_t *dlane = &tr->drum_clips[tr->active_clip].lanes[lidx];
+            clip_t      *dlc   = &dlane->clip;
+            if (!strcmp(p2, "_lane_note"))
+                return snprintf(out, out_len, "%d", (int)dlane->midi_note);
+            if (!strcmp(p2, "_note_count"))
+                return snprintf(out, out_len, "%d", (int)dlc->note_count);
+            if (!strcmp(p2, "_length"))
+                return snprintf(out, out_len, "%d", (int)dlc->length);
+            if (!strcmp(p2, "_steps")) {
+                if (out_len < SEQ_STEPS + 1) return -1;
+                int s;
+                for (s = 0; s < SEQ_STEPS; s++) out[s] = '0';
+                uint16_t ni3;
+                for (ni3 = 0; ni3 < dlc->note_count; ni3++) {
+                    note_t *n = &dlc->notes[ni3];
+                    if (!n->active) continue;
+                    uint16_t sn = note_step(n->tick, dlc->length, dlc->ticks_per_step);
+                    if (sn >= SEQ_STEPS) continue;
+                    if (!n->step_muted)
+                        out[sn] = '1';
+                    else if (out[sn] == '0')
+                        out[sn] = '2';
+                }
+                out[SEQ_STEPS] = '\0';
+                return SEQ_STEPS;
+            }
+            if (!strncmp(p2, "_step_", 6)) {
+                const char *q = p2 + 6;
+                int sidx = 0;
+                while (*q >= '0' && *q <= '9') { sidx = sidx * 10 + (*q++ - '0'); }
+                if (sidx < 0 || sidx >= SEQ_STEPS) return -1;
+                if (*q == '\0')
+                    return snprintf(out, out_len, "%d", (int)dlc->steps[sidx]);
+                if (!strcmp(q, "_notes")) {
+                    int cnt = (int)dlc->step_note_count[sidx];
+                    if (cnt == 0) { out[0] = '\0'; return 0; }
+                    int pos = 0, n;
+                    for (n = 0; n < cnt; n++) {
+                        if (n > 0 && pos < out_len - 1) out[pos++] = ' ';
+                        pos += snprintf(out + pos, (size_t)(out_len - pos),
+                                        "%d", (int)dlc->step_notes[sidx][n]);
+                    }
+                    return pos;
+                }
+                if (!strcmp(q, "_vel"))
+                    return snprintf(out, out_len, "%d", (int)dlc->step_vel[sidx]);
+                if (!strcmp(q, "_gate"))
+                    return snprintf(out, out_len, "%d", (int)dlc->step_gate[sidx]);
+                if (!strcmp(q, "_nudge"))
+                    return snprintf(out, out_len, "%d",
+                        dlc->step_note_count[sidx] > 0 ? (int)dlc->note_tick_offset[sidx][0] : 0);
+                return -1;
+            }
             return -1;
         }
         if (!strcmp(sub, "clock_shift_pos"))
