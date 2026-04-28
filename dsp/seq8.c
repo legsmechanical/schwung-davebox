@@ -508,7 +508,7 @@ static void seq8_save_state(seq8_instance_t *inst) {
     FILE *fp = fopen(inst->state_path, "w");
     if (!fp) return;
     int t, c;
-    fprintf(fp, "{\"v\":13,\"playing\":%d", inst->playing);
+    fprintf(fp, "{\"v\":14,\"playing\":%d", inst->playing);
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
     for (t = 0; t < NUM_TRACKS; t++)
@@ -568,6 +568,38 @@ static void seq8_save_state(seq8_instance_t *inst) {
             }
         }
     }
+    /* Drum lane data (sparse — only drum-mode tracks, only lanes with notes) */
+    for (t = 0; t < NUM_TRACKS; t++) {
+        if (inst->tracks[t].pad_mode != PAD_MODE_DRUM) continue;
+        for (c = 0; c < NUM_CLIPS; c++) {
+            int l;
+            for (l = 0; l < DRUM_LANES; l++) {
+                drum_lane_t *dl = &inst->tracks[t].drum_clips[c].lanes[l];
+                clip_t *dlc = &dl->clip;
+                uint16_t ni;
+                int has_active = 0;
+                for (ni = 0; ni < dlc->note_count; ni++)
+                    if (dlc->notes[ni].active) { has_active = 1; break; }
+                if (!has_active) continue;
+                if (dl->midi_note != (uint8_t)(DRUM_BASE_NOTE + l))
+                    fprintf(fp, ",\"t%dc%dl%d_mn\":%d", t, c, l, (int)dl->midi_note);
+                if (dlc->length != SEQ_STEPS_DEFAULT)
+                    fprintf(fp, ",\"t%dc%dl%d_len\":%d", t, c, l, (int)dlc->length);
+                if (dlc->ticks_per_step != TICKS_PER_STEP)
+                    fprintf(fp, ",\"t%dc%dl%d_tps\":%d", t, c, l, (int)dlc->ticks_per_step);
+                int wrote = 0;
+                for (ni = 0; ni < dlc->note_count; ni++) {
+                    note_t *n = &dlc->notes[ni];
+                    if (!n->active) continue;
+                    if (!wrote) { fprintf(fp, ",\"t%dc%dl%d_n\":\"", t, c, l); wrote = 1; }
+                    fprintf(fp, "%u:%d:%d:%d:%d;",
+                            (unsigned)n->tick, (int)n->pitch,
+                            (int)n->vel, (int)n->gate, (int)n->step_muted);
+                }
+                if (wrote) fputc('"', fp);
+            }
+        }
+    }
     /* Mute/solo state */
     fprintf(fp, ",\"mute\":\"");
     for (t = 0; t < NUM_TRACKS; t++) fputc(inst->mute[t] ? '1' : '0', fp);
@@ -620,12 +652,15 @@ static void seq8_load_state(seq8_instance_t *inst) {
     if (!n) { free(buf); remove(inst->state_path); return; }
     buf[n] = '\0';
 
-    /* Version gate: delete and ignore any state file that isn't v=13. */
-    if (json_get_int(buf, "v", -1) != 13) {
-        free(buf);
-        remove(inst->state_path);
-        seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
-        return;
+    /* Version gate: accept v=13 (no drum data) and v=14 (drum data). */
+    {
+        int sv = json_get_int(buf, "v", -1);
+        if (sv != 13 && sv != 14) {
+            free(buf);
+            remove(inst->state_path);
+            seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
+            return;
+        }
     }
 
     int t, c;
@@ -777,6 +812,72 @@ static void seq8_load_state(seq8_instance_t *inst) {
             p2->fb_clock        = clamp_i(json_get_int(buf, key,   0),  -100, 100);
         }
     }
+    /* Drum lane data (v=14 only; v=13 files have no drum keys, loops are no-ops) */
+    for (t = 0; t < NUM_TRACKS; t++) {
+        if (inst->tracks[t].pad_mode != PAD_MODE_DRUM) continue;
+        for (c = 0; c < NUM_CLIPS; c++) {
+            int l;
+            for (l = 0; l < DRUM_LANES; l++) {
+                drum_lane_t *dl = &inst->tracks[t].drum_clips[c].lanes[l];
+                clip_t *dlc = &dl->clip;
+                char search[48];
+                snprintf(search, sizeof(search), "\"t%dc%dl%d_n\":\"", t, c, l);
+                if (!strstr(buf, search)) continue;
+                snprintf(key, sizeof(key), "t%dc%dl%d_mn", t, c, l);
+                dl->midi_note = (uint8_t)clamp_i(
+                    json_get_int(buf, key, DRUM_BASE_NOTE + l), 0, 127);
+                snprintf(key, sizeof(key), "t%dc%dl%d_len", t, c, l);
+                dlc->length = (uint16_t)clamp_i(
+                    json_get_int(buf, key, SEQ_STEPS_DEFAULT), 1, SEQ_STEPS);
+                snprintf(key, sizeof(key), "t%dc%dl%d_tps", t, c, l);
+                {
+                    int raw_tps = json_get_int(buf, key, (int)TICKS_PER_STEP);
+                    int vi, valid = 0;
+                    for (vi = 0; vi < 6; vi++)
+                        if (raw_tps == (int)TPS_VALUES[vi]) { valid = 1; break; }
+                    dlc->ticks_per_step = valid ? (uint16_t)raw_tps : TICKS_PER_STEP;
+                }
+                {
+                    const char *p = strstr(buf, search);
+                    p += strlen(search);
+                    uint32_t max_tick = (uint32_t)dlc->length * dlc->ticks_per_step;
+                    while (*p && *p != '"') {
+                        unsigned long tick_val = 0;
+                        while (*p >= '0' && *p <= '9')
+                            tick_val = tick_val * 10 + (unsigned long)(*p++ - '0');
+                        if (*p != ':') { while (*p && *p != ';' && *p != '"') p++; if (*p==';') p++; continue; }
+                        p++;
+                        int pitch_val = 0;
+                        while (*p >= '0' && *p <= '9') pitch_val = pitch_val*10 + (*p++ - '0');
+                        if (*p != ':') { while (*p && *p != ';' && *p != '"') p++; if (*p==';') p++; continue; }
+                        p++;
+                        int vel_val = 0;
+                        while (*p >= '0' && *p <= '9') vel_val = vel_val*10 + (*p++ - '0');
+                        if (*p != ':') { while (*p && *p != ';' && *p != '"') p++; if (*p==';') p++; continue; }
+                        p++;
+                        int gate_val = 0;
+                        while (*p >= '0' && *p <= '9') gate_val = gate_val*10 + (*p++ - '0');
+                        int sm_val = 0;
+                        if (*p == ':') {
+                            p++;
+                            while (*p >= '0' && *p <= '9') sm_val = sm_val*10 + (*p++ - '0');
+                        }
+                        if (*p == ';') p++;
+                        if ((uint32_t)tick_val < max_tick) {
+                            int gmax_ld = SEQ_STEPS * dlc->ticks_per_step;
+                            if (gmax_ld > 65535) gmax_ld = 65535;
+                            int ni_idx = clip_insert_note(dlc, (uint32_t)tick_val,
+                                             (uint16_t)clamp_i(gate_val, 1, gmax_ld),
+                                             (uint8_t)clamp_i(pitch_val, 0, 127),
+                                             (uint8_t)clamp_i(vel_val, 0, 127));
+                            if (ni_idx >= 0 && sm_val)
+                                dlc->notes[ni_idx].step_muted = 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
     /* Global settings */
     inst->pad_key      = (uint8_t)clamp_i(json_get_int(buf, "key",   9), 0, 11);
     inst->pad_scale    = (uint8_t)clamp_i(json_get_int(buf, "scale", 1), 0, 13);
@@ -801,6 +902,15 @@ static void seq8_load_state(seq8_instance_t *inst) {
     for (t = 0; t < NUM_TRACKS; t++)
         for (c = 0; c < NUM_CLIPS; c++)
             clip_build_steps_from_notes(&inst->tracks[t].clips[c]);
+    for (t = 0; t < NUM_TRACKS; t++) {
+        if (inst->tracks[t].pad_mode != PAD_MODE_DRUM) continue;
+        for (c = 0; c < NUM_CLIPS; c++) {
+            int l;
+            for (l = 0; l < DRUM_LANES; l++)
+                clip_build_steps_from_notes(
+                    &inst->tracks[t].drum_clips[c].lanes[l].clip);
+        }
+    }
     /* Sync each track's tr->pfx params from its active clip's pfx_params */
     for (t = 0; t < NUM_TRACKS; t++)
         pfx_sync_from_clip(&inst->tracks[t]);
