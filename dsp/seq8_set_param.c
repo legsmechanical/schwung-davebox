@@ -1169,6 +1169,61 @@ static void set_param(void *instance, const char *key, const char *val) {
                 seq8_save_state(inst);
                 return;
             }
+            if (!strncmp(p, "_drum_clear", 11) && p[11] == '\0') {
+                /* tN_cC_drum_clear val="0"=deactivate|"1"=keep transport
+                 * Clears all lane step data in clip C; midi_note/length/tps/pfx preserved */
+                int keep = my_atoi(val);
+                int l, s;
+                drum_clip_t *dc = &tr->drum_clips[cidx];
+                for (l = 0; l < DRUM_LANES; l++) {
+                    clip_t *lc = &dc->lanes[l].clip;
+                    for (s = 0; s < SEQ_STEPS; s++) {
+                        lc->steps[s] = 0;
+                        memset(lc->step_notes[s], 0, 8);
+                        lc->step_note_count[s] = 0;
+                        lc->step_vel[s] = (uint8_t)SEQ_VEL;
+                        lc->step_gate[s] = (uint16_t)GATE_TICKS;
+                        memset(lc->note_tick_offset[s], 0, 8 * sizeof(int16_t));
+                    }
+                    lc->active = 0;
+                    lc->note_count = 0;
+                    memset(lc->notes, 0, sizeof(lc->notes));
+                    lc->occ_dirty = 1;
+                }
+                if (!keep) {
+                    silence_track_notes_v2(inst, tr);
+                    if (tr->active_clip == (uint8_t)cidx) {
+                        tr->clip_playing = 0;
+                        tr->will_relaunch = 0;
+                    }
+                    if (tr->queued_clip == cidx) tr->queued_clip = -1;
+                    tr->recording = 0;
+                    tr->rec_pending_count = 0;
+                }
+                seq8_save_state(inst);
+                return;
+            }
+            if (!strncmp(p, "_drum_reset", 11) && p[11] == '\0') {
+                /* tN_cC_drum_reset — factory reset all lanes in clip C
+                 * clip_init on each lane's clip_t; midi_note preserved (sibling field in drum_lane_t) */
+                int l;
+                drum_clip_t *dc = &tr->drum_clips[cidx];
+                silence_track_notes_v2(inst, tr);
+                for (l = 0; l < DRUM_LANES; l++) {
+                    clip_init(&dc->lanes[l].clip);
+                    tr->drum_current_step[l] = 0;
+                    tr->drum_tick_in_step[l] = 0;
+                }
+                if (tr->active_clip == (uint8_t)cidx) {
+                    tr->clip_playing = 0;
+                    tr->will_relaunch = 0;
+                    tr->recording = 0;
+                    tr->rec_pending_count = 0;
+                }
+                if (tr->queued_clip == cidx) tr->queued_clip = -1;
+                seq8_save_state(inst);
+                return;
+            }
             return;
         }
 
