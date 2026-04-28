@@ -243,16 +243,22 @@ typedef struct {
 /* Drum mode data model                                                */
 /* ------------------------------------------------------------------ */
 
-/* One drum lane mirrors a melodic clip_t almost exactly — same absolute tick model,
- * notes[] playback surface, step arrays as edit overlay, active/inactive steps,
- * step edit ops (copy/paste/nudge/gate/vel), pfx_params. The only drum-specific
- * constraint: all notes in this lane carry midi_note as their pitch.
- * pfx still applies at render time, so octave/harmonize/delay can sound other pitches. */
+/* One drum lane: a full monophonic melodic clip (all clip machinery reused) plus a
+ * fixed base pitch. All params (length, tps, pfx, gate, vel, nudge) live here — there
+ * are no container-wide params. pfx applies at render time so harmonize/delay can
+ * sound other pitches beyond midi_note. */
 typedef struct {
-    clip_t  clip;       /* full clip data — reuses all clip machinery unchanged */
-    uint8_t midi_note;  /* base pitch for this lane; written into every note at step-entry/record time */
+    clip_t  clip;       /* full clip_t — notes[], step arrays, length, tps, pfx_params */
+    uint8_t midi_note;  /* base pitch written into every note at step-entry/record time */
     uint8_t _pad[3];
-} drum_lane_t;          /* sizeof(clip_t) + 4 bytes ≈ 13.7 KB per lane */
+} drum_lane_t;          /* sizeof(clip_t) + 4 ≈ 13.7 KB */
+
+/* A drum clip is a container of 32 independent monophonic lanes. It appears and
+ * behaves like a melodic clip for launch, cut/copy/paste, session view, and undo,
+ * but has no container-wide params — everything is per-lane. */
+typedef struct {
+    drum_lane_t lanes[DRUM_LANES];
+} drum_clip_t;          /* DRUM_LANES × ~13.7 KB ≈ 438 KB */
 
 typedef struct {
     uint8_t   channel;              /* MIDI channel 0-3 */
@@ -293,9 +299,11 @@ typedef struct {
     /* Atomic render-state snapshot for set_param timing reads */
     uint32_t current_clip_tick;     /* current_step * TPS + tick_in_step; written each render tick */
 
-    /* Drum mode: 32 lanes. Active when pad_mode == PAD_MODE_DRUM. */
-    drum_lane_t drum_lanes[DRUM_LANES];
-    /* Per-lane render state for drum mode (not persisted; reset on transport play). */
+    /* Drum mode: 16 clips, each containing 32 monophonic lanes.
+     * Active when pad_mode == PAD_MODE_DRUM. active_clip/queued_clip/clip_playing
+     * apply to drum_clips[] exactly as they do to clips[] in melodic mode. */
+    drum_clip_t drum_clips[NUM_CLIPS];
+    /* Per-lane render-state tick counters (not persisted; reset on transport play/clip launch). */
     uint16_t drum_current_step[DRUM_LANES];
     uint32_t drum_tick_in_step[DRUM_LANES];
 } seq8_track_t;
@@ -1280,11 +1288,13 @@ static void clip_init(clip_t *cl) {
 }
 
 static void drum_track_init(seq8_track_t *tr) {
-    int l;
-    for (l = 0; l < DRUM_LANES; l++) {
-        drum_lane_t *lane = &tr->drum_lanes[l];
-        clip_init(&lane->clip);
-        lane->midi_note = (uint8_t)(DRUM_BASE_NOTE + l);
+    int c, l;
+    for (c = 0; c < NUM_CLIPS; c++) {
+        for (l = 0; l < DRUM_LANES; l++) {
+            drum_lane_t *lane = &tr->drum_clips[c].lanes[l];
+            clip_init(&lane->clip);
+            lane->midi_note = (uint8_t)(DRUM_BASE_NOTE + l);
+        }
     }
 }
 
@@ -1539,9 +1549,9 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     {
         char szlog[128];
         snprintf(szlog, sizeof(szlog),
-                 "SEQ8 drum-mode init: sizeof_inst=%zu sizeof_drum_lane=%zu get_bpm=%s bpm=%.1f",
+                 "SEQ8 drum-mode init: sizeof_inst=%zu sizeof_drum_clip=%zu get_bpm=%s bpm=%.1f",
                  sizeof(seq8_instance_t),
-                 sizeof(drum_lane_t),
+                 sizeof(drum_clip_t),
                  (g_host && g_host->get_bpm) ? "ok" : "null",
                  inst->tracks[0].pfx.cached_bpm);
         seq8_ilog(inst, szlog);
@@ -2150,42 +2160,51 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 tr->note_active = (tr->play_pending_count > 0) ? 1 : 0;
             }
 
-            if (tr->pad_mode != PAD_MODE_DRUM && inst->master_tick_in_step == 0) {
+            if (inst->master_tick_in_step == 0) {
                 /* Quantized boundary: launch queued clip (only if not waiting for page stop) */
                 if (tr->queued_clip >= 0 && !tr->pending_page_stop &&
                     inst->global_tick % QUANT_STEPS[inst->launch_quant] == 0) {
                     silence_track_notes_v2(inst, tr);
                     tr->active_clip  = (uint8_t)tr->queued_clip;
-                    pfx_sync_from_clip(tr);
                     tr->queued_clip  = -1;
-                    tr->current_step = 0;
-                    tr->tick_in_step = 0;
                     tr->clip_playing = 1;
+                    if (tr->pad_mode == PAD_MODE_DRUM) {
+                        memset(tr->drum_current_step, 0, sizeof(tr->drum_current_step));
+                        memset(tr->drum_tick_in_step,  0, sizeof(tr->drum_tick_in_step));
+                    } else {
+                        pfx_sync_from_clip(tr);
+                        tr->current_step = 0;
+                        tr->tick_in_step = 0;
+                        cl = &tr->clips[tr->active_clip];
+                    }
                     if (tr->record_armed) {
                         tr->recording    = 1;
                         tr->record_armed = 0;
                     }
-                    cl = &tr->clips[tr->active_clip];
                 }
 
-                /* Page stop: silence at next main clock bar boundary (global_tick % 16).
-                 * Anchored to main clock, not track step page. */
+                /* Page stop: silence at next main clock bar boundary (global_tick % 16). */
                 if (tr->pending_page_stop && inst->global_tick % 16 == 0) {
                     tr->pending_page_stop = 0;
                     tr->clip_playing      = 0;
                     silence_track_notes_v2(inst, tr);
                     if (tr->queued_clip >= 0) {
                         tr->active_clip  = (uint8_t)tr->queued_clip;
-                        pfx_sync_from_clip(tr);
                         tr->queued_clip  = -1;
-                        tr->current_step = 0;
-                        tr->tick_in_step = 0;
                         tr->clip_playing = 1;
+                        if (tr->pad_mode == PAD_MODE_DRUM) {
+                            memset(tr->drum_current_step, 0, sizeof(tr->drum_current_step));
+                            memset(tr->drum_tick_in_step,  0, sizeof(tr->drum_tick_in_step));
+                        } else {
+                            pfx_sync_from_clip(tr);
+                            tr->current_step = 0;
+                            tr->tick_in_step = 0;
+                            cl = &tr->clips[tr->active_clip];
+                        }
                         if (tr->record_armed) {
                             tr->recording    = 1;
                             tr->record_armed = 0;
                         }
-                        cl = &tr->clips[tr->active_clip];
                     }
                 }
             }
@@ -2196,7 +2215,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 if (tr->clip_playing && !effective_mute(inst, t)) {
                     int l;
                     for (l = 0; l < DRUM_LANES; l++) {
-                        clip_t *dlc = &tr->drum_lanes[l].clip;
+                        clip_t *dlc = &tr->drum_clips[tr->active_clip].lanes[l].clip;
                         if (dlc->note_count == 0) continue;
                         pfx_apply_params(&tr->pfx, &dlc->pfx_params);
                         uint32_t cct = (uint32_t)tr->drum_current_step[l] * dlc->ticks_per_step
@@ -2265,7 +2284,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 /* Drum: advance per-lane tick counters independently. */
                 int l;
                 for (l = 0; l < DRUM_LANES; l++) {
-                    clip_t *dlc = &tr->drum_lanes[l].clip;
+                    clip_t *dlc = &tr->drum_clips[tr->active_clip].lanes[l].clip;
                     tr->drum_tick_in_step[l]++;
                     if (tr->drum_tick_in_step[l] >= dlc->ticks_per_step) {
                         tr->drum_tick_in_step[l] = 0;
