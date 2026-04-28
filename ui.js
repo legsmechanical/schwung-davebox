@@ -832,6 +832,10 @@ function flushChordBatch() {}
  * chords (multiple pads hit in the same ~5ms JS tick) are not lost to coalescing. */
 const _recordingNoteTrack = new Map(); /* pitch → track index, for matching note-offs */
 const extHeldNotes = new Map(); /* pitch → {track, recording} — external MIDI held notes */
+/* One refcount per pitch for in-flight ROUTE_MOVE inject echoes. Incremented when a
+ * note-on from onMidiMessageExternal will cause a midi_inject_to_move; decremented+dropped
+ * when the Move echo arrives back. Prevents cascade: inject → echo → re-inject → ... */
+const _echoOnRefcount = new Uint8Array(128);
 
 function recordNoteOn(pitch, velocity, rt) {
     _recordingNoteTrack.set(pitch, rt);
@@ -3557,6 +3561,11 @@ globalThis.onMidiMessageExternal = function (data) {
     const t = activeTrack;
 
     if (msgType === 0x90 && d2 > 0) {
+        if (bankParams[t][0][1] === 1) {
+            /* ROUTE_MOVE echo filter: drop if this is an echo of our own inject. */
+            if (_echoOnRefcount[d1] > 0) { _echoOnRefcount[d1]--; return; }
+            _echoOnRefcount[d1]++;
+        }
         const vel = effectiveVelocity(d2);
         lastPlayedNote  = d1;
         lastPadVelocity = vel;
