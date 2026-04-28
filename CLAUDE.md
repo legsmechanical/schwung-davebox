@@ -46,6 +46,8 @@ Phases 0–4, 5a–5z-e, unquantized-recording A–L, Post-A–L (complete): ful
 
 **code-organization**: sens=16 baseline for knobs, fine-tuned per-knob · `dsp/seq8_set_param.c` via `#include` (single translation unit) · `ui_constants.mjs` (ES module) for constants/palette/fmt/MCUFONT.
 
+**drum-mode**: `pad_mode=1` per track. DSP: `drum_lane_t` = `clip_t clip + uint8_t midi_note`; `drum_clip_t` = `drum_lane_t lanes[32]`; `drum_clips[NUM_CLIPS]` + `drum_current_step[32]` + `drum_tick_in_step[32]` in `seq8_track_t`. `drum_track_init` initializes all 32 lanes per clip (`clip_init + midi_note = DRUM_BASE_NOTE + l`). Render path parallel to melodic: one note per lane per step, no chord. JS: left 4×4 pads = lanes 0–15 (or 16–31 on page 2); right 4×4 = velocity zones. `drumLaneSteps[t][l]` / `drumLaneHasNotes[t][l]` / `drumLaneNote[t][l]` / `drumLaneLength[t]` / `drumStepPage[t]` / `drumLanePage[t]` / `activeDrumLane[t]`. `drumClipNonEmpty[t][c]` from `tN_cC_drum_has_content`. `tN_drum_active_lanes` bitmask getter: uint32, one bit per lane, set when lane has a hit at its current step — used for pad flash during playback. `drumLaneFlashTick[t][l]` + `DRUM_FLASH_TICKS=8` for pad flash. Session/track view: drum clips with content show `TRACK_DIM` (same as parked melodic); playing/queued = bright/flash; empty = off. Loop-held in drum Track View shows page overview using `drumLaneSteps` data. `syncDrumLaneSteps(t,l)` reads `tN_lL_steps` (active-clip-implicit getter) — deferred 2 ticks after clip switch via `pendingDrumResync` because DSP must process `tN_launch_clip` first (contrast: melodic `tN_cC_steps` is clip-indexed and reads immediately). `tN_lL_step_S_toggle` / `tN_lL_step_S_clear` / `tN_lL_step_S_vel` / `tN_lL_step_S_gate` — drum lane step setters, same note machinery as melodic. `DRUM_BASE_NOTE=36`, `DRUM_LANES=32`.
+
 **undo/redo**: 1-level undo/redo via hardware Undo button (CC 56); Shift+Undo = redo. DSP owns two snapshot buffers (`undo_clips[]`/`redo_clips[]`, `UNDO_MAX_CLIPS=16` slots each, ~214KB per buffer). `undo_begin_single(t,c)` / `undo_begin_row(row_c)` / `undo_begin_clip_pair(srcT,srcC,dstT,dstC)` / `undo_begin_row_pair(srcRow,dstRow)` snapshot before mutation. `apply_clip_restore` handles recording disarm, memcpy restore, `clip_migrate_to_notes`, `pfx_sync_from_clip`. `undo_restore`/`redo_restore` set_params do the swap and call `seq8_save_state`. JS: `undoAvailable`/`redoAvailable` flags; SEQ ARP (JS-only bank 4) has a parallel `undoSeqArpSnapshot`/`redoSeqArpSnapshot`. After restore: `pendingDspSync=5` + `refreshPerClipBankParams` for all tracks. OLED flash on undo/redo/nothing-to-undo/nothing-to-redo.
 
 ## What's Built
@@ -89,13 +91,13 @@ Phases 0–4, 5a–5z-e, unquantized-recording A–L, Post-A–L (complete): ful
 
 **Scale**: 14 scales, `SCALE_IVLS[14][8]`. `computePadNoteMap` uses `intervals.length`. Scale-aware play effects: `scale_transpose(inst, note, deg_offset)` anchors to note's degree then shifts.
 
-**State persistence**: v=13. Saved at Shift+Back and `destroy_instance`. Note format: `tick:pitch:vel:gate:sm;`. Per-clip stretch_exp/clock_shift_pos/ticks_per_step if nonzero/non-default. Per-clip pfx params sparse (`t%dc%d_nfo` etc.) if non-default. `step_muted=1` preserves inactive-step notes through reload.
+**State persistence**: v=14. Saved at Shift+Back and `destroy_instance`. Note format: `tick:pitch:vel:gate:sm;`. Per-clip stretch_exp/clock_shift_pos/ticks_per_step if nonzero/non-default. Per-clip pfx params sparse (`t%dc%d_nfo` etc.) if non-default. `step_muted=1` preserves inactive-step notes through reload. Drum lane data sparse (`t{t}c{c}l{l}_mn/len/tps/n` keys) — only lanes with active notes written; only drum-mode tracks included. Load accepts v=13 (no drum keys → drum lanes stay default) or v=14. `state_load` handler calls `drum_track_init` before loading to prevent stale drum data from prior session.
 
-**JS internals**: `effectiveClip(t)` → queued if stopped+queued else active. `pendingDspSync` (5-tick countdown after state_load). `pendingStepsReread` (2-tick countdown after `_reassign`/`_copy_to`; re-reads `_steps` bulk). `stepWasHeld` set at hold threshold, cleared on release/press/cancel — `stepBtnPressedTick` is -1 for both paths at release time so can't be used. `seqNoteOnClipTick`/`seqNoteGateTicks`: clip-tick gate expiry for pad highlight; `seqActiveNotes` cleared when elapsed ≥ gate (wrap-safe). `pollDSP` unconditionally overwrites `trackActiveClip[t]` when playing; `lastDspActiveClip[t]` tracks last DSP-reported value — change triggers `refreshPerClipBankParams(t)`. `clipTPS[t][c]`: JS mirror of per-clip ticks_per_step; used for Dur display, gate LED viz, K3 gate max, K5 nudge range, clip-tick computation. Synced at state load via `t{n}_c{c}_tps` get_param. `bankParams[t][b][k]`: JS mirror of bank knob values; per-clip banks (1=CLIP K3/K4/K7, 2=NOTE FX, 3=HARMZ, 5=MIDI DLY) refreshed on clip/track switch via `refreshPerClipBankParams(t)` using `tN_cC_pfx_snapshot`. `clipSeqFollow[t][c]`: JS-only per-clip flag (default true); K8 in CLIP bank reads/writes it; synced at `refreshPerClipBankParams` and at all `activeTrack` switch sites. OLED `drawPositionBar(t)`: segmented bar at y=57–61 — solid=view page, outline=playhead page, bottom-edge=others; 1px playhead dot mapped 0–127px, inverted on solid block; always shown in normal Track View. `pendingDefaultSetParams` ([{key,val}]): drained one per tick when `pendingDspSync==0` and `!pendingSetLoad`; populated on first load when no UI sidecar exists (sends `scale_aware=1`, `metro_vol=100`, `input_vel=0`). `uiDefaultsApplyAfterSync`: re-applies first-run defaults after a `state_load` re-sync completes. UI sidecar (`uuidToUiStatePath`): `init()` reads `seq8-ui-state.json` to restore `activeTrack`, `trackActiveClip[]`, `sessionView`; Shift+Back writes it; Clear Session wipes it.
+**JS internals**: `effectiveClip(t)` → queued if stopped+queued else active. `pendingDspSync` (5-tick countdown after state_load). `pendingStepsReread` (2-tick countdown after `_reassign`/`_copy_to`; re-reads `_steps` bulk). `pendingDrumResync` / `pendingDrumResyncTrack` (2-tick countdown after drum clip switch while stopped; deferred because `tN_lL_steps` reads active_clip implicitly — must wait for `tN_launch_clip` to be processed before reading; melodic `tN_cC_steps` is clip-indexed so needs no defer). `stepWasHeld` set at hold threshold, cleared on release/press/cancel — `stepBtnPressedTick` is -1 for both paths at release time so can't be used. `seqNoteOnClipTick`/`seqNoteGateTicks`: clip-tick gate expiry for pad highlight; `seqActiveNotes` cleared when elapsed ≥ gate (wrap-safe). `pollDSP` unconditionally overwrites `trackActiveClip[t]` when playing; `lastDspActiveClip[t]` tracks last DSP-reported value — change triggers `refreshPerClipBankParams(t)` + drum resync (immediate when playing, deferred when stopped). `clipTPS[t][c]`: JS mirror of per-clip ticks_per_step; used for Dur display, gate LED viz, K3 gate max, K5 nudge range, clip-tick computation. Synced at state load via `t{n}_c{c}_tps` get_param. `bankParams[t][b][k]`: JS mirror of bank knob values; per-clip banks (1=CLIP K3/K4/K7, 2=NOTE FX, 3=HARMZ, 5=MIDI DLY) refreshed on clip/track switch via `refreshPerClipBankParams(t)` using `tN_cC_pfx_snapshot`. `clipSeqFollow[t][c]`: JS-only per-clip flag (default true); K8 in CLIP bank reads/writes it; synced at `refreshPerClipBankParams` and at all `activeTrack` switch sites. OLED `drawPositionBar(t)`: segmented bar at y=57–61 — solid=view page, outline=playhead page, bottom-edge=others; 1px playhead dot mapped 0–127px, inverted on solid block; always shown in normal Track View. `pendingDefaultSetParams` ([{key,val}]): drained one per tick when `pendingDspSync==0` and `!pendingSetLoad`; populated on first load when no UI sidecar exists (sends `scale_aware=1`, `metro_vol=100`, `input_vel=0`). `uiDefaultsApplyAfterSync`: re-applies first-run defaults after a `state_load` re-sync completes. UI sidecar (`uuidToUiStatePath`): `init()` reads `seq8-ui-state.json` to restore `activeTrack`, `trackActiveClip[]`, `sessionView`; Shift+Back writes it; Clear Session wipes it.
 
 ## Upcoming tasks
 
-1. **Drum mode** — per-track flag switching from isomorphic pitch layout to fixed drum-pad layout. Major architectural change: pad note map, step entry, OLED display, MIDI routing, persistence.
+1. **Drum mode (in progress)** — core complete; remaining: per-lane mute/solo, DRUM SEQ bank (per-lane length/resolution knobs), live recording, NOTE FX bank (K1/K2 = lane note octave/semitone), mode-switch confirmation dialog.
 2. **Scale-aware key/scale changes** — global option: changing Key/Scale transposes all clip notes to fit new scale. Design TBD.
 3. **Step/note editing fixes** — see pending fixes in planning doc.
 4. MIDI Delay Rnd refinement · 5. Full instance reset · 6. State snapshots (16 slots) · 7. Arpeggiator · 8. Swing (wire stub) · 9. MIDI clock sync
@@ -163,6 +165,8 @@ All `tN_` keys: N = 0..7.
 
 Other keys: `clip_copy "srcT srcC dstT dstC"` · `row_copy "srcRow dstRow"` · `clip_cut "srcT srcC dstT dstC"` (copy src→dst + hard-reset src, `undo_begin_clip_pair` snapshot) · `row_cut "srcRow dstRow"` (all 8 tracks, `undo_begin_row_pair` snapshot) · `tN_active_clip`, `tN_current_step`, `tN_current_clip_tick` (get: `current_step*TPS+tick_in_step`), `tN_queued_clip`, `tN_cC_steps` (get: 256-char '0'/'1'/'2', midpoint-based position), `tN_cC_length`, `tN_cC_step_S` (set '0'/'1' = deactivate/activate without touching notes), `tN_launch_clip`, `launch_scene`, `transport` (set: `"play"`, `"stop"`, `"panic"`, `"deactivate_all"`), `playing`, `state_snapshot`, `tN_route`, `tN_pad_mode`, `tN_pad_octave`, `key`, `scale`, `scale_aware`, `bpm`, `launch_quant`, `input_vel`, `inp_quant`, `midi_in_channel` (0=All, 1–16), noteFX/harm/delay params.
 
+**Drum lane keys** (all read from/write to active clip's lane L of track N): `tN_lL_lane_note` (get/set midi_note) · `tN_lL_clip_length` (set, saves) · `tN_lL_steps` (get: 256-char '0'/'1'/'2'; **active-clip-implicit** — reads `tr->drum_clips[active_clip].lanes[L]`; must defer JS read 2 ticks after clip switch) · `tN_lL_note_count` (get) · `tN_lL_length` (get) · `tN_lL_current_step` (get) · `tN_lL_step_S_toggle "vel"` (set, saves) · `tN_lL_step_S_clear` (set, saves) · `tN_lL_step_S_vel` (set, saves) · `tN_lL_step_S_gate` (set, saves) · `tN_cC_drum_has_content` (get: '1' if any lane has note_count > 0) · `tN_drum_active_lanes` (get: uint32 bitmask, bit L set if lane L has a hit at its current step — used for playback pad flash).
+
 ## DSP Struct Reference
 
 ```c
@@ -195,6 +199,16 @@ typedef struct {
 } clip_t;
 
 typedef struct {
+    clip_t  clip;       /* full clip_t — notes[], step arrays, length, tps, pfx_params */
+    uint8_t midi_note;  /* base pitch; default DRUM_BASE_NOTE + lane_index */
+    uint8_t _pad[3];
+} drum_lane_t;
+
+typedef struct {
+    drum_lane_t lanes[DRUM_LANES]; /* 32 lanes */
+} drum_clip_t;
+
+typedef struct {
     clip_t    clips[NUM_CLIPS];
     uint8_t   active_clip;
     int8_t    queued_clip;
@@ -209,6 +223,10 @@ typedef struct {
     struct { uint8_t pitch; uint16_t ticks_remaining; } play_pending[32];
     uint8_t   play_pending_count;
     uint32_t  current_clip_tick;  /* current_step*ticks_per_step + tick_in_step */
+    uint8_t   pad_mode;           /* 0=PAD_MODE_MELODIC_SCALE, 1=PAD_MODE_DRUM */
+    drum_clip_t drum_clips[NUM_CLIPS];
+    uint16_t  drum_current_step[DRUM_LANES];
+    uint32_t  drum_tick_in_step[DRUM_LANES];
 } seq8_track_t;
 
 typedef struct {
