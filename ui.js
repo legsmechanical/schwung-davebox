@@ -109,10 +109,10 @@ const BANKS = [
         p('Shft', 'Clock Shift',     'clock_shift',     'action', 0, 0,   0,   fmtSign,    8),
         p('Ndg',  'Nudge',           'nudge',           'action', 0, 0,   0,   fmtSign,    8),
         p('Res',  'Resolution',      'clip_resolution', 'clip',   0, 5,   1,   fmtRes, 16),
-        p('Len',  'Clip Length',     'clip_length',     'track',  1, 256, 16,  fmtLen, 4),
+        p('Len',  'Clip Length',     'clip_length',     'track',  1, 256, 16,  fmtLen, 8),
         p('ClpS', 'Clip Start',      null,              'stub',   0, 0,   0,   fmtNA),
         p('ClpE', 'Clip End',        null,              'stub',   0, 0,   0,   fmtNA),
-        p('SqFl', 'Seq Follow',      null,              'seqfollow', 0, 1, 1,  fmtBool),
+        p('SqFl', 'Seq Follow',      null,              'seqfollow', 0, 1, 1,  fmtBool, 16),
     ]},
     /* 2 — NOTE FX (pad 94) — fully wired; Oct/Ofs slowed; Qnt moved here from TIMING */
     { name: 'NOTE FX', knobs: [
@@ -3535,9 +3535,9 @@ globalThis.onMidiMessageInternal = function (data) {
                     return;
                 }
                 if (knobIdx === 4) {
-                    /* K5 = Len (lane length, sens=4) */
+                    /* K5 = Len (lane length, sens=8) */
                     knobAccum[knobIdx]++;
-                    if (knobAccum[knobIdx] >= 4) {
+                    if (knobAccum[knobIdx] >= 8) {
                         knobAccum[knobIdx] = 0;
                         const nv = Math.max(1, Math.min(256, drumLaneLength[t] + dir));
                         if (nv !== drumLaneLength[t]) {
@@ -3552,13 +3552,17 @@ globalThis.onMidiMessageInternal = function (data) {
                     return;
                 }
                 if (knobIdx === 7) {
-                    /* K8 = SqFl: matches melodic sens=1 — clamp 0/1, only fires on value change */
-                    const _cur = clipSeqFollow[t][ac] ? 1 : 0;
-                    const _nv  = Math.max(0, Math.min(1, _cur + dir));
-                    if (_nv !== _cur) {
-                        clipSeqFollow[t][ac]  = _nv !== 0;
-                        bankParams[t][1][7]   = _nv;
-                        screenDirty = true;
+                    /* K8 = SqFl: sens=16 — matches melodic */
+                    knobAccum[knobIdx]++;
+                    if (knobAccum[knobIdx] >= 16) {
+                        knobAccum[knobIdx] = 0;
+                        const _cur = clipSeqFollow[t][ac] ? 1 : 0;
+                        const _nv  = Math.max(0, Math.min(1, _cur + dir));
+                        if (_nv !== _cur) {
+                            clipSeqFollow[t][ac] = _nv !== 0;
+                            bankParams[t][1][7]  = _nv;
+                            screenDirty = true;
+                        }
                     }
                     return;
                 }
