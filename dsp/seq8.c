@@ -208,22 +208,6 @@ typedef struct {
 } clip_pfx_params_t;
 
 /* ------------------------------------------------------------------ */
-/* Drum mode data model                                                */
-/* ------------------------------------------------------------------ */
-
-/* One drum lane: single step sequence + pfx. No clip concept — everything is per-lane. */
-typedef struct {
-    uint8_t           steps[SEQ_STEPS];     /* 0=off, 1=on */
-    uint8_t           step_vel[SEQ_STEPS];  /* default SEQ_VEL */
-    uint16_t          step_gate[SEQ_STEPS]; /* gate ticks */
-    uint16_t          length;               /* 1..256, default 16 */
-    uint16_t          ticks_per_step;       /* default TICKS_PER_STEP (24) */
-    clip_pfx_params_t pfx_params;           /* NOTE FX/HARMZ/MIDI DLY */
-    uint8_t           midi_note;            /* fixed MIDI pitch for this lane */
-    uint8_t           _pad[3];
-} drum_lane_t;                              /* ~1097 bytes per lane */
-
-/* ------------------------------------------------------------------ */
 /* Clip and track structs                                               */
 /* ------------------------------------------------------------------ */
 
@@ -254,6 +238,21 @@ typedef struct {
     uint8_t  occ_cache[32];      /* 256-bit occupancy: bit S=1 if any active note in step S */
     uint8_t  occ_dirty;          /* 1 = occ_cache needs recomputation */
 } clip_t;
+
+/* ------------------------------------------------------------------ */
+/* Drum mode data model                                                */
+/* ------------------------------------------------------------------ */
+
+/* One drum lane mirrors a melodic clip_t almost exactly — same absolute tick model,
+ * notes[] playback surface, step arrays as edit overlay, active/inactive steps,
+ * step edit ops (copy/paste/nudge/gate/vel), pfx_params. The only drum-specific
+ * constraint: all notes in this lane carry midi_note as their pitch.
+ * pfx still applies at render time, so octave/harmonize/delay can sound other pitches. */
+typedef struct {
+    clip_t  clip;       /* full clip data — reuses all clip machinery unchanged */
+    uint8_t midi_note;  /* base pitch for this lane; written into every note at step-entry/record time */
+    uint8_t _pad[3];
+} drum_lane_t;          /* sizeof(clip_t) + 4 bytes ≈ 13.7 KB per lane */
 
 typedef struct {
     uint8_t   channel;              /* MIDI channel 0-3 */
@@ -1276,18 +1275,11 @@ static void clip_init(clip_t *cl) {
 }
 
 static void drum_track_init(seq8_track_t *tr) {
-    int l, s;
+    int l;
     for (l = 0; l < DRUM_LANES; l++) {
-        drum_lane_t *lane    = &tr->drum_lanes[l];
-        lane->midi_note      = (uint8_t)(DRUM_BASE_NOTE + l);
-        lane->length         = SEQ_STEPS_DEFAULT;
-        lane->ticks_per_step = TICKS_PER_STEP;
-        clip_pfx_params_init(&lane->pfx_params);
-        for (s = 0; s < SEQ_STEPS; s++) {
-            lane->steps[s]    = 0;
-            lane->step_vel[s] = SEQ_VEL;
-            lane->step_gate[s] = GATE_TICKS;
-        }
+        drum_lane_t *lane = &tr->drum_lanes[l];
+        clip_init(&lane->clip);
+        lane->midi_note = (uint8_t)(DRUM_BASE_NOTE + l);
     }
 }
 
