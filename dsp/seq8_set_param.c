@@ -1205,7 +1205,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             return;
         }
         if (!strcmp(sub, "pad_mode")) {
-            tr->pad_mode = (uint8_t)clamp_i(my_atoi(val), 0, 0);
+            tr->pad_mode = (uint8_t)clamp_i(my_atoi(val), 0, 1);
             return;
         }
 

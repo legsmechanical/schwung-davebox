@@ -45,6 +45,13 @@ typedef struct { uint8_t s; uint8_t d1; uint8_t d2; } ext_msg_t;
 
 /* Pad input modes */
 #define PAD_MODE_MELODIC_SCALE  0   /* isomorphic 4ths diatonic layout */
+#define PAD_MODE_DRUM           1   /* 32-lane drum sequencer */
+
+/* Drum mode */
+#define DRUM_LANES          32
+/* Baseline MIDI note for lane 0 — standard Ableton Drum Rack layout.
+ * Lane L plays note (DRUM_BASE_NOTE + L). Verify against live device before shipping. */
+#define DRUM_BASE_NOTE      36
 
 /* Scale-aware play effects: interval tables matching JS SCALE_INTERVALS order */
 static const uint8_t SCALE_IVLS[14][8] = {
@@ -201,6 +208,27 @@ typedef struct {
 } clip_pfx_params_t;
 
 /* ------------------------------------------------------------------ */
+/* Drum mode data model                                                */
+/* ------------------------------------------------------------------ */
+
+/* Per-lane, per-clip step data. No pitch (fixed by lane's midi_note). */
+typedef struct {
+    uint8_t  steps[SEQ_STEPS];     /* 0=off, 1=on */
+    uint8_t  step_vel[SEQ_STEPS];  /* default SEQ_VEL */
+    uint16_t step_gate[SEQ_STEPS]; /* gate ticks */
+    uint16_t length;               /* 1..256, default 16 */
+    uint16_t ticks_per_step;       /* TPS_VALUES index; default 24 */
+} drum_clip_t;                     /* ~1028 bytes */
+
+/* Per-lane state: 16 clips of step data + one pfx_params shared across clips. */
+typedef struct {
+    drum_clip_t       clips[NUM_CLIPS]; /* per-clip step sequences */
+    clip_pfx_params_t pfx_params;       /* NOTE FX/HARMZ/MIDI DLY; shared across clips */
+    uint8_t           midi_note;        /* fixed MIDI pitch for this lane */
+    uint8_t           _pad[3];
+} drum_lane_t;                          /* ~16.6 KB per lane */
+
+/* ------------------------------------------------------------------ */
 /* Clip and track structs                                               */
 /* ------------------------------------------------------------------ */
 
@@ -270,6 +298,10 @@ typedef struct {
     uint32_t tick_in_step;
     /* Atomic render-state snapshot for set_param timing reads */
     uint32_t current_clip_tick;     /* current_step * TPS + tick_in_step; written each render tick */
+
+    /* Drum mode: 32 lanes, each with 16 clips of step data + shared pfx_params.
+     * Active when pad_mode == PAD_MODE_DRUM. Initialized at create_instance for all tracks. */
+    drum_lane_t drum_lanes[DRUM_LANES];
 } seq8_track_t;
 #define LRS_SET(tr, s)  ((tr)->live_recorded_steps[(s)>>3] |=  (uint8_t)(1u<<((s)&7)))
 #define LRS_TEST(tr, s) ((tr)->live_recorded_steps[(s)>>3] &   (1u<<((s)&7)))
@@ -699,7 +731,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
     /* Per-track: pad_mode (route/channel already loaded above) */
     for (t = 0; t < NUM_TRACKS; t++) {
         snprintf(key, sizeof(key), "t%d_pm", t);
-        inst->tracks[t].pad_mode = (uint8_t)clamp_i(json_get_int(buf, key, 0), 0, 0);
+        inst->tracks[t].pad_mode = (uint8_t)clamp_i(json_get_int(buf, key, 0), 0, 1);
     }
     /* Per-clip play-effect params (sparse — missing keys default to neutral) */
     for (t = 0; t < NUM_TRACKS; t++) {
@@ -1248,6 +1280,28 @@ static void clip_init(clip_t *cl) {
     cl->occ_dirty = 0;
 }
 
+static void drum_clip_init(drum_clip_t *dc) {
+    int s;
+    dc->length        = SEQ_STEPS_DEFAULT;
+    dc->ticks_per_step = TICKS_PER_STEP;
+    for (s = 0; s < SEQ_STEPS; s++) {
+        dc->steps[s]    = 0;
+        dc->step_vel[s] = SEQ_VEL;
+        dc->step_gate[s] = GATE_TICKS;
+    }
+}
+
+static void drum_track_init(seq8_track_t *tr) {
+    int l, c;
+    for (l = 0; l < DRUM_LANES; l++) {
+        drum_lane_t *lane = &tr->drum_lanes[l];
+        lane->midi_note   = (uint8_t)(DRUM_BASE_NOTE + l);
+        clip_pfx_params_init(&lane->pfx_params);
+        for (c = 0; c < NUM_CLIPS; c++)
+            drum_clip_init(&lane->clips[c]);
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* Note-centric helpers (Stage B+)                                     */
 /* ------------------------------------------------------------------ */
@@ -1478,6 +1532,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
         inst->tracks[t].pad_mode    = PAD_MODE_MELODIC_SCALE;
         for (c = 0; c < NUM_CLIPS; c++)
             clip_init(&inst->tracks[t].clips[c]);
+        drum_track_init(&inst->tracks[t]);
         pfx_init_defaults(&inst->tracks[t].pfx);
         /* Default routing: tracks 1-4 → Move (ch 1-4), tracks 5-8 → Schwung (ch 5-8) */
         if (t < 4) inst->tracks[t].pfx.route = ROUTE_MOVE;
@@ -1498,10 +1553,10 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     {
         char szlog[128];
         snprintf(szlog, sizeof(szlog),
-                 "SEQ8 Phase 5 init: sizeof=%zu get_bpm=%s get_clock_status=%s bpm=%.1f",
+                 "SEQ8 drum-mode init: sizeof_inst=%zu sizeof_drum_lane=%zu get_bpm=%s bpm=%.1f",
                  sizeof(seq8_instance_t),
+                 sizeof(drum_lane_t),
                  (g_host && g_host->get_bpm) ? "ok" : "null",
-                 (g_host && g_host->get_clock_status) ? "ok" : "null",
                  inst->tracks[0].pfx.cached_bpm);
         seq8_ilog(inst, szlog);
     }
