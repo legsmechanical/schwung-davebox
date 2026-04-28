@@ -1978,6 +1978,8 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                 return snprintf(out, out_len, "%d", (int)dlc->length);
             if (!strcmp(p2, "_current_step"))
                 return snprintf(out, out_len, "%d", (int)tr->drum_current_step[lidx]);
+            if (!strcmp(p2, "_tps"))
+                return snprintf(out, out_len, "%d", (int)dlc->ticks_per_step);
             if (!strcmp(p2, "_steps")) {
                 if (out_len < SEQ_STEPS + 1) return -1;
                 int s;
