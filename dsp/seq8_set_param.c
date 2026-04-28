@@ -146,6 +146,8 @@ static void set_param(void *instance, const char *key, const char *val) {
                     inst->tracks[t].tick_in_step      = 0;
                     inst->tracks[t].note_active        = 0;
                     inst->tracks[t].pfx.sample_counter = 0;
+                    memset(inst->tracks[t].drum_current_step, 0, sizeof(inst->tracks[t].drum_current_step));
+                    memset(inst->tracks[t].drum_tick_in_step,  0, sizeof(inst->tracks[t].drum_tick_in_step));
                     if (inst->tracks[t].will_relaunch) {
                         inst->tracks[t].clip_playing      = 1;
                         inst->tracks[t].will_relaunch     = 0;
