@@ -579,6 +579,9 @@ let pendingStepsRereadTrack = 0;
 let pendingStepsRereadClip  = 0;
 let pendingDrumResync       = 0;  /* ticks remaining before drum lane steps re-read after clip switch */
 let pendingDrumResyncTrack  = 0;
+let pendingDrumLaneResync      = 0;  /* lighter resync: only re-reads active lane steps (no meta) */
+let pendingDrumLaneResyncTrack = 0;
+let pendingDrumLaneResyncLane  = 0;
 
 /* ------------------------------------------------------------------ */
 /* Utility                                                              */
@@ -2154,7 +2157,7 @@ function drawUI() {
         const oct       = Math.floor(note / 12) - 2;
         const name      = NOTE_KEYS[note % 12];
         const bankGroup = pg === 0 ? 'Bank A' : 'Bank B';
-        const bankName  = activeBank === 1 ? 'SEQ' : BANKS[activeBank].name;
+        const bankName  = activeBank === 1 ? 'SEQ' : activeBank === 2 ? 'Note/NoteFX' : BANKS[activeBank].name;
         print(4, 10, 'KNOB: [' + bankName + ']', 1);
         print(4, 22, bankGroup + '  Pad: ' + name + oct + ' (' + note + ')', 1);
         drawTrackRow(34);
@@ -2537,6 +2540,13 @@ globalThis.tick = function () {
         if (pendingDrumResync === 0) {
             syncDrumLanesMeta(pendingDrumResyncTrack);
             syncDrumLaneSteps(pendingDrumResyncTrack, activeDrumLane[pendingDrumResyncTrack]);
+            forceRedraw();
+        }
+    }
+    if (pendingDrumLaneResync > 0) {
+        pendingDrumLaneResync--;
+        if (pendingDrumLaneResync === 0) {
+            syncDrumLaneSteps(pendingDrumLaneResyncTrack, pendingDrumLaneResyncLane);
             forceRedraw();
         }
     }
@@ -3499,7 +3509,7 @@ globalThis.onMidiMessageInternal = function (data) {
                         bankParams[t][1][knobIdx] = clockShiftTouchDelta;
                         if (typeof host_module_set_param === 'function')
                             host_module_set_param('t' + t + '_l' + lane + '_clock_shift', String(dir));
-                        pendingDrumResync = 2; pendingDrumResyncTrack = t;
+                        pendingDrumLaneResync = 2; pendingDrumLaneResyncTrack = t; pendingDrumLaneResyncLane = lane;
                         screenDirty = true;
                     }
                     return;
@@ -3512,7 +3522,7 @@ globalThis.onMidiMessageInternal = function (data) {
                         bankParams[t][1][knobIdx] += dir;
                         if (typeof host_module_set_param === 'function')
                             host_module_set_param('t' + t + '_l' + lane + '_nudge', String(dir));
-                        pendingDrumResync = 2; pendingDrumResyncTrack = t;
+                        pendingDrumLaneResync = 2; pendingDrumLaneResyncTrack = t; pendingDrumLaneResyncLane = lane;
                         screenDirty = true;
                     }
                     return;
@@ -3567,6 +3577,28 @@ globalThis.onMidiMessageInternal = function (data) {
                     return;
                 }
                 return; /* K6, K7 = stub */
+            }
+            /* Drum NOTE FX bank: K6 (lane oct) and K7 (lane semitone) override stubs */
+            if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM && bank === 2 &&
+                    (knobIdx === 5 || knobIdx === 6)) {
+                const t    = activeTrack;
+                const lane = activeDrumLane[t];
+                const dir  = (d2 >= 1 && d2 <= 63) ? 1 : -1;
+                const sens = knobIdx === 5 ? 4 : 2;
+                if (dir !== knobLastDir[knobIdx]) { knobAccum[knobIdx] = 0; knobLastDir[knobIdx] = dir; }
+                knobAccum[knobIdx]++;
+                if (knobAccum[knobIdx] >= sens) {
+                    knobAccum[knobIdx] = 0;
+                    const delta = knobIdx === 5 ? dir * 12 : dir;
+                    const nv = Math.max(0, Math.min(127, drumLaneNote[t][lane] + delta));
+                    if (nv !== drumLaneNote[t][lane]) {
+                        drumLaneNote[t][lane] = nv;
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + t + '_l' + lane + '_lane_note', String(nv));
+                        screenDirty = true;
+                    }
+                }
+                return;
             }
             const pm      = BANKS[bank].knobs[knobIdx];
             if (pm && pm.abbrev && pm.scope !== 'stub' && !knobLocked[knobIdx]) {
