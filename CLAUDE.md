@@ -67,12 +67,10 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 
 ## Upcoming tasks
 
-1. **Drum mode — remaining code** (not yet implemented):
+1. **Drum mode — remaining code**:
    - Copy+step drum lane branch (`tN_lL_step_S_copy_to`) — step-to-step copy within a drum lane; `copyStep()` currently uses melodic `tN_cC_step_S_copy_to`
-   - Undo/redo drum step resync — after `undo_restore`/`redo_restore` in drum mode, trigger `pendingDrumResync` so lane step display refreshes
-   - Mode-switch confirmation dialog + `tN_convert_to_drum` / `tN_convert_to_melodic`
-   - UI sidecar `activeDrumLane[]` — persist active lane per track across reboots
-   - *(Done 2026-04-29)*: Drum lane copy/cut/paste (`tN_lL_copy_to`, `tN_lL_cut_to`); drum clip copy/cut/paste (`drum_clip_copy`, `drum_clip_cut`)
+   - Mode-switch confirmation dialog + `tN_convert_to_drum` / `tN_convert_to_melodic` (backburner — medium task, design noted in SESSION doc)
+   - *(Done 2026-04-29)*: Drum lane/clip copy/cut/paste; undo/redo drum step resync; UI sidecar `activeDrumLane[]`
 
 3. **Scale-aware key/scale changes** — global option: changing Key/Scale transposes all clip notes to fit new scale. Design TBD.
 4. **Step/note editing fixes** — see pending fixes in planning doc.
