@@ -4406,14 +4406,28 @@ globalThis.onMidiMessageInternal = function (data) {
                         const bit = 1 << lane;
                         if (shiftHeld) {
                             const wasOn = !!(drumLaneSolo[t] & bit);
-                            if (wasOn) drumLaneSolo[t] &= ~bit;
-                            else       drumLaneSolo[t] |= bit;
+                            if (wasOn) { drumLaneSolo[t] &= ~bit; }
+                            else {
+                                drumLaneSolo[t] |= bit;
+                                if (drumLaneMute[t] & bit) {
+                                    drumLaneMute[t] &= ~bit;
+                                    if (typeof host_module_set_param === 'function')
+                                        host_module_set_param('t' + t + '_l' + lane + '_mute', '0');
+                                }
+                            }
                             if (typeof host_module_set_param === 'function')
                                 host_module_set_param('t' + t + '_l' + lane + '_solo', wasOn ? '0' : '1');
                         } else {
                             const wasOn = !!(drumLaneMute[t] & bit);
-                            if (wasOn) drumLaneMute[t] &= ~bit;
-                            else       drumLaneMute[t] |= bit;
+                            if (wasOn) { drumLaneMute[t] &= ~bit; }
+                            else {
+                                drumLaneMute[t] |= bit;
+                                if (drumLaneSolo[t] & bit) {
+                                    drumLaneSolo[t] &= ~bit;
+                                    if (typeof host_module_set_param === 'function')
+                                        host_module_set_param('t' + t + '_l' + lane + '_solo', '0');
+                                }
+                            }
                             if (typeof host_module_set_param === 'function')
                                 host_module_set_param('t' + t + '_l' + lane + '_mute', wasOn ? '0' : '1');
                         }
