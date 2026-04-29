@@ -540,6 +540,7 @@ Open with **Shift + Note/Session toggle**. Jog rotate navigates; jog click confi
 | Item | Description |
 |---|---|
 | BPM | Set tempo 40–250 BPM. Updates in real time while turning. Back cancels and restores previous. SEQ8 owns its own tempo; not slaved to Move's native tempo. |
+| Tap Tempo | Sub-screen for tap-based BPM entry. All 32 pads light dim white; tapping any pad flashes all pads blue and registers a tap. BPM is derived from a sliding-window average of the last 8 intervals; tapping noticeably faster/slower (>1.8× ratio change) starts a fresh tap session, and a 2-second pause also resets. Jog rotate adjusts BPM ±1 without disturbing the tap session. Jog click or Back applies the BPM and exits. Clamps 40–250. |
 | Key | Global root note (A through G#), shared across all tracks |
 | Scale | Global scale: Major · Minor · Dorian · Phrygian · Lydian · Mixolydian · Locrian · Harmonic Minor · Melodic Minor · Pentatonic Major · Pentatonic Minor · Blues · Whole Tone · Diminished |
 | Scale Aware | On (default) / Off. When On: NOTE FX Offset, HARMZ Hrm1/Hrm2, MIDI DLY Pitch Feedback and Pitch Random all step in scale degrees rather than semitones. Automatically bypassed for drum tracks. |
@@ -821,9 +822,6 @@ The M and S indicators displayed on track numbers in the OLED track row when a t
 ---
 
 ### Global Settings
-
-**Tap Tempo**
-A Tap Tempo entry in the Global Menu below BPM. When selected, SEQ8 prompts "Tap any pad." Four taps are interpreted as quarter notes; BPM is derived from the average interval and rounded to the nearest whole number. Pressing Back assigns the calculated BPM and exits.
 
 **Scale-Aware Key/Scale Transpose**
 A Transpose toggle in the Global Menu. When on, changing the Key or Scale transposes all notes across all clips on all tracks to fit the new key/scale. Notes that don't land on a scale degree snap to the nearest. Drum tracks are bypassed.
