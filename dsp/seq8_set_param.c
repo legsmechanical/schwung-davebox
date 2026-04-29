@@ -2053,7 +2053,10 @@ static void set_param(void *instance, const char *key, const char *val) {
                         dlc->step_note_count[step]     = 1;
                         dlc->step_vel[step]            = (uint8_t)vel;
                         dlc->step_gate[step]           = (uint16_t)GATE_TICKS;
-                        dlc->note_tick_offset[step][0] = 0;
+                        /* inp_quant OFF: capture sub-step timing (like melodic record_note_on).
+                         * inp_quant ON:  snap to step boundary (offset=0). */
+                        dlc->note_tick_offset[step][0] = inst->inp_quant
+                            ? 0 : (int16_t)tr->drum_tick_in_step[lane];
                         dlc->steps[step]               = 1;
                         dlc->active                    = 1;
                         clip_migrate_to_notes(dlc);
