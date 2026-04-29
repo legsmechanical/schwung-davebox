@@ -1566,20 +1566,6 @@ function updateStepLEDs() {
         const base = page * 16;
         const len  = drumLaneLength[t];
 
-        if (loopHeld) {
-            const pagesInUse = Math.max(1, Math.ceil(len / 16));
-            const blink = Math.floor(tickCount / 24) % 2;
-            for (let i = 0; i < 16; i++) {
-                if (i >= pagesInUse) { setLED(16 + i, DarkGrey); continue; }
-                let hasNotes = false;
-                for (let s = i * 16; s < (i + 1) * 16; s++) {
-                    if (ls[s] === '1') { hasNotes = true; break; }
-                }
-                setLED(16 + i, hasNotes ? (blink ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t]) : TRACK_COLORS[t]);
-            }
-            return;
-        }
-
         for (let i = 0; i < 16; i++) {
             const absStep = base + i;
             let color;
@@ -1601,8 +1587,8 @@ function updateStepLEDs() {
                 if (offset <= _sSpan) setLED(16 + i, _sDim);
             }
         }
-        /* Gate overlay: K3 (Dur) touched in drum step edit — White=full, DarkGrey=partial */
-        if (heldStep >= 0 && knobTouched === 2 && heldStepNotes.length > 0) {
+        /* Gate overlay: K1 (Dur) touched in drum step edit — White=full, DarkGrey=partial */
+        if (heldStep >= 0 && knobTouched === 0 && heldStepNotes.length > 0) {
             const _dTps      = drumLaneTPS[t] || 24;
             const _fullSteps = Math.floor(stepEditGate / _dTps);
             const _partTicks = stepEditGate % _dTps;
@@ -1616,21 +1602,6 @@ function updateStepLEDs() {
                     setLED(16 + i, DarkGrey);
                 }
             }
-        }
-        return;
-    }
-
-    if (loopHeld) {
-        const pagesInUse = Math.max(1, Math.ceil(clipLength[activeTrack][ac] / 16));
-        const blink = Math.floor(tickCount / 24) % 2;
-        const steps = clipSteps[activeTrack][ac];
-        for (let i = 0; i < 16; i++) {
-            if (i >= pagesInUse) { setLED(16 + i, DarkGrey); continue; }
-            let hasNotes = false;
-            for (let s = i * 16; s < (i + 1) * 16; s++) {
-                if (steps[s]) { hasNotes = true; break; }
-            }
-            setLED(16 + i, hasNotes ? (blink ? TRACK_COLORS[activeTrack] : TRACK_DIM_COLORS[activeTrack]) : TRACK_COLORS[activeTrack]);
         }
         return;
     }
@@ -1853,7 +1824,7 @@ function updateTrackLEDs() {
             const velZone  = drumLastVelZone[t];
             const tc       = TRACK_COLORS[t];
             const td       = TRACK_DIM_COLORS[t];
-            const blink    = Math.floor(tickCount / 12) % 2;
+            const flashDur = (drumLaneTPS[t] || 24) + 2 * POLL_INTERVAL;
             for (let i = 0; i < 32; i++) {
                 const col = i % 8;
                 const row = Math.floor(i / 8);
@@ -1864,15 +1835,15 @@ function updateTrackLEDs() {
                     const hasHits  = drumLaneHasNotes[t][lane];
                     const laneNote = drumLaneNote[t][lane];
                     const sounding = liveActiveNotes.has(laneNote);
-                    const flashing = (tickCount - drumLaneFlashTick[t][lane]) < DRUM_FLASH_TICKS;
+                    const flashing = (tickCount - drumLaneFlashTick[t][lane]) < flashDur;
                     if (sounding) {
                         color = White;
-                    } else if (isActive) {
-                        color = (playing && hasHits && blink) ? tc : White;
                     } else if (flashing) {
                         color = tc;
+                    } else if (isActive) {
+                        color = White;
                     } else if (hasHits) {
-                        color = playing ? (blink ? tc : td) : tc;
+                        color = playing ? td : tc;
                     } else {
                         color = td;
                     }
@@ -2130,7 +2101,7 @@ function drawUI() {
                 ];
                 const COL_X = [13, 51, 89];
                 for (let i = 0; i < 3; i++) {
-                    const hi = (knobTouched === i + 2);
+                    const hi = (knobTouched === i);
                     if (hi) fill_rect(COL_X[i], 21, 25, 30, 1);
                     print(COL_X[i], 27, LABELS[i], hi ? 0 : 1);
                     print(COL_X[i], 40, VALS[i], hi ? 0 : 1);
@@ -3539,7 +3510,7 @@ globalThis.onMidiMessageInternal = function (data) {
             }
         }
 
-        /* Drum step edit: K3 (Dur) + K4 (Vel) + K5 (Ndg); K1/K2 swallowed */
+        /* Drum step edit: K1 (Dur) + K2 (Vel) + K3 (Ndg); K4/K5 swallowed */
         if (heldStep >= 0 && heldStepNotes.length > 0 && d1 >= 71 && d1 <= 75 &&
                 bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {
             const knobIdx = d1 - 71;
@@ -3549,16 +3520,16 @@ globalThis.onMidiMessageInternal = function (data) {
             knobTouched          = knobIdx;
             knobTurnedTick[knobIdx] = tickCount;
             screenDirty = true;
-            if (knobIdx === 2) {
+            if (knobIdx === 0) {
                 const _gmaxD = Math.min(65535, 256 * (drumLaneTPS[t] || 24));
                 stepEditGate = Math.max(1, Math.min(_gmaxD, stepEditGate + dir * 6));
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('t' + t + '_l' + lane + '_step_' + heldStep + '_gate', String(stepEditGate));
-            } else if (knobIdx === 3) {
+            } else if (knobIdx === 1) {
                 stepEditVel = Math.max(0, Math.min(127, stepEditVel + dir));
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('t' + t + '_l' + lane + '_step_' + heldStep + '_vel', String(stepEditVel));
-            } else if (knobIdx === 4) {
+            } else if (knobIdx === 2) {
                 knobAccum[knobIdx] = (dir === knobLastDir[knobIdx]) ? knobAccum[knobIdx] + 1 : 1;
                 knobLastDir[knobIdx] = dir;
                 if (knobAccum[knobIdx] >= 16) {
@@ -4286,6 +4257,7 @@ globalThis.onMidiMessageInternal = function (data) {
                             stepEditVel = vel;
                             if (typeof host_module_set_param === 'function')
                                 host_module_set_param('t' + t + '_l' + lane_vp + '_step_' + heldStep + '_vel', String(vel));
+                            stepBtnPressedTick[heldStepBtn] = -1;
                         }
                         screenDirty = true;
                     } else if (lane >= 0 && lane < DRUM_LANES) {
@@ -4438,7 +4410,23 @@ globalThis.onMidiMessageInternal = function (data) {
                             drumClipNonEmpty[t][ac] = hcRaw === '1';
                         }
                     }
-                    /* Hold release: no nudge reassign for drum — just exit */
+                    /* Hold release: reassign to adjacent step if nudge crossed midpoint */
+                    if (stepWasHeld && heldStepNotes.length > 0) {
+                        const _tpsMid = Math.floor((drumLaneTPS[t] || 24) / 2);
+                        let dstStep = -1;
+                        if (stepEditNudge >= _tpsMid)
+                            dstStep = (heldStep + 1) % drumLaneLength[t];
+                        else if (stepEditNudge <= -_tpsMid)
+                            dstStep = (heldStep - 1 + drumLaneLength[t]) % drumLaneLength[t];
+                        if (dstStep >= 0) {
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_l' + lane + '_step_' + heldStep + '_reassign', String(dstStep));
+                            drumLaneSteps[t][lane][heldStep] = '0';
+                            pendingDrumLaneResync      = 3;
+                            pendingDrumLaneResyncTrack = t;
+                            pendingDrumLaneResyncLane  = lane;
+                        }
+                    }
                 } else {
                 if (stepBtnPressedTick[btn] >= 0) {
                     /* Quick release within threshold — commit as tap toggle */

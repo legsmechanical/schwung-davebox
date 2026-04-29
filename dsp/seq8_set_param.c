@@ -1780,6 +1780,58 @@ static void set_param(void *instance, const char *key, const char *val) {
                     seq8_save_state(inst);
                     return;
                 }
+                if (!strcmp(q, "_reassign")) {
+                    int dstStep = clamp_i(my_atoi(val), 0, (int)dlc->length - 1);
+                    if (dstStep == sidx) return;
+                    if (dlc->step_note_count[sidx] == 0) return;
+                    {
+                        int tps_m1 = dlc->ticks_per_step - 1;
+                        int offset_adjust = ((int)sidx - dstStep) * dlc->ticks_per_step;
+                        int ni;
+                        if (dlc->step_note_count[dstStep] == 0) {
+                            for (ni = 0; ni < (int)dlc->step_note_count[sidx]; ni++) {
+                                dlc->step_notes[dstStep][ni] = dlc->step_notes[sidx][ni];
+                                int new_off = (int)dlc->note_tick_offset[sidx][ni] + offset_adjust;
+                                dlc->note_tick_offset[dstStep][ni] =
+                                    (int16_t)clamp_i(new_off, -tps_m1, tps_m1);
+                            }
+                            dlc->step_note_count[dstStep] = dlc->step_note_count[sidx];
+                            dlc->step_vel[dstStep]        = dlc->step_vel[sidx];
+                            dlc->step_gate[dstStep]       = dlc->step_gate[sidx];
+                            dlc->steps[dstStep]           = dlc->steps[sidx];
+                        } else {
+                            for (ni = 0; ni < (int)dlc->step_note_count[sidx]; ni++) {
+                                uint8_t pitch = dlc->step_notes[sidx][ni];
+                                int nj, dup = 0;
+                                for (nj = 0; nj < (int)dlc->step_note_count[dstStep]; nj++) {
+                                    if (dlc->step_notes[dstStep][nj] == pitch) { dup = 1; break; }
+                                }
+                                if (dup || dlc->step_note_count[dstStep] >= 8) continue;
+                                int slot = (int)dlc->step_note_count[dstStep];
+                                dlc->step_notes[dstStep][slot] = pitch;
+                                int new_off = (int)dlc->note_tick_offset[sidx][ni] + offset_adjust;
+                                dlc->note_tick_offset[dstStep][slot] =
+                                    (int16_t)clamp_i(new_off, -tps_m1, tps_m1);
+                                dlc->step_note_count[dstStep]++;
+                            }
+                            if (dlc->steps[sidx]) dlc->steps[dstStep] = 1;
+                        }
+                        memset(dlc->step_notes[sidx], 0, 8);
+                        memset(dlc->note_tick_offset[sidx], 0, 8 * sizeof(int16_t));
+                        dlc->step_note_count[sidx] = 0;
+                        dlc->step_vel[sidx]        = (uint8_t)SEQ_VEL;
+                        dlc->step_gate[sidx]       = (uint16_t)GATE_TICKS;
+                        dlc->steps[sidx]           = 0;
+                    }
+                    {
+                        int any = 0, k;
+                        for (k = 0; k < (int)dlc->length; k++) if (dlc->steps[k]) { any = 1; break; }
+                        dlc->active = (uint8_t)any;
+                    }
+                    clip_migrate_to_notes(dlc);
+                    seq8_save_state(inst);
+                    return;
+                }
             }
             return;
         }
