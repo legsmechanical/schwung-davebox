@@ -844,6 +844,63 @@ function copyStep(t, ac, srcAbs, dstAbs) {
     }
 }
 
+/* Copy active clip's lane srcLane to dstLane (same track, preserves dst midi_note). */
+function copyDrumLane(t, srcLane, dstLane) {
+    if (srcLane === dstLane) return;
+    if (typeof host_module_set_param !== 'function') return;
+    undoAvailable = true; redoAvailable = false; undoSeqArpSnapshot = null;
+    host_module_set_param('t' + t + '_l' + srcLane + '_copy_to', String(dstLane));
+    const steps = drumLaneSteps[t];
+    for (let s = 0; s < 256; s++) steps[dstLane][s] = steps[srcLane][s];
+    drumLaneHasNotes[t][dstLane] = drumLaneHasNotes[t][srcLane];
+    if (drumLaneHasNotes[t][srcLane]) drumClipNonEmpty[t][trackActiveClip[t]] = true;
+    pendingDrumLaneResync = 2; pendingDrumLaneResyncTrack = t; pendingDrumLaneResyncLane = dstLane;
+}
+
+/* Cut active clip's lane srcLane into dstLane (copy then clear src). */
+function cutDrumLane(t, srcLane, dstLane) {
+    if (srcLane === dstLane) return;
+    if (typeof host_module_set_param !== 'function') return;
+    undoAvailable = true; redoAvailable = false; undoSeqArpSnapshot = null;
+    host_module_set_param('t' + t + '_l' + srcLane + '_cut_to', String(dstLane));
+    const steps = drumLaneSteps[t];
+    for (let s = 0; s < 256; s++) { steps[dstLane][s] = steps[srcLane][s]; steps[srcLane][s] = '0'; }
+    drumLaneHasNotes[t][dstLane] = drumLaneHasNotes[t][srcLane];
+    drumLaneHasNotes[t][srcLane] = false;
+    let anyHits = false;
+    for (let l = 0; l < DRUM_LANES; l++) if (drumLaneHasNotes[t][l]) { anyHits = true; break; }
+    drumClipNonEmpty[t][trackActiveClip[t]] = anyHits;
+    pendingDrumLaneResync = 2; pendingDrumLaneResyncTrack = t; pendingDrumLaneResyncLane = dstLane;
+}
+
+/* Copy all 32 lanes of drum_clips[srcC] on srcT to drum_clips[dstC] on dstT; preserve dst midi_notes. */
+function copyDrumClip(srcT, srcC, dstT, dstC) {
+    if (srcT === dstT && srcC === dstC) return;
+    if (typeof host_module_set_param !== 'function') return;
+    undoAvailable = true; redoAvailable = false; undoSeqArpSnapshot = null;
+    host_module_set_param('drum_clip_copy', `${srcT} ${srcC} ${dstT} ${dstC}`);
+    drumClipNonEmpty[dstT][dstC] = drumClipNonEmpty[srcT][srcC];
+    if (dstC === trackActiveClip[dstT]) { pendingDrumResync = 2; pendingDrumResyncTrack = dstT; }
+}
+
+/* Cut all 32 lanes of drum_clips[srcC] on srcT into drum_clips[dstC] on dstT; undo dst only. */
+function cutDrumClip(srcT, srcC, dstT, dstC) {
+    if (srcT === dstT && srcC === dstC) return;
+    if (typeof host_module_set_param !== 'function') return;
+    undoAvailable = true; redoAvailable = false; undoSeqArpSnapshot = null;
+    host_module_set_param('drum_clip_cut', `${srcT} ${srcC} ${dstT} ${dstC}`);
+    drumClipNonEmpty[dstT][dstC] = drumClipNonEmpty[srcT][srcC];
+    drumClipNonEmpty[srcT][srcC] = false;
+    if (srcC === trackActiveClip[srcT]) {
+        for (let l = 0; l < DRUM_LANES; l++) {
+            for (let s = 0; s < 256; s++) drumLaneSteps[srcT][l][s] = '0';
+            drumLaneHasNotes[srcT][l] = false;
+        }
+        drumLaneLength[srcT] = 16;
+    }
+    if (dstC === trackActiveClip[dstT]) { pendingDrumResync = 2; pendingDrumResyncTrack = dstT; }
+}
+
 /* Clear all 8 tracks for a scene row (single atomic DSP write, JS mirror update). */
 function clearRow(rowIdx) {
     if (typeof host_module_set_param !== 'function') return;
@@ -1882,9 +1939,10 @@ function updateSessionLEDs() {
             }
             /* Copy source blink: JS-side timer (transport-independent) */
             if (copySrc) {
-                const isSrcClip = (copySrc.kind === 'clip' || copySrc.kind === 'cut_clip') && copySrc.track === t && copySrc.clip === sceneIdx;
-                const isSrcRow  = (copySrc.kind === 'row'  || copySrc.kind === 'cut_row')  && copySrc.row === sceneIdx;
-                if (isSrcClip || isSrcRow) color = (Math.floor(tickCount / 24) % 2) ? White : LED_OFF;
+                const isSrcClip     = (copySrc.kind === 'clip'      || copySrc.kind === 'cut_clip')      && copySrc.track === t && copySrc.clip === sceneIdx;
+                const isSrcRow      = (copySrc.kind === 'row'       || copySrc.kind === 'cut_row')       && copySrc.row === sceneIdx;
+                const isSrcDrumClip = (copySrc.kind === 'drum_clip' || copySrc.kind === 'cut_drum_clip') && copySrc.track === t && copySrc.clip === sceneIdx;
+                if (isSrcClip || isSrcRow || isSrcDrumClip) color = (Math.floor(tickCount / 24) % 2) ? White : LED_OFF;
             }
             cachedSetLED(note, color);
         }
@@ -1928,6 +1986,11 @@ function updateTrackLEDs() {
                         color = playing ? td : tc;
                     } else {
                         color = td;
+                    }
+                    /* Copy source blink */
+                    if (copySrc && (copySrc.kind === 'drum_lane' || copySrc.kind === 'cut_drum_lane') &&
+                            copySrc.track === t && copySrc.lane === lane) {
+                        color = (Math.floor(tickCount / 24) % 2) ? White : LED_OFF;
                     }
                 } else {
                     const zone = row * 4 + (col - 4);
@@ -1979,9 +2042,10 @@ function updateTrackLEDs() {
         }
         /* Copy source blink: JS-side timer (transport-independent) */
         if (copySrc) {
-            const isSrcRow  = (copySrc.kind === 'row'  || copySrc.kind === 'cut_row')  && copySrc.row === sceneIdx;
-            const isSrcClip = (copySrc.kind === 'clip' || copySrc.kind === 'cut_clip') && copySrc.track === activeTrack && copySrc.clip === sceneIdx;
-            if (isSrcRow || isSrcClip) color = (Math.floor(tickCount / 24) % 2) ? White : LED_OFF;
+            const isSrcRow      = (copySrc.kind === 'row'       || copySrc.kind === 'cut_row')       && copySrc.row === sceneIdx;
+            const isSrcClip     = (copySrc.kind === 'clip'      || copySrc.kind === 'cut_clip')      && copySrc.track === activeTrack && copySrc.clip === sceneIdx;
+            const isSrcDrumClip = (copySrc.kind === 'drum_clip' || copySrc.kind === 'cut_drum_clip') && copySrc.track === activeTrack && copySrc.clip === sceneIdx;
+            if (isSrcRow || isSrcClip || isSrcDrumClip) color = (Math.floor(tickCount / 24) % 2) ? White : LED_OFF;
         }
         cachedSetButtonLED(40 + idx, color);
     }
@@ -3536,8 +3600,29 @@ globalThis.onMidiMessageInternal = function (data) {
                         showActionPopup('PASTED');
                     }
                     /* clip/cut_clip kinds: swallow — don't mix copy types */
+                } else if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {
+                    /* Track View drum clip copy/cut via track button */
+                    if (!copySrc) {
+                        copySrc = shiftHeld
+                            ? { kind: 'cut_drum_clip', track: activeTrack, clip: clipIdx }
+                            : { kind: 'drum_clip',     track: activeTrack, clip: clipIdx };
+                        invalidateLEDCache();
+                        showActionPopup(shiftHeld ? 'CUT' : 'COPIED');
+                    } else if (copySrc.kind === 'drum_clip') {
+                        copyDrumClip(copySrc.track, copySrc.clip, activeTrack, clipIdx);
+                        invalidateLEDCache();
+                        forceRedraw();
+                        showActionPopup('PASTED');
+                    } else if (copySrc.kind === 'cut_drum_clip') {
+                        cutDrumClip(copySrc.track, copySrc.clip, activeTrack, clipIdx);
+                        copySrc = { kind: 'drum_clip', track: activeTrack, clip: clipIdx };
+                        invalidateLEDCache();
+                        forceRedraw();
+                        showActionPopup('PASTED');
+                    }
+                    /* Other kinds: swallow — don't mix copy types */
                 } else {
-                    /* Track View: clip copy/cut via track button */
+                    /* Track View melodic clip copy/cut via track button */
                     if (!copySrc) {
                         copySrc = shiftHeld
                             ? { kind: 'cut_clip', track: activeTrack, clip: clipIdx }
@@ -4262,12 +4347,19 @@ globalThis.onMidiMessageInternal = function (data) {
                     } else if (copyHeld) {
                         /* Copy + clip pad (Session View): clip-to-clip copy */
                         const clipIdx = sceneRow + row;
+                        const isDrumT = bankParams[t][0][2] === PAD_MODE_DRUM;
                         if (copySrc && copySrc.kind === 'step') {
                             /* step copy in progress: swallow */
                         } else if (!copySrc) {
-                            copySrc = shiftHeld
-                                ? { kind: 'cut_clip', track: t, clip: clipIdx }
-                                : { kind: 'clip', track: t, clip: clipIdx };
+                            if (isDrumT) {
+                                copySrc = shiftHeld
+                                    ? { kind: 'cut_drum_clip', track: t, clip: clipIdx }
+                                    : { kind: 'drum_clip',     track: t, clip: clipIdx };
+                            } else {
+                                copySrc = shiftHeld
+                                    ? { kind: 'cut_clip', track: t, clip: clipIdx }
+                                    : { kind: 'clip',     track: t, clip: clipIdx };
+                            }
                             invalidateLEDCache();
                             showActionPopup(shiftHeld ? 'CUT' : 'COPIED');
                         } else if (copySrc.kind === 'clip') {
@@ -4281,8 +4373,19 @@ globalThis.onMidiMessageInternal = function (data) {
                             invalidateLEDCache();
                             forceRedraw();
                             showActionPopup('PASTED');
+                        } else if (copySrc.kind === 'drum_clip') {
+                            copyDrumClip(copySrc.track, copySrc.clip, t, clipIdx);
+                            invalidateLEDCache();
+                            forceRedraw();
+                            showActionPopup('PASTED');
+                        } else if (copySrc.kind === 'cut_drum_clip') {
+                            cutDrumClip(copySrc.track, copySrc.clip, t, clipIdx);
+                            copySrc = { kind: 'drum_clip', track: t, clip: clipIdx };
+                            invalidateLEDCache();
+                            forceRedraw();
+                            showActionPopup('PASTED');
                         }
-                        /* row/cut_row kinds: swallow — don't mix copy types */
+                        /* row/cut_row kinds or drum/melodic mismatch: swallow */
                     } else if (shiftHeld && deleteHeld) {
                         /* Shift+Delete + clip pad (Session View): hard reset that clip */
                         const clipIdx = sceneRow + row;
@@ -4418,6 +4521,31 @@ globalThis.onMidiMessageInternal = function (data) {
                             pendingDrumLaneResyncLane  = lane_vp;
                         }
                         screenDirty = true;
+                    } else if (lane >= 0 && lane < DRUM_LANES && copyHeld && !muteHeld) {
+                        /* Copy+lane pad: drum lane copy/cut gesture (same track, active clip) */
+                        if (!copySrc) {
+                            copySrc = shiftHeld
+                                ? { kind: 'cut_drum_lane', track: t, lane: lane }
+                                : { kind: 'drum_lane',     track: t, lane: lane };
+                            invalidateLEDCache();
+                            showActionPopup(shiftHeld ? 'CUT' : 'COPIED');
+                        } else if (copySrc.kind === 'drum_lane' && copySrc.track === t) {
+                            copyDrumLane(t, copySrc.lane, lane);
+                            activeDrumLane[t] = lane;
+                            refreshDrumLaneBankParams(t, lane);
+                            invalidateLEDCache();
+                            forceRedraw();
+                            showActionPopup('PASTED');
+                        } else if (copySrc.kind === 'cut_drum_lane' && copySrc.track === t) {
+                            cutDrumLane(t, copySrc.lane, lane);
+                            copySrc = { kind: 'drum_lane', track: t, lane: lane };
+                            activeDrumLane[t] = lane;
+                            refreshDrumLaneBankParams(t, lane);
+                            invalidateLEDCache();
+                            forceRedraw();
+                            showActionPopup('PASTED');
+                        }
+                        /* Other copySrc kinds or cross-track: swallow */
                     } else if (lane >= 0 && lane < DRUM_LANES && muteHeld) {
                         /* Mute+pad: toggle lane mute; Shift+Mute+pad: toggle lane solo */
                         muteUsedAsModifier = true;

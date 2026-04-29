@@ -643,6 +643,92 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
 
+    if (!strcmp(key, "drum_clip_copy")) {
+        /* drum_clip_copy "srcT srcC dstT dstC" — copy all 32 lanes; preserve dst midi_notes */
+        const char *p = val;
+        int nums[4], i;
+        for (i = 0; i < 4; i++) {
+            while (*p == ' ') p++;
+            nums[i] = 0;
+            while (*p >= '0' && *p <= '9') nums[i] = nums[i]*10 + (*p++ - '0');
+        }
+        {
+            int srcT = clamp_i(nums[0], 0, NUM_TRACKS-1);
+            int srcC = clamp_i(nums[1], 0, NUM_CLIPS-1);
+            int dstT = clamp_i(nums[2], 0, NUM_TRACKS-1);
+            int dstC = clamp_i(nums[3], 0, NUM_CLIPS-1);
+            if (srcT == dstT && srcC == dstC) return;
+            drum_clip_t *src = &inst->tracks[srcT].drum_clips[srcC];
+            drum_clip_t *dst = &inst->tracks[dstT].drum_clips[dstC];
+            int l;
+            undo_begin_drum_clip(inst, dstT, dstC);
+            for (l = 0; l < DRUM_LANES; l++) {
+                uint8_t dst_midi_note = dst->lanes[l].midi_note;
+                clip_t *sc = &src->lanes[l].clip;
+                clip_t *dc = &dst->lanes[l].clip;
+                memcpy(dc->steps,            sc->steps,            SEQ_STEPS);
+                memcpy(dc->step_notes,       sc->step_notes,       SEQ_STEPS * 8);
+                memcpy(dc->step_note_count,  sc->step_note_count,  SEQ_STEPS);
+                memcpy(dc->step_vel,         sc->step_vel,         SEQ_STEPS);
+                memcpy(dc->step_gate,        sc->step_gate,        SEQ_STEPS * sizeof(uint16_t));
+                memcpy(dc->note_tick_offset, sc->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
+                dc->length        = sc->length;
+                dc->ticks_per_step = sc->ticks_per_step;
+                dc->active        = sc->active;
+                dst->lanes[l].midi_note = dst_midi_note;
+                clip_migrate_to_notes(dc);
+            }
+            seq8_save_state(inst);
+        }
+        return;
+    }
+
+    if (!strcmp(key, "drum_clip_cut")) {
+        /* drum_clip_cut "srcT srcC dstT dstC" — copy all 32 lanes then clear src; undo dst only */
+        const char *p = val;
+        int nums[4], i;
+        for (i = 0; i < 4; i++) {
+            while (*p == ' ') p++;
+            nums[i] = 0;
+            while (*p >= '0' && *p <= '9') nums[i] = nums[i]*10 + (*p++ - '0');
+        }
+        {
+            int srcT = clamp_i(nums[0], 0, NUM_TRACKS-1);
+            int srcC = clamp_i(nums[1], 0, NUM_CLIPS-1);
+            int dstT = clamp_i(nums[2], 0, NUM_TRACKS-1);
+            int dstC = clamp_i(nums[3], 0, NUM_CLIPS-1);
+            if (srcT == dstT && srcC == dstC) return;
+            seq8_track_t *srcTr = &inst->tracks[srcT];
+            seq8_track_t *dstTr = &inst->tracks[dstT];
+            drum_clip_t *src = &srcTr->drum_clips[srcC];
+            drum_clip_t *dst = &dstTr->drum_clips[dstC];
+            int l;
+            undo_begin_drum_clip(inst, dstT, dstC);
+            for (l = 0; l < DRUM_LANES; l++) {
+                uint8_t dst_midi_note = dst->lanes[l].midi_note;
+                uint8_t src_midi_note = src->lanes[l].midi_note;
+                clip_t *sc = &src->lanes[l].clip;
+                clip_t *dc = &dst->lanes[l].clip;
+                memcpy(dc->steps,            sc->steps,            SEQ_STEPS);
+                memcpy(dc->step_notes,       sc->step_notes,       SEQ_STEPS * 8);
+                memcpy(dc->step_note_count,  sc->step_note_count,  SEQ_STEPS);
+                memcpy(dc->step_vel,         sc->step_vel,         SEQ_STEPS);
+                memcpy(dc->step_gate,        sc->step_gate,        SEQ_STEPS * sizeof(uint16_t));
+                memcpy(dc->note_tick_offset, sc->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
+                dc->length        = sc->length;
+                dc->ticks_per_step = sc->ticks_per_step;
+                dc->active        = sc->active;
+                dst->lanes[l].midi_note = dst_midi_note;
+                clip_migrate_to_notes(dc);
+                pfx_note_off_imm(inst, srcTr, src_midi_note);
+                clip_init(sc);
+                src->lanes[l].midi_note = src_midi_note;
+            }
+            seq8_save_state(inst);
+        }
+        return;
+    }
+
     if (!strcmp(key, "row_clear")) {
         int rowIdx = clamp_i(my_atoi(val), 0, NUM_CLIPS-1);
         int t, i;
@@ -1823,6 +1909,58 @@ static void set_param(void *instance, const char *key, const char *val) {
                 undo_begin_single(inst, tidx, (int)tr->active_clip);
                 pfx_set(inst, tr, &dlane->clip.pfx_params, "pfx_reset", "1");
                 seq8_save_state(inst);
+                return;
+            }
+
+            /* tN_lL_copy_to "dstLane" — copy active clip's lane L to dstLane; preserve dst midi_note */
+            if (!strcmp(p2, "_copy_to")) {
+                int dstLane = clamp_i(my_atoi(val), 0, DRUM_LANES - 1);
+                if (dstLane == lane_idx) return;
+                {
+                    drum_lane_t *dst = &tr->drum_clips[(int)tr->active_clip].lanes[dstLane];
+                    uint8_t dst_midi_note = dst->midi_note;
+                    undo_begin_drum_clip(inst, tidx, (int)tr->active_clip);
+                    memcpy(dst->clip.steps,            dlc->steps,            SEQ_STEPS);
+                    memcpy(dst->clip.step_notes,       dlc->step_notes,       SEQ_STEPS * 8);
+                    memcpy(dst->clip.step_note_count,  dlc->step_note_count,  SEQ_STEPS);
+                    memcpy(dst->clip.step_vel,         dlc->step_vel,         SEQ_STEPS);
+                    memcpy(dst->clip.step_gate,        dlc->step_gate,        SEQ_STEPS * sizeof(uint16_t));
+                    memcpy(dst->clip.note_tick_offset, dlc->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
+                    dst->clip.length        = dlc->length;
+                    dst->clip.ticks_per_step = dlc->ticks_per_step;
+                    dst->clip.active        = dlc->active;
+                    dst->midi_note          = dst_midi_note;
+                    clip_migrate_to_notes(&dst->clip);
+                    seq8_save_state(inst);
+                }
+                return;
+            }
+
+            /* tN_lL_cut_to "dstLane" — copy then clear src; atomic undo */
+            if (!strcmp(p2, "_cut_to")) {
+                int dstLane = clamp_i(my_atoi(val), 0, DRUM_LANES - 1);
+                if (dstLane == lane_idx) return;
+                {
+                    drum_lane_t *dst = &tr->drum_clips[(int)tr->active_clip].lanes[dstLane];
+                    uint8_t dst_midi_note = dst->midi_note;
+                    uint8_t src_midi_note = dlane->midi_note;
+                    undo_begin_drum_clip(inst, tidx, (int)tr->active_clip);
+                    memcpy(dst->clip.steps,            dlc->steps,            SEQ_STEPS);
+                    memcpy(dst->clip.step_notes,       dlc->step_notes,       SEQ_STEPS * 8);
+                    memcpy(dst->clip.step_note_count,  dlc->step_note_count,  SEQ_STEPS);
+                    memcpy(dst->clip.step_vel,         dlc->step_vel,         SEQ_STEPS);
+                    memcpy(dst->clip.step_gate,        dlc->step_gate,        SEQ_STEPS * sizeof(uint16_t));
+                    memcpy(dst->clip.note_tick_offset, dlc->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
+                    dst->clip.length        = dlc->length;
+                    dst->clip.ticks_per_step = dlc->ticks_per_step;
+                    dst->clip.active        = dlc->active;
+                    dst->midi_note          = dst_midi_note;
+                    clip_migrate_to_notes(&dst->clip);
+                    pfx_note_off_imm(inst, tr, src_midi_note);
+                    clip_init(dlc);
+                    dlane->midi_note = src_midi_note;
+                    seq8_save_state(inst);
+                }
                 return;
             }
 
