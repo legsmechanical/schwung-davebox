@@ -1318,6 +1318,27 @@ static void set_param(void *instance, const char *key, const char *val) {
                 seq8_save_state(inst);
                 return;
             }
+            if (!strcmp(p2, "_mute")) {
+                uint32_t bit = 1u << (uint32_t)lane_idx;
+                if (my_atoi(val)) {
+                    tr->drum_lane_mute |= bit;
+                    pfx_note_off(inst, tr, dlane->midi_note);
+                } else {
+                    tr->drum_lane_mute &= ~bit;
+                }
+                seq8_save_state(inst);
+                return;
+            }
+            if (!strcmp(p2, "_solo")) {
+                uint32_t bit = 1u << (uint32_t)lane_idx;
+                if (my_atoi(val)) {
+                    tr->drum_lane_solo |= bit;
+                } else {
+                    tr->drum_lane_solo &= ~bit;
+                }
+                seq8_save_state(inst);
+                return;
+            }
             if (!strcmp(p2, "_clip_length")) {
                 int newlen = clamp_i(my_atoi(val), 1, SEQ_STEPS);
                 dlc->length = (uint16_t)newlen;
@@ -2015,6 +2036,14 @@ static void set_param(void *instance, const char *key, const char *val) {
                 if (tr->pfx.route == ROUTE_MOVE)
                     pfx_note_off_imm(inst, tr, (uint8_t)pitch);
             }
+            return;
+        }
+
+        if (!strcmp(sub, "drum_mute_all_clear")) {
+            /* tN_drum_mute_all_clear: unmute and unsolo all drum lanes. */
+            tr->drum_lane_mute = 0;
+            tr->drum_lane_solo = 0;
+            seq8_save_state(inst);
             return;
         }
 

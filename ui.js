@@ -412,6 +412,9 @@ let drumStepPage      = new Array(NUM_TRACKS).fill(0);  /* current view page for
 let drumCurrentStep   = new Array(NUM_TRACKS).fill(-1); /* playhead step of active lane */
 /* drumLaneFlashTick[t][l] — tickCount when this lane last fired a hit (for pad flash) */
 let drumLaneFlashTick = Array.from({length: NUM_TRACKS}, () => new Array(DRUM_LANES).fill(-999));
+/* Per-track drum lane mute/solo bitmasks (uint32 mirrors of DSP drum_lane_mute/drum_lane_solo) */
+let drumLaneMute = new Array(NUM_TRACKS).fill(0);
+let drumLaneSolo = new Array(NUM_TRACKS).fill(0);
 const DRUM_FLASH_TICKS = 8; /* ~130ms pad flash duration after a drum hit */
 /* drumClipNonEmpty[t][c] — true if any lane in drum clip c of track t has content */
 let drumClipNonEmpty  = Array.from({length: NUM_TRACKS}, () => new Array(NUM_CLIPS).fill(false));
@@ -1022,6 +1025,17 @@ function syncDrumLanesMeta(t) {
         const ncRaw  = host_module_get_param('t' + t + '_l' + l + '_note_count');
         drumLaneHasNotes[t][l] = ncRaw !== null ? parseInt(ncRaw, 10) > 0 : false;
     }
+    const muteRaw = host_module_get_param('t' + t + '_drum_lane_mute');
+    if (muteRaw !== null) drumLaneMute[t] = parseInt(muteRaw, 10) >>> 0;
+    const soloRaw = host_module_get_param('t' + t + '_drum_lane_solo');
+    if (soloRaw !== null) drumLaneSolo[t] = parseInt(soloRaw, 10) >>> 0;
+}
+
+function effectiveDrumMute(t, l) {
+    const bit = 1 << l;
+    if (drumLaneMute[t] & bit) return true;
+    if (drumLaneSolo[t] && !(drumLaneSolo[t] & bit)) return true;
+    return false;
 }
 
 /** Convert a padIdx (0-31) to drum lane index for the current lane page, or -1 if right half. */
@@ -1269,6 +1283,8 @@ function pollDSP() {
                 }
             }
         }
+        /* M blink: keep screen dirty while any lane is muted so blink animates */
+        if (drumLaneMute[activeTrack]) screenDirty = true;
         /* Drum pad flash + seqActiveNotes: poll which lanes are hitting (single bitmask call) */
         if (playing && trackClipPlaying[activeTrack]) {
             const _maskRaw = host_module_get_param('t' + activeTrack + '_drum_active_lanes');
@@ -1838,10 +1854,13 @@ function updateTrackLEDs() {
                     const laneNote = drumLaneNote[t][lane];
                     const sounding = liveActiveNotes.has(laneNote);
                     const flashing = (tickCount - drumLaneFlashTick[t][lane]) < flashDur;
+                    const isMuted  = effectiveDrumMute(t, lane);
                     if (sounding) {
                         color = White;
                     } else if (flashing) {
-                        color = tc;
+                        color = isMuted ? DarkGrey : tc;
+                    } else if (isMuted) {
+                        color = LED_OFF;
                     } else if (isActive) {
                         color = White;
                     } else if (hasHits) {
@@ -2265,6 +2284,23 @@ function drawUI() {
         const bankName  = activeBank === 1 ? 'DRUM SEQ' : activeBank === 2 ? 'NOTE/NOTEFX' : BANKS[activeBank].name;
         print(4, 0,  'Knob: [ ' + bankName + ' ]', 1);
         print(4, 10, bankGroup + '  Pad: ' + name + oct + ' (' + note + ')', 1);
+        /* M/S lane markers: show only if any mute or solo is active */
+        if (drumLaneMute[t] || drumLaneSolo[t]) {
+            const pg = drumLanePage[t];
+            const msY = 22;
+            const showM = Math.floor(tickCount / 4) % 2 === 0;
+            for (let i = 0; i < 16; i++) {
+                const lane = pg * 16 + i;
+                const bit  = 1 << lane;
+                const x    = i * 8;
+                if (drumLaneSolo[t] & bit) {
+                    fill_rect(x, msY, 6, 5, 1);
+                    pixelPrint(x, msY, 'S', 0);
+                } else if ((drumLaneMute[t] & bit) && showM) {
+                    pixelPrint(x, msY, 'M', 1);
+                }
+            }
+        }
         drawTrackRow(34);
         for (let _t = 0; _t < NUM_TRACKS; _t++)
             print(_t * 16 + 5, 46, SCENE_LETTERS[trackActiveClip[_t]], 1);
@@ -3340,7 +3376,19 @@ globalThis.onMidiMessageInternal = function (data) {
          * Press: handle Delete+Mute immediately. Release: toggle mute/solo, but only if Mute was not used as
          * a modifier key (e.g. Mute+Play = metro toggle). */
         if (d1 === MoveMute && d2 === 127) {
-            if (deleteHeld) clearAllMuteSolo();
+            if (deleteHeld) {
+                if (!sessionView && bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {
+                    /* Delete+Mute in drum track view: clear all drum lane mute/solo */
+                    drumLaneMute[activeTrack] = 0;
+                    drumLaneSolo[activeTrack] = 0;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + activeTrack + '_drum_mute_all_clear', '1');
+                    muteUsedAsModifier = true;
+                    forceRedraw();
+                } else {
+                    clearAllMuteSolo();
+                }
+            }
         }
         if (d1 === MoveMute && d2 === 0) {
             if (!muteUsedAsModifier && !deleteHeld && !sessionView) {
@@ -4262,6 +4310,24 @@ globalThis.onMidiMessageInternal = function (data) {
                             stepBtnPressedTick[heldStepBtn] = -1;
                         }
                         screenDirty = true;
+                    } else if (lane >= 0 && lane < DRUM_LANES && muteHeld) {
+                        /* Mute+pad: toggle lane mute; Shift+Mute+pad: toggle lane solo */
+                        muteUsedAsModifier = true;
+                        const bit = 1 << lane;
+                        if (shiftHeld) {
+                            const wasOn = !!(drumLaneSolo[t] & bit);
+                            if (wasOn) drumLaneSolo[t] &= ~bit;
+                            else       drumLaneSolo[t] |= bit;
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_l' + lane + '_solo', wasOn ? '0' : '1');
+                        } else {
+                            const wasOn = !!(drumLaneMute[t] & bit);
+                            if (wasOn) drumLaneMute[t] &= ~bit;
+                            else       drumLaneMute[t] |= bit;
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_l' + lane + '_mute', wasOn ? '0' : '1');
+                        }
+                        forceRedraw();
                     } else if (lane >= 0 && lane < DRUM_LANES) {
                         if (deleteHeld) {
                             /* Delete + lane pad: clear all steps in this lane */

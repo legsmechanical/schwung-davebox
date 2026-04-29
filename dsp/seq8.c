@@ -306,6 +306,9 @@ typedef struct {
     /* Per-lane render-state tick counters (not persisted; reset on transport play/clip launch). */
     uint16_t drum_current_step[DRUM_LANES];
     uint32_t drum_tick_in_step[DRUM_LANES];
+    /* Per-lane mute/solo bitmasks (persisted). bit l = lane l. */
+    uint32_t drum_lane_mute;
+    uint32_t drum_lane_solo;
 } seq8_track_t;
 #define LRS_SET(tr, s)  ((tr)->live_recorded_steps[(s)>>3] |=  (uint8_t)(1u<<((s)&7)))
 #define LRS_TEST(tr, s) ((tr)->live_recorded_steps[(s)>>3] &   (1u<<((s)&7)))
@@ -402,6 +405,13 @@ static int effective_mute(seq8_instance_t *inst, int t) {
     return inst->mute[t] || (any_solo && !inst->solo[t]);
 }
 
+static int effective_drum_mute(seq8_track_t *tr, int l) {
+    uint32_t bit = 1u << (uint32_t)l;
+    if (tr->drum_lane_mute & bit) return 1;
+    if (tr->drum_lane_solo && !(tr->drum_lane_solo & bit)) return 1;
+    return 0;
+}
+
 /* silence_muted_tracks defined after pfx_note_off below */
 
 /* Forward declarations for note-centric helpers (defined after clip_init) */
@@ -453,6 +463,18 @@ static int json_get_int(const char *buf, const char *key, int def) {
     p += strlen(search);
     while (*p == ' ') p++;
     return my_atoi(p);
+}
+
+static uint32_t json_get_uint(const char *buf, const char *key, uint32_t def) {
+    char search[64];
+    snprintf(search, sizeof(search), "\"%s\":", key);
+    const char *p = strstr(buf, search);
+    if (!p) return def;
+    p += strlen(search);
+    while (*p == ' ') p++;
+    uint32_t v = 0;
+    while (*p >= '0' && *p <= '9') { v = v * 10u + (uint32_t)(*p++ - '0'); }
+    return v;
 }
 
 static void json_get_steps(const char *buf, const char *key,
@@ -623,6 +645,13 @@ static void seq8_save_state(seq8_instance_t *inst) {
     /* Per-track: pad_mode (route saved above with channel) */
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_pm\":%d", t, (int)inst->tracks[t].pad_mode);
+    /* Per-track: drum lane mute/solo bitmasks (sparse; omit if zero) */
+    for (t = 0; t < NUM_TRACKS; t++) {
+        if (inst->tracks[t].drum_lane_mute)
+            fprintf(fp, ",\"t%ddlm\":%u", t, inst->tracks[t].drum_lane_mute);
+        if (inst->tracks[t].drum_lane_solo)
+            fprintf(fp, ",\"t%ddls\":%u", t, inst->tracks[t].drum_lane_solo);
+    }
     /* Global settings */
     fprintf(fp, ",\"key\":%d,\"scale\":%d,\"lq\":%d",
             (int)inst->pad_key, (int)inst->pad_scale, (int)inst->launch_quant);
@@ -771,6 +800,13 @@ static void seq8_load_state(seq8_instance_t *inst) {
     for (t = 0; t < NUM_TRACKS; t++) {
         snprintf(key, sizeof(key), "t%d_pm", t);
         inst->tracks[t].pad_mode = (uint8_t)clamp_i(json_get_int(buf, key, 0), 0, 1);
+    }
+    /* Per-track: drum lane mute/solo bitmasks */
+    for (t = 0; t < NUM_TRACKS; t++) {
+        snprintf(key, sizeof(key), "t%ddlm", t);
+        inst->tracks[t].drum_lane_mute = json_get_uint(buf, key, 0);
+        snprintf(key, sizeof(key), "t%ddls", t);
+        inst->tracks[t].drum_lane_solo = json_get_uint(buf, key, 0);
     }
     /* Per-clip play-effect params (sparse — missing keys default to neutral) */
     for (t = 0; t < NUM_TRACKS; t++) {
@@ -1962,6 +1998,10 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
             }
             return snprintf(out, out_len, "%u", mask);
         }
+        if (!strcmp(sub, "drum_lane_mute"))
+            return snprintf(out, out_len, "%u", tr->drum_lane_mute);
+        if (!strcmp(sub, "drum_lane_solo"))
+            return snprintf(out, out_len, "%u", tr->drum_lane_solo);
         /* tN_lL_* — drum lane getters (lane_note, note_count, steps, step_S_*) */
         if (sub[0] == 'l' && sub[1] >= '0' && sub[1] <= '9') {
             int lidx = 0;
@@ -2422,6 +2462,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                         drum_lane_t *lane = &tr->drum_clips[tr->active_clip].lanes[l];
                         clip_t      *dlc  = &lane->clip;
                         if (dlc->note_count == 0) continue;
+                        if (effective_drum_mute(tr, l)) continue;
                         pfx_apply_params(&tr->pfx, &dlc->pfx_params);
                         uint32_t cct = (uint32_t)tr->drum_current_step[l] * dlc->ticks_per_step
                                        + tr->drum_tick_in_step[l];
