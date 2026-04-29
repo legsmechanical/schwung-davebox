@@ -51,7 +51,7 @@ The primary editing view for a single track and clip. Shows:
 - Pad grid for note input and display
 - Side clip buttons (4) for switching between clips on the active track
 - Position bar at the bottom of the OLED (see Section 15)
-- Active track indicated with brackets, e.g. `[T1]`
+- Active track indicated by a 1px box around the track number in the OLED track row
 
 **Navigation within Track View:**
 - Left/Right arrow buttons move between pages of the active clip
@@ -141,7 +141,7 @@ The LED below each knob lights when that parameter has been changed from its def
 | Knob | Parameter | Notes |
 |---|---|---|
 | K1 | Channel | MIDI channel 1–16; displayed 1-indexed |
-| K2 | Route | Schwung internal or external USB-A MIDI |
+| K2 | Route | Schwung internal or Move internal |
 | K3 | Track Mode | Drum or Melodic |
 | K4 | (unused) | — |
 | K5 | (unused) | — |
@@ -161,7 +161,7 @@ Settings are saved and restored with project state.
 | K5 | Length | Clip length in steps, 1–256. Changes take effect immediately. |
 | K6 | Clip Start | Stub (display only) |
 | K7 | Clip End | Stub (display only) |
-| K8 | SeqFollow | ON (default): Track View auto-scrolls to follow the playhead. OFF: view stays wherever you left it. Per-clip. |
+| K8 | SeqFollow | ON (default): Track View auto-scrolls to follow the playhead. OFF: view stays wherever you left it. Per-clip. *(Persistence unconfirmed — needs verification.)* |
 
 **Beat Stretch limits:** Clip length clamped 1–256 steps. Compress blocked if it would cause two notes to land on the same step (OLED: COMPRESS LIMIT).
 
@@ -190,7 +190,7 @@ Settings are saved and restored with project state.
 
 ### 4.5 SEQ ARP Bank
 
-On/off, type, sort, hold, octave range, speed. DSP is implemented; fully functional.
+On/off, type, sort, hold, octave range, speed. Stub only — DSP not yet implemented.
 
 ### 4.6 MIDI DLY Bank
 
@@ -389,8 +389,8 @@ Doubles the active clip's length and fills the new second half with an exact cop
 
 ### 7.8 Clearing Clips
 
-- **Delete + clip button (Track View)** / **Delete + clip pad (Session View)**: clears all notes from that clip. Clip remains active and continues playing empty — transport is not interrupted.
-- **Shift+Delete + clip button / clip pad**: hard reset — clears all notes AND resets all per-clip params (NOTE FX, HARMZ, MIDI DLY) to defaults. Fires CLIP CLEARED pop-up. Undoable.
+- **Delete + clip button (Track View)** / **Delete + clip pad (Session View)**: clears all notes from that clip. Clip remains active and continues playing empty — transport is not interrupted. *(Session View behavior unconfirmed — needs device testing.)*
+- **Shift+Delete + clip button / clip pad**: hard reset — clears all notes AND resets all per-clip params (NOTE FX, HARMZ, MIDI DLY) to defaults, and resets clip length to 16 steps and resolution to 1/16. Fires CLIP CLEARED pop-up. Undoable.
 
 ---
 
@@ -718,3 +718,190 @@ SEQ8 saves and loads separate state per native Move set. When you switch sets in
 - Mute/solo state and all 16 snapshots (including drum lane mutes)
 - MIDI In channel setting
 
+
+---
+
+## In Development
+
+Items are organized by the section of SEQ8 they interact with. Items marked **[deferred]** are specced but not actively being built. Items marked **[fix]** are corrections to existing behavior.
+
+---
+
+### Views
+
+**Session View — Jog Hold: Quick Bank Access**
+Holding the jog wheel touch in Session View brings up the OLED and knob display for the active parameter bank on the active track — the same view available in Track View. Rotating the jog wheel (to scroll scene rows) overrides and dismisses this view.
+
+**Session View — Knob Touch: Track Focus**
+Touching any knob in Session View immediately switches the active track to the track corresponding to that knob's position. Knobs map 1:1 to tracks 1–8.
+
+---
+
+### Parameter Banks
+
+**Drum Track — All-Lanes Quantize (DRUM SEQ K6)**
+A macro quantize knob for drum tracks. Turning K6 sets the NoteЕX quantize value on all 32 lanes simultaneously. Non-destructive — quantization is applied at render time and can be dialed back to 0. Replaces the sstart parameter. Send is also removed from the DRUM SEQ bank for drum tracks.
+
+**Harmonizer — Rand 1 and Rand 2 Voices**
+Two new knobs added to the HARMZ bank. Both are scale-aware (values are scale degrees). Each adds an additional note voice alongside the source note. Rand 1 widens a randomized range from ±1 to ±7 scale degrees. Rand 2 is bipolar — CW adds a random voice up to 7 degrees above; CCW adds one up to 7 degrees below.
+
+**MIDI Delay — Dotted Timing and Rnd Refinement**
+Dotted is added as a third timing option alongside Straight and Triplet. Null timing is removed. Default changes to 1/8 Dotted. The Pitch Random knob (K8) is extended from a ±12 toggle to a 0–24 continuous range (0=off, 24=±24 semitones/degrees).
+
+**Arpeggiator — SEQ ARP and LIVE ARP**
+Both arpeggiator banks are currently stubs. SEQ ARP (per-clip) and LIVE ARP (per-track) will be implemented together, sharing a common DSP architecture.
+
+**Swing**
+Global swing amount and resolution, applied last in the play effects chain. Currently a stub in the Global Menu.
+
+**Bank Overview Display [fix]**
+The bank overview currently shows labels for all 8 parameters but only displays values for 4 of them. All 8 values should be visible.
+
+---
+
+### Melodic Track
+
+**Chromatic Pad Layout Toggle**
+A per-track toggle in the TRACK bank switches between the current isomorphic (Wicki-Hayden 4ths) layout and a chromatic layout where each pad to the right is +1 semitone and each pad up is +5 semitones (guitar fretboard style). Setting persists per track.
+
+**Step Preview**
+A global toggle in the Global Menu. When on and transport is stopped, holding a step that contains notes triggers live playback of those notes. Has no effect while transport is running.
+
+---
+
+### Drum Track
+
+**Drum Mode Default for Track 1**
+On new project creation, Track 1 defaults to drum mode. Tracks 2–8 default to melodic.
+
+**Per-Lane Loop Length [deferred]**
+Each drum lane can have an independent loop length within a clip, enabling polyrhythmic patterns. Requires a data model extension.
+
+**Euclidean Sequencing [deferred]**
+Per-lane Bjorklund algorithm for generating euclidean rhythms.
+
+**Melodic ↔ Drum Track Conversion [deferred]**
+A confirmation dialog on the TRACK bank K3 mode switch that converts an existing melodic track to drum mode (or vice versa), migrating clip data where possible.
+
+---
+
+### Clips
+
+**Clip Loop Start Position**
+In Loop view (hold Loop button), holding a step sets the page the clip begins on; tapping a step to the right sets the end page. Currently clips always start at step 0.
+
+**Clip Clear Keeps Playback Active [fix]**
+Clearing a clip via Delete+clip button in Track View or Session View should not stop playback of the cleared clip. The clip should remain active and continue playing (now empty). Applies to both melodic and drum tracks.
+
+---
+
+### Live Recording
+
+**Live Merge (Shift+Capture)**
+Records the post-effects MIDI output of the active track into the first empty clip slot from the bottom of that track. The clip does not loop during recording — it captures up to 256 steps. When stopped, the clip comes in with default effect params (effects are already baked into the recorded notes). Useful for committing a live performance with effects into a new clip.
+
+**Print / Bake**
+Renders the currently playing clip with all play effects applied to the note data, replacing the source clip with the processed result. Activated by holding a dedicated button during playback.
+
+**Undo in Overdub Recording [fix]**
+Current undo behavior during overdub is unsatisfactory. Needs a design decision on what undo should do mid-overdub vs. after disarm before implementing.
+
+**Live Input Through Play Effects**
+Currently, live pad input bypasses the play effects chain — Harmonizer and MIDI Delay do not affect notes played live, only sequenced notes. A routing fix would apply play effects to live input as well. Design decision pending.
+
+---
+
+### Track Controls
+
+**Mute/Solo OLED Indicators on Track Numbers [fix]**
+The M and S indicators displayed on track numbers in the OLED track row when a track is muted or soloed need to be corrected.
+
+---
+
+### Global Settings
+
+**Tap Tempo**
+A Tap Tempo entry in the Global Menu below BPM. When selected, SEQ8 prompts "Tap any pad." Four taps are interpreted as quarter notes; BPM is derived from the average interval and rounded to the nearest whole number. Pressing Back assigns the calculated BPM and exits.
+
+**Scale-Aware Key/Scale Transpose**
+A Transpose toggle in the Global Menu. When on, changing the Key or Scale transposes all notes across all clips on all tracks to fit the new key/scale. Notes that don't land on a scale degree snap to the nearest. Drum tracks are bypassed.
+
+**State Snapshots**
+16 snapshot slots in Session View (Shift+Capture+step to save, Capture+step to recall). Each snapshot captures the full SEQ8 instance state: which clips are active on each track, track mute/solo status, and all clip-level effect params (NOTE FX, HARMZ, MIDI DLY). TRACK and LIVE ARP settings are excluded.
+
+**Transport Sync**
+Synchronize SEQ8's transport and BPM to an external source. Two candidate approaches: MIDI clock (0xF8 messages via USB-A) or a native Move transport API (pending Schwung update).
+
+**Velocity Override and Input Quantize**
+Both are already present as stubs in the Global Menu. Will be wired to DSP when implemented.
+
+---
+
+### MIDI
+
+**External MIDI Input — Pad LED Feedback [fix]**
+When external MIDI notes are received in Track View, the corresponding pads should light up the same way they do for pad input. Currently only physical pad presses trigger LED feedback.
+
+**Schwung Chain Access**
+Expose Schwung's native effects chain (reverb, delay, etc.) from within SEQ8. Access method to be determined — options include a dedicated button combo, a new parameter bank, or a Global Menu entry.
+
+---
+
+### OLED Display
+
+**Metronome Menu Label [fix]**
+The Metro toggle label "On" is ambiguous. To be replaced with a clearer label (options: Active/Inactive, Enabled/Disabled, or rename the entry to "Click").
+
+---
+
+### LED Behavior
+
+**Playhead Dot — Flashes on Inactive Clips During Transport [fix]**
+In Track View, the playhead dot on step 1 of an inactive clip is static when transport is stopped (intentional). When transport is running and the clip is inactive, the dot should flash at the 1/16 rate.
+
+**Beat Markers**
+Steps 1, 5, 9, and 13 show a dim white marker in Track View when the step is not otherwise active. Matches native Move step button behavior.
+
+**Context-Sensitive Button Lighting**
+Buttons that are currently accessible light dim white to indicate availability: Mute, Shift, Delete, Capture, Undo, +/−, Left/Right Arrow, Loop.
+
+**Clip Color Pulse**
+Active non-empty clips pulse between dim track color and white at a 1/4-note interval.
+
+**LED Corruption on Exit [fix]**
+Native Move UI LEDs are left in a corrupted state after SEQ8 backgrounds. Root cause unknown — likely a cleanup step missing from the background lifecycle handler.
+
+---
+
+### System
+
+**GitHub Repository Setup**
+Create a remote repository, push the main branch and drum mode branch history, and configure .gitignore. To be done before any further major features to establish a clean remote baseline.
+
+**Move Native Set Copy**
+When a Move set is duplicated, the SEQ8 state associated with the original set should be copied and linked to the new set UUID. Requires investigation into the Schwung framework.
+
+**Power Button Shutdown [fix]**
+Pressing Move's power button from within SEQ8 does not begin the shutdown process. Needs a Schwung shutdown/suspend lifecycle hook.
+
+**Rename Click Wave File**
+The metronome click asset should be renamed to `click.wave`.
+
+**Multiple Simultaneous Clip Pad Presses**
+The Session View pad handler currently does not correctly handle two clip pads pressed at the same time. Each press should be processed independently.
+
+---
+
+### v1.1 / Long-term
+
+**Impressive Chords Port**
+Port the schwung-impressive-chords DSP into SEQ8 as a dedicated play effects bank. Includes a 52-preset chord table, strum timing, velocity tilt, articulation, retrigger, gate, and choke. Strum timing requires sample-accurate scheduling across render blocks.
+
+**Global MIDI Looper**
+Activated by Loop+step in Session View during transport. Captures all post-effects outgoing MIDI across all tracks. Step button determines capture length (Step 1=1 bar, Step 2=1/2 bar, etc.). Stops immediately on release.
+
+**Per-Track MIDI Looper**
+Same concept as the global looper but scoped to a single track. Lives in a reserved bank slot.
+
+**Port to Standalone (RNBO)**
+Run SEQ8 independently of Move's native instrument layer on the CM4, using RNBO as the host. Requires investigation with the Schwung developer.
