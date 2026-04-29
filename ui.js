@@ -20,6 +20,7 @@ import {
     Mustard,
     DeepGreen,
     DarkGrey,
+    LightGrey,
     HotMagenta,
     DeepMagenta,
     Cyan,
@@ -1580,7 +1581,7 @@ function updateStepLEDs() {
     if (loopHeld) {
         const t = activeTrack;
         const trackColor = TRACK_COLORS[t];
-        const pulsOn = Math.floor(tickCount / 12) % 2;
+        const pulsOn = playing ? flashSixteenth : (Math.floor(tickCount / 24) % 2);
         if (bankParams[t][0][2] === PAD_MODE_DRUM) {
             const lane = activeDrumLane[t];
             const len  = drumLaneLength[t];
@@ -1855,7 +1856,7 @@ function updateSessionLEDs() {
                 : clipHasActiveNotes(t, sceneIdx);
             let color;
             if (!hasContent) {
-                color = LED_OFF;
+                color = isActiveClip ? LightGrey : LED_OFF;
             } else if (!hasActive) {
                 color = DarkGrey;
             } else if (isPlaying && isPendingStop) {
@@ -2334,17 +2335,17 @@ function drawUI() {
         const bankGroup = pg === 0 ? 'Bank: A' : 'Bank: B';
         const bankName  = activeBank === 1 ? 'DRUM SEQ' : activeBank === 2 ? 'NOTE/NOTEFX' : BANKS[activeBank].name;
         print(4, 0,  'Knob: [ ' + bankName + ' ]', 1);
-        if (drumLaneSolo[t]) {
+        print(4, 10, bankGroup + '  Pad: ' + name + oct + ' (' + note + ')', 1);
+        const laneBit = 1 << lane;
+        if (drumLaneSolo[t] & laneBit) {
             const sw = 6 * 6, sx = (128 - sw) >> 1;
-            fill_rect(sx, 9, sw, 10, 1);
-            print(sx, 10, 'SOLOED', 0);
-        } else if (drumLaneMute[t]) {
+            fill_rect(sx, 20, sw, 10, 1);
+            print(sx, 21, 'SOLOED', 0);
+        } else if (drumLaneMute[t] & laneBit) {
             if (Math.floor(tickCount / 50) % 2 === 0) {
                 const mw = 5 * 6, mx = (128 - mw) >> 1;
-                print(mx, 10, 'MUTED', 1);
+                print(mx, 21, 'MUTED', 1);
             }
-        } else {
-            print(4, 10, bankGroup + '  Pad: ' + name + oct + ' (' + note + ')', 1);
         }
         drawTrackRow(34);
         for (let _t = 0; _t < NUM_TRACKS; _t++)
