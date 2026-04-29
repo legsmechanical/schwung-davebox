@@ -2283,23 +2283,17 @@ function drawUI() {
         const bankGroup = pg === 0 ? 'Bank: A' : 'Bank: B';
         const bankName  = activeBank === 1 ? 'DRUM SEQ' : activeBank === 2 ? 'NOTE/NOTEFX' : BANKS[activeBank].name;
         print(4, 0,  'Knob: [ ' + bankName + ' ]', 1);
-        print(4, 10, bankGroup + '  Pad: ' + name + oct + ' (' + note + ')', 1);
-        /* M/S lane markers: show only if any mute or solo is active */
-        if (drumLaneMute[t] || drumLaneSolo[t]) {
-            const pg = drumLanePage[t];
-            const msY = 22;
-            const showM = Math.floor(tickCount / 96) % 2 === 0;
-            for (let i = 0; i < 16; i++) {
-                const lane = pg * 16 + i;
-                const bit  = 1 << lane;
-                const x    = i * 8;
-                if (drumLaneSolo[t] & bit) {
-                    fill_rect(x, msY, 6, 5, 1);
-                    pixelPrint(x, msY, 'S', 0);
-                } else if ((drumLaneMute[t] & bit) && showM) {
-                    pixelPrint(x, msY, 'M', 1);
-                }
+        if (drumLaneSolo[t]) {
+            const sw = 6 * 6, sx = (128 - sw) >> 1;
+            fill_rect(sx, 9, sw, 10, 1);
+            print(sx, 10, 'SOLOED', 0);
+        } else if (drumLaneMute[t]) {
+            if (Math.floor(tickCount / 50) % 2 === 0) {
+                const mw = 5 * 6, mx = (128 - mw) >> 1;
+                print(mx, 10, 'MUTED', 1);
             }
+        } else {
+            print(4, 10, bankGroup + '  Pad: ' + name + oct + ' (' + note + ')', 1);
         }
         drawTrackRow(34);
         for (let _t = 0; _t < NUM_TRACKS; _t++)
@@ -4289,7 +4283,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     return;
                 }
                 /* Drum mode pad handling */
-                if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM && !shiftHeld) {
+                if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM && (!shiftHeld || muteHeld)) {
                     const t = activeTrack;
                     const lane = drumPadToLane(padIdx);
                     const velZone = drumPadToVelZone(padIdx);
