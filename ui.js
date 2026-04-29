@@ -1824,7 +1824,7 @@ function updateTrackLEDs() {
             const velZone  = drumLastVelZone[t];
             const tc       = TRACK_COLORS[t];
             const td       = TRACK_DIM_COLORS[t];
-            const flashDur = (drumLaneTPS[t] || 24) + 2 * POLL_INTERVAL;
+            const flashDur = 2 * POLL_INTERVAL;
             for (let i = 0; i < 32; i++) {
                 const col = i % 8;
                 const row = Math.floor(i / 8);
@@ -4386,9 +4386,10 @@ globalThis.onMidiMessageInternal = function (data) {
             const btn = d1 - 16;
             if (btn === heldStepBtn) {
                 if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {
-                    /* Drum step release: tap toggles, hold-release just exits */
+                    /* Drum step release: tap toggles, hold-release exits + vel confirm */
                     const t    = activeTrack;
                     const lane = activeDrumLane[t];
+                    let drumStepCleared = false;
                     if (stepBtnPressedTick[btn] >= 0) {
                         stepBtnPressedTick[btn] = -1;
                         if (stepWasEmpty) {
@@ -4403,6 +4404,7 @@ globalThis.onMidiMessageInternal = function (data) {
                                 host_module_set_param('t' + t + '_l' + lane + '_step_' + heldStep + '_clear', '1');
                             drumLaneSteps[t][lane][heldStep] = '0';
                             drumLaneHasNotes[t][lane] = drumLaneSteps[t][lane].some(c => c !== '0');
+                            drumStepCleared = true;
                         }
                         if (typeof host_module_get_param === 'function') {
                             const ac = trackActiveClip[t];
@@ -4411,6 +4413,7 @@ globalThis.onMidiMessageInternal = function (data) {
                         }
                     }
                     /* Hold release: reassign to adjacent step if nudge crossed midpoint */
+                    let drumDidReassign = false;
                     if (stepWasHeld && heldStepNotes.length > 0) {
                         const _tpsMid = Math.floor((drumLaneTPS[t] || 24) / 2);
                         let dstStep = -1;
@@ -4425,7 +4428,13 @@ globalThis.onMidiMessageInternal = function (data) {
                             pendingDrumLaneResync      = 3;
                             pendingDrumLaneResyncTrack = t;
                             pendingDrumLaneResyncLane  = lane;
+                            drumDidReassign = true;
                         }
+                    }
+                    /* Confirm vel at release — ensures it sticks even if mid-hold send was coalesced */
+                    if (!drumStepCleared && !drumDidReassign && heldStepNotes.length > 0) {
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + t + '_l' + lane + '_step_' + heldStep + '_vel', String(stepEditVel));
                     }
                 } else {
                 if (stepBtnPressedTick[btn] >= 0) {
