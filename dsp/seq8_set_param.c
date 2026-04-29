@@ -2018,6 +2018,54 @@ static void set_param(void *instance, const char *key, const char *val) {
             return;
         }
 
+        if (!strcmp(sub, "drum_record_note_on")) {
+            /* tN_drum_record_note_on "pitch vel"
+             * Routes to the drum lane whose midi_note matches pitch.
+             * Inserts a step hit at the lane's current playback position.
+             * Gate is GATE_TICKS (fixed); no note-off tracking needed for drums. */
+            if (!tr->recording) return;
+            {
+                int ac = (int)tr->active_clip;
+                drum_clip_t *dc = &tr->drum_clips[ac];
+                const char *sp = val;
+                while (*sp == ' ') sp++;
+                int pitch = 0;
+                while (*sp >= '0' && *sp <= '9') { pitch = pitch * 10 + (*sp++ - '0'); }
+                pitch = clamp_i(pitch, 0, 127);
+                while (*sp == ' ') sp++;
+                int vel = SEQ_VEL;
+                if (*sp >= '0' && *sp <= '9') {
+                    vel = 0;
+                    while (*sp >= '0' && *sp <= '9') { vel = vel * 10 + (*sp++ - '0'); }
+                }
+                vel = clamp_i(vel, 1, 127);
+                if (inst->input_vel > 0) vel = (int)inst->input_vel;
+                /* Find lane by matching midi_note */
+                int lane = -1;
+                { int l; for (l = 0; l < DRUM_LANES; l++) {
+                    if (dc->lanes[l].midi_note == (uint8_t)pitch) { lane = l; break; }
+                }}
+                if (lane >= 0) {
+                    clip_t   *dlc  = &dc->lanes[lane].clip;
+                    uint16_t  step = tr->drum_current_step[lane];
+                    if (step < dlc->length && dlc->step_note_count[step] == 0) {
+                        dlc->step_notes[step][0]       = (uint8_t)pitch;
+                        dlc->step_note_count[step]     = 1;
+                        dlc->step_vel[step]            = (uint8_t)vel;
+                        dlc->step_gate[step]           = (uint16_t)GATE_TICKS;
+                        dlc->note_tick_offset[step][0] = 0;
+                        dlc->steps[step]               = 1;
+                        dlc->active                    = 1;
+                        clip_migrate_to_notes(dlc);
+                        /* Save deferred to recording=0 or next step operation */
+                    }
+                    if (tr->pfx.route == ROUTE_MOVE)
+                        pfx_note_on(inst, tr, (uint8_t)pitch, (uint8_t)vel);
+                }
+            }
+            return;
+        }
+
         if (!strcmp(sub, "live_notes")) {
             /* tN_live_notes "off p off p on p v on p v ..."
              * Batched live note events; offs always precede ons in the JS flush.

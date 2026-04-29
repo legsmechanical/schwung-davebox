@@ -1269,14 +1269,16 @@ function pollDSP() {
                 }
             }
         }
-        /* Drum pad flash: poll which lanes are hitting right now (single DSP call bitmask) */
+        /* Drum pad flash + seqActiveNotes: poll which lanes are hitting (single bitmask call) */
         if (playing && trackClipPlaying[activeTrack]) {
             const _maskRaw = host_module_get_param('t' + activeTrack + '_drum_active_lanes');
             if (_maskRaw !== null) {
                 const _mask = parseInt(_maskRaw, 10) | 0;
+                seqActiveNotes.clear(); /* refresh per poll; stale entries block external recording */
                 for (let _fl = 0; _fl < DRUM_LANES; _fl++) {
                     if (_mask & (1 << _fl)) {
                         drumLaneFlashTick[activeTrack][_fl] = tickCount;
+                        seqActiveNotes.add(drumLaneNote[activeTrack][_fl]);
                         screenDirty = true;
                     }
                 }
@@ -4287,6 +4289,14 @@ globalThis.onMidiMessageInternal = function (data) {
                             liveSendNote(t, 0x90, laneNote, vel);
                             padPitch[padIdx] = laneNote;
                             liveActiveNotes.add(laneNote);
+                            /* Record step hit if armed */
+                            if (recordArmed && !recordCountingIn && t === recordArmedTrack) {
+                                if (typeof host_module_set_param === 'function')
+                                    host_module_set_param('t' + t + '_drum_record_note_on', laneNote + ' ' + vel);
+                                pendingDrumLaneResync      = 3;
+                                pendingDrumLaneResyncTrack = t;
+                                pendingDrumLaneResyncLane  = lane;
+                            }
                             forceRedraw();
                         }
                     }
@@ -4525,6 +4535,35 @@ globalThis.onMidiMessageExternal = function (data) {
      * Never inject — injecting causes an echo cascade (Move echoes cable-2 back
      * as cable-2, we re-inject, infinite loop → crash). */
     const routeIsMove = bankParams[t][0][1] === 1;
+
+    /* Drum track: route by pitch to lanes; skip melodic step assignment */
+    if (bankParams[t][0][2] === PAD_MODE_DRUM) {
+        if (msgType === 0x90 && d2 > 0) {
+            const vel = effectiveVelocity(d2);
+            lastPadVelocity = vel;
+            if (!routeIsMove) liveSendNote(t, 0x90, d1, vel);
+            const isSeqEcho = routeIsMove && seqActiveNotes.has(d1);
+            const isRec = !isSeqEcho && recordArmed && !recordCountingIn && t === recordArmedTrack;
+            if (isRec && typeof host_module_set_param === 'function') {
+                host_module_set_param('t' + t + '_drum_record_note_on', d1 + ' ' + vel);
+                const recLane = drumLaneNote[t].indexOf(d1);
+                if (recLane >= 0) {
+                    pendingDrumLaneResync      = 3;
+                    pendingDrumLaneResyncTrack = t;
+                    pendingDrumLaneResyncLane  = recLane;
+                }
+            }
+            extHeldNotes.set(d1, { track: t, recording: false });
+        } else if (msgType === 0x80 || (msgType === 0x90 && d2 === 0)) {
+            const info = extHeldNotes.get(d1);
+            const noteTrack = info ? info.track : t;
+            if (bankParams[noteTrack][0][1] !== 1) liveSendNote(noteTrack, 0x80, d1, 0);
+            extHeldNotes.delete(d1);
+        } else if (msgType === 0xB0 || msgType === 0xD0 || msgType === 0xA0 || msgType === 0xE0) {
+            if (!routeIsMove) liveSendNote(t, msgType, d1, d2);
+        }
+        return;
+    }
 
     if (msgType === 0x90 && d2 > 0) {
         const vel = effectiveVelocity(d2);
