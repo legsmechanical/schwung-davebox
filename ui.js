@@ -2611,6 +2611,13 @@ globalThis.init = function () {
                 }
             }
             sessionView = us.sv === 1;
+            if (Array.isArray(us.dl)) {
+                for (let _t = 0; _t < NUM_TRACKS; _t++) {
+                    const _l = us.dl[_t];
+                    if (typeof _l === 'number' && _l >= 0 && _l < DRUM_LANES)
+                        activeDrumLane[_t] = _l;
+                }
+            }
         } else {
             /* No sidecar: apply first-run defaults. */
             scaleAware   = 1;
@@ -3291,7 +3298,8 @@ globalThis.onMidiMessageInternal = function (data) {
                 if (typeof host_module_set_param === 'function') host_module_set_param('save', '1');
                 if (typeof host_write_file === 'function')
                     host_write_file(uuidToUiStatePath(currentSetUuid), JSON.stringify({
-                        v: 1, at: activeTrack, ac: trackActiveClip.slice(), sv: sessionView ? 1 : 0
+                        v: 1, at: activeTrack, ac: trackActiveClip.slice(), sv: sessionView ? 1 : 0,
+                        dl: activeDrumLane.slice()
                     }));
                 if (typeof host_hide_module === 'function') host_hide_module();
             }
