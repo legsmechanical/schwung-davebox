@@ -1333,6 +1333,13 @@ static void set_param(void *instance, const char *key, const char *val) {
                 uint32_t bit = 1u << (uint32_t)lane_idx;
                 if (my_atoi(val)) {
                     tr->drum_lane_solo |= bit;
+                    /* Silence all lanes that just became effectively muted */
+                    int ll;
+                    for (ll = 0; ll < DRUM_LANES; ll++) {
+                        if (ll == lane_idx) continue;
+                        uint8_t n2 = tr->drum_clips[tr->active_clip].lanes[ll].midi_note;
+                        pfx_note_off(inst, tr, n2);
+                    }
                 } else {
                     tr->drum_lane_solo &= ~bit;
                 }
