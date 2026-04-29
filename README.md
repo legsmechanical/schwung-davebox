@@ -29,6 +29,8 @@
 
 SEQ8 is an 8-track MIDI sequencer running running as a tool module on the schwung platform for the Ableton Move. It supports melodic and drum tracks, per-clip parameter sets, note-centric timing, live recording, step editing, and external MIDI I/O. Tracks can be routed to Move's native instruments or to Schwung's internal chains.
 
+SEQ8 is inspired by the Yamaha RM1X and RS7000 sequencers.
+
 **Defaults on fresh load:**
 - Opens in Session View
 - BPM seeded from Move's current tempo
