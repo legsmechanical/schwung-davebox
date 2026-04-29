@@ -4374,15 +4374,15 @@ globalThis.onMidiMessageInternal = function (data) {
                     const lane = drumPadToLane(padIdx);
                     const velZone = drumPadToVelZone(padIdx);
                     if (velZone >= 0) {
-                        /* Velocity pad: update selected velocity zone + preview lane note.
-                         * Live note uses actual pad pressure; step-edit and recording use zone velocity. */
-                        drumLastVelZone[t] = velZone;
-                        const zoneVel  = drumVelZoneToVelocity(velZone);
-                        const liveVel  = effectiveVelocity(d2);
+                        /* Velocity pad: snap actual pad pressure to nearest zone value.
+                         * This gives touch sensitivity while keeping output on the 16-level grid. */
+                        const pressZone = Math.min(15, Math.max(0, Math.round(effectiveVelocity(d2) * 16 / 127) - 1));
+                        drumLastVelZone[t] = pressZone;
+                        const zoneVel  = drumVelZoneToVelocity(pressZone);
                         lastPadVelocity = zoneVel;
                         const lane_vp  = activeDrumLane[t];
                         const laneNote = drumLaneNote[t][lane_vp];
-                        liveSendNote(t, 0x90, laneNote, liveVel);
+                        liveSendNote(t, 0x90, laneNote, zoneVel);
                         padPitch[padIdx] = laneNote;
                         liveActiveNotes.add(laneNote);
                         if (heldStep >= 0 && heldStepNotes.length > 0) {
