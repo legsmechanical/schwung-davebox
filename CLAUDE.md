@@ -67,14 +67,11 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 
 ## Upcoming tasks
 
-1. **Drum mode — remaining code**:
-   - Copy+step drum lane branch (`tN_lL_step_S_copy_to`) — step-to-step copy within a drum lane; `copyStep()` currently uses melodic `tN_cC_step_S_copy_to`
-   - Mode-switch confirmation dialog + `tN_convert_to_drum` / `tN_convert_to_melodic` (backburner — medium task, design noted in SESSION doc)
-   - *(Done 2026-04-29)*: Drum lane/clip copy/cut/paste; undo/redo drum step resync; UI sidecar `activeDrumLane[]`
-
-3. **Scale-aware key/scale changes** — global option: changing Key/Scale transposes all clip notes to fit new scale. Design TBD.
-4. **Step/note editing fixes** — see pending fixes in planning doc.
-5. MIDI Delay Rnd refinement · 6. Full instance reset · 7. State snapshots (16 slots) · 8. Arpeggiator · 9. Swing (wire stub) · 10. MIDI clock sync
+1. **Drum mode — remaining code**: Copy+step drum lane branch (`tN_lL_step_S_copy_to`) — step-to-step copy within a drum lane; `copyStep()` currently uses melodic `tN_cC_step_S_copy_to`. *(Done 2026-04-29)*: Drum lane/clip copy/cut/paste; undo/redo drum step resync; UI sidecar `activeDrumLane[]`
+2. **Scale-aware key/scale changes** — global option: changing Key/Scale transposes all clip notes to fit new scale. Design TBD.
+3. **Step/note editing fixes** — see pending fixes in planning doc.
+4. MIDI Delay Rnd refinement · 5. Full instance reset · 6. State snapshots (16 slots) · 7. Arpeggiator · 8. Swing (wire stub) · 9. MIDI clock sync
+10. **Drum mode — track conversion** (`tN_convert_to_drum` / `tN_convert_to_melodic`): TRACK bank K3 confirmation dialog; design notes in SESSION_2026-04-28.md.
 
 ## Per-set state
 
