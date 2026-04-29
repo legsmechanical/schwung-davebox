@@ -266,7 +266,10 @@ static void set_param(void *instance, const char *key, const char *val) {
     /* --- DSP-side count-in --- */
     if (!strcmp(key, "record_count_in")) {
         int track = clamp_i(my_atoi(val), 0, NUM_TRACKS - 1);
-        undo_begin_single(inst, track, (int)inst->tracks[track].active_clip);
+        if (inst->tracks[track].pad_mode == PAD_MODE_DRUM)
+            undo_begin_drum_clip(inst, track, (int)inst->tracks[track].active_clip);
+        else
+            undo_begin_single(inst, track, (int)inst->tracks[track].active_clip);
         inst->count_in_track = (uint8_t)track;
         inst->count_in_ticks = 4 * PPQN;  /* 1 bar; tick_delta already tracks actual BPM */
         inst->tick_accum     = 0;          /* reset phase so first beat fires on schedule */
@@ -452,7 +455,7 @@ static void set_param(void *instance, const char *key, const char *val) {
     }
 
     if (!strcmp(key, "snap_save")) {
-        /* Format: "N m0..m7 s0..s7" (space-separated 0/1 values) */
+        /* Format: "N m0..m7 s0..s7 dm0..dm7" — dm values are uint32 drum eff-mute bitmasks */
         const char *p = val;
         int n = 0, t, v;
         while (*p == ' ') p++;
@@ -470,6 +473,12 @@ static void set_param(void *instance, const char *key, const char *val) {
             while (*p >= '0' && *p <= '9') v = v * 10 + (*p++ - '0');
             inst->snap_solo[n][t] = v ? 1 : 0;
         }
+        for (t = 0; t < NUM_TRACKS; t++) {
+            while (*p == ' ') p++;
+            uint32_t uv = 0;
+            while (*p >= '0' && *p <= '9') uv = uv * 10 + (uint32_t)(*p++ - '0');
+            inst->snap_drum_eff_mute[n][t] = uv;
+        }
         inst->snap_valid[n] = 1;
         return;
     }
@@ -480,6 +489,8 @@ static void set_param(void *instance, const char *key, const char *val) {
         for (t = 0; t < NUM_TRACKS; t++) {
             inst->mute[t] = inst->snap_mute[n][t];
             inst->solo[t] = inst->snap_solo[n][t];
+            inst->tracks[t].drum_lane_mute = inst->snap_drum_eff_mute[n][t];
+            inst->tracks[t].drum_lane_solo = 0;
         }
         silence_muted_tracks(inst);
         return;
@@ -675,6 +686,44 @@ static void set_param(void *instance, const char *key, const char *val) {
 
     if (!strcmp(key, "undo_restore")) {
         int i;
+        if (inst->drum_undo_valid) {
+            /* Drum recording undo */
+            int t = (int)inst->drum_undo_track, c = (int)inst->drum_undo_clip;
+            drum_clip_t *dc = &inst->tracks[t].drum_clips[c];
+            /* Capture redo */
+            for (i = 0; i < DRUM_LANES; i++) {
+                const clip_t *src = &dc->lanes[i].clip;
+                drum_rec_snap_lane_t *dst = &inst->drum_redo_lanes[i];
+                memcpy(dst->steps,            src->steps,            SEQ_STEPS);
+                memcpy(dst->step_notes,       src->step_notes,       SEQ_STEPS * 8);
+                memcpy(dst->step_note_count,  src->step_note_count,  SEQ_STEPS);
+                memcpy(dst->step_vel,         src->step_vel,         SEQ_STEPS);
+                memcpy(dst->step_gate,        src->step_gate,        SEQ_STEPS * sizeof(uint16_t));
+                memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
+                dst->length = src->length;
+                dst->active = src->active;
+            }
+            inst->drum_redo_track = (uint8_t)t;
+            inst->drum_redo_clip  = (uint8_t)c;
+            inst->drum_redo_valid = 1;
+            /* Restore */
+            for (i = 0; i < DRUM_LANES; i++) {
+                clip_t *dst = &dc->lanes[i].clip;
+                const drum_rec_snap_lane_t *src = &inst->drum_undo_lanes[i];
+                memcpy(dst->steps,            src->steps,            SEQ_STEPS);
+                memcpy(dst->step_notes,       src->step_notes,       SEQ_STEPS * 8);
+                memcpy(dst->step_note_count,  src->step_note_count,  SEQ_STEPS);
+                memcpy(dst->step_vel,         src->step_vel,         SEQ_STEPS);
+                memcpy(dst->step_gate,        src->step_gate,        SEQ_STEPS * sizeof(uint16_t));
+                memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
+                dst->length = src->length;
+                dst->active = src->active;
+                clip_migrate_to_notes(dst);
+            }
+            inst->drum_undo_valid = 0;
+            seq8_save_state(inst);
+            return;
+        }
         if (!inst->undo_valid) return;
         inst->redo_clip_count = inst->undo_clip_count;
         memcpy(inst->redo_clip_tracks,  inst->undo_clip_tracks,  inst->undo_clip_count);
@@ -694,6 +743,44 @@ static void set_param(void *instance, const char *key, const char *val) {
 
     if (!strcmp(key, "redo_restore")) {
         int i;
+        if (inst->drum_redo_valid) {
+            /* Drum recording redo */
+            int t = (int)inst->drum_redo_track, c = (int)inst->drum_redo_clip;
+            drum_clip_t *dc = &inst->tracks[t].drum_clips[c];
+            /* Capture new undo */
+            for (i = 0; i < DRUM_LANES; i++) {
+                const clip_t *src = &dc->lanes[i].clip;
+                drum_rec_snap_lane_t *dst = &inst->drum_undo_lanes[i];
+                memcpy(dst->steps,            src->steps,            SEQ_STEPS);
+                memcpy(dst->step_notes,       src->step_notes,       SEQ_STEPS * 8);
+                memcpy(dst->step_note_count,  src->step_note_count,  SEQ_STEPS);
+                memcpy(dst->step_vel,         src->step_vel,         SEQ_STEPS);
+                memcpy(dst->step_gate,        src->step_gate,        SEQ_STEPS * sizeof(uint16_t));
+                memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
+                dst->length = src->length;
+                dst->active = src->active;
+            }
+            inst->drum_undo_track = (uint8_t)t;
+            inst->drum_undo_clip  = (uint8_t)c;
+            inst->drum_undo_valid = 1;
+            /* Restore redo */
+            for (i = 0; i < DRUM_LANES; i++) {
+                clip_t *dst = &dc->lanes[i].clip;
+                const drum_rec_snap_lane_t *src = &inst->drum_redo_lanes[i];
+                memcpy(dst->steps,            src->steps,            SEQ_STEPS);
+                memcpy(dst->step_notes,       src->step_notes,       SEQ_STEPS * 8);
+                memcpy(dst->step_note_count,  src->step_note_count,  SEQ_STEPS);
+                memcpy(dst->step_vel,         src->step_vel,         SEQ_STEPS);
+                memcpy(dst->step_gate,        src->step_gate,        SEQ_STEPS * sizeof(uint16_t));
+                memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
+                dst->length = src->length;
+                dst->active = src->active;
+                clip_migrate_to_notes(dst);
+            }
+            inst->drum_redo_valid = 0;
+            seq8_save_state(inst);
+            return;
+        }
         if (!inst->redo_valid) return;
         inst->undo_clip_count = inst->redo_clip_count;
         memcpy(inst->undo_clip_tracks,  inst->redo_clip_tracks,  inst->redo_clip_count);
@@ -1871,7 +1958,10 @@ static void set_param(void *instance, const char *key, const char *val) {
             int rv = my_atoi(val);
             if (rv) {
                 int snap_clip = (tr->queued_clip >= 0) ? (int)tr->queued_clip : (int)tr->active_clip;
-                undo_begin_single(inst, tidx, snap_clip);
+                if (tr->pad_mode == PAD_MODE_DRUM)
+                    undo_begin_drum_clip(inst, tidx, snap_clip);
+                else
+                    undo_begin_single(inst, tidx, snap_clip);
                 /* Fresh recording session: clear pass mask so existing notes play back */
                 memset(tr->live_recorded_steps, 0, 32);
                 if (tr->clip_playing) {
@@ -2053,6 +2143,17 @@ static void set_param(void *instance, const char *key, const char *val) {
             /* tN_drum_mute_all_clear: unmute and unsolo all drum lanes. */
             tr->drum_lane_mute = 0;
             tr->drum_lane_solo = 0;
+            seq8_save_state(inst);
+            return;
+        }
+
+        if (!strcmp(sub, "drum_lanes_qnt")) {
+            /* tN_drum_lanes_qnt "value" — set NoteFX quantize on all 32 lanes of active drum clip. */
+            int v = clamp_i(my_atoi(val), 0, 100);
+            drum_clip_t *dc = &tr->drum_clips[tr->active_clip];
+            int l;
+            for (l = 0; l < DRUM_LANES; l++)
+                dc->lanes[l].clip.pfx_params.quantize = (uint8_t)v;
             seq8_save_state(inst);
             return;
         }

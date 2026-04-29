@@ -260,6 +260,19 @@ typedef struct {
     drum_lane_t lanes[DRUM_LANES];
 } drum_clip_t;          /* DRUM_LANES × ~13.7 KB ≈ 438 KB */
 
+/* Step-data-only snapshot of one drum lane — used for live recording undo/redo.
+ * No notes[] array; clip_migrate_to_notes() rebuilds it from step arrays on restore. */
+typedef struct {
+    uint8_t  steps[SEQ_STEPS];
+    uint8_t  step_notes[SEQ_STEPS][8];
+    uint8_t  step_note_count[SEQ_STEPS];
+    uint8_t  step_vel[SEQ_STEPS];
+    uint16_t step_gate[SEQ_STEPS];
+    int16_t  note_tick_offset[SEQ_STEPS][8];
+    uint16_t length;
+    uint8_t  active;
+} drum_rec_snap_lane_t;  /* ~7.4 KB/lane × 32 = ~237 KB/slot */
+
 typedef struct {
     uint8_t   channel;              /* MIDI channel 0-3 */
     clip_t    clips[NUM_CLIPS];
@@ -388,6 +401,20 @@ typedef struct {
     uint8_t redo_clip_indices[UNDO_MAX_CLIPS];
     uint8_t redo_clip_count;
     uint8_t redo_valid;
+
+    /* Drum-clip recording undo/redo — mutually exclusive with melodic undo_valid. */
+    uint8_t  drum_undo_valid;
+    uint8_t  drum_undo_track;
+    uint8_t  drum_undo_clip;
+    uint8_t  drum_redo_valid;
+    uint8_t  drum_redo_track;
+    uint8_t  drum_redo_clip;
+
+    /* Drum effective-mute bitmask per snapshot slot per track (bit L = lane L muted). */
+    uint32_t snap_drum_eff_mute[16][NUM_TRACKS];
+
+    drum_rec_snap_lane_t drum_undo_lanes[DRUM_LANES];
+    drum_rec_snap_lane_t drum_redo_lanes[DRUM_LANES];
 } seq8_instance_t;
 
 static const host_api_v1_t *g_host = NULL;
@@ -640,6 +667,10 @@ static void seq8_save_state(seq8_instance_t *inst) {
             fprintf(fp, ",\"sn%d_s\":\"", n);
             for (t = 0; t < NUM_TRACKS; t++) fputc(inst->snap_solo[n][t] ? '1' : '0', fp);
             fputc('"', fp);
+            for (t = 0; t < NUM_TRACKS; t++) {
+                if (inst->snap_drum_eff_mute[n][t])
+                    fprintf(fp, ",\"sn%dde%d\":%u", n, t, inst->snap_drum_eff_mute[n][t]);
+            }
         }
     }
     /* Per-track: pad_mode (route saved above with channel) */
@@ -793,6 +824,10 @@ static void seq8_load_state(seq8_instance_t *inst) {
             json_get_steps(buf, skey, inst->snap_mute[n], NUM_TRACKS);
             snprintf(skey, sizeof(skey), "sn%d_s", n);
             json_get_steps(buf, skey, inst->snap_solo[n], NUM_TRACKS);
+            for (t = 0; t < NUM_TRACKS; t++) {
+                snprintf(key, sizeof(key), "sn%dde%d", n, t);
+                inst->snap_drum_eff_mute[n][t] = json_get_uint(buf, key, 0);
+            }
             inst->snap_valid[n] = 1;
         }
     }
@@ -1741,6 +1776,7 @@ static void undo_begin_single(seq8_instance_t *inst, int t, int c) {
     memcpy(&inst->undo_clips[0], &inst->tracks[t].clips[c], sizeof(clip_t));
     inst->undo_valid = 1;
     inst->redo_valid = 0;
+    inst->drum_undo_valid = 0;
 }
 
 static void undo_begin_row(seq8_instance_t *inst, int row_c) {
@@ -1753,6 +1789,7 @@ static void undo_begin_row(seq8_instance_t *inst, int row_c) {
     }
     inst->undo_valid = 1;
     inst->redo_valid = 0;
+    inst->drum_undo_valid = 0;
 }
 
 /* Snapshot two clips (src + dst) for cut operations — restores both on undo. */
@@ -1766,6 +1803,7 @@ static void undo_begin_clip_pair(seq8_instance_t *inst, int srcT, int srcC, int 
     memcpy(&inst->undo_clips[1], &inst->tracks[dstT].clips[dstC], sizeof(clip_t));
     inst->undo_valid = 1;
     inst->redo_valid = 0;
+    inst->drum_undo_valid = 0;
 }
 
 /* Snapshot two full rows (src + dst, 16 clips) for row cut operations. */
@@ -1782,6 +1820,29 @@ static void undo_begin_row_pair(seq8_instance_t *inst, int srcRow, int dstRow) {
     }
     inst->undo_valid = 1;
     inst->redo_valid = 0;
+    inst->drum_undo_valid = 0;
+}
+
+static void undo_begin_drum_clip(seq8_instance_t *inst, int t, int c) {
+    int l;
+    drum_clip_t *dc = &inst->tracks[t].drum_clips[c];
+    for (l = 0; l < DRUM_LANES; l++) {
+        const clip_t *src = &dc->lanes[l].clip;
+        drum_rec_snap_lane_t *dst = &inst->drum_undo_lanes[l];
+        memcpy(dst->steps,            src->steps,            SEQ_STEPS);
+        memcpy(dst->step_notes,       src->step_notes,       SEQ_STEPS * 8);
+        memcpy(dst->step_note_count,  src->step_note_count,  SEQ_STEPS);
+        memcpy(dst->step_vel,         src->step_vel,         SEQ_STEPS);
+        memcpy(dst->step_gate,        src->step_gate,        SEQ_STEPS * sizeof(uint16_t));
+        memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
+        dst->length = src->length;
+        dst->active = src->active;
+    }
+    inst->drum_undo_valid = 1;
+    inst->drum_undo_track = (uint8_t)t;
+    inst->drum_undo_clip  = (uint8_t)c;
+    inst->drum_redo_valid = 0;
+    inst->undo_valid = 0;
 }
 
 static void apply_clip_restore(seq8_instance_t *inst,

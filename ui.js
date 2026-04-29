@@ -415,6 +415,7 @@ let drumLaneFlashTick = Array.from({length: NUM_TRACKS}, () => new Array(DRUM_LA
 /* Per-track drum lane mute/solo bitmasks (uint32 mirrors of DSP drum_lane_mute/drum_lane_solo) */
 let drumLaneMute = new Array(NUM_TRACKS).fill(0);
 let drumLaneSolo = new Array(NUM_TRACKS).fill(0);
+let drumSeqQnt   = new Array(NUM_TRACKS).fill(0); /* last-set K6 drum Qnt macro value (display only) */
 const DRUM_FLASH_TICKS = 8; /* ~130ms pad flash duration after a drum hit */
 /* drumClipNonEmpty[t][c] — true if any lane in drum clip c of track t has content */
 let drumClipNonEmpty  = Array.from({length: NUM_TRACKS}, () => new Array(NUM_CLIPS).fill(false));
@@ -1574,6 +1575,55 @@ function updateStepLEDs() {
     if (!ledInitComplete) return;
     const ac = effectiveClip(activeTrack);
 
+    /* Loop-held pages view: 16 step buttons represent 16 possible 16-step pages.
+     * Pages with notes → pulse; empty pages within clip → solid track color; OOB → DarkGrey. */
+    if (loopHeld) {
+        const t = activeTrack;
+        const trackColor = TRACK_COLORS[t];
+        const pulsOn = Math.floor(tickCount / 12) % 2;
+        if (bankParams[t][0][2] === PAD_MODE_DRUM) {
+            const lane = activeDrumLane[t];
+            const len  = drumLaneLength[t];
+            const ls   = drumLaneSteps[t][lane];
+            const totalPages = Math.ceil(len / 16);
+            for (let p = 0; p < 16; p++) {
+                let color;
+                if (p >= totalPages) {
+                    color = DarkGrey;
+                } else {
+                    const base = p * 16;
+                    const end  = Math.min(base + 16, len);
+                    let hasNotes = false;
+                    for (let s = base; s < end; s++) {
+                        if (ls[s] !== '0') { hasNotes = true; break; }
+                    }
+                    color = hasNotes ? (pulsOn ? trackColor : LED_OFF) : trackColor;
+                }
+                setLED(16 + p, color);
+            }
+        } else {
+            const len   = clipLength[t][ac];
+            const steps = clipSteps[t][ac];
+            const totalPages = Math.ceil(len / 16);
+            for (let p = 0; p < 16; p++) {
+                let color;
+                if (p >= totalPages) {
+                    color = DarkGrey;
+                } else {
+                    const base = p * 16;
+                    const end  = Math.min(base + 16, len);
+                    let hasNotes = false;
+                    for (let s = base; s < end; s++) {
+                        if (steps[s] !== 0) { hasNotes = true; break; }
+                    }
+                    color = hasNotes ? (pulsOn ? trackColor : LED_OFF) : trackColor;
+                }
+                setLED(16 + p, color);
+            }
+        }
+        return;
+    }
+
     /* Drum mode: step buttons show active lane's steps — identical visualization to melodic */
     if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {
         const t    = activeTrack;
@@ -2198,14 +2248,15 @@ function drawUI() {
             const len  = drumLaneLength[t];
             const tpsIdx = Math.max(0, TPS_VALUES.indexOf(drumLaneTPS[t]));
             const sqfl   = clipSeqFollow[t][ac] ? 1 : 0;
-            const drumSeqLabels = ['Stch', 'Shft', 'Ndg', 'Res', 'Len', null, null, 'SqFl'];
+            const drumSeqLabels = ['Stch', 'Shft', 'Ndg', 'Res', 'Len', 'Qnt', null, 'SqFl'];
             const drumSeqVals   = [
                 fmtStretch(bankParams[t][1][0]),
                 fmtSign(bankParams[t][1][1]),
                 fmtSign(bankParams[t][1][2]),
                 fmtRes(tpsIdx),
                 fmtLen(len),
-                null, null,
+                fmtPct(drumSeqQnt[t]),
+                null,
                 fmtBool(sqfl),
             ];
             print(4, 0, '[ DRUM SEQ ]', 1);
@@ -3776,6 +3827,22 @@ globalThis.onMidiMessageInternal = function (data) {
                     }
                     return;
                 }
+                if (knobIdx === 5) {
+                    /* K6 = Qnt (drum lanes quantize macro, sens=4) */
+                    knobAccum[knobIdx]++;
+                    if (knobAccum[knobIdx] >= 4) {
+                        knobAccum[knobIdx] = 0;
+                        const nv = Math.max(0, Math.min(100, drumSeqQnt[t] + dir));
+                        if (nv !== drumSeqQnt[t]) {
+                            drumSeqQnt[t] = nv;
+                            bankParams[t][2][4] = nv; /* mirror to NOTE FX K5 for active lane display */
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_drum_lanes_qnt', String(nv));
+                        }
+                        screenDirty = true;
+                    }
+                    return;
+                }
                 if (knobIdx === 7) {
                     /* K8 = SqFl: sens=16 — matches melodic */
                     knobAccum[knobIdx]++;
@@ -3791,7 +3858,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     }
                     return;
                 }
-                return; /* K6, K7 = stub */
+                return; /* K7 = stub */
             }
             /* Drum NOTE FX bank: K7 (lane oct, coarse ±12) and K8 (lane note, fine ±1) */
             if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM && bank === 2 &&
@@ -3946,17 +4013,36 @@ globalThis.onMidiMessageInternal = function (data) {
                 /* All 16 step buttons are snapshot slots 0-15 */
                 if (shiftHeld) {
                     /* Shift+tap: save/overwrite snapshot */
-                    snapshots[idx] = { mute: trackMuted.slice(), solo: trackSoloed.slice() };
+                    const drumEffMutes = [];
+                    for (let _t = 0; _t < NUM_TRACKS; _t++) {
+                        const mMask = drumLaneMute[_t];
+                        const sMask = drumLaneSolo[_t];
+                        let effMask = mMask;
+                        if (sMask) {
+                            let notSoloed = 0;
+                            for (let _l = 0; _l < DRUM_LANES; _l++) {
+                                if (!(sMask & (1 << _l))) notSoloed |= (1 << _l);
+                            }
+                            effMask = (mMask | notSoloed) >>> 0;
+                        }
+                        drumEffMutes.push(effMask >>> 0);
+                    }
+                    snapshots[idx] = { mute: trackMuted.slice(), solo: trackSoloed.slice(), drumEffMute: drumEffMutes };
                     const mStr = trackMuted.map(function(m) { return m ? '1' : '0'; }).join(' ');
                     const sStr = trackSoloed.map(function(s) { return s ? '1' : '0'; }).join(' ');
+                    const dStr = drumEffMutes.join(' ');
                     if (typeof host_module_set_param === 'function')
-                        host_module_set_param('snap_save', idx + ' ' + mStr + ' ' + sStr);
+                        host_module_set_param('snap_save', idx + ' ' + mStr + ' ' + sStr + ' ' + dStr);
                 } else if (snapshots[idx] !== null) {
                     /* Tap occupied: recall snapshot */
                     const snap = snapshots[idx];
                     for (let _t = 0; _t < NUM_TRACKS; _t++) {
                         trackMuted[_t]  = snap.mute[_t];
                         trackSoloed[_t] = snap.solo[_t];
+                        if (snap.drumEffMute) {
+                            drumLaneMute[_t] = snap.drumEffMute[_t];
+                            drumLaneSolo[_t] = 0;
+                        }
                     }
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('snap_load', String(idx));
@@ -4288,25 +4374,27 @@ globalThis.onMidiMessageInternal = function (data) {
                     const lane = drumPadToLane(padIdx);
                     const velZone = drumPadToVelZone(padIdx);
                     if (velZone >= 0) {
-                        /* Velocity pad: update selected velocity zone + preview lane note */
+                        /* Velocity pad: update selected velocity zone + preview lane note.
+                         * Live note uses actual pad pressure; step-edit and recording use zone velocity. */
                         drumLastVelZone[t] = velZone;
-                        const vel = drumVelZoneToVelocity(velZone);
-                        lastPadVelocity = vel;
+                        const zoneVel  = drumVelZoneToVelocity(velZone);
+                        const liveVel  = effectiveVelocity(d2);
+                        lastPadVelocity = zoneVel;
                         const lane_vp  = activeDrumLane[t];
                         const laneNote = drumLaneNote[t][lane_vp];
-                        liveSendNote(t, 0x90, laneNote, vel);
+                        liveSendNote(t, 0x90, laneNote, liveVel);
                         padPitch[padIdx] = laneNote;
                         liveActiveNotes.add(laneNote);
                         if (heldStep >= 0 && heldStepNotes.length > 0) {
-                            stepEditVel = vel;
+                            stepEditVel = zoneVel;
                             if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + t + '_l' + lane_vp + '_step_' + heldStep + '_vel', String(vel));
+                                host_module_set_param('t' + t + '_l' + lane_vp + '_step_' + heldStep + '_vel', String(zoneVel));
                             stepBtnPressedTick[heldStepBtn] = -1;
                         }
                         /* Record hit at zone velocity if armed */
                         if (recordArmed && !recordCountingIn && t === recordArmedTrack) {
                             if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + t + '_drum_record_note_on', laneNote + ' ' + vel);
+                                host_module_set_param('t' + t + '_drum_record_note_on', laneNote + ' ' + zoneVel);
                             pendingDrumLaneResync      = 3;
                             pendingDrumLaneResyncTrack = t;
                             pendingDrumLaneResyncLane  = lane_vp;
