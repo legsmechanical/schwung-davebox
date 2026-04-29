@@ -4497,7 +4497,7 @@ globalThis.onMidiMessageInternal = function (data) {
                         let dstStep = -1;
                         if (stepEditNudge >= _tpsMid)
                             dstStep = (heldStep + 1) % drumLaneLength[t];
-                        else if (stepEditNudge <= -_tpsMid)
+                        else if (stepEditNudge < -_tpsMid)
                             dstStep = (heldStep - 1 + drumLaneLength[t]) % drumLaneLength[t];
                         if (dstStep >= 0) {
                             if (typeof host_module_set_param === 'function')

@@ -2023,17 +2023,13 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
             if (!strcmp(p2, "_steps")) {
                 if (out_len < SEQ_STEPS + 1) return -1;
                 int s;
-                for (s = 0; s < SEQ_STEPS; s++) out[s] = '0';
-                uint16_t ni3;
-                for (ni3 = 0; ni3 < dlc->note_count; ni3++) {
-                    note_t *n = &dlc->notes[ni3];
-                    if (!n->active) continue;
-                    uint16_t sn = note_step(n->tick, dlc->length, dlc->ticks_per_step);
-                    if (sn >= SEQ_STEPS) continue;
-                    if (!n->step_muted)
-                        out[sn] = '1';
-                    else if (out[sn] == '0')
-                        out[sn] = '2';
+                for (s = 0; s < SEQ_STEPS; s++) {
+                    if (dlc->step_note_count[s] == 0)
+                        out[s] = '0';
+                    else if (dlc->steps[s])
+                        out[s] = '1';
+                    else
+                        out[s] = '2';
                 }
                 out[SEQ_STEPS] = '\0';
                 return SEQ_STEPS;
