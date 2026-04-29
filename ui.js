@@ -826,12 +826,22 @@ function cutRow(srcRow, dstRow) {
 function copyStep(t, ac, srcAbs, dstAbs) {
     if (typeof host_module_set_param !== 'function') return;
     undoAvailable = true; redoAvailable = false; undoSeqArpSnapshot = null;
-    host_module_set_param('t' + t + '_c' + ac + '_step_' + srcAbs + '_copy_to', String(dstAbs));
-    clipSteps[t][ac][dstAbs] = clipSteps[t][ac][srcAbs];
-    if (clipSteps[t][ac][srcAbs] !== 0) clipNonEmpty[t][ac] = true;
-    pendingStepsReread      = 2;
-    pendingStepsRereadTrack = t;
-    pendingStepsRereadClip  = ac;
+    if (bankParams[t][0][2] === PAD_MODE_DRUM) {
+        const lane = activeDrumLane[t];
+        host_module_set_param('t' + t + '_l' + lane + '_step_' + srcAbs + '_copy_to', String(dstAbs));
+        drumLaneSteps[t][lane][dstAbs] = drumLaneSteps[t][lane][srcAbs];
+        if (drumLaneSteps[t][lane][srcAbs] !== '0') drumLaneHasNotes[t][lane] = true;
+        pendingDrumLaneResync      = 2;
+        pendingDrumLaneResyncTrack = t;
+        pendingDrumLaneResyncLane  = lane;
+    } else {
+        host_module_set_param('t' + t + '_c' + ac + '_step_' + srcAbs + '_copy_to', String(dstAbs));
+        clipSteps[t][ac][dstAbs] = clipSteps[t][ac][srcAbs];
+        if (clipSteps[t][ac][srcAbs] !== 0) clipNonEmpty[t][ac] = true;
+        pendingStepsReread      = 2;
+        pendingStepsRereadTrack = t;
+        pendingStepsRereadClip  = ac;
+    }
 }
 
 /* Clear all 8 tracks for a scene row (single atomic DSP write, JS mirror update). */

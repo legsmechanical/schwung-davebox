@@ -1950,6 +1950,26 @@ static void set_param(void *instance, const char *key, const char *val) {
                     seq8_save_state(inst);
                     return;
                 }
+                if (!strcmp(q, "_copy_to")) {
+                    /* tN_lL_step_S_copy_to — copy step data to dstStep; src unchanged */
+                    int dstStep = clamp_i(my_atoi(val), 0, (int)dlc->length - 1);
+                    if (dstStep == sidx) return;
+                    if (dlc->step_note_count[sidx] == 0) return;
+                    memcpy(dlc->step_notes[dstStep], dlc->step_notes[sidx], 8);
+                    memcpy(dlc->note_tick_offset[dstStep], dlc->note_tick_offset[sidx], 8 * sizeof(int16_t));
+                    dlc->step_note_count[dstStep] = dlc->step_note_count[sidx];
+                    dlc->step_vel[dstStep]        = dlc->step_vel[sidx];
+                    dlc->step_gate[dstStep]       = dlc->step_gate[sidx];
+                    dlc->steps[dstStep]           = dlc->steps[sidx];
+                    {
+                        int any = 0, k;
+                        for (k = 0; k < (int)dlc->length; k++) if (dlc->steps[k]) { any = 1; break; }
+                        dlc->active = (uint8_t)any;
+                    }
+                    clip_migrate_to_notes(dlc);
+                    seq8_save_state(inst);
+                    return;
+                }
             }
             return;
         }
