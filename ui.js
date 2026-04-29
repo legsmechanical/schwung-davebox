@@ -4303,6 +4303,14 @@ globalThis.onMidiMessageInternal = function (data) {
                                 host_module_set_param('t' + t + '_l' + lane_vp + '_step_' + heldStep + '_vel', String(vel));
                             stepBtnPressedTick[heldStepBtn] = -1;
                         }
+                        /* Record hit at zone velocity if armed */
+                        if (recordArmed && !recordCountingIn && t === recordArmedTrack) {
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_drum_record_note_on', laneNote + ' ' + vel);
+                            pendingDrumLaneResync      = 3;
+                            pendingDrumLaneResyncTrack = t;
+                            pendingDrumLaneResyncLane  = lane_vp;
+                        }
                         screenDirty = true;
                     } else if (lane >= 0 && lane < DRUM_LANES && muteHeld) {
                         /* Mute+pad: toggle lane mute; Shift+Mute+pad: toggle lane solo */
@@ -4343,8 +4351,8 @@ globalThis.onMidiMessageInternal = function (data) {
                             activeDrumLane[t] = lane;
                             syncDrumLaneSteps(t, lane);
                             refreshDrumLaneBankParams(t, lane);
-                            /* Preview lane note */
-                            const vel = drumVelZoneToVelocity(drumLastVelZone[t]);
+                            /* Preview lane note at actual pad velocity */
+                            const vel = effectiveVelocity(d2);
                             const laneNote = drumLaneNote[t][lane];
                             liveSendNote(t, 0x90, laneNote, vel);
                             padPitch[padIdx] = laneNote;
