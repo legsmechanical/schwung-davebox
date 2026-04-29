@@ -897,6 +897,7 @@ function cutDrumClip(srcT, srcC, dstT, dstC) {
             drumLaneHasNotes[srcT][l] = false;
         }
         drumLaneLength[srcT] = 16;
+        drumLaneTPS[srcT]    = 24;
     }
     if (dstC === trackActiveClip[dstT]) { pendingDrumResync = 2; pendingDrumResyncTrack = dstT; }
 }
@@ -4373,19 +4374,19 @@ globalThis.onMidiMessageInternal = function (data) {
                             invalidateLEDCache();
                             forceRedraw();
                             showActionPopup('PASTED');
-                        } else if (copySrc.kind === 'drum_clip') {
+                        } else if (copySrc.kind === 'drum_clip' && isDrumT) {
                             copyDrumClip(copySrc.track, copySrc.clip, t, clipIdx);
                             invalidateLEDCache();
                             forceRedraw();
                             showActionPopup('PASTED');
-                        } else if (copySrc.kind === 'cut_drum_clip') {
+                        } else if (copySrc.kind === 'cut_drum_clip' && isDrumT) {
                             cutDrumClip(copySrc.track, copySrc.clip, t, clipIdx);
                             copySrc = { kind: 'drum_clip', track: t, clip: clipIdx };
                             invalidateLEDCache();
                             forceRedraw();
                             showActionPopup('PASTED');
                         }
-                        /* row/cut_row kinds or drum/melodic mismatch: swallow */
+                        /* row/cut_row kinds, drum→melodic or melodic→drum mismatch: swallow */
                     } else if (shiftHeld && deleteHeld) {
                         /* Shift+Delete + clip pad (Session View): hard reset that clip */
                         const clipIdx = sceneRow + row;
