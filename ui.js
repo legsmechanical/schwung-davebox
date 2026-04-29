@@ -192,6 +192,9 @@ function buildGlobalMenuItems() {
             min: 40, max: 250, step: 1,
             format: function(v) { return String(Math.round(v)); }
         }),
+        createAction('Tap Tempo', function() {
+            openTapTempo();
+        }),
         createEnum('Key', {
             get: function() { return padKey; },
             set: function(v) {
@@ -547,6 +550,15 @@ let globalMenuStack       = null;
 let bpmWasEditing         = false;
 let lastSentMenuEditValue = null;  /* dedup: only send set_param when edit value changes */
 let confirmClearSession   = false; /* showing Clear Session confirmation dialog */
+
+/* Tap Tempo screen state */
+let tapTempoOpen      = false;
+let tapTempoTapTimes  = [];
+let tapTempoBpm       = 120;
+let tapTempoFlashTick = -1;
+let tapTempoFlashPad  = -1;
+const TAP_TEMPO_FLASH_TICKS = 20;   /* ~100ms at 196Hz */
+const TAP_TEMPO_RESET_TICKS = 392;  /* ~2s at 196Hz */
 let confirmClearSel       = 1;     /* 0=Yes, 1=No; default No */
 
 /* Session overview overlay (hold CC 50) */
@@ -973,6 +985,85 @@ function recordNoteOff(pitch) {
     _recNoteOffs.push({pitch, rt});
 }
 
+function pixelPrintLargeC(cx, y, text, scale, color) {
+    const charW  = 5 * scale + scale;
+    const totalW = text.length * charW - scale;
+    const startX = cx - Math.floor(totalW / 2);
+    for (let ci = 0; ci < text.length; ci++) {
+        const g = MCUFONT[text[ci]];
+        if (!g) continue;
+        for (let row = 0; row < 5; row++) {
+            const bits = g[row];
+            for (let col = 0; col < 5; col++) {
+                if (bits & (1 << (4 - col)))
+                    fill_rect(startX + ci * charW + col * scale, y + row * scale, scale, scale, color);
+            }
+        }
+    }
+}
+
+function openTapTempo() {
+    tapTempoOpen      = true;
+    tapTempoTapTimes  = [];
+    tapTempoBpm       = Math.max(40, Math.min(250, Math.round(parseFloat(host_module_get_param('bpm')) || 120)));
+    tapTempoFlashTick = -1;
+    tapTempoFlashPad  = -1;
+    invalidateLEDCache();
+    screenDirty = true;
+}
+
+function closeTapTempo() {
+    tapTempoOpen = false;
+    if (typeof host_module_set_param === 'function')
+        host_module_set_param('bpm', String(tapTempoBpm));
+    invalidateLEDCache();
+    screenDirty = true;
+}
+
+function registerTapTempo(padNote) {
+    const now    = tickCount;
+    const taps   = tapTempoTapTimes;
+    const last   = taps.length > 0 ? taps[taps.length - 1] : -1;
+    const intvl  = last >= 0 ? now - last : -1;
+
+    /* Inactivity reset: gap exceeds 2s window */
+    if (intvl > TAP_TEMPO_RESET_TICKS) {
+        tapTempoTapTimes = [now];
+    } else if (intvl > 0 && taps.length >= 2) {
+        /* Deviation reset: new interval differs from previous by >~1.8x */
+        const prevIntvl = taps[taps.length - 1] - taps[taps.length - 2];
+        const ratio     = intvl / prevIntvl;
+        if (ratio > 1.8 || ratio < 0.55) {
+            /* Tempo change: keep last tap as anchor for new session */
+            tapTempoTapTimes = [last, now];
+        } else {
+            taps.push(now);
+            /* Sliding window: cap at last 9 taps (8 intervals) */
+            if (taps.length > 9) tapTempoTapTimes = taps.slice(-9);
+        }
+    } else {
+        taps.push(now);
+    }
+
+    if (tapTempoTapTimes.length >= 2) {
+        const t = tapTempoTapTimes;
+        const n = t.length;
+        const avgInterval = (t[n - 1] - t[0]) / (n - 1);
+        if (avgInterval > 0)
+            tapTempoBpm = Math.max(40, Math.min(250, Math.round(196 * 60 / avgInterval)));
+    }
+    tapTempoFlashTick = now;
+    tapTempoFlashPad  = padNote;
+    screenDirty = true;
+}
+
+function drawTapTempoScreen() {
+    clear_screen();
+    drawMenuHeader('TAP TEMPO');
+    pixelPrintLargeC(64, 22, String(tapTempoBpm), 3, 1);
+    print(4, 50, 'Tap any pad. Jog=BPM', 1);
+}
+
 function openGlobalMenu() {
     globalMenuItems       = buildGlobalMenuItems();
     globalMenuState       = createMenuState();
@@ -1014,6 +1105,7 @@ function drawClearSessionConfirm() {
 }
 
 function drawGlobalMenu() {
+    if (tapTempoOpen)       { drawTapTempoScreen();       return; }
     if (confirmClearSession) { drawClearSessionConfirm(); return; }
     clear_screen();
     drawMenuHeader('GLOBAL');
@@ -1907,6 +1999,15 @@ function updateSceneMapLEDs() {
 
 function updateSessionLEDs() {
     if (!ledInitComplete) return;
+    if (tapTempoOpen) {
+        for (let i = 0; i < 32; i++) {
+            const note  = TRACK_PAD_BASE + i;
+            const flash = tapTempoFlashTick >= 0 &&
+                          tickCount - tapTempoFlashTick < TAP_TEMPO_FLASH_TICKS;
+            cachedSetLED(note, flash ? Blue : LightGrey);
+        }
+        return;
+    }
     for (let row = 0; row < 4; row++) {
         const sceneIdx = sceneRow + row;
         for (let t = 0; t < 8; t++) {
@@ -1952,6 +2053,16 @@ function updateSessionLEDs() {
 
 function updateTrackLEDs() {
     if (!ledInitComplete) return;
+
+    if (tapTempoOpen) {
+        for (let i = 0; i < 32; i++) {
+            const note  = TRACK_PAD_BASE + i;
+            const flash = tapTempoFlashTick >= 0 &&
+                          tickCount - tapTempoFlashTick < TAP_TEMPO_FLASH_TICKS;
+            cachedSetLED(note, flash ? Blue : LightGrey);
+        }
+        return;
+    }
 
     if (!sessionView) {
         const isDrum = bankParams[activeTrack][0][2] === PAD_MODE_DRUM;
@@ -3095,6 +3206,11 @@ globalThis.onMidiMessageInternal = function (data) {
     if (status === 0xB0) {
         /* CC 3 = jog wheel physical click */
         if (d1 === 3 && d2 === 127 && globalMenuOpen) {
+            if (tapTempoOpen) {
+                closeTapTempo();
+                screenDirty = true;
+                return;
+            }
             if (confirmClearSession) {
                 if (confirmClearSel === 0) doClearSession();
                 else { confirmClearSession = false; }
@@ -3149,7 +3265,13 @@ globalThis.onMidiMessageInternal = function (data) {
 
         if (d1 === MoveMainKnob) {
             if (globalMenuOpen) {
-                if (confirmClearSession) {
+                if (tapTempoOpen) {
+                    const delta = decodeDelta(d2);
+                    if (delta !== 0) {
+                        tapTempoBpm = Math.max(40, Math.min(250, tapTempoBpm + delta));
+                        screenDirty = true;
+                    }
+                } else if (confirmClearSession) {
                     const delta = decodeDelta(d2);
                     if (delta !== 0) { confirmClearSel = confirmClearSel === 0 ? 1 : 0; screenDirty = true; }
                 } else if (globalMenuState.editing) {
@@ -3357,7 +3479,10 @@ globalThis.onMidiMessageInternal = function (data) {
 
         /* Back: close global menu if open; otherwise (with Shift) hide module */
         if (d1 === MoveBack && d2 === 127) {
-            if (globalMenuOpen && confirmClearSession) {
+            if (globalMenuOpen && tapTempoOpen) {
+                closeTapTempo();
+                forceRedraw();
+            } else if (globalMenuOpen && confirmClearSession) {
                 confirmClearSession = false;
                 forceRedraw();
             } else if (globalMenuOpen) {
@@ -4111,6 +4236,7 @@ globalThis.onMidiMessageInternal = function (data) {
 
     /* Step buttons: notes 16-31, note-on only */
     if ((status & 0xF0) === 0x90 && d1 >= 16 && d1 <= 31 && d2 > 0) {
+        if (tapTempoOpen) return;
         stepOpTick = tickCount;
         const idx = d1 - 16;
         if (sessionView) {
@@ -4336,6 +4462,10 @@ globalThis.onMidiMessageInternal = function (data) {
 
     /* Pad presses: note-on */
     if ((status & 0xF0) === 0x90 && d2 > 0) {
+        if (tapTempoOpen && d1 >= 68 && d1 <= 99) {
+            registerTapTempo(d1);
+            return;
+        }
         if (sessionView) {
             for (let row = 0; row < 4; row++) {
                 const rowBase = 92 - row * 8;
@@ -4707,6 +4837,7 @@ globalThis.onMidiMessageInternal = function (data) {
 
     /* Pad releases: note-off */
     if ((status & 0xF0) === 0x80 || ((status & 0xF0) === 0x90 && d2 === 0)) {
+        if (tapTempoOpen && d1 >= 68 && d1 <= 99) return;
         /* Step button release: tap-toggle if within threshold, always exit step edit */
         if (d1 >= 16 && d1 <= 31) {
             stepOpTick = tickCount;
