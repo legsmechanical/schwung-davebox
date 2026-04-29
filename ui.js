@@ -2288,7 +2288,7 @@ function drawUI() {
         if (drumLaneMute[t] || drumLaneSolo[t]) {
             const pg = drumLanePage[t];
             const msY = 22;
-            const showM = Math.floor(tickCount / 4) % 2 === 0;
+            const showM = Math.floor(tickCount / 96) % 2 === 0;
             for (let i = 0; i < 16; i++) {
                 const lane = pg * 16 + i;
                 const bit  = 1 << lane;
