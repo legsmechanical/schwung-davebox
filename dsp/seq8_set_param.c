@@ -1758,7 +1758,9 @@ static void set_param(void *instance, const char *key, const char *val) {
                         dlc->steps[sidx]                = 1;
                     } else {
                         /* Has note: toggle active/inactive */
-                        dlc->steps[sidx] = dlc->steps[sidx] ? 0 : 1;
+                        int was_on = dlc->steps[sidx];
+                        dlc->steps[sidx] = was_on ? 0 : 1;
+                        if (was_on) pfx_note_off_imm(inst, tr, dlane->midi_note);
                     }
                     { int i, any = 0;
                       for (i = 0; i < SEQ_STEPS; i++) if (dlc->steps[i]) { any = 1; break; }
@@ -1777,6 +1779,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                       for (i = 0; i < SEQ_STEPS; i++) if (dlc->steps[i]) { any = 1; break; }
                       dlc->active = (uint8_t)any; }
                     clip_migrate_to_notes(dlc);
+                    pfx_note_off_imm(inst, tr, dlane->midi_note);
                     seq8_save_state(inst);
                     return;
                 }
