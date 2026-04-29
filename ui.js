@@ -268,6 +268,7 @@ function buildGlobalMenuItems() {
                 midiInChannel = v;
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('midi_in_channel', String(v));
+                updateExtMidiRemap();
             },
             options: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16],
             format: function(v) { return v === 0 ? 'All' : String(v); }
@@ -1597,6 +1598,7 @@ function applyBankParam(t, bankIdx, knobIdx, val) {
             const maxPage = Math.max(0, Math.ceil(val / 16) - 1);
             if (trackCurrentPage[t] > maxPage) trackCurrentPage[t] = maxPage;
         }
+        if (pm.dspKey === 'route' || pm.dspKey === 'channel') updateExtMidiRemap();
     } else if (pm.scope === 'clip') {
         const ac = trackActiveClip[t];
         if (pm.dspKey === 'clip_resolution') {
@@ -1625,6 +1627,23 @@ function liveSendNote(t, type, pitch, vel) {
     } else {
         if (typeof shadow_send_midi_to_dsp === 'function') shadow_send_midi_to_dsp([status, pitch, vel]);
     }
+}
+
+/* Update the shim's cable-2 channel remap table for the active track.
+ * No-op when the schwung cable2-channel-remap feature is not installed. */
+function updateExtMidiRemap() {
+    if (typeof host_ext_midi_remap_enable !== 'function') return;
+    const routeIsMove = bankParams[activeTrack][0][1] === 1;
+    if (!routeIsMove) {
+        host_ext_midi_remap_clear();
+        host_ext_midi_remap_enable(0);
+        return;
+    }
+    const in_ch  = midiInChannel > 0 ? midiInChannel - 1 : 0;
+    const out_ch = (bankParams[activeTrack][0][0] - 1) & 0x0F;
+    host_ext_midi_remap_clear();
+    host_ext_midi_remap_set(in_ch, out_ch);
+    host_ext_midi_remap_enable(1);
 }
 
 function extNoteOffAll() {
@@ -2717,6 +2736,14 @@ globalThis.init = function () {
     ledInitIndex    = 0;
 
     installFlagsWrap();
+    updateExtMidiRemap();
+};
+
+globalThis.onUnload = function () {
+    if (typeof host_ext_midi_remap_clear === 'function') {
+        host_ext_midi_remap_clear();
+        host_ext_midi_remap_enable(0);
+    }
 };
 
 globalThis.tick = function () {
@@ -2771,6 +2798,7 @@ globalThis.tick = function () {
                 trackCurrentPage[_t] = Math.max(0, Math.floor(trackCurrentStep[_t] / 16));
             syncClipsFromDsp();
             syncMuteSoloFromDsp();
+            updateExtMidiRemap();
             computePadNoteMap();
             invalidateLEDCache();
             forceRedraw();
@@ -2787,6 +2815,7 @@ globalThis.tick = function () {
                 trackCurrentPage[_t] = Math.max(0, Math.floor(trackCurrentStep[_t] / 16));
             syncClipsFromDsp();
             syncMuteSoloFromDsp();
+            updateExtMidiRemap();
             if (uiDefaultsApplyAfterSync) {
                 uiDefaultsApplyAfterSync = false;
                 scaleAware   = 1;
@@ -3194,6 +3223,7 @@ globalThis.onMidiMessageInternal = function (data) {
                             handoffRecordingToTrack(next);
                             activeTrack = next;
                             refreshPerClipBankParams(next);
+                            updateExtMidiRemap();
                             computePadNoteMap();
                             seqActiveNotes.clear();
                             seqLastStep = -1;
@@ -4419,6 +4449,7 @@ globalThis.onMidiMessageInternal = function (data) {
                             handoffRecordingToTrack(t);
                             activeTrack = t;
                             refreshPerClipBankParams(t);
+                            updateExtMidiRemap();
                             sessionView = false;
                             invalidateLEDCache();
                             forceRedraw();
@@ -4426,6 +4457,7 @@ globalThis.onMidiMessageInternal = function (data) {
                             handoffRecordingToTrack(t);
                             activeTrack = t;
                             refreshPerClipBankParams(t);
+                            updateExtMidiRemap();
                             if (trackPendingPageStop[t]) {
                                 /* Pending stop → cancel by re-launching */
                                 if (typeof host_module_set_param === 'function')
@@ -4440,6 +4472,7 @@ globalThis.onMidiMessageInternal = function (data) {
                             handoffRecordingToTrack(t);
                             activeTrack = t;
                             refreshPerClipBankParams(t);
+                            updateExtMidiRemap();
                             if (typeof host_module_set_param === 'function')
                                 host_module_set_param('t' + t + '_deactivate', '1');
                         } else if (trackQueuedClip[t] === clipIdx) {
@@ -4447,6 +4480,7 @@ globalThis.onMidiMessageInternal = function (data) {
                             handoffRecordingToTrack(t);
                             activeTrack = t;
                             refreshPerClipBankParams(t);
+                            updateExtMidiRemap();
                             if (typeof host_module_set_param === 'function')
                                 host_module_set_param('t' + t + '_deactivate', '1');
                         } else {
@@ -4458,6 +4492,7 @@ globalThis.onMidiMessageInternal = function (data) {
                                 trackCurrentPage[t] = 0;
                             }
                             refreshPerClipBankParams(t);
+                            updateExtMidiRemap();
                             if (typeof host_module_set_param === 'function')
                                 host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
                         }
@@ -4665,6 +4700,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     handoffRecordingToTrack(padIdx);
                     activeTrack = padIdx;
                     refreshPerClipBankParams(padIdx);
+                    updateExtMidiRemap();
                     computePadNoteMap();
                     seqActiveNotes.clear();
                     seqLastStep = -1;
