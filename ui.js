@@ -3049,6 +3049,23 @@ globalThis.init = function () {
                         activeDrumLane[_t] = _l;
                 }
             }
+            /* Perf mod state (v=2+) */
+            if (us.v >= 2) {
+                if (typeof us.pm === 'number') perfModsToggled = us.pm & 0xFFFFFF;
+                perfLatchMode = us.lm === 1;
+                if (typeof us.rs === 'number' && us.rs >= 0 && us.rs < 16) {
+                    perfRecalledSlot = us.rs;
+                    if (Array.isArray(us.us)) {
+                        for (let _i = 0; _i < 8; _i++) {
+                            if (typeof us.us[_i] === 'number')
+                                perfSnapshots[8 + _i] = us.us[_i];
+                        }
+                    }
+                    perfRecalledMods = perfSnapshots[perfRecalledSlot] || 0;
+                }
+                const _pm = perfModsToggled | perfRecalledMods;
+                if (_pm) pendingDefaultSetParams.push({ key: 'perf_mods', val: String(_pm) });
+            }
         } else {
             /* No sidecar: apply first-run defaults. */
             scaleAware   = 1;
@@ -3680,7 +3697,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     stepWasEmpty       = false;
                     stepWasHeld        = false;
                     stepBtnPressedTick.fill(-1);
-                    /* Leaving Session View clears Perf Mode state + stops any active loop. */
+                    /* Leaving Session View stops any active loop; mods/latch persist. */
                     if (!sessionView && (perfViewLocked || perfStack.length > 0)) {
                         const _hadLoop = perfStack.length > 0;
                         perfStack         = [];
@@ -3689,10 +3706,6 @@ globalThis.onMidiMessageInternal = function (data) {
                         perfViewLocked    = false;
                         loopHeld         = false;
                         perfModsHeld     = 0;
-                        perfModsToggled  = 0;
-                        perfRecalledMods = 0;
-                        perfRecalledSlot = -1;
-                        perfLatchMode    = false;
                         sendPerfMods();
                         /* looper_stop last so set_param coalescing can't eat it */
                         if (_hadLoop && typeof host_module_set_param === 'function')
@@ -3735,10 +3748,6 @@ globalThis.onMidiMessageInternal = function (data) {
                     perfStickyLengths = new Set();
                     perfHoldPadHeld   = false;
                     perfModsHeld     = 0;
-                    perfModsToggled  = 0;
-                    perfRecalledMods = 0;
-                    perfRecalledSlot = -1;
-                    perfLatchMode    = false;
                     sendPerfMods();
                     /* looper_stop last so set_param coalescing can't eat it */
                     if (typeof host_module_set_param === 'function')
@@ -3772,10 +3781,6 @@ globalThis.onMidiMessageInternal = function (data) {
                 if (perfStack.length > 0 && typeof host_module_set_param === 'function')
                     host_module_set_param('looper_arm', String(perfStack[perfStack.length - 1].ticks));
             } else {
-                perfModsToggled  = 0;
-                perfRecalledMods = 0;
-                perfRecalledSlot = -1;
-                perfLatchMode    = false;
                 if (perfStack.length > 0 &&
                         typeof host_module_set_param === 'function')
                     host_module_set_param('looper_stop', '1');
@@ -3856,8 +3861,10 @@ globalThis.onMidiMessageInternal = function (data) {
                 if (typeof host_module_set_param === 'function') host_module_set_param('save', '1');
                 if (typeof host_write_file === 'function')
                     host_write_file(uuidToUiStatePath(currentSetUuid), JSON.stringify({
-                        v: 1, at: activeTrack, ac: trackActiveClip.slice(), sv: sessionView ? 1 : 0,
-                        dl: activeDrumLane.slice()
+                        v: 2, at: activeTrack, ac: trackActiveClip.slice(), sv: sessionView ? 1 : 0,
+                        dl: activeDrumLane.slice(),
+                        pm: perfModsToggled, lm: perfLatchMode ? 1 : 0,
+                        rs: perfRecalledSlot, us: perfSnapshots.slice(8)
                     }));
                 if (typeof host_hide_module === 'function') host_hide_module();
             }
