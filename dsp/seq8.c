@@ -671,6 +671,13 @@ static void seq8_save_state(seq8_instance_t *inst) {
                 if (p2->seq_arp_gate      != 50)            fprintf(fp, ",\"t%dc%d_argt\":%d", t, c, p2->seq_arp_gate);
                 if (p2->seq_arp_steps_mode != 0)            fprintf(fp, ",\"t%dc%d_arsm\":%d", t, c, p2->seq_arp_steps_mode);
                 if (p2->seq_arp_vel_decay != 0)             fprintf(fp, ",\"t%dc%d_arvd\":%d", t, c, p2->seq_arp_vel_decay);
+                {
+                    int _i;
+                    for (_i = 0; _i < 8; _i++) {
+                        if (p2->seq_arp_step_vel[_i] != 4)
+                            fprintf(fp, ",\"t%dc%d_arsv%d\":%d", t, c, _i, (int)p2->seq_arp_step_vel[_i]);
+                    }
+                }
             }
             /* note list: "tick:pitch:vel:gate;" for each active note */
             if (cl->note_count > 0) {
@@ -971,6 +978,13 @@ static void seq8_load_state(seq8_instance_t *inst) {
             p2->seq_arp_steps_mode = clamp_i(json_get_int(buf, key, 0), 0, 2);
             snprintf(key, sizeof(key), "t%dc%d_arvd", t, c);
             p2->seq_arp_vel_decay = clamp_i(json_get_int(buf, key, 0), -100, 100);
+            {
+                int _i;
+                for (_i = 0; _i < 8; _i++) {
+                    snprintf(key, sizeof(key), "t%dc%d_arsv%d", t, c, _i);
+                    p2->seq_arp_step_vel[_i] = (uint8_t)clamp_i(json_get_int(buf, key, 4), 0, 4);
+                }
+            }
         }
     }
     /* Drum lane data (v=14 only; v=13 files have no drum keys, loops are no-ops) */
@@ -1377,7 +1391,8 @@ static void arp_init_defaults(arp_engine_t *a) {
     a->steps_mode = 0;
     a->vel_decay = 0;
     int i;
-    for (i = 0; i < 8; i++) a->step_vel[i] = 100;
+    /* step_vel level: 0=off, 1=row0(min), 4=row3(full incoming). Default 4. */
+    for (i = 0; i < 8; i++) a->step_vel[i] = 4;
     arp_clear_runtime(a);
 }
 
@@ -1547,18 +1562,16 @@ static void arp_add_note(arp_engine_t *a, uint8_t pitch, uint8_t vel) {
     a->held_order[a->held_count] = a->next_order++;
     a->held_count++;
     if (was_empty) {
-        /* Buffer goes 0→1: pending fire on next rate boundary. cyc/step reset. */
-        a->cyc_pos          = 0;
-        a->ud_dir           = 1;
-        a->step_pos         = 0;
-        a->random_used      = 0;
-        a->cycle_step_count = 0;
+        /* Buffer 0→1: arm a fire on next rate boundary. cyc_pos / step_pos
+         * persist across step boundaries so consecutive sequenced steps
+         * progress through the cycle (only arp_silence fully resets). */
         a->pending_first_note = 1;
         a->ticks_until_next   = 0;
     }
 }
 
 static void arp_remove_note(seq8_instance_t *inst, seq8_track_t *tr, uint8_t pitch) {
+    (void)inst;
     arp_engine_t *a = &tr->pfx.arp;
     int i, found = -1;
     for (i = 0; i < a->held_count; i++)
@@ -1571,19 +1584,11 @@ static void arp_remove_note(seq8_instance_t *inst, seq8_track_t *tr, uint8_t pit
     }
     a->held_count--;
     if (a->held_count == 0) {
-        /* Buffer empty — silence sounding immediately. */
-        if (a->sounding_active) {
-            tr->pfx.arp_emitting = 1;
-            pfx_note_off(inst, tr, a->sounding_pitch);
-            tr->pfx.arp_emitting = 0;
-            a->sounding_active = 0;
-        }
-        a->next_order         = 0;
+        /* Buffer empty — let the sounding note play out its own gate via
+         * arp_tick countdown. Don't reset cycle position; consecutive
+         * sequenced steps continue the pattern across the empty gap. */
         a->pending_first_note = 0;
-        a->cyc_pos            = 0;
-        a->step_pos           = 0;
-        a->random_used        = 0;
-        a->cycle_step_count   = 0;
+        a->next_order         = 0;
     }
 }
 
@@ -1736,23 +1741,37 @@ static int arp_compute_step(arp_engine_t *a, play_fx_t *fx,
     return 1;
 }
 
-/* Fire one arp step: silence prior, emit next note (with step pattern + decay). */
+/* Fire one arp step: silence prior, emit next note (with step pattern + decay).
+ *
+ * Steps modes:
+ *   0 = Off   — step_vel array ignored, every step fires at incoming vel.
+ *   1 = Mute  — level 0 step rests (no note); cycle advances underneath so
+ *               the next active step plays what would have played anyway.
+ *   2 = Step  — level 0 step skips entirely (no note, no cycle advance).
+ *
+ * step_vel[i] is a 5-state level: 0 = step off, 1..4 = row 0..3 of the editor.
+ * Active levels lerp between vel=10 (level 1) and incoming vel (level 4). */
 static void arp_fire_step(seq8_instance_t *inst, seq8_track_t *tr) {
     play_fx_t    *fx = &tr->pfx;
     arp_engine_t *a  = &fx->arp;
     if (a->held_count == 0) return;
 
-    int step_idx = a->step_pos & 7;
-    uint8_t step_v = a->step_vel[step_idx];
-    int muted = (a->steps_mode != 0) && (step_v == 0);
+    uint16_t rate = ARP_RATE_TICKS[a->rate_idx];
+    if (rate == 0) rate = 24;
 
-    /* Skip mode: muted step → no fire, no cycle advance, leave sounding alone. */
-    if (muted && a->steps_mode == 2) {
+    int step_idx = a->step_pos & 7;
+    uint8_t level = a->step_vel[step_idx];
+    int step_off = (a->steps_mode != 0) && (level == 0);
+
+    /* Step mode + step off: skip — no fire, no cycle advance, leave sounding alone.
+     * Reset interval so we land on the next rate boundary, not the next render tick. */
+    if (step_off && a->steps_mode == 2) {
         a->step_pos = (uint8_t)((a->step_pos + 1) & 7);
+        a->ticks_until_next = (int32_t)rate;
         return;
     }
 
-    /* Silence prior sounding note before firing next. */
+    /* Silence prior sounding note before firing next (or before resting in Mute). */
     if (a->sounding_active) {
         fx->arp_emitting = 1;
         pfx_note_off(inst, tr, a->sounding_pitch);
@@ -1760,28 +1779,38 @@ static void arp_fire_step(seq8_instance_t *inst, seq8_track_t *tr) {
         a->sounding_active = 0;
     }
 
-    if (muted) {
-        /* Mute mode: rest, but advance cycle so next active step plays the
-         * note that would have played anyway. */
+    if (step_off) {
+        /* Mute mode + step off: rest this slot but advance cycle so the next
+         * active step plays the note that would have played anyway. */
         uint8_t pitch_unused, vel_unused;
         (void)arp_compute_step(a, fx, &pitch_unused, &vel_unused);
         a->step_pos = (uint8_t)((a->step_pos + 1) & 7);
         a->cycle_step_count++;
+        a->ticks_until_next = (int32_t)rate;
         return;
     }
 
     uint8_t pitch, base_vel;
     if (!arp_compute_step(a, fx, &pitch, &base_vel)) {
         a->step_pos = (uint8_t)((a->step_pos + 1) & 7);
+        a->ticks_until_next = (int32_t)rate;
         return;
     }
 
-    /* Velocity: base from input, override by step_vel if Mute/Skip mode active.
-     * Apply vel_decay multiplicatively across the cycle. */
+    /* Velocity: in Off mode, use incoming directly; in Mute/Step modes, scale
+     * via the level: level 1 → vel 10, level 4 → vel = base_vel, levels 2/3
+     * proportionally between. Apply vel_decay multiplicatively on top. */
     int v = (int)base_vel;
-    if (a->steps_mode != 0) v = (int)step_v;
+    if (a->steps_mode != 0 && level >= 1 && level <= 4) {
+        if (level == 4) {
+            v = (int)base_vel;
+        } else {
+            /* lerp(10, base_vel, (level-1)/3) */
+            int span = (int)base_vel - 10;
+            v = 10 + (span * (level - 1)) / 3;
+        }
+    }
     if (a->vel_decay != 0 && a->cycle_step_count > 0) {
-        /* (1 + decay/100)^cycle_step_count; clamp every step to keep manageable. */
         double mult = 1.0;
         int n = a->cycle_step_count;
         if (n > 32) n = 32;
@@ -1804,8 +1833,6 @@ static void arp_fire_step(seq8_instance_t *inst, seq8_track_t *tr) {
     a->sounding_active = 1;
 
     /* Set next-step interval and gate countdown. */
-    uint16_t rate = ARP_RATE_TICKS[a->rate_idx];
-    if (rate == 0) rate = 24;
     a->ticks_until_next = (int32_t)rate;
     uint32_t gate = ((uint32_t)rate * (uint32_t)a->gate_pct) / 100U;
     if (gate < 1)        gate = 1;
@@ -1900,7 +1927,7 @@ static void clip_pfx_params_init(clip_pfx_params_t *p) {
     p->seq_arp_steps_mode = 0;
     p->seq_arp_vel_decay = 0;
     int i;
-    for (i = 0; i < 8; i++) p->seq_arp_step_vel[i] = 100;
+    for (i = 0; i < 8; i++) p->seq_arp_step_vel[i] = 4;
 }
 
 /* Copy per-clip pfx params from active clip into tr->pfx (the render surface).
@@ -2381,19 +2408,23 @@ static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
         return snprintf(out, out_len, "%s",
                         fx->route == ROUTE_MOVE ? "move" : "schwung");
 
-    /* Batch read: per-clip pfx params in bank-knob order. Fields 0-16 are
-     * NOTE FX K0-K4, HARMZ K0-K3, MIDI DLY K0-K7 (legacy 17 ints).
-     * Fields 17-23 are SEQ ARP K0-K6 (on/style/rate/octaves/gate/steps_mode/vel_decay). */
+    /* Batch read: per-clip pfx params. Fields 0-16: NOTE FX K0-K4, HARMZ K0-K3,
+     * MIDI DLY K0-K7 (legacy 17). Fields 17-23: SEQ ARP K0-K6 (on/style/rate/
+     * octaves/gate/steps_mode/vel_decay). Fields 24-31: SEQ ARP step_vel[0..7]. */
     if (!strcmp(key, "pfx_snapshot"))
         return snprintf(out, out_len,
-            "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d",
+            "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d "
+            "%d %d %d %d %d %d %d %d",
             fx->octave_shift, fx->note_offset, fx->gate_time, fx->velocity_offset, fx->quantize,
             fx->unison, fx->octaver, fx->harmonize_1, fx->harmonize_2,
             fx->delay_time_idx, fx->delay_level, fx->repeat_times,
             fx->fb_velocity, fx->fb_note, fx->fb_gate_time, fx->fb_clock, fx->fb_note_random,
             (int)fx->arp.on, (int)fx->arp.style, (int)fx->arp.rate_idx,
             (int)fx->arp.octaves, (int)fx->arp.gate_pct,
-            (int)fx->arp.steps_mode, (int)fx->arp.vel_decay);
+            (int)fx->arp.steps_mode, (int)fx->arp.vel_decay,
+            (int)fx->arp.step_vel[0], (int)fx->arp.step_vel[1], (int)fx->arp.step_vel[2],
+            (int)fx->arp.step_vel[3], (int)fx->arp.step_vel[4], (int)fx->arp.step_vel[5],
+            (int)fx->arp.step_vel[6], (int)fx->arp.step_vel[7]);
 
     if (!strcmp(key, "noteFX_octave"))    return snprintf(out, out_len, "%d", fx->octave_shift);
     if (!strcmp(key, "noteFX_offset"))    return snprintf(out, out_len, "%d", fx->note_offset);
@@ -2625,7 +2656,8 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
             if (!strcmp(p2, "_pfx_snapshot")) {
                 clip_pfx_params_t *cp = &dlane->clip.pfx_params;
                 return snprintf(out, out_len,
-                    "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d",
+                    "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d "
+                    "%d %d %d %d %d %d %d %d",
                     cp->octave_shift, cp->note_offset, cp->gate_time,
                     cp->velocity_offset, cp->quantize,
                     cp->unison, cp->octaver, cp->harmonize_1, cp->harmonize_2,
@@ -2634,7 +2666,11 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                     cp->fb_clock, cp->fb_note_random,
                     cp->seq_arp_on, cp->seq_arp_style, cp->seq_arp_rate,
                     cp->seq_arp_octaves, cp->seq_arp_gate,
-                    cp->seq_arp_steps_mode, cp->seq_arp_vel_decay);
+                    cp->seq_arp_steps_mode, cp->seq_arp_vel_decay,
+                    (int)cp->seq_arp_step_vel[0], (int)cp->seq_arp_step_vel[1],
+                    (int)cp->seq_arp_step_vel[2], (int)cp->seq_arp_step_vel[3],
+                    (int)cp->seq_arp_step_vel[4], (int)cp->seq_arp_step_vel[5],
+                    (int)cp->seq_arp_step_vel[6], (int)cp->seq_arp_step_vel[7]);
             }
             return -1;
         }
@@ -2734,7 +2770,8 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
             if (!strncmp(p, "_pfx_snapshot", 13)) {
                 clip_pfx_params_t *cp = &cl->pfx_params;
                 return snprintf(out, out_len,
-                    "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d",
+                    "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d "
+                    "%d %d %d %d %d %d %d %d",
                     cp->octave_shift, cp->note_offset, cp->gate_time,
                     cp->velocity_offset, cp->quantize,
                     cp->unison, cp->octaver, cp->harmonize_1, cp->harmonize_2,
@@ -2743,7 +2780,11 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                     cp->fb_clock, cp->fb_note_random,
                     cp->seq_arp_on, cp->seq_arp_style, cp->seq_arp_rate,
                     cp->seq_arp_octaves, cp->seq_arp_gate,
-                    cp->seq_arp_steps_mode, cp->seq_arp_vel_decay);
+                    cp->seq_arp_steps_mode, cp->seq_arp_vel_decay,
+                    (int)cp->seq_arp_step_vel[0], (int)cp->seq_arp_step_vel[1],
+                    (int)cp->seq_arp_step_vel[2], (int)cp->seq_arp_step_vel[3],
+                    (int)cp->seq_arp_step_vel[4], (int)cp->seq_arp_step_vel[5],
+                    (int)cp->seq_arp_step_vel[6], (int)cp->seq_arp_step_vel[7]);
             }
             return -1;
         }
@@ -2969,11 +3010,6 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 tr->note_active = (tr->play_pending_count > 0) ? 1 : 0;
             }
 
-            /* SEQ ARP: run engine tick (gate countdown + step fire). Routed
-             * before the note-on scan so a sounding arp note is silenced
-             * (gate expiry) ahead of the next sequenced note for this tick. */
-            arp_tick(inst, tr);
-
             if (inst->master_tick_in_step == 0) {
                 /* Quantized boundary: launch queued clip (only if not waiting for page stop) */
                 if (tr->queued_clip >= 0 && !tr->pending_page_stop &&
@@ -3092,6 +3128,11 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                     }
                 }
             }
+
+            /* SEQ ARP: tick AFTER note-on scan so this tick's chord (just
+             * added to the held buffer) can fire immediately when
+             * pending_first_note=1 lands on a rate boundary. */
+            arp_tick(inst, tr);
         }
 
         /* Per-track tick advance and step advance */

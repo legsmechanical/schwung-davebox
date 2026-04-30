@@ -104,6 +104,20 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
         fx->arp.vel_decay     = (int8_t)_v;
         return;
     }
+    if (!strcmp(key, "seq_arp_step_vel")) {
+        /* Format: "S L" — step index 0..7, level 0..4 (0=step off, 4=full incoming). */
+        const char *p = val;
+        int s = 0, lv = 0;
+        while (*p == ' ') p++;
+        while (*p >= '0' && *p <= '9') { s = s * 10 + (*p - '0'); p++; }
+        while (*p == ' ') p++;
+        while (*p >= '0' && *p <= '9') { lv = lv * 10 + (*p - '0'); p++; }
+        if (s < 0 || s > 7) return;
+        lv = clamp_i(lv, 0, 4);
+        cp->seq_arp_step_vel[s] = (uint8_t)lv;
+        fx->arp.step_vel[s]     = (uint8_t)lv;
+        return;
+    }
 
 #undef PFX_SET_BOTH
 

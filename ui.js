@@ -422,6 +422,12 @@ let drumLaneFlashTick = Array.from({length: NUM_TRACKS}, () => new Array(DRUM_LA
 let drumLaneMute = new Array(NUM_TRACKS).fill(0);
 let drumLaneSolo = new Array(NUM_TRACKS).fill(0);
 let drumSeqQnt   = new Array(NUM_TRACKS).fill(0); /* last-set K6 drum Qnt macro value (display only) */
+/* SEQ ARP per-clip step_vel[8] mirror. Stored as level 0..4:
+ *   0 = step off (no note)
+ *   1 = bottom row (vel 10)
+ *   4 = top row (vel = incoming) — default. */
+let seqArpStepVel = Array.from({length: NUM_TRACKS}, () =>
+    Array.from({length: NUM_CLIPS}, () => new Array(8).fill(4)));
 const DRUM_FLASH_TICKS = 8; /* ~130ms pad flash duration after a drum hit */
 /* drumClipNonEmpty[t][c] — true if any lane in drum clip c of track t has content */
 let drumClipNonEmpty  = Array.from({length: NUM_TRACKS}, () => new Array(NUM_CLIPS).fill(false));
@@ -1369,6 +1375,10 @@ function refreshPerClipBankParams(t) {
     if (v.length >= 24) {
         for (let k = 0; k < 7; k++) bankParams[t][4][k] = parseInt(v[17 + k], 10) | 0;
     }
+    /* step_vel[0..7] when present (length-aware) */
+    if (v.length >= 32) {
+        for (let s = 0; s < 8; s++) seqArpStepVel[t][ac][s] = parseInt(v[24 + s], 10) | 0;
+    }
     /* CLIP bank (1): Res (K3), Len (K4), SqFl (K7) — all per-clip */
     const tps    = clipTPS[t][ac] || 24;
     const tpsIdx = TPS_VALUES.indexOf(tps);
@@ -2066,6 +2076,32 @@ function updateTrackLEDs() {
             const flash = tapTempoFlashTick >= 0 &&
                           tickCount - tapTempoFlashTick < TAP_TEMPO_FLASH_TICKS;
             cachedSetLED(note, flash ? Blue : LightGrey);
+        }
+        return;
+    }
+
+    /* SEQ ARP K6 (Steps Mode) touched + Steps Mode != Off: pad grid becomes
+     * 8-col × 4-row vel-level editor for step_vel[8].
+     *   level 0 = step off (column entirely dark)
+     *   level 1..4 = rows 0..3 lit from bottom up (topmost lit = bright,
+     *                 lower lit = dim track color).
+     * In Off mode the editor is suppressed and pads keep their normal mode. */
+    if (!sessionView && activeBank === 4 && knobTouched === 5 &&
+            (bankParams[activeTrack][4][5] | 0) !== 0) {
+        const t  = activeTrack;
+        const ac = effectiveClip(t);
+        const sv = seqArpStepVel[t][ac];
+        const tc = TRACK_COLORS[t];
+        const td = TRACK_DIM_COLORS[t];
+        for (let i = 0; i < 32; i++) {
+            const col = i % 8;
+            const row = Math.floor(i / 8);
+            const lvl = sv[col] | 0;
+            let color = LED_OFF;
+            if (lvl > 0 && row < lvl) {
+                color = (row === lvl - 1) ? tc : td;
+            }
+            cachedSetLED(TRACK_PAD_BASE + i, color);
         }
         return;
     }
@@ -3152,7 +3188,11 @@ globalThis.onMidiMessageInternal = function (data) {
     if (d1 >= 0 && d1 <= 9) {
         if ((status & 0xF0) === 0x90) {
             if (d2 === 127) {
-                if (d1 <= 7 && activeBank >= 0) { knobTouched = d1; knobTurnedTick[d1] = -1; screenDirty = true; }
+                if (d1 <= 7 && activeBank >= 0) {
+                    knobTouched = d1; knobTurnedTick[d1] = -1; screenDirty = true;
+                    /* SEQ ARP K6 touch: switch pads to vel-slider editor immediately. */
+                    if (activeBank === 4 && d1 === 5) forceRedraw();
+                }
                 if (d1 === MoveMainTouch && !globalMenuOpen && !shiftHeld) { jogTouched = true; forceRedraw(); }
             } else if (d2 < 64) {
                 if (d1 <= 7) {
@@ -3172,6 +3212,8 @@ globalThis.onMidiMessageInternal = function (data) {
                             bankParams[activeTrack][activeBank][d1] = 0;
                         }
                     }
+                    /* SEQ ARP K6 release: refresh pads (vel-slider editor → normal pads). */
+                    if (activeBank === 4 && d1 === 5) forceRedraw();
                     knobTouched = -1;
                     knobLocked[d1] = false;
                     knobAccum[d1]  = 0;
@@ -3199,6 +3241,7 @@ globalThis.onMidiMessageInternal = function (data) {
                         bankParams[activeTrack][activeBank][d1] = 0;
                     }
                 }
+                if (activeBank === 4 && d1 === 5) forceRedraw();
                 knobTouched = -1;
                 knobLocked[d1] = false;
                 knobAccum[d1]  = 0;
@@ -4472,6 +4515,27 @@ globalThis.onMidiMessageInternal = function (data) {
             registerTapTempo(d1);
             return;
         }
+        /* SEQ ARP K6 (Steps Mode) touched + Mute/Step mode: pad press = level edit.
+         * Column = step (0..7); row sets level (1=bottom..4=top). Bottom-row
+         * press when already at level 1 → level 0 (step off). Off mode: ignored. */
+        if (!sessionView && activeBank === 4 && knobTouched === 5 &&
+                (bankParams[activeTrack][4][5] | 0) !== 0 &&
+                d1 >= 68 && d1 <= 99) {
+            const idx = d1 - 68;
+            const col = idx % 8;
+            const row = Math.floor(idx / 8);
+            const t   = activeTrack;
+            const ac  = effectiveClip(t);
+            const cur = seqArpStepVel[t][ac][col] | 0;
+            const newLvl = (row === 0 && cur === 1) ? 0 : (row + 1);
+            if (newLvl !== cur) {
+                seqArpStepVel[t][ac][col] = newLvl;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + t + '_seq_arp_step_vel', col + ' ' + newLvl);
+                forceRedraw();
+            }
+            return;
+        }
         if (sessionView) {
             for (let row = 0; row < 4; row++) {
                 const rowBase = 92 - row * 8;
@@ -4844,6 +4908,10 @@ globalThis.onMidiMessageInternal = function (data) {
     /* Pad releases: note-off */
     if ((status & 0xF0) === 0x80 || ((status & 0xF0) === 0x90 && d2 === 0)) {
         if (tapTempoOpen && d1 >= 68 && d1 <= 99) return;
+        /* Swallow pad releases while SEQ ARP step-level editor is open. */
+        if (!sessionView && activeBank === 4 && knobTouched === 5 &&
+                (bankParams[activeTrack][4][5] | 0) !== 0 &&
+                d1 >= 68 && d1 <= 99) return;
         /* Step button release: tap-toggle if within threshold, always exit step edit */
         if (d1 >= 16 && d1 <= 31) {
             stepOpTick = tickCount;
