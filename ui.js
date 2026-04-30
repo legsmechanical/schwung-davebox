@@ -25,6 +25,8 @@ import {
     DeepMagenta,
     Cyan,
     PurpleBlue,
+    Purple,
+    DarkPurple,
     Bright,
     BurntOrange,
     White,
@@ -2321,38 +2323,38 @@ function updatePerfModeLEDs() {
 
     /* R0 (68-75): rate pads 0-5, sync toggle (6), latch (7) */
     for (let i = 0; i < 6; i++)
-        setLED(68 + i, flashAtRate(LOOPER_RATES_STRAIGHT[i]) ? White : PurpleBlue);
-    /* Sync (pad 74): blink Red/White at 1/4 when sync=on; solid Red when sync=off */
-    setLED(74, perfSync ? (flashAtRate(96) ? Red : White) : Red);
+        setLED(68 + i, flashAtRate(LOOPER_RATES_STRAIGHT[i]) ? White : LightGrey);
+    /* Sync (pad 74): blink dim/bright red at 1/4 when sync=on; solid Red when sync=off */
+    setLED(74, perfSync ? (flashAtRate(96) ? Red : DeepRed) : Red);
     /* Latch (pad 75): Yellow when latch mode is on (mods sticky); Purple when off */
     setLED(75, perfLatchMode ? VividYellow : PurpleBlue);
 
-    /* R1 (76-83): PITCH mods */
+    /* R1 (76-83): PITCH mods — active = White, inactive = dim Magenta */
     for (let i = 0; i < 8; i++) {
         const note = 76 + i;
         const modIdx = PERF_MOD_PAD_MAP[note];
         if (modIdx !== undefined)
-            setLED(note, (activeMods >> modIdx) & 1 ? HotMagenta : DeepMagenta);
+            setLED(note, (activeMods >> modIdx) & 1 ? White : DeepMagenta);
         else
             setLED(note, LED_OFF);
     }
 
-    /* R2 (84-91): VEL/GATE mods */
+    /* R2 (84-91): VEL/GATE mods — active = White, inactive = dim Yellow */
     for (let i = 0; i < 8; i++) {
         const note = 84 + i;
         const modIdx = PERF_MOD_PAD_MAP[note];
         if (modIdx !== undefined)
-            setLED(note, (activeMods >> modIdx) & 1 ? VividYellow : Mustard);
+            setLED(note, (activeMods >> modIdx) & 1 ? White : Mustard);
         else
             setLED(note, LED_OFF);
     }
 
-    /* R3 (92-99): WILD mods */
+    /* R3 (92-99): WILD mods — active = White, inactive = dim Blue */
     for (let i = 0; i < 8; i++) {
         const note = 92 + i;
         const modIdx = PERF_MOD_PAD_MAP[note];
         if (modIdx !== undefined)
-            setLED(note, (activeMods >> modIdx) & 1 ? Cyan : DarkBlue);
+            setLED(note, (activeMods >> modIdx) & 1 ? White : DarkBlue);
         else
             setLED(note, LED_OFF);
     }
