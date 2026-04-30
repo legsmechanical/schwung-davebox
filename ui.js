@@ -3164,12 +3164,14 @@ globalThis.tick = function () {
         /* Transport LEDs */
         setButtonLED(MovePlay, playing ? Green : LED_OFF);
         setButtonLED(MoveRec,  recordArmed ? Red : LED_OFF);
-        /* Loop LED: blink White while looper view is locked (Session View only),
-         * dim DarkGrey while a press is held momentarily, off otherwise. */
+        /* Loop LED: flash White at 1/8 rate while looper view is locked (Session
+         * View only); dim DarkGrey while a press is held momentarily; off otherwise.
+         * Uses flashAtRate(48) so the blink stays musical whether transport is
+         * running or stopped. */
         {
             let loopColor = LED_OFF;
             if (sessionView && looperViewLocked) {
-                loopColor = (Math.floor(tickCount / 24) % 2) ? White : DarkGrey;
+                loopColor = flashAtRate(48) ? White : LED_OFF;
             } else if (sessionView && loopHeld) {
                 loopColor = DarkGrey;
             }
