@@ -535,10 +535,22 @@ static void set_param(void *instance, const char *key, const char *val) {
 
     /* --- Scene launch (global): all tracks to clip M --- */
     /* Global MIDI Looper: arm with capture length in master 96-PPQN ticks.
-     * Capture begins at the next master boundary aligned to that length.
-     * Re-arming while already ARMED/CAPTURING/LOOPING resets and starts over. */
+     * Behavior depends on current state:
+     *   IDLE / ARMED / CAPTURING — drop in-flight state and re-arm fresh.
+     *   LOOPING — queue the new rate; transition fires at the next loop
+     *     boundary (in looper_tick) so the switch lands cleanly on the beat.
+     *   LOOPING with rate already equal to current — clear any pending queue
+     *     (this is the path used to "cancel" a queued switch when the user
+     *     releases a newer step button while still holding an older one). */
     if (!strcmp(key, "looper_arm")) {
         int t = clamp_i(my_atoi(val), 1, 65535);
+        if (inst->looper_state == LOOPER_STATE_LOOPING) {
+            if ((uint16_t)t == inst->looper_capture_ticks)
+                inst->looper_pending_rate_ticks = 0;
+            else
+                inst->looper_pending_rate_ticks = (uint16_t)t;
+            return;
+        }
         looper_stop(inst);
         inst->looper_capture_ticks = (uint16_t)t;
         inst->looper_state         = LOOPER_STATE_ARMED;

@@ -350,16 +350,18 @@ let ledInitIndex    = 0;
 let ledInitComplete = false;  /* false until init queue fully flushed; tick() blocks normal render */
 let shiftHeld       = false;
 let loopHeld        = false;
-/* Global MIDI Looper UI state. Active iff looperHeldStep >= 0 (a step button
- * is currently held to keep the loop going). Pressing Loop+step in Session
- * View arms; releasing either Loop or that step button stops the looper.
+/* Global MIDI Looper UI state. looperStack tracks every length step button
+ * currently held (top = most recent, drives the active rate). Pressing a new
+ * length while another is held queues a rate change at the next loop
+ * boundary (DSP-side); releasing the newest pops back to the previous one.
  * Capture window: master 96-PPQN ticks per loop. */
-const LOOPER_PPQN = 24;  /* master ticks per 1/16 step */
-const LOOPER_RATES_STRAIGHT = [12, 24, 48, 96, 192, 384];           /* 1/32, 1/16, 1/8, 1/4, 1/2, 1bar */
-const LOOPER_RATES_TRIPLET  = [8,  16, 32, 64, 128, 384];           /* triplet variants for steps 1-5; step 6 stays 1bar */
-let looperTriplet      = false;
-let looperHeldStep     = -1;     /* 0..5 = which step button (1..6) is the active rate; -1 = inactive */
-let looperRateTicks    = 0;
+const LOOPER_RATES_STRAIGHT = [12, 24, 48, 96, 192, 384];   /* 1/32, 1/16, 1/8, 1/4, 1/2, 1bar */
+const LOOPER_RATES_TRIPLET  = [8,  16, 32, 64, 128, 384];   /* triplet variants for steps 1-5; step 6 stays 1bar */
+let looperTriplet = false;
+/* Stack of {idx, ticks} for currently-held length steps. Top = active rate.
+ * Rate is captured at press time so toggling triplet mid-hold doesn't
+ * retroactively change held steps' rates. */
+let looperStack = [];
 
 /* Live pad note input — isomorphic 4ths diatonic layout. */
 const SCALE_INTERVALS = [
@@ -3532,12 +3534,11 @@ globalThis.onMidiMessageInternal = function (data) {
         if (d1 === MoveLoop && sessionView) {
             loopHeld = d2 === 127;
             if (!loopHeld) {
-                /* Loop released: stop looper if active */
-                if (looperHeldStep >= 0) {
+                /* Loop released: stop looper if active, clear held-step stack. */
+                if (looperStack.length > 0) {
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('looper_stop', '1');
-                    looperHeldStep  = -1;
-                    looperRateTicks = 0;
+                    looperStack = [];
                 }
             }
             forceRedraw();
@@ -4410,12 +4411,16 @@ globalThis.onMidiMessageInternal = function (data) {
                     looperTriplet = !looperTriplet;
                     forceRedraw();
                 } else if (idx <= 5) {
-                    const rates = looperTriplet ? LOOPER_RATES_TRIPLET : LOOPER_RATES_STRAIGHT;
-                    looperHeldStep  = idx;
-                    looperRateTicks = rates[idx];
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('looper_arm', String(looperRateTicks));
-                    forceRedraw();
+                    /* Skip if this step is already in the stack (defensive — hardware
+                     * shouldn't fire two press events without a release, but guard anyway). */
+                    if (looperStack.findIndex(function(e) { return e.idx === idx; }) < 0) {
+                        const rates = looperTriplet ? LOOPER_RATES_TRIPLET : LOOPER_RATES_STRAIGHT;
+                        const ticks = rates[idx];
+                        looperStack.push({ idx: idx, ticks: ticks });
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('looper_arm', String(ticks));
+                        forceRedraw();
+                    }
                 }
                 /* steps 7-15: ignored */
             } else if (!deleteHeld && !shiftHeld) {
@@ -5005,17 +5010,28 @@ globalThis.onMidiMessageInternal = function (data) {
         if (d1 >= 16 && d1 <= 31) {
             stepOpTick = tickCount;
             const btn = d1 - 16;
-            /* Looper held-step release: stop the looper. Captures the
-             * minimum-hold rule: if release fires while DSP is still in
-             * ARMED or CAPTURING (looperState < LOOPING), nothing has been
-             * committed and the discard is automatic. */
-            if (sessionView && btn === looperHeldStep) {
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('looper_stop', '1');
-                looperHeldStep  = -1;
-                looperRateTicks = 0;
-                forceRedraw();
-                return;
+            /* Looper held-step release: pop the released step from the stack.
+             * If the stack is now empty, stop the looper (sends note-offs, drops
+             * captured content). Otherwise re-arm with the new top's rate —
+             * this either queues a switch back (if currently LOOPING) or cancels
+             * a not-yet-fired pending change (if rate now matches). The minimum-
+             * hold rule is automatic: if the release happens before LOOPING
+             * starts, looper_stop discards everything in flight. */
+            if (sessionView) {
+                const sIdx = looperStack.findIndex(function(e) { return e.idx === btn; });
+                if (sIdx >= 0) {
+                    looperStack.splice(sIdx, 1);
+                    if (looperStack.length === 0) {
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('looper_stop', '1');
+                    } else {
+                        const top = looperStack[looperStack.length - 1];
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('looper_arm', String(top.ticks));
+                    }
+                    forceRedraw();
+                    return;
+                }
             }
             if (btn === heldStepBtn) {
                 if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {

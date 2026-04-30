@@ -507,6 +507,10 @@ typedef struct {
     uint32_t looper_pos;            /* 0..capture_ticks-1; advances each master tick while CAPTURING/LOOPING */
     uint16_t looper_play_idx;       /* next event index during LOOPING playback */
     uint16_t looper_event_count;
+    /* Queued rate change: while LOOPING, looper_arm with a different rate sets
+     * this; at the next loop boundary we transition LOOPING → ARMED with the
+     * new rate so the switch lands cleanly on the beat. 0 = no pending. */
+    uint16_t looper_pending_rate_ticks;
     struct {
         uint16_t tick;              /* 0..capture_ticks-1 */
         uint8_t  status;
@@ -1281,6 +1285,22 @@ static void looper_tick(seq8_instance_t *inst) {
         }
         inst->looper_pos++;
         if (inst->looper_pos >= cap) {
+            /* Loop boundary: drop a queued rate change here so the switch
+             * lands on-beat. Silence sounding looper notes, transition into
+             * ARMED with the new rate (which then waits for absolute master-
+             * clock alignment before re-capturing). */
+            if (inst->looper_pending_rate_ticks != 0 &&
+                    inst->looper_pending_rate_ticks != inst->looper_capture_ticks) {
+                looper_silence_active(inst);
+                inst->looper_capture_ticks      = inst->looper_pending_rate_ticks;
+                inst->looper_pending_rate_ticks = 0;
+                inst->looper_state              = LOOPER_STATE_ARMED;
+                inst->looper_pos                = 0;
+                inst->looper_event_count        = 0;
+                inst->looper_play_idx           = 0;
+                return;
+            }
+            inst->looper_pending_rate_ticks = 0;
             inst->looper_pos      = 0;
             inst->looper_play_idx = 0;
         }
@@ -1292,11 +1312,12 @@ static void looper_tick(seq8_instance_t *inst) {
 static void looper_stop(seq8_instance_t *inst) {
     if (inst->looper_state == LOOPER_STATE_LOOPING)
         looper_silence_active(inst);
-    inst->looper_state       = LOOPER_STATE_IDLE;
-    inst->looper_pos         = 0;
-    inst->looper_play_idx    = 0;
-    inst->looper_event_count = 0;
-    inst->looper_capture_ticks = 0;
+    inst->looper_state              = LOOPER_STATE_IDLE;
+    inst->looper_pos                = 0;
+    inst->looper_play_idx           = 0;
+    inst->looper_event_count        = 0;
+    inst->looper_capture_ticks      = 0;
+    inst->looper_pending_rate_ticks = 0;
     memset(inst->looper_active_notes, 0, sizeof(inst->looper_active_notes));
 }
 
