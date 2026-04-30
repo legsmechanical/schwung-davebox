@@ -1125,27 +1125,44 @@ static int scale_transpose(seq8_instance_t *inst, int note, int deg_offset) {
 /* Generated-note list (direct port from NoteTwist)                    */
 /* ------------------------------------------------------------------ */
 
-static int pfx_build_gen_notes(seq8_instance_t *inst, int scale_aware,
-                               play_fx_t *fx, int orig_note, uint8_t *out) {
-    int cnt = 0;
+/* Pure NOTE FX pitch transform: octave_shift + note_offset, with scale awareness.
+ * Returns the post-NOTE-FX primary pitch (clamped 0..127). */
+static int pfx_apply_notefx(seq8_instance_t *inst, int scale_aware,
+                             play_fx_t *fx, int orig_note) {
     int base = orig_note + fx->octave_shift * 12;
     int n = scale_aware ? scale_transpose(inst, clamp_i(base, 0, 127), fx->note_offset)
                         : clamp_i(base + fx->note_offset, 0, 127);
-    out[cnt++] = (uint8_t)n;
+    return n;
+}
+
+/* Build harmonize copies (octaver + h1 + h2) of a primary note already past NOTE FX.
+ * out[0] = primary; subsequent slots are octaver/h1/h2 if set. Returns count. */
+static int pfx_build_harmz_copies(seq8_instance_t *inst, int scale_aware,
+                                   play_fx_t *fx, int primary, uint8_t *out) {
+    int cnt = 0;
+    out[cnt++] = (uint8_t)primary;
 
     if (fx->octaver != 0) {
-        int o = n + fx->octaver * 12;
+        int o = primary + fx->octaver * 12;
         if (o >= 0 && o <= 127 && cnt < MAX_GEN_NOTES) out[cnt++] = (uint8_t)o;
     }
     if (fx->harmonize_1 != 0) {
-        int h = scale_aware ? scale_transpose(inst, n, fx->harmonize_1) : n + fx->harmonize_1;
+        int h = scale_aware ? scale_transpose(inst, primary, fx->harmonize_1)
+                            : primary + fx->harmonize_1;
         if (h >= 0 && h <= 127 && cnt < MAX_GEN_NOTES) out[cnt++] = (uint8_t)h;
     }
     if (fx->harmonize_2 != 0) {
-        int h = scale_aware ? scale_transpose(inst, n, fx->harmonize_2) : n + fx->harmonize_2;
+        int h = scale_aware ? scale_transpose(inst, primary, fx->harmonize_2)
+                            : primary + fx->harmonize_2;
         if (h >= 0 && h <= 127 && cnt < MAX_GEN_NOTES) out[cnt++] = (uint8_t)h;
     }
     return cnt;
+}
+
+static int pfx_build_gen_notes(seq8_instance_t *inst, int scale_aware,
+                               play_fx_t *fx, int orig_note, uint8_t *out) {
+    int primary = pfx_apply_notefx(inst, scale_aware, fx, orig_note);
+    return pfx_build_harmz_copies(inst, scale_aware, fx, primary, out);
 }
 
 /* ------------------------------------------------------------------ */
