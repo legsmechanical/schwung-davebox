@@ -357,14 +357,13 @@ let loopHeld        = false;
  * perfModsHeld: momentary bitmask (held mod pads, not Latch-pressed).
  * DSP receives (perfModsToggled | perfModsHeld) as perf_mods each change. */
 const LOOPER_RATES_STRAIGHT = [12, 24, 48, 96, 192, 384];   /* 1/32, 1/16, 1/8, 1/4, 1/2, 1bar */
-const LOOPER_RATES_TRIPLET  = [8,  16, 32, 64, 128, 384];   /* triplet variants for idx 0-4; idx 5 stays 1bar */
-let perfTriplet      = false;
+let perfSync         = true;           /* true=wait for clock boundary; false=start immediately */
 let perfStack        = [];              /* [{idx, ticks}] — top is active rate */
-let perfModsToggled  = 0;              /* latched mods (persist after pad release) */
-let perfModsHeld     = 0;              /* momentary held mods */
-let perfLatchHeld    = false;
+let perfModsToggled  = 0;              /* sticky mods set while in Latch mode */
+let perfModsHeld     = 0;              /* momentary held mod bitmask */
+let perfLatchMode    = false;          /* true=Latch mode on: mod presses are toggles */
 let perfLatchPressedTick = -1;
-const PERF_LATCH_LONG_PRESS = 100;     /* ~510ms → clear all latched mods */
+const PERF_LATCH_LONG_PRESS = 100;     /* ~510ms → clear all toggled mods + exit Latch mode */
 /* Pad → modifier index map (note number → bit index into perf_mods_active) */
 const PERF_MOD_PAD_MAP = Object.freeze({
     76: 0, /* OCT_UP    — R1 PITCH */
@@ -2288,18 +2287,16 @@ function sendPerfMods() {
 function updatePerfModeLEDs() {
     if (!ledInitComplete) return;
     const activeMods = perfModsToggled | perfModsHeld;
-    const rates = perfTriplet ? LOOPER_RATES_TRIPLET : LOOPER_RATES_STRAIGHT;
-
     /* Step buttons: clear (not used) */
     for (let i = 0; i < 16; i++) setLED(16 + i, LED_OFF);
 
-    /* R0 (68-75): rate pads + triplet + latch */
+    /* R0 (68-75): rate pads 0-5, sync toggle (6), latch (7) */
     for (let i = 0; i < 6; i++)
-        setLED(68 + i, flashAtRate(rates[i]) ? White : PurpleBlue);
-    /* Triplet: solid PurpleBlue normally; blink when active */
-    setLED(74, perfTriplet ? (flashAtRate(32) ? PurpleBlue : DarkGrey) : PurpleBlue);
-    /* Latch: lit yellow if any toggled mods, bright white if held, purple off */
-    setLED(75, perfLatchHeld ? White : (perfModsToggled ? VividYellow : PurpleBlue));
+        setLED(68 + i, flashAtRate(LOOPER_RATES_STRAIGHT[i]) ? White : PurpleBlue);
+    /* Sync (pad 74): blink Red/White at 1/4 when sync=on; solid Red when sync=off */
+    setLED(74, perfSync ? (flashAtRate(96) ? Red : White) : Red);
+    /* Latch (pad 75): Yellow when latch mode is on (mods sticky); Purple when off */
+    setLED(75, perfLatchMode ? VividYellow : PurpleBlue);
 
     /* R1 (76-83): PITCH mods */
     for (let i = 0; i < 8; i++) {
@@ -2436,9 +2433,8 @@ function drawPerfModeOled() {
     const activeMods = perfModsToggled | perfModsHeld;
     /* Header */
     print(4, 4, 'PERF' + (perfViewLocked ? ' \xb7 LOCKED' : ''), 1);
-    if (perfLatchHeld || perfModsToggled) {
-        const latchStr = perfModsToggled ? 'LATCH' : 'LATCH (hold)';
-        print(84, 4, latchStr, 1);
+    if (perfLatchMode || perfModsToggled) {
+        print(84, 4, perfLatchMode ? 'LATCH' : 'LATCHED', 1);
     }
     /* Horizontal rule */
     fill_rect(0, 13, 128, 1, 1);
@@ -2459,7 +2455,7 @@ function drawPerfModeOled() {
     if (perfStack.length > 0) {
         const RATE_LABELS = ['1/32','1/16','1/8','1/4','1/2','1bar'];
         const top = perfStack[perfStack.length - 1];
-        const label = RATE_LABELS[top.idx] + (perfTriplet && top.idx < 5 ? 'T' : '');
+        const label = RATE_LABELS[top.idx];
         print(4, 52, '\xbb ' + label, 1);
     }
 }
@@ -3634,8 +3630,9 @@ globalThis.onMidiMessageInternal = function (data) {
                         perfViewLocked   = false;
                         loopHeld         = false;
                         perfModsHeld     = 0;
-                        perfLatchHeld    = false;
+                        perfLatchMode    = false;
                         sendPerfMods();
+                        invalidateLEDCache();
                     }
                     if (sessionView) {
                         for (let i = 0; i < 16; i++) setLED(16 + i, LED_OFF);
@@ -3674,8 +3671,9 @@ globalThis.onMidiMessageInternal = function (data) {
                         host_module_set_param('looper_stop', '1');
                     perfStack    = [];
                     perfModsHeld = 0;
-                    perfLatchHeld = false;
+                    perfLatchMode = false;
                     sendPerfMods();
+                    invalidateLEDCache();
                     forceRedraw();
                 }
                 return;
@@ -3695,12 +3693,13 @@ globalThis.onMidiMessageInternal = function (data) {
             /* Normal release: exit Perf Mode, stop loop, clear momentary mods. */
             loopHeld     = false;
             perfModsHeld = 0;
-            perfLatchHeld = false;
+            perfLatchMode = false;
             if (perfStack.length > 0 &&
                     typeof host_module_set_param === 'function')
                 host_module_set_param('looper_stop', '1');
             perfStack = [];
             sendPerfMods();
+            invalidateLEDCache();
             forceRedraw();
             return;
         }
@@ -4776,14 +4775,14 @@ globalThis.onMidiMessageInternal = function (data) {
                 /* R0: rate pads 0-5 (arm/stack), triplet toggle (6), latch (7) */
                 const subIdx = d1 - 68;
                 if (subIdx === 7) {
-                    perfLatchHeld = true;
                     perfLatchPressedTick = tickCount;
                 } else if (subIdx === 6) {
-                    perfTriplet = !perfTriplet;
+                    perfSync = !perfSync;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('looper_sync', perfSync ? '1' : '0');
                 } else {
                     if (perfStack.findIndex(function(e) { return e.idx === subIdx; }) < 0) {
-                        const rates = perfTriplet ? LOOPER_RATES_TRIPLET : LOOPER_RATES_STRAIGHT;
-                        const ticks = rates[subIdx];
+                        const ticks = LOOPER_RATES_STRAIGHT[subIdx];
                         perfStack.push({ idx: subIdx, ticks: ticks });
                         if (typeof host_module_set_param === 'function')
                             host_module_set_param('looper_arm', String(ticks));
@@ -4792,7 +4791,7 @@ globalThis.onMidiMessageInternal = function (data) {
             } else {
                 const modIdx = PERF_MOD_PAD_MAP[d1];
                 if (modIdx !== undefined) {
-                    if (perfLatchHeld) {
+                    if (perfLatchMode) {
                         perfModsToggled ^= (1 << modIdx);
                     } else {
                         perfModsHeld |= (1 << modIdx);
@@ -5184,13 +5183,15 @@ globalThis.onMidiMessageInternal = function (data) {
             if (d1 >= 68 && d1 <= 75) {
                 const subIdx = d1 - 68;
                 if (subIdx === 7) {
-                    /* Latch release: long-press clears all toggled mods */
+                    /* Latch release: short tap = toggle latch mode; long-press = clear all toggled */
                     const held = tickCount - perfLatchPressedTick;
                     if (held >= PERF_LATCH_LONG_PRESS) {
                         perfModsToggled = 0;
+                        perfLatchMode   = false;
                         sendPerfMods();
+                    } else {
+                        perfLatchMode = !perfLatchMode;
                     }
-                    perfLatchHeld = false;
                 } else if (subIdx < 6) {
                     /* Rate pad release: pop from stack */
                     const sIdx = perfStack.findIndex(function(e) { return e.idx === subIdx; });
