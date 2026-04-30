@@ -69,6 +69,7 @@ import {
     TPS_VALUES, NOTE_KEYS, SCALE_NAMES, SCALE_DISPLAY, DELAY_LABELS,
     fmtSign, fmtStretch, fmtLen, fmtRes, fmtPct, fmtNote, fmtPages, fmtUnis,
     fmtDly, fmtBool, fmtRoute, fmtPlain, fmtNA,
+    fmtArpStyle, fmtArpRate, fmtArpSteps,
     col4, parseActionRaw, MCUFONT, pixelPrint, pixelPrintC
 } from './ui_constants.mjs';
 
@@ -131,15 +132,16 @@ const BANKS = [
         p('Hrm2', 'Harmony 2',  'harm_interval2', 'track', -24, 24, 0, fmtSign, 8),
         _X, _X, _X, _X,
     ]},
-    /* 4 — SEQ ARP (pad 96) — stub: arpeggiator not in DSP */
+    /* 4 — SEQ ARP (pad 96) — per-clip arpeggiator; sits between NOTE FX and HARMZ */
     { name: 'SEQ ARP', knobs: [
-        p('On',   'Arp On/Off',   null, 'stub', 0, 0, 0, fmtNA),
-        p('Type', 'Arp Type',     null, 'stub', 0, 0, 0, fmtNA),
-        p('Sort', 'Note Sort',    null, 'stub', 0, 0, 0, fmtNA),
-        p('Hold', 'Hold',         null, 'stub', 0, 0, 0, fmtNA),
-        p('OctR', 'Octave Range', null, 'stub', 0, 0, 0, fmtNA),
-        p('Spd',  'Speed',        null, 'stub', 0, 0, 0, fmtNA),
-        _X, _X,
+        p('On',   'Arp On/Off',   'seq_arp_on',         'track', 0,    1,   0, fmtBool,     16),
+        p('Styl', 'Arp Style',    'seq_arp_style',      'track', 0,    8,   0, fmtArpStyle, 16),
+        p('Rate', 'Arp Rate',     'seq_arp_rate',       'track', 0,    9,   1, fmtArpRate,  16),
+        p('Oct',  'Octave Range', 'seq_arp_octaves',    'track', 1,    4,   1, fmtPlain,    16),
+        p('Gate', 'Arp Gate',     'seq_arp_gate',       'track', 1,    200, 50, fmtPct,     16),
+        p('Stps', 'Steps Mode',   'seq_arp_steps_mode', 'track', 0,    2,   0, fmtArpSteps, 16),
+        p('Decy', 'Vel Decay',    'seq_arp_vel_decay',  'track', -100, 100, 0, fmtSign,     16),
+        _X,
     ]},
     /* 5 — MIDI DLY (pad 97) — fully wired */
     { name: 'MIDI DLY', knobs: [
@@ -1323,8 +1325,8 @@ function drainLedInit() {
     if (ledInitIndex >= ledInitQueue.length) ledInitComplete = true;
 }
 
-/* Per-clip banks: NOTE FX (2), HARMZ (3), MIDI DLY (5) */
-const PER_CLIP_BANKS  = [2, 3, 5];
+/* Per-clip banks: NOTE FX (2), HARMZ (3), SEQ ARP (4), MIDI DLY (5) */
+const PER_CLIP_BANKS  = [2, 3, 4, 5];
 const PARAM_LED_BANKS = [2, 3, 4, 5]; /* NOTE FX, HARMZ, SEQ ARP, MIDI DLY */
 
 /* Read per-clip bank params from DSP into bankParams for track t.
@@ -1363,6 +1365,10 @@ function refreshPerClipBankParams(t) {
     for (let k = 0; k < 4; k++) bankParams[t][3][k] = parseInt(v[5 + k], 10) | 0;
     /* MIDI DLY bank (5): K0=dly K1=lvl K2=rep K3=vfb K4=pfb K5=gfb K6=clk K7=rnd */
     for (let k = 0; k < 8; k++) bankParams[t][5][k] = parseInt(v[9 + k], 10) | 0;
+    /* SEQ ARP bank (4): K0=on K1=style K2=rate K3=oct K4=gate K5=steps K6=decay (length-aware) */
+    if (v.length >= 24) {
+        for (let k = 0; k < 7; k++) bankParams[t][4][k] = parseInt(v[17 + k], 10) | 0;
+    }
     /* CLIP bank (1): Res (K3), Len (K4), SqFl (K7) — all per-clip */
     const tps    = clipTPS[t][ac] || 24;
     const tpsIdx = TPS_VALUES.indexOf(tps);
@@ -1562,7 +1568,7 @@ function resetFxBanks(t) {
     } else {
         host_module_set_param('t' + t + '_pfx_reset', '1');
     }
-    const targets = [2, 3, 5]; /* NOTE FX, HARMZ, MIDI DLY */
+    const targets = [2, 3, 4, 5]; /* NOTE FX, HARMZ, SEQ ARP, MIDI DLY */
     for (let bi = 0; bi < targets.length; bi++) {
         const b = targets[bi];
         for (let k = 0; k < 8; k++) {
