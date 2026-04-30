@@ -362,6 +362,14 @@ let looperTriplet = false;
  * Rate is captured at press time so toggling triplet mid-hold doesn't
  * retroactively change held steps' rates. */
 let looperStack = [];
+/* Looper-view lock: double-tap Loop in Session View to keep the looper UI
+ * alive after Loop is released. Single tap while locked → unlock + stop.
+ * Switching out of Session View also unlocks. */
+let looperViewLocked = false;
+let loopPressTick    = -1;     /* tickCount of most recent Loop press */
+let loopLastTapEndTick = -999; /* tickCount of last completed tap on Loop */
+const LOOP_TAP_TICKS  = 8;     /* ~190ms — press→release shorter than this is a tap, not a hold */
+const LOOP_DBLTAP_GAP = 16;    /* ~370ms — between taps for double-tap recognition */
 
 /* Live pad note input — isomorphic 4ths diatonic layout. */
 const SCALE_INTERVALS = [
@@ -2274,7 +2282,7 @@ function forceRedraw() {
     if (sessionView) {
         updateSessionLEDs();
         updateSceneMapLEDs();
-        if (loopHeld) updateLooperStepLEDs();
+        if (loopHeld || looperViewLocked) updateLooperStepLEDs();
         else for (let i = 0; i < 16; i++) setLED(16 + i, LED_OFF);
     } else {
         updateStepLEDs();
@@ -3156,6 +3164,17 @@ globalThis.tick = function () {
         /* Transport LEDs */
         setButtonLED(MovePlay, playing ? Green : LED_OFF);
         setButtonLED(MoveRec,  recordArmed ? Red : LED_OFF);
+        /* Loop LED: blink White while looper view is locked (Session View only),
+         * dim DarkGrey while a press is held momentarily, off otherwise. */
+        {
+            let loopColor = LED_OFF;
+            if (sessionView && looperViewLocked) {
+                loopColor = (Math.floor(tickCount / 24) % 2) ? White : DarkGrey;
+            } else if (sessionView && loopHeld) {
+                loopColor = DarkGrey;
+            }
+            setButtonLED(MoveLoop, loopColor);
+        }
         {
             const _muted      = trackMuted[activeTrack];
             const _soloed     = trackSoloed[activeTrack];
@@ -3166,7 +3185,7 @@ globalThis.tick = function () {
         if (sessionView) {
             updateSessionLEDs();
             updateSceneMapLEDs();
-            if (loopHeld) updateLooperStepLEDs();
+            if (loopHeld || looperViewLocked) updateLooperStepLEDs();
         } else {
             updateStepLEDs();
             /* Count-in flash: blink all step buttons white at quarter-note rate */
@@ -3515,6 +3534,15 @@ globalThis.onMidiMessageInternal = function (data) {
                     stepWasEmpty       = false;
                     stepWasHeld        = false;
                     stepBtnPressedTick.fill(-1);
+                    /* Leaving Session View clears any locked looper view + active loop. */
+                    if (!sessionView && (looperViewLocked || looperStack.length > 0)) {
+                        if (looperStack.length > 0 &&
+                                typeof host_module_set_param === 'function')
+                            host_module_set_param('looper_stop', '1');
+                        looperStack       = [];
+                        looperViewLocked  = false;
+                        loopHeld          = false;
+                    }
                     if (sessionView) {
                         for (let i = 0; i < 16; i++) setLED(16 + i, LED_OFF);
                         for (let t = 0; t < 8; t++) setLED(TRACK_PAD_BASE + t, LED_OFF);
@@ -3532,15 +3560,53 @@ globalThis.onMidiMessageInternal = function (data) {
          * Step button + Loop arms the global MIDI looper (handled in step
          * button input). Releasing Loop while looper is active stops it. */
         if (d1 === MoveLoop && sessionView) {
-            loopHeld = d2 === 127;
-            if (!loopHeld) {
-                /* Loop released: stop looper if active, clear held-step stack. */
-                if (looperStack.length > 0) {
-                    if (typeof host_module_set_param === 'function')
+            if (d2 === 127) {
+                loopPressTick = tickCount;
+                loopHeld      = true;
+                forceRedraw();
+                return;
+            }
+            /* Loop release. Double-tap detection: a tap = press→release within
+             * LOOP_TAP_TICKS. If two taps land within LOOP_DBLTAP_GAP, lock the
+             * looper view; the next single tap of Loop unlocks. */
+            const heldDuration = tickCount - loopPressTick;
+            const wasTap       = heldDuration < LOOP_TAP_TICKS;
+
+            if (looperViewLocked) {
+                /* Locked + tap of Loop → unlock + full stop. A long press
+                 * while locked just keeps the lock. */
+                if (wasTap) {
+                    looperViewLocked   = false;
+                    loopHeld           = false;
+                    loopLastTapEndTick = -999;
+                    if (looperStack.length > 0 &&
+                            typeof host_module_set_param === 'function')
                         host_module_set_param('looper_stop', '1');
                     looperStack = [];
+                    forceRedraw();
                 }
+                return;
             }
+
+            if (wasTap && (tickCount - loopLastTapEndTick) < LOOP_DBLTAP_GAP) {
+                /* Second tap within window → enter locked mode. Keep loopHeld=true
+                 * so updateLooperStepLEDs continues drawing the rate preview, and
+                 * preserve any active loop. */
+                looperViewLocked   = true;
+                loopHeld           = true;
+                loopLastTapEndTick = -999;
+                forceRedraw();
+                return;
+            }
+
+            if (wasTap) loopLastTapEndTick = tickCount;
+
+            /* Normal release: drop view, stop looper. */
+            loopHeld = false;
+            if (looperStack.length > 0 &&
+                    typeof host_module_set_param === 'function')
+                host_module_set_param('looper_stop', '1');
+            looperStack = [];
             forceRedraw();
             return;
         }
@@ -4403,8 +4469,8 @@ globalThis.onMidiMessageInternal = function (data) {
                     screenDirty = true;
                 }
                 /* Tap empty: no-op; muteHeld swallows all step buttons in Session View */
-            } else if (loopHeld) {
-                /* Loop + step button: arm the global MIDI looper.
+            } else if (loopHeld || looperViewLocked) {
+                /* Loop + step button (or locked-view + step): arm the global MIDI looper.
                  * Steps 1-6 = capture length (1/32, 1/16, 1/8, 1/4, 1/2, 1bar);
                  * step 16 = toggle triplet (steps 1-5 use triplet rates; step 6 stays 1bar). */
                 if (idx === 15) {
