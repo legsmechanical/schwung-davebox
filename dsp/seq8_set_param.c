@@ -369,6 +369,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             inst->playing        = 0;
             inst->count_in_ticks = 0;
             send_panic(inst);
+            looper_stop(inst);  /* also queues deferred silence for ROUTE_MOVE looper notes */
             seq8_ilog(inst, "SEQ8 transport: panic");
         } else if (!strcmp(val, "deactivate_all")) {
             int t;

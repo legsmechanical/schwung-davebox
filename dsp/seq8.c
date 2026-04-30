@@ -535,6 +535,7 @@ typedef struct {
     uint32_t perf_mods_active;
     uint32_t looper_cycle;
     uint8_t  looper_sync;               /* 1=wait for clock boundary (default), 0=start immediately */
+    uint8_t  looper_pending_silence;    /* 1=call looper_silence_active at next render_block tick (ROUTE_MOVE safe) */
     uint8_t  perf_emitted_pitch[NUM_TRACKS][128];
     struct {
         uint8_t  raw_pitch, emitted_pitch, track;
@@ -1347,6 +1348,11 @@ static int perf_apply(seq8_instance_t *inst, uint8_t tr_idx,
 /* Per master tick. Drives ARMED→CAPTURING boundary detection, capture window
  * advance, capture→loop transition, and event playback during LOOPING. */
 static void looper_tick(seq8_instance_t *inst) {
+    /* Drain deferred silence from looper_stop (render_block context → safe for ROUTE_MOVE). */
+    if (inst->looper_pending_silence) {
+        looper_silence_active(inst);
+        inst->looper_pending_silence = 0;
+    }
     uint16_t cap = inst->looper_capture_ticks;
     if (cap == 0) return;
 
@@ -1368,6 +1374,18 @@ static void looper_tick(seq8_instance_t *inst) {
             inst->looper_state    = LOOPER_STATE_LOOPING;
             inst->looper_pos      = 0;
             inst->looper_play_idx = 0;
+            /* Silence any in-flight sequencer notes on looper_on tracks so the
+             * LOOPING suppression doesn't orphan their note-offs. Set looper_emitting
+             * to bypass our own suppression hook (state is now LOOPING). */
+            {
+                int _t;
+                inst->looper_emitting = 1;
+                for (_t = 0; _t < NUM_TRACKS; _t++) {
+                    if (inst->tracks[_t].pfx.looper_on)
+                        silence_track_notes_v2(inst, &inst->tracks[_t]);
+                }
+                inst->looper_emitting = 0;
+            }
         }
         return;
     }
@@ -1439,8 +1457,11 @@ static void looper_tick(seq8_instance_t *inst) {
 /* Cleanup: silence active notes, clear state, return to IDLE. Safe to call
  * from any state. */
 static void looper_stop(seq8_instance_t *inst) {
+    /* Defer note-offs to next render_block tick so midi_inject_to_move works
+     * (pfx_send from set_param context doesn't release Move synth voices). */
     if (inst->looper_state == LOOPER_STATE_LOOPING)
-        looper_silence_active(inst);
+        inst->looper_pending_silence = 1;
+    /* perf_emitted_pitch left intact; looper_silence_active clears it when it fires. */
     inst->looper_state              = LOOPER_STATE_IDLE;
     inst->looper_pos                = 0;
     inst->looper_play_idx           = 0;
@@ -1449,7 +1470,6 @@ static void looper_stop(seq8_instance_t *inst) {
     inst->looper_pending_rate_ticks = 0;
     inst->looper_cycle              = 0;
     inst->perf_staccato_count       = 0;
-    memset(inst->perf_emitted_pitch, 0xFF, sizeof(inst->perf_emitted_pitch));
 }
 
 /* Brute-force note-off for all 128 notes on all active channels.
@@ -2564,7 +2584,8 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     inst->launch_quant = 0;   /* Now */
     inst->metro_on     = 1;    /* default: Count (count-in only) */
     inst->metro_vol    = 80;
-    inst->looper_sync  = 1;
+    inst->looper_sync            = 1;
+    inst->looper_pending_silence = 0;
     memset(inst->perf_emitted_pitch, 0xFF, sizeof(inst->perf_emitted_pitch));
     strncpy(inst->state_path, SEQ8_STATE_PATH_FALLBACK, sizeof(inst->state_path) - 1);
 
