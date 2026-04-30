@@ -510,11 +510,11 @@ typedef struct {
 #define PERF_MOD_TRITONE      (1u <<  5)  /* R1: +6 semitones */
 #define PERF_MOD_DRIFT        (1u <<  6)  /* R1: random walk ±6st, updates each cycle */
 #define PERF_MOD_STORM        (1u <<  7)  /* R1: random ±12st per event */
-#define PERF_MOD_SOFT_DECAY   (1u <<  8)  /* R2: vel ×0.5 */
-#define PERF_MOD_HARD_DECAY   (1u <<  9)  /* R2: vel ×0.25 */
-#define PERF_MOD_CRESC        (1u << 10)  /* R2: vel +13 per cycle, saturates 127 */
+#define PERF_MOD_DECRSC       (1u <<  8)  /* R2: vel ×(1-0.15*cycle), floor 10% — decrescendo */
+#define PERF_MOD_SWELL        (1u <<  9)  /* R2: vel follows 16-cycle triangle (loud→quiet→loud) */
+#define PERF_MOD_CRESC        (1u << 10)  /* R2: vel ×(1+0.15*cycle), ceil 127 — crescendo */
 #define PERF_MOD_PULSE        (1u << 11)  /* R2: even cycles full vel, odd cycles ×0.2 */
-#define PERF_MOD_SIDECHAIN    (1u << 12)  /* R2: vel -10 per successive note-on in cycle */
+#define PERF_MOD_SIDECHAIN    (1u << 12)  /* R2: vel ×(1-0.15*note_idx), floor 10% per cycle */
 #define PERF_MOD_STACCATO     (1u << 13)  /* R2: gate = cap/8, via staccato queue */
 #define PERF_MOD_LEGATO       (1u << 14)  /* R2: gate = cap-1, via staccato queue */
 #define PERF_MOD_RAMP_GATE    (1u << 15)  /* R2: gate ramps up across note-ons in cycle */
@@ -1336,7 +1336,9 @@ static int perf_apply(seq8_instance_t *inst, uint8_t tr_idx,
             pitch = (int)inst->perf_shuffle_pitches[ei];
     }
 
-    /* Pitch transforms: drum tracks bypass semitone-based mods. */
+    /* Pitch transforms: drum tracks bypass semitone-based mods.
+     * All interval mods use scale_transpose (scale-degree offsets) so results
+     * stay in-key. Oct↑/Oct↓ use chromatic ±12 — octave shift is scale-neutral. */
     int is_drum = tr_idx < NUM_TRACKS
                   && inst->tracks[tr_idx].pad_mode == PAD_MODE_DRUM;
     if (!is_drum) {
@@ -1348,47 +1350,54 @@ static int perf_apply(seq8_instance_t *inst, uint8_t tr_idx,
             pitch = scale_transpose(inst, pitch,  1);
         if (mods & PERF_MOD_SCALE_DOWN)
             pitch = scale_transpose(inst, pitch, -1);
+        /* 5th: +4 scale degrees (perfect 5th in major; scale-appropriate elsewhere). */
         if (mods & PERF_MOD_FIFTH)
-            pitch = pitch + 7 > 127 ? 127 : pitch + 7;
+            pitch = scale_transpose(inst, pitch, 4);
+        /* Tritone: +3 scale degrees (keeps result in-key). */
         if (mods & PERF_MOD_TRITONE)
-            pitch = pitch + 6 > 127 ? 127 : pitch + 6;
-        if (mods & PERF_MOD_DRIFT) {
-            int dp = pitch + (int)inst->perf_drift_offset;
-            pitch = dp < 0 ? 0 : dp > 127 ? 127 : dp;
-        }
+            pitch = scale_transpose(inst, pitch, 3);
+        /* Drift: accumulated scale-degree walk (±1 deg/cycle, clamped ±6). */
+        if (mods & PERF_MOD_DRIFT)
+            pitch = scale_transpose(inst, pitch, (int)inst->perf_drift_offset);
+        /* Storm: random ±6 scale degrees. */
         if (mods & PERF_MOD_STORM) {
             unsigned s = (unsigned)raw_d1 * 31337u + (unsigned)inst->looper_pos * 7919u
                        + (unsigned)inst->looper_cycle * 6271u + 89u;
-            int sp = pitch + (int)(s % 25u) - 12;
-            pitch = sp < 0 ? 0 : sp > 127 ? 127 : sp;
+            pitch = scale_transpose(inst, pitch, (int)(s % 13u) - 6);
         }
+        /* Glitch: random ±2 scale degrees. */
         if (mods & PERF_MOD_GLITCH) {
             unsigned s = (unsigned)raw_d1 * 31337u + (unsigned)inst->looper_pos * 7919u
                        + (unsigned)inst->looper_cycle * 6271u;
-            int gp = pitch + (int)(s % 11u) - 5;
-            pitch = gp < 0 ? 0 : gp > 127 ? 127 : gp;
+            pitch = scale_transpose(inst, pitch, (int)(s % 5u) - 2);
         }
-        /* Stagger: note N in cycle gets +N semitones chromatic (resets each cycle). */
-        if (mods & PERF_MOD_STAGGER) {
-            int sp = pitch + (int)(inst->perf_cycle_note_idx % 12u);
-            pitch = sp > 127 ? 127 : sp;
-        }
+        /* Stagger: note N in cycle gets +N scale degrees (resets each cycle). */
+        if (mods & PERF_MOD_STAGGER)
+            pitch = scale_transpose(inst, pitch, (int)(inst->perf_cycle_note_idx % 7u));
     }
 
-    /* Velocity transforms: apply to all tracks including drum. */
-    if (mods & PERF_MOD_SOFT_DECAY)
-        vel = vel / 2 < 1 ? 1 : vel / 2;
-    if (mods & PERF_MOD_HARD_DECAY)
-        vel = vel / 4 < 1 ? 1 : vel / 4;
+    /* Velocity transforms: all multiplicative so effect scales with incoming vel. */
+    if (mods & PERF_MOD_DECRSC) {
+        int f = 100 - (int)inst->looper_cycle * 15;
+        vel = vel * (f < 10 ? 10 : f) / 100;
+        if (vel < 1) vel = 1;
+    }
+    if (mods & PERF_MOD_SWELL) {
+        int phase = (int)(inst->looper_cycle % 16u);
+        int sw    = 8 - (phase < 8 ? phase : 16 - phase);  /* 8→0→8 over 16 cycles */
+        vel = vel * (sw + 2) / 10;
+        if (vel < 1) vel = 1;
+    }
     if (mods & PERF_MOD_CRESC) {
-        int boost = (int)inst->looper_cycle * 13;
-        vel = vel + boost > 127 ? 127 : vel + boost;
+        vel = vel * (100 + (int)inst->looper_cycle * 15) / 100;
+        if (vel > 127) vel = 127;
     }
     if ((mods & PERF_MOD_PULSE) && (inst->looper_cycle & 1u))
         vel = vel / 5 < 1 ? 1 : vel / 5;
     if (mods & PERF_MOD_SIDECHAIN) {
-        int cut = (int)inst->perf_cycle_note_idx * 10;
-        vel = vel - cut < 1 ? 1 : vel - cut;
+        int f = 100 - (int)inst->perf_cycle_note_idx * 15;
+        vel = vel * (f < 10 ? 10 : f) / 100;
+        if (vel < 1) vel = 1;
     }
 
     *d1 = (uint8_t)(pitch < 0 ? 0 : pitch > 127 ? 127 : pitch);

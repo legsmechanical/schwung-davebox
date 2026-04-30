@@ -375,7 +375,7 @@ const PERF_MOD_PAD_MAP = Object.freeze({
 });
 const PERF_MOD_NAMES = [
     'Oct↑','Oct↓','Sc↑','Sc↓','5th','Triton','Drift','Storm',
-    'Soft','Hard','Cresc','Pulse','Sdchn','Stac','Lgto','RmpG',
+    'Decrsc','Swell','Cresc','Pulse','Sdchn','Stac','Lgto','RmpG',
     '½time','3Skip','Phnm','Sprs','Gltch','Stggr','Shfl','Back',
 ];
 
@@ -388,11 +388,11 @@ const PERF_FACTORY_PRESETS = [
              8=Soft 9=Hard 10=Cresc 11=Pulse 12=Sdchn 13=Stac 14=Lgto 15=RmpG
              16=½time 17=3Skip 18=Phnm 19=Sprs 20=Gltch 21=Stggr 22=Shfl 23=Back */
     { name: 'Float',    mods: (1<<2)|(1<<14) },           /* Sc↑ + Lgto */
-    { name: 'Sink',     mods: (1<<1)|(1<<9)|(1<<13) },    /* Oct↓ + Hard + Stac */
+    { name: 'Sink',     mods: (1<<1)|(1<<8)|(1<<13) },    /* Oct↓ + Decrsc + Stac */
     { name: 'Heartbt',  mods: (1<<11)|(1<<16) },          /* Pulse + ½time */
-    { name: 'F.Dust',   mods: (1<<7)|(1<<8)|(1<<19) },    /* Storm + Soft + Sprs */
+    { name: 'F.Dust',   mods: (1<<7)|(1<<9)|(1<<19) },    /* Storm + Swell + Sprs */
     { name: 'Robot',    mods: (1<<5)|(1<<11)|(1<<17) },   /* Triton + Pulse + 3Skip */
-    { name: 'Dissolve', mods: (1<<6)|(1<<9)|(1<<18) },    /* Drift + Hard + Phnm */
+    { name: 'Dissolve', mods: (1<<6)|(1<<8)|(1<<18) },    /* Drift + Decrsc + Phnm */
     { name: 'Chaos',    mods: (1<<7)|(1<<20)|(1<<23) },   /* Storm + Gltch + Back */
     { name: 'Lift',     mods: (1<<2)|(1<<10)|(1<<15) },   /* Sc↑ + Cresc + RmpG */
 ];
