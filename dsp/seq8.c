@@ -205,12 +205,11 @@ typedef struct {
     int fb_note_random;     /* 0 or 1 */
     int fb_gate_time;       /* -100..+100 */
     int fb_clock;           /* -100..+100 */
-    /* SEQ ARP (sits between NOTE FX and HARMZ) — runtime engine state below */
+    /* SEQ ARP (sits between NOTE FX and HARMZ) — runtime engine state below.
+     * Sequencer-source notes route through pfx_seq_note_on/off which apply
+     * the arp gate. Live pad / external / arp emit calls go through plain
+     * pfx_note_on/off and bypass the arp entirely. */
     arp_engine_t arp;
-    /* Re-entrancy guard: when 1, pfx_note_on/off bypass the arp gate.
-     * Set during arp_fire_step / arp_silence to allow arp output to flow
-     * through the existing emit path. */
-    uint8_t      arp_emitting;
     /* Runtime */
     uint64_t    sample_counter;
     double      cached_bpm;
@@ -1424,19 +1423,14 @@ static void pfx_reset(play_fx_t *fx) {
 }
 
 /* Process a note-on through the chain. Sends immediate output via
- * pfx_send; queues unison stagger copies and delay repeats. */
+ * pfx_send; queues unison stagger copies and delay repeats.
+ *
+ * NOTE: SEQ ARP gating lives in pfx_seq_note_on (sequencer-only path).
+ * Live pad / external MIDI / arp emit calls go through this function
+ * directly and bypass the arp engine. */
 static void pfx_note_on(seq8_instance_t *inst, seq8_track_t *tr,
                         uint8_t orig_note, uint8_t vel) {
     play_fx_t   *fx  = &tr->pfx;
-
-    /* SEQ ARP gate: when on (and not in re-entrant emit), capture into the
-     * arp's held buffer instead of firing now. Velocity_offset applies at
-     * arp emit time so changing it mid-arp affects future steps. */
-    if (fx->arp.on && !fx->arp_emitting) {
-        arp_add_note(&fx->arp, orig_note, vel);
-        return;
-    }
-
     uint8_t      ch  = tr->channel;
     uint64_t     now = fx->sample_counter;
     pfx_active_t *an = &fx->active_notes[orig_note];
@@ -1494,16 +1488,11 @@ static void pfx_note_on(seq8_instance_t *inst, seq8_track_t *tr,
 }
 
 /* Process a note-off. Sends/queues note-offs for harmony copies and all
- * delay repeat echoes. Echoes never re-enter the chain. */
+ * delay repeat echoes. Echoes never re-enter the chain.
+ * SEQ ARP gating lives in pfx_seq_note_off; this is the live/raw path. */
 static void pfx_note_off(seq8_instance_t *inst, seq8_track_t *tr,
                          uint8_t orig_note) {
     play_fx_t   *fx  = &tr->pfx;
-
-    if (fx->arp.on && !fx->arp_emitting) {
-        arp_remove_note(inst, tr, orig_note);
-        return;
-    }
-
     pfx_active_t *an = &fx->active_notes[orig_note];
     if (!an->active) return;
 
@@ -1548,6 +1537,29 @@ static void pfx_note_off_imm(seq8_instance_t *inst, seq8_track_t *tr,
 }
 
 /* ------------------------------------------------------------------ */
+/* Sequencer-source note-on/off — routes through SEQ ARP when on.        */
+/* Only callers fed by the sequencer note-on scan / gate countdown      */
+/* should use these. Live pad and external MIDI use pfx_note_on/off.    */
+/* ------------------------------------------------------------------ */
+static void pfx_seq_note_on(seq8_instance_t *inst, seq8_track_t *tr,
+                             uint8_t orig_note, uint8_t vel) {
+    if (tr->pfx.arp.on) {
+        arp_add_note(&tr->pfx.arp, orig_note, vel);
+        return;
+    }
+    pfx_note_on(inst, tr, orig_note, vel);
+}
+
+static void pfx_seq_note_off(seq8_instance_t *inst, seq8_track_t *tr,
+                              uint8_t orig_note) {
+    if (tr->pfx.arp.on) {
+        arp_remove_note(inst, tr, orig_note);
+        return;
+    }
+    pfx_note_off(inst, tr, orig_note);
+}
+
+/* ------------------------------------------------------------------ */
 /* SEQ ARP engine                                                       */
 /* ------------------------------------------------------------------ */
 
@@ -1571,7 +1583,7 @@ static void arp_add_note(arp_engine_t *a, uint8_t pitch, uint8_t vel) {
 }
 
 static void arp_remove_note(seq8_instance_t *inst, seq8_track_t *tr, uint8_t pitch) {
-    (void)inst;
+    (void)inst; (void)tr;
     arp_engine_t *a = &tr->pfx.arp;
     int i, found = -1;
     for (i = 0; i < a->held_count; i++)
@@ -1595,11 +1607,7 @@ static void arp_remove_note(seq8_instance_t *inst, seq8_track_t *tr, uint8_t pit
 /* Drop all held notes, silence sounding, and reset cycle state. */
 static void arp_silence(seq8_instance_t *inst, seq8_track_t *tr) {
     arp_engine_t *a = &tr->pfx.arp;
-    if (a->sounding_active) {
-        tr->pfx.arp_emitting = 1;
-        pfx_note_off(inst, tr, a->sounding_pitch);
-        tr->pfx.arp_emitting = 0;
-    }
+    if (a->sounding_active) pfx_note_off(inst, tr, a->sounding_pitch);
     arp_clear_runtime(a);
 }
 
@@ -1773,9 +1781,7 @@ static void arp_fire_step(seq8_instance_t *inst, seq8_track_t *tr) {
 
     /* Silence prior sounding note before firing next (or before resting in Mute). */
     if (a->sounding_active) {
-        fx->arp_emitting = 1;
         pfx_note_off(inst, tr, a->sounding_pitch);
-        fx->arp_emitting = 0;
         a->sounding_active = 0;
     }
 
@@ -1823,9 +1829,7 @@ static void arp_fire_step(seq8_instance_t *inst, seq8_track_t *tr) {
     if (v > 127) v = 127;
 
     /* Emit through NOTE FX → HARMZ → DELAY (existing chain). */
-    fx->arp_emitting = 1;
     pfx_note_on(inst, tr, pitch, (uint8_t)v);
-    fx->arp_emitting = 0;
 
     /* Track sounding note as the post-NOTE-FX primary so note-off matches. */
     int sa = inst->scale_aware && tr->pad_mode == PAD_MODE_MELODIC_SCALE;
@@ -1853,9 +1857,7 @@ static void arp_tick(seq8_instance_t *inst, seq8_track_t *tr) {
     if (a->sounding_active && a->gate_remaining > 0) {
         a->gate_remaining--;
         if (a->gate_remaining == 0) {
-            fx->arp_emitting = 1;
             pfx_note_off(inst, tr, a->sounding_pitch);
-            fx->arp_emitting = 0;
             a->sounding_active = 0;
         }
     }
@@ -2866,7 +2868,7 @@ static void silence_track_notes(seq8_instance_t *inst, seq8_track_t *tr) {
     if (tr->note_active) {
         int n;
         for (n = 0; n < (int)tr->pending_note_count; n++)
-            pfx_note_off(inst, tr, tr->pending_notes[n]);
+            pfx_seq_note_off(inst, tr, tr->pending_notes[n]);
         tr->note_active        = 0;
         tr->pending_note_count = 0;
     }
@@ -2876,7 +2878,7 @@ static void silence_track_notes(seq8_instance_t *inst, seq8_track_t *tr) {
 static void silence_track_notes_v2(seq8_instance_t *inst, seq8_track_t *tr) {
     int pp;
     for (pp = 0; pp < (int)tr->play_pending_count; pp++)
-        pfx_note_off(inst, tr, tr->play_pending[pp].pitch);
+        pfx_seq_note_off(inst, tr, tr->play_pending[pp].pitch);
     tr->play_pending_count = 0;
     tr->note_active = 0;
     tr->pending_note_count = 0;
@@ -2903,7 +2905,7 @@ static void begin_step_note(seq8_instance_t *inst, seq8_track_t *tr,
         int pi = (int)tr->pending_note_count;
         tr->pending_notes[pi] = cl->step_notes[s][ni];
         tr->pending_note_count++;
-        pfx_note_on(inst, tr, tr->pending_notes[pi], cl->step_vel[s]);
+        pfx_seq_note_on(inst, tr, tr->pending_notes[pi], cl->step_vel[s]);
     }
 }
 
@@ -3000,7 +3002,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                     if (tr->play_pending[pp].ticks_remaining > 0)
                         tr->play_pending[pp].ticks_remaining--;
                     if (tr->play_pending[pp].ticks_remaining == 0) {
-                        pfx_note_off(inst, tr, tr->play_pending[pp].pitch);
+                        pfx_seq_note_off(inst, tr, tr->play_pending[pp].pitch);
                         tr->play_pending[pp] = tr->play_pending[tr->play_pending_count - 1];
                         tr->play_pending_count--;
                     } else {
@@ -3080,7 +3082,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                             if (effective_note_tick(n, dlc, tr->pfx.quantize) != cct) continue;
                             { int pp; for (pp = 0; pp < (int)tr->play_pending_count; pp++) {
                                 if (tr->play_pending[pp].pitch == lane_note) {
-                                    pfx_note_off(inst, tr, lane_note);
+                                    pfx_seq_note_off(inst, tr, lane_note);
                                     tr->play_pending[pp] = tr->play_pending[tr->play_pending_count - 1];
                                     tr->play_pending_count--;
                                     break;
@@ -3094,7 +3096,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                                 tr->play_pending_count++;
                                 tr->note_active = 1;
                             }
-                            pfx_note_on(inst, tr, lane_note, n->vel);
+                            pfx_seq_note_on(inst, tr, lane_note, n->vel);
                         }
                     }
                 }
@@ -3109,7 +3111,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                         if (effective_note_tick(n, cl, tr->pfx.quantize) != cct) continue;
                         { int pp; for (pp = 0; pp < (int)tr->play_pending_count; pp++) {
                             if (tr->play_pending[pp].pitch == n->pitch) {
-                                pfx_note_off(inst, tr, n->pitch);
+                                pfx_seq_note_off(inst, tr, n->pitch);
                                 tr->play_pending[pp] = tr->play_pending[tr->play_pending_count - 1];
                                 tr->play_pending_count--;
                                 break;
@@ -3124,7 +3126,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                             tr->play_pending_count++;
                             tr->note_active = 1;
                         }
-                        pfx_note_on(inst, tr, n->pitch, n->vel);
+                        pfx_seq_note_on(inst, tr, n->pitch, n->vel);
                     }
                 }
             }
