@@ -535,7 +535,6 @@ typedef struct {
     uint32_t perf_mods_active;
     uint32_t looper_cycle;
     uint8_t  looper_sync;               /* 1=wait for clock boundary (default), 0=start immediately */
-    uint16_t looper_slice_ticks;        /* 0=play full buffer; >0=loop only first N ticks of captured buffer */
     uint8_t  perf_emitted_pitch[NUM_TRACKS][128];
     struct {
         uint8_t  raw_pitch, emitted_pitch, track;
@@ -1331,7 +1330,7 @@ static int perf_apply(seq8_instance_t *inst, uint8_t tr_idx,
 
     /* Staccato: enqueue a short note-off at looper_pos + cap/8 */
     if ((mods & PERF_MOD_STACCATO) && inst->perf_staccato_count < 16) {
-        uint16_t cap = inst->looper_slice_ticks ? inst->looper_slice_ticks : inst->looper_capture_ticks;
+        uint16_t cap = inst->looper_capture_ticks;
         uint16_t gap = cap / 8 < 2 ? 2 : cap / 8;
         uint16_t fire = (uint16_t)((inst->looper_pos + (uint32_t)gap) % cap);
         int si = (int)inst->perf_staccato_count++;
@@ -1372,7 +1371,6 @@ static void looper_tick(seq8_instance_t *inst) {
     }
 
     if (inst->looper_state == LOOPER_STATE_LOOPING) {
-        uint32_t eff_cap = inst->looper_slice_ticks ? (uint32_t)inst->looper_slice_ticks : (uint32_t)cap;
         /* Fire staccato pending note-offs due at this position. */
         {
             int _si;
@@ -1413,10 +1411,9 @@ static void looper_tick(seq8_instance_t *inst) {
             else if (hi == 0x80 || (hi == 0x90)) looper_mark_active(inst, tr_idx, raw_d1, 0xFF);
         }
         inst->looper_pos++;
-        if (inst->looper_pos >= eff_cap) {
+        if (inst->looper_pos >= cap) {
             /* Loop boundary: process queued rate change or increment cycle counter. */
-            if (!inst->looper_slice_ticks &&
-                    inst->looper_pending_rate_ticks != 0 &&
+            if (inst->looper_pending_rate_ticks != 0 &&
                     inst->looper_pending_rate_ticks != inst->looper_capture_ticks) {
                 looper_silence_active(inst);
                 inst->looper_capture_ticks      = inst->looper_pending_rate_ticks;
@@ -1448,7 +1445,6 @@ static void looper_stop(seq8_instance_t *inst) {
     inst->looper_event_count        = 0;
     inst->looper_capture_ticks      = 0;
     inst->looper_pending_rate_ticks = 0;
-    inst->looper_slice_ticks        = 0;
     inst->looper_cycle              = 0;
     inst->perf_staccato_count       = 0;
     memset(inst->perf_emitted_pitch, 0xFF, sizeof(inst->perf_emitted_pitch));
@@ -2566,8 +2562,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     inst->launch_quant = 0;   /* Now */
     inst->metro_on     = 1;    /* default: Count (count-in only) */
     inst->metro_vol    = 80;
-    inst->looper_sync        = 1;
-    inst->looper_slice_ticks = 0;
+    inst->looper_sync  = 1;
     memset(inst->perf_emitted_pitch, 0xFF, sizeof(inst->perf_emitted_pitch));
     strncpy(inst->state_path, SEQ8_STATE_PATH_FALLBACK, sizeof(inst->state_path) - 1);
 

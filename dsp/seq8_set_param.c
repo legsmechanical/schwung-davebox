@@ -569,18 +569,6 @@ static void set_param(void *instance, const char *key, const char *val) {
         inst->looper_sync = my_atoi(val) ? 1 : 0;
         return;
     }
-    if (!strcmp(key, "looper_slice")) {
-        uint16_t new_slice = (uint16_t)(unsigned int)my_atoi(val);
-        if (new_slice != inst->looper_slice_ticks) {
-            if (inst->looper_state == LOOPER_STATE_LOOPING)
-                looper_silence_active(inst);
-            inst->looper_slice_ticks  = new_slice;
-            inst->looper_pos          = 0;
-            inst->looper_play_idx     = 0;
-            inst->perf_staccato_count = 0;
-        }
-        return;
-    }
     if (!strcmp(key, "perf_mods")) {
         inst->perf_mods_active = (uint32_t)(unsigned int)my_atoi(val);
         return;
