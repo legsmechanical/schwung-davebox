@@ -361,6 +361,7 @@ let loopHeld        = false;
 const LOOPER_RATES_STRAIGHT = [12, 24, 48, 96, 192, 384];   /* 1/32, 1/16, 1/8, 1/4, 1/2, 1bar */
 let perfSync         = true;           /* true=wait for clock boundary; false=start immediately */
 let perfStack        = [];              /* [{idx, ticks}] — top is active rate */
+let perfStickyLengths = new Set();       /* length-pad indices toggled sticky via Shift+pad */
 let perfModsToggled  = 0;              /* sticky mods set while in Latch mode */
 let perfModsHeld     = 0;              /* momentary held mod bitmask */
 let perfLatchMode    = false;          /* true=Latch mode on: mod presses are toggles */
@@ -3659,11 +3660,10 @@ globalThis.onMidiMessageInternal = function (data) {
                     stepBtnPressedTick.fill(-1);
                     /* Leaving Session View clears Perf Mode state + stops any active loop. */
                     if (!sessionView && (perfViewLocked || perfStack.length > 0)) {
-                        if (perfStack.length > 0 &&
-                                typeof host_module_set_param === 'function')
-                            host_module_set_param('looper_stop', '1');
-                        perfStack        = [];
-                        perfViewLocked   = false;
+                        const _hadLoop = perfStack.length > 0;
+                        perfStack         = [];
+                        perfStickyLengths = new Set();
+                        perfViewLocked    = false;
                         loopHeld         = false;
                         perfModsHeld     = 0;
                         perfModsToggled  = 0;
@@ -3671,6 +3671,9 @@ globalThis.onMidiMessageInternal = function (data) {
                         perfRecalledSlot = -1;
                         perfLatchMode    = false;
                         sendPerfMods();
+                        /* looper_stop last so set_param coalescing can't eat it */
+                        if (_hadLoop && typeof host_module_set_param === 'function')
+                            host_module_set_param('looper_stop', '1');
                         invalidateLEDCache();
                     }
                     if (sessionView) {
@@ -3705,16 +3708,17 @@ globalThis.onMidiMessageInternal = function (data) {
                     perfViewLocked     = false;
                     loopHeld           = false;
                     loopLastTapEndTick = -999;
-                    if (perfStack.length > 0 &&
-                            typeof host_module_set_param === 'function')
-                        host_module_set_param('looper_stop', '1');
-                    perfStack        = [];
+                    perfStack         = [];
+                    perfStickyLengths = new Set();
                     perfModsHeld     = 0;
                     perfModsToggled  = 0;
                     perfRecalledMods = 0;
                     perfRecalledSlot = -1;
                     perfLatchMode    = false;
                     sendPerfMods();
+                    /* looper_stop last so set_param coalescing can't eat it */
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('looper_stop', '1');
                     invalidateLEDCache();
                     forceRedraw();
                 }
@@ -3732,17 +3736,26 @@ globalThis.onMidiMessageInternal = function (data) {
 
             if (wasTap) loopLastTapEndTick = tickCount;
 
-            /* Normal release: exit Perf Mode, stop loop, clear all mods. */
-            loopHeld         = false;
-            perfModsHeld     = 0;
-            perfModsToggled  = 0;
-            perfRecalledMods = 0;
-            perfRecalledSlot = -1;
-            perfLatchMode    = false;
-            if (perfStack.length > 0 &&
-                    typeof host_module_set_param === 'function')
-                host_module_set_param('looper_stop', '1');
-            perfStack = [];
+            /* Normal release: if sticky lengths exist, keep perf mode locked + loop running.
+             * Otherwise exit Perf Mode, stop loop, clear all mods. */
+            loopHeld     = false;
+            perfModsHeld = 0;
+            if (perfStickyLengths.size > 0) {
+                perfViewLocked = true;
+                /* Filter perfStack down to sticky entries only */
+                perfStack = perfStack.filter(function(e) { return perfStickyLengths.has(e.idx); });
+                if (perfStack.length > 0 && typeof host_module_set_param === 'function')
+                    host_module_set_param('looper_arm', String(perfStack[perfStack.length - 1].ticks));
+            } else {
+                perfModsToggled  = 0;
+                perfRecalledMods = 0;
+                perfRecalledSlot = -1;
+                perfLatchMode    = false;
+                if (perfStack.length > 0 &&
+                        typeof host_module_set_param === 'function')
+                    host_module_set_param('looper_stop', '1');
+                perfStack = [];
+            }
             sendPerfMods();
             invalidateLEDCache();
             forceRedraw();
@@ -4846,8 +4859,30 @@ globalThis.onMidiMessageInternal = function (data) {
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('looper_sync', perfSync ? '1' : '0');
                 } else {
-                    if (perfStack.findIndex(function(e) { return e.idx === subIdx; }) < 0) {
-                        const ticks = LOOPER_RATES_STRAIGHT[subIdx];
+                    const ticks = LOOPER_RATES_STRAIGHT[subIdx];
+                    if (shiftHeld) {
+                        /* Shift+length toggles sticky hold for that length */
+                        if (perfStickyLengths.has(subIdx)) {
+                            /* Remove sticky + pop from stack */
+                            perfStickyLengths.delete(subIdx);
+                            const sIdx = perfStack.findIndex(function(e) { return e.idx === subIdx; });
+                            if (sIdx >= 0) perfStack.splice(sIdx, 1);
+                            if (typeof host_module_set_param === 'function') {
+                                if (perfStack.length === 0) host_module_set_param('looper_stop', '1');
+                                else host_module_set_param('looper_arm', String(perfStack[perfStack.length - 1].ticks));
+                            }
+                            if (perfStickyLengths.size === 0 && !loopHeld) perfViewLocked = false;
+                        } else {
+                            /* Add sticky + ensure on stack + lock view */
+                            perfStickyLengths.add(subIdx);
+                            if (perfStack.findIndex(function(e) { return e.idx === subIdx; }) < 0) {
+                                perfStack.push({ idx: subIdx, ticks: ticks });
+                                if (typeof host_module_set_param === 'function')
+                                    host_module_set_param('looper_arm', String(ticks));
+                            }
+                            perfViewLocked = true;
+                        }
+                    } else if (perfStack.findIndex(function(e) { return e.idx === subIdx; }) < 0) {
                         perfStack.push({ idx: subIdx, ticks: ticks });
                         if (typeof host_module_set_param === 'function')
                             host_module_set_param('looper_arm', String(ticks));
@@ -5257,17 +5292,19 @@ globalThis.onMidiMessageInternal = function (data) {
                         sendPerfMods();
                     }
                 } else if (subIdx < 6) {
-                    /* Rate pad release: pop from stack */
-                    const sIdx = perfStack.findIndex(function(e) { return e.idx === subIdx; });
-                    if (sIdx >= 0) {
-                        perfStack.splice(sIdx, 1);
-                        if (perfStack.length === 0) {
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('looper_stop', '1');
-                        } else {
-                            const top = perfStack[perfStack.length - 1];
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('looper_arm', String(top.ticks));
+                    /* Rate pad release: pop from stack — unless sticky-held */
+                    if (!perfStickyLengths.has(subIdx)) {
+                        const sIdx = perfStack.findIndex(function(e) { return e.idx === subIdx; });
+                        if (sIdx >= 0) {
+                            perfStack.splice(sIdx, 1);
+                            if (perfStack.length === 0) {
+                                if (typeof host_module_set_param === 'function')
+                                    host_module_set_param('looper_stop', '1');
+                            } else {
+                                const top = perfStack[perfStack.length - 1];
+                                if (typeof host_module_set_param === 'function')
+                                    host_module_set_param('looper_arm', String(top.ticks));
+                            }
                         }
                     }
                 }
