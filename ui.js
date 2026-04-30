@@ -25,6 +25,7 @@ import {
     DeepMagenta,
     Cyan,
     PurpleBlue,
+    DarkPurple,
     Bright,
     BurntOrange,
     White,
@@ -2312,11 +2313,11 @@ function sendPerfMods() {
 function updatePerfModeLEDs() {
     if (!ledInitComplete) return;
     const activeMods = perfModsToggled | perfModsHeld | perfRecalledMods;
-    /* Step buttons: preset slots. Active = White, has content = PurpleBlue, empty = off. */
+    /* Step buttons: preset slots. Active = White, has content = PurpleBlue, empty = DarkPurple. */
     for (let i = 0; i < 16; i++) {
         if (i === perfRecalledSlot)         setLED(16 + i, White);
         else if (perfSnapshots[i] !== 0)    setLED(16 + i, PurpleBlue);
-        else                                setLED(16 + i, LED_OFF);
+        else                                setLED(16 + i, DarkPurple);
     }
 
     /* R0 (68-75): rate pads 0-5, sync toggle (6), latch (7) */
@@ -4572,14 +4573,16 @@ globalThis.onMidiMessageInternal = function (data) {
                 perfSnapshots[idx] = perfModsToggled | perfModsHeld | perfRecalledMods;
                 showActionPopup('SAVED');
             } else if (perfRecalledSlot === idx) {
-                /* Tap active slot again: deactivate recall */
+                /* Tap active slot again: deactivate and clear all mods */
                 perfRecalledSlot = -1;
                 perfRecalledMods = 0;
+                perfModsToggled = 0;
                 sendPerfMods();
             } else {
-                /* Tap a slot: recall its mods */
+                /* Tap a slot: recall its mods (clean load — clear any prior toggles) */
                 perfRecalledSlot = idx;
                 perfRecalledMods = perfSnapshots[idx];
+                perfModsToggled = 0;
                 sendPerfMods();
             }
             forceRedraw();
