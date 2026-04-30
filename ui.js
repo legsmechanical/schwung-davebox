@@ -364,32 +364,37 @@ let perfModsHeld     = 0;              /* momentary held mod bitmask */
 let perfLatchMode    = false;          /* true=Latch mode on: mod presses are toggles */
 let perfLatchPressedTick = -1;
 const PERF_LATCH_LONG_PRESS = 100;     /* ~510ms → clear all toggled mods + exit Latch mode */
-/* Pad → modifier index map (note number → bit index into perf_mods_active) */
+/* Pad → modifier bit index. R1=bits 0-7 (pitch), R2=bits 8-15 (vel/gate), R3=bits 16-23 (wild). */
 const PERF_MOD_PAD_MAP = Object.freeze({
-    76: 0, /* OCT_UP    — R1 PITCH */
-    77: 1, /* SCALE_DOWN — R1 PITCH */
-    84: 2, /* CRESC     — R2 VEL */
-    85: 3, /* SOFT_DECAY — R2 VEL */
-    86: 4, /* STACCATO  — R2 VEL */
-    92: 5, /* HALFTIME  — R3 WILD */
-    93: 6, /* GLITCH    — R3 WILD */
-    94: 7, /* SPARSE    — R3 WILD */
+    76: 0,  /* Oct↑    */ 77: 1,  /* Oct↓    */ 78: 2,  /* Sc↑     */ 79: 3,  /* Sc↓     */
+    80: 4,  /* 5th     */ 81: 5,  /* Triton  */ 82: 6,  /* Drift   */ 83: 7,  /* Storm   */
+    84: 8,  /* Soft    */ 85: 9,  /* Hard    */ 86: 10, /* Cresc   */ 87: 11, /* Pulse   */
+    88: 12, /* Sdchn   */ 89: 13, /* Stac    */ 90: 14, /* Lgto    */ 91: 15, /* RmpG    */
+    92: 16, /* ½time   */ 93: 17, /* 3Skip   */ 94: 18, /* Phnm    */ 95: 19, /* Sprs    */
+    96: 20, /* Gltch   */ 97: 21, /* Stggr   */ 98: 22, /* Shfl    */ 99: 23, /* Back    */
 });
-const PERF_MOD_NAMES = ['Oct↑','Sc↓','Cresc','Soft','Stac','½time','Glitch','Sparse'];
+const PERF_MOD_NAMES = [
+    'Oct↑','Oct↓','Sc↑','Sc↓','5th','Triton','Drift','Storm',
+    'Soft','Hard','Cresc','Pulse','Sdchn','Stac','Lgto','RmpG',
+    '½time','3Skip','Phnm','Sprs','Gltch','Stggr','Shfl','Back',
+];
 
 /* Preset snapshots: 16 slots (step buttons 1-16).
  * perfRecalledSlot: which slot is active (-1 = none).
  * perfRecalledMods: bitmask from the recalled slot (ORed into sendPerfMods).
  * Factory presets populate slots 0-7 (steps 1-8) at init. */
 const PERF_FACTORY_PRESETS = [
-    { name: 'Float',   mods: 0x18 }, /* Soft Decay + Staccato */
-    { name: 'Sink',    mods: 0x0A }, /* Scale↓ + Soft Decay */
-    { name: 'Heartbt', mods: 0x24 }, /* Cresc + Halftime */
-    { name: 'F.Dust',  mods: 0x88 }, /* Soft Decay + Sparse */
-    { name: 'Robot',   mods: 0x50 }, /* Staccato + Glitch */
-    { name: 'Dissolve',mods: 0x82 }, /* Scale↓ + Sparse */
-    { name: 'Chaos',   mods: 0xE0 }, /* Halftime + Glitch + Sparse */
-    { name: 'Lift',    mods: 0x05 }, /* Oct↑ + Cresc */
+    /* bits: 0=Oct↑ 1=Oct↓ 2=Sc↑ 3=Sc↓ 4=5th 5=Triton 6=Drift 7=Storm
+             8=Soft 9=Hard 10=Cresc 11=Pulse 12=Sdchn 13=Stac 14=Lgto 15=RmpG
+             16=½time 17=3Skip 18=Phnm 19=Sprs 20=Gltch 21=Stggr 22=Shfl 23=Back */
+    { name: 'Float',    mods: (1<<2)|(1<<14) },           /* Sc↑ + Lgto */
+    { name: 'Sink',     mods: (1<<1)|(1<<9)|(1<<13) },    /* Oct↓ + Hard + Stac */
+    { name: 'Heartbt',  mods: (1<<11)|(1<<16) },          /* Pulse + ½time */
+    { name: 'F.Dust',   mods: (1<<7)|(1<<8)|(1<<19) },    /* Storm + Soft + Sprs */
+    { name: 'Robot',    mods: (1<<5)|(1<<11)|(1<<17) },   /* Triton + Pulse + 3Skip */
+    { name: 'Dissolve', mods: (1<<6)|(1<<9)|(1<<18) },    /* Drift + Hard + Phnm */
+    { name: 'Chaos',    mods: (1<<7)|(1<<20)|(1<<23) },   /* Storm + Gltch + Back */
+    { name: 'Lift',     mods: (1<<2)|(1<<10)|(1<<15) },   /* Sc↑ + Cresc + RmpG */
 ];
 let perfSnapshots    = PERF_FACTORY_PRESETS.map(function(p) { return p.mods; })
                            .concat(new Array(8).fill(0));  /* slots 8-15 empty */

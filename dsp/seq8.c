@@ -501,15 +501,31 @@ typedef struct {
 #define LOOPER_STATE_CAPTURING 2
 #define LOOPER_STATE_LOOPING   3
 #define LOOPER_MAX_EVENTS      1024
-/* Performance modifier bitmask: each bit enables one effect on the looping stream. */
-#define PERF_MOD_OCT_UP     (1u << 0)  /* PITCH:     +12 semitones */
-#define PERF_MOD_SCALE_DOWN (1u << 1)  /* PITCH:     -1 scale degree (scale-aware) */
-#define PERF_MOD_CRESC      (1u << 2)  /* VEL:       +13 per cycle, saturates at 127 */
-#define PERF_MOD_SOFT_DECAY (1u << 3)  /* VEL:       ×0.5 */
-#define PERF_MOD_STACCATO   (1u << 4)  /* GATE:      cap/8, via staccato_pending */
-#define PERF_MOD_HALFTIME   (1u << 5)  /* WILD:      suppress every odd cycle */
-#define PERF_MOD_GLITCH     (1u << 6)  /* WILD:      random pitch ±5 semitones */
-#define PERF_MOD_SPARSE     (1u << 7)  /* WILD:      ~50% random event suppression */
+/* Performance modifier bitmask — 24 mods across 3 rows (bits 0-7=R1 Pitch, 8-15=R2 Vel/Gate, 16-23=R3 Wild). */
+#define PERF_MOD_OCT_UP       (1u <<  0)  /* R1: +12 semitones */
+#define PERF_MOD_OCT_DOWN     (1u <<  1)  /* R1: -12 semitones */
+#define PERF_MOD_SCALE_UP     (1u <<  2)  /* R1: +1 scale degree (scale-aware) */
+#define PERF_MOD_SCALE_DOWN   (1u <<  3)  /* R1: -1 scale degree (scale-aware) */
+#define PERF_MOD_FIFTH        (1u <<  4)  /* R1: +7 semitones */
+#define PERF_MOD_TRITONE      (1u <<  5)  /* R1: +6 semitones */
+#define PERF_MOD_DRIFT        (1u <<  6)  /* R1: random walk ±6st, updates each cycle */
+#define PERF_MOD_STORM        (1u <<  7)  /* R1: random ±12st per event */
+#define PERF_MOD_SOFT_DECAY   (1u <<  8)  /* R2: vel ×0.5 */
+#define PERF_MOD_HARD_DECAY   (1u <<  9)  /* R2: vel ×0.25 */
+#define PERF_MOD_CRESC        (1u << 10)  /* R2: vel +13 per cycle, saturates 127 */
+#define PERF_MOD_PULSE        (1u << 11)  /* R2: even cycles full vel, odd cycles ×0.2 */
+#define PERF_MOD_SIDECHAIN    (1u << 12)  /* R2: vel -10 per successive note-on in cycle */
+#define PERF_MOD_STACCATO     (1u << 13)  /* R2: gate = cap/8, via staccato queue */
+#define PERF_MOD_LEGATO       (1u << 14)  /* R2: gate = cap-1, via staccato queue */
+#define PERF_MOD_RAMP_GATE    (1u << 15)  /* R2: gate ramps up across note-ons in cycle */
+#define PERF_MOD_HALFTIME     (1u << 16)  /* R3: suppress every odd cycle */
+#define PERF_MOD_TRIPLET_SKIP (1u << 17)  /* R3: suppress every 3rd cycle */
+#define PERF_MOD_PHANTOM      (1u << 18)  /* R3: ghost note at pitch-12, vel/4, short gate */
+#define PERF_MOD_SPARSE       (1u << 19)  /* R3: ~50% random suppression */
+#define PERF_MOD_GLITCH       (1u << 20)  /* R3: random ±5st per event */
+#define PERF_MOD_STAGGER      (1u << 21)  /* R3: note N gets +N semitones chromatic */
+#define PERF_MOD_SHUFFLE      (1u << 22)  /* R3: randomise pitch order each cycle (drums: hit order) */
+#define PERF_MOD_BACKWARDS    (1u << 23)  /* R3: reverse pitch order each cycle */
     uint8_t  looper_state;
     uint8_t  looper_emitting;       /* set during playback emit; pfx_send skips capture/suppress */
     uint16_t looper_capture_ticks;  /* total length of the loop window in master ticks */
@@ -541,8 +557,13 @@ typedef struct {
         uint8_t  raw_pitch, emitted_pitch, track;
         uint8_t  _pad;
         uint16_t fire_at;
-    } perf_staccato_notes[16];
+    } perf_staccato_notes[32];           /* staccato, legato, ramp-gate, phantom note-offs */
     uint8_t  perf_staccato_count;
+    int8_t   perf_drift_offset;          /* current Drift pitch offset, ±6 semitones */
+    uint16_t perf_cycle_note_idx;        /* note-on count for current cycle (sidechain/ramp/stagger) */
+    uint16_t perf_note_on_count;         /* total note-ons in loop (for ramp gate divisor) */
+    uint16_t perf_current_event_idx;     /* set before each perf_apply() call (shuffle lookup) */
+    uint8_t  perf_shuffle_pitches[LOOPER_MAX_EVENTS]; /* pitch permutation built at cycle start */
 } seq8_instance_t;
 
 static const host_api_v1_t *g_host = NULL;
@@ -1234,10 +1255,12 @@ static inline void looper_mark_active(seq8_instance_t *inst, uint8_t track,
     inst->perf_emitted_pitch[track][raw_pitch] = emitted_pitch;
 }
 
-/* Send note-offs for every sounding looper note and drain staccato pending.
+/* Send note-offs for every sounding looper note and drain pending queues.
+ * Handles both tracked notes (perf_emitted_pitch) and phantom notes
+ * (staccato queue, raw_pitch=0xFF sentinel = not in emitted table).
  * Safe to call from any looper state. */
 static void looper_silence_active(seq8_instance_t *inst) {
-    int t, p;
+    int t, p, si;
     inst->looper_emitting = 1;
     for (t = 0; t < NUM_TRACKS; t++) {
         play_fx_t *fx = &inst->tracks[t].pfx;
@@ -1249,99 +1272,158 @@ static void looper_silence_active(seq8_instance_t *inst) {
             }
         }
     }
+    /* Drain pending queue for phantom notes (raw_pitch=0xFF → not in emitted table). */
+    for (si = 0; si < (int)inst->perf_staccato_count; si++) {
+        if (inst->perf_staccato_notes[si].raw_pitch == 0xFF) {
+            uint8_t tr = inst->perf_staccato_notes[si].track;
+            uint8_t ep = inst->perf_staccato_notes[si].emitted_pitch;
+            if (tr < NUM_TRACKS)
+                pfx_send(&inst->tracks[tr].pfx,
+                         (uint8_t)(0x80 | inst->tracks[tr].channel), ep, 0);
+        }
+    }
     inst->perf_staccato_count = 0;
     inst->looper_emitting = 0;
 }
 
 /* Apply active Performance Mode modifiers to one looper event.
- * Transforms pitch/velocity in-place; returns 0 to suppress (skip emit), 1 to emit.
- * For note-on with STACCATO active, also enqueues a short note-off in staccato_notes[].
- * For note-off, looks up the emitted pitch from the xlate table so cross-cycle gates
- * land the note-off on the correct translated pitch. */
+ * Transforms pitch/velocity in-place; returns 0 to suppress, 1 to emit.
+ * inst->perf_current_event_idx must be set to the event index before each call.
+ * Gate-override mods (Staccato/Legato/Ramp Gate) enqueue note-offs in the staccato queue;
+ * captured note-offs are suppressed in the is_off path.
+ * Phantom ghost notes are emitted directly from looper_tick after this call. */
 static int perf_apply(seq8_instance_t *inst, uint8_t tr_idx,
                       uint8_t status, uint8_t *d1, uint8_t *d2) {
     uint32_t mods = inst->perf_mods_active;
+    uint8_t  hi   = status & 0xF0;
+    int is_on  = (hi == 0x90 && *d2 > 0);
+    int is_off = (hi == 0x80 || (hi == 0x90 && *d2 == 0));
 
-    uint8_t hi    = status & 0xF0;
-    int     is_on  = (hi == 0x90 && *d2 > 0);
-    int     is_off = (hi == 0x80 || (hi == 0x90 && *d2 == 0));
-
-    /* Note-off: always look up xlate table so pitch matches what was emitted,
-     * even if mods changed since the note-on was fired. */
+    /* Note-off: always use xlate table so pitch matches what was emitted. */
     if (is_off) {
         if (tr_idx >= NUM_TRACKS || *d1 >= 128) return 0;
         uint8_t ep = inst->perf_emitted_pitch[tr_idx][*d1];
-        if (ep == 0xFF) return 0;  /* not currently sounding — suppress */
+        if (ep == 0xFF) return 0;
         *d1 = ep;
-        /* Staccato owns note-off timing via staccato_pending; suppress captured one */
-        if (mods & PERF_MOD_STACCATO) return 0;
+        if (mods & (PERF_MOD_STACCATO | PERF_MOD_LEGATO | PERF_MOD_RAMP_GATE)) return 0;
         return 1;
     }
 
-    if (!mods) return 1;  /* no active mods: pass note-on/CC through unchanged */
+    if (!mods) return 1;
 
-    /* Halftime: suppress every odd cycle entirely */
-    if ((mods & PERF_MOD_HALFTIME) && (inst->looper_cycle & 1u)) return 0;
+    /* Cycle-level suppression. */
+    if ((mods & PERF_MOD_HALFTIME)     && (inst->looper_cycle & 1u))        return 0;
+    if ((mods & PERF_MOD_TRIPLET_SKIP) && (inst->looper_cycle % 3u) == 2u) return 0;
 
-    if (!is_on) return 1;  /* pass non-note events through unchanged */
+    if (!is_on) return 1;
 
     uint8_t raw_d1 = *d1;
     int pitch = (int)*d1;
     int vel   = (int)*d2;
 
-    /* Sparse: ~50% suppression, deterministic per (pitch, pos, cycle) */
+    /* Sparse: ~50% per (pitch, pos, cycle). */
     if (mods & PERF_MOD_SPARSE) {
         unsigned s = (unsigned)pitch * 31337u + (unsigned)inst->looper_pos * 127u
                    + (unsigned)inst->looper_cycle * 53u;
         if ((s >> 7) & 1u) return 0;
     }
 
-    /* Pitch transforms: drum tracks bypass all pitch modifications. */
+    /* Shuffle / Backwards: replace pitch with permuted value (drums: swaps hits).
+     * Table built at cycle start; note-offs still use xlate table for correctness. */
+    if (mods & (PERF_MOD_SHUFFLE | PERF_MOD_BACKWARDS)) {
+        uint16_t ei = inst->perf_current_event_idx;
+        if (ei < LOOPER_MAX_EVENTS)
+            pitch = (int)inst->perf_shuffle_pitches[ei];
+    }
+
+    /* Pitch transforms: drum tracks bypass semitone-based mods. */
     int is_drum = tr_idx < NUM_TRACKS
                   && inst->tracks[tr_idx].pad_mode == PAD_MODE_DRUM;
     if (!is_drum) {
-        /* Oct↑: climbs one octave per cycle (dynamic) */
-        if (mods & PERF_MOD_OCT_UP) {
-            int shift = 12 * (int)(inst->looper_cycle + 1);
-            pitch = pitch + shift > 127 ? 127 : pitch + shift;
-        }
-        /* Scale↓: descends one more scale degree per cycle (dynamic) */
+        if (mods & PERF_MOD_OCT_UP)
+            pitch = pitch + 12 > 127 ? 127 : pitch + 12;
+        if (mods & PERF_MOD_OCT_DOWN)
+            pitch = pitch - 12 < 0   ?   0 : pitch - 12;
+        if (mods & PERF_MOD_SCALE_UP)
+            pitch = scale_transpose(inst, pitch,  1);
         if (mods & PERF_MOD_SCALE_DOWN)
-            pitch = scale_transpose(inst, pitch, -(int)(inst->looper_cycle + 1));
-        /* Glitch: random chromatic ±5 semitones (intentionally not scale-aware) */
+            pitch = scale_transpose(inst, pitch, -1);
+        if (mods & PERF_MOD_FIFTH)
+            pitch = pitch + 7 > 127 ? 127 : pitch + 7;
+        if (mods & PERF_MOD_TRITONE)
+            pitch = pitch + 6 > 127 ? 127 : pitch + 6;
+        if (mods & PERF_MOD_DRIFT) {
+            int dp = pitch + (int)inst->perf_drift_offset;
+            pitch = dp < 0 ? 0 : dp > 127 ? 127 : dp;
+        }
+        if (mods & PERF_MOD_STORM) {
+            unsigned s = (unsigned)raw_d1 * 31337u + (unsigned)inst->looper_pos * 7919u
+                       + (unsigned)inst->looper_cycle * 6271u + 89u;
+            int sp = pitch + (int)(s % 25u) - 12;
+            pitch = sp < 0 ? 0 : sp > 127 ? 127 : sp;
+        }
         if (mods & PERF_MOD_GLITCH) {
-            unsigned s = (unsigned)pitch * 31337u + (unsigned)inst->looper_pos * 7919u
+            unsigned s = (unsigned)raw_d1 * 31337u + (unsigned)inst->looper_pos * 7919u
                        + (unsigned)inst->looper_cycle * 6271u;
-            int delta = (int)(s % 11u) - 5;
-            pitch = pitch + delta < 0 ? 0 : (pitch + delta > 127 ? 127 : pitch + delta);
+            int gp = pitch + (int)(s % 11u) - 5;
+            pitch = gp < 0 ? 0 : gp > 127 ? 127 : gp;
+        }
+        /* Stagger: note N in cycle gets +N semitones chromatic (resets each cycle). */
+        if (mods & PERF_MOD_STAGGER) {
+            int sp = pitch + (int)(inst->perf_cycle_note_idx % 12u);
+            pitch = sp > 127 ? 127 : sp;
         }
     }
 
     /* Velocity transforms: apply to all tracks including drum. */
+    if (mods & PERF_MOD_SOFT_DECAY)
+        vel = vel / 2 < 1 ? 1 : vel / 2;
+    if (mods & PERF_MOD_HARD_DECAY)
+        vel = vel / 4 < 1 ? 1 : vel / 4;
     if (mods & PERF_MOD_CRESC) {
         int boost = (int)inst->looper_cycle * 13;
         vel = vel + boost > 127 ? 127 : vel + boost;
     }
-    /* Soft Decay: mirrors Cresc — vel decreases 13 per cycle, floor 1 */
-    if (mods & PERF_MOD_SOFT_DECAY) {
-        int cut = (int)inst->looper_cycle * 13;
+    if ((mods & PERF_MOD_PULSE) && (inst->looper_cycle & 1u))
+        vel = vel / 5 < 1 ? 1 : vel / 5;
+    if (mods & PERF_MOD_SIDECHAIN) {
+        int cut = (int)inst->perf_cycle_note_idx * 10;
         vel = vel - cut < 1 ? 1 : vel - cut;
     }
 
     *d1 = (uint8_t)(pitch < 0 ? 0 : pitch > 127 ? 127 : pitch);
     *d2 = (uint8_t)(vel   < 1 ? 1 : vel   > 127 ? 127 : vel);
 
-    /* Staccato: enqueue a short note-off at looper_pos + cap/8 */
-    if ((mods & PERF_MOD_STACCATO) && inst->perf_staccato_count < 16) {
-        uint16_t cap = inst->looper_capture_ticks;
-        uint16_t gap = cap / 8 < 2 ? 2 : cap / 8;
-        uint16_t fire = (uint16_t)((inst->looper_pos + (uint32_t)gap) % cap);
-        int si = (int)inst->perf_staccato_count++;
-        inst->perf_staccato_notes[si].raw_pitch     = raw_d1;
-        inst->perf_staccato_notes[si].emitted_pitch = *d1;
-        inst->perf_staccato_notes[si].track         = tr_idx;
-        inst->perf_staccato_notes[si].fire_at        = fire;
+    /* Gate-override mods: enqueue note-off; priority Legato > Staccato > Ramp Gate. */
+    if (inst->perf_staccato_count < 32) {
+        uint16_t cap  = inst->looper_capture_ticks;
+        uint16_t fire = 0;
+        int       enq = 0;
+        if (mods & PERF_MOD_LEGATO) {
+            fire = (uint16_t)((inst->looper_pos + cap - 1) % cap);
+            enq  = 1;
+        } else if (mods & PERF_MOD_STACCATO) {
+            uint16_t gap = cap / 8 < 2 ? 2 : cap / 8;
+            fire = (uint16_t)((inst->looper_pos + gap) % cap);
+            enq  = 1;
+        } else if (mods & PERF_MOD_RAMP_GATE) {
+            uint16_t nc = inst->perf_note_on_count > 0 ? inst->perf_note_on_count : 1;
+            uint32_t g  = (uint32_t)cap * (inst->perf_cycle_note_idx + 1) / nc;
+            if (g < 2) g = 2;
+            if (g >= cap) g = cap - 1;
+            fire = (uint16_t)((inst->looper_pos + g) % cap);
+            enq  = 1;
+        }
+        if (enq) {
+            int si = (int)inst->perf_staccato_count++;
+            inst->perf_staccato_notes[si].raw_pitch     = raw_d1;
+            inst->perf_staccato_notes[si].emitted_pitch = *d1;
+            inst->perf_staccato_notes[si].track         = tr_idx;
+            inst->perf_staccato_notes[si].fire_at       = fire;
+        }
     }
+
+    inst->perf_cycle_note_idx++;
     return 1;
 }
 
@@ -1391,7 +1473,72 @@ static void looper_tick(seq8_instance_t *inst) {
     }
 
     if (inst->looper_state == LOOPER_STATE_LOOPING) {
-        /* Fire staccato pending note-offs due at this position. */
+        /* Cycle-start hook: runs once at looper_pos==0, before any events. */
+        if (inst->looper_pos == 0) {
+            uint32_t pmods = inst->perf_mods_active;
+            uint16_t ec    = inst->looper_event_count;
+            uint16_t i;
+
+            inst->perf_cycle_note_idx = 0;
+
+            /* Drift: random walk ±1 semitone per cycle, clamped ±6. */
+            if (pmods & PERF_MOD_DRIFT) {
+                uint32_t rng = inst->looper_cycle * 1664525u + 1013904223u;
+                int delta = ((rng >> 16) & 1u) ? 1 : -1;
+                int nd = (int)inst->perf_drift_offset + delta;
+                inst->perf_drift_offset = (int8_t)(nd < -6 ? -6 : nd > 6 ? 6 : nd);
+            }
+
+            /* Shuffle / Backwards: build pitch permutation table indexed by event index.
+             * Works on melodic and drum tracks alike (drum: swaps which hit plays when). */
+            if (pmods & (PERF_MOD_SHUFFLE | PERF_MOD_BACKWARDS)) {
+                uint8_t  pitches[LOOPER_MAX_EVENTS];
+                uint16_t nc = 0;
+                /* Collect note-on pitches in event order. */
+                for (i = 0; i < ec; i++) {
+                    uint8_t st = inst->looper_events[i].status;
+                    if ((st & 0xF0) == 0x90 && inst->looper_events[i].d2 > 0)
+                        pitches[nc++] = inst->looper_events[i].d1;
+                }
+                inst->perf_note_on_count = nc;
+                if (pmods & PERF_MOD_BACKWARDS) {
+                    /* Reverse: retrograde pitch order. */
+                    uint16_t lo = 0, hi2 = nc > 0 ? nc - 1 : 0;
+                    while (lo < hi2) {
+                        uint8_t tmp = pitches[lo]; pitches[lo] = pitches[hi2]; pitches[hi2] = tmp;
+                        lo++; hi2--;
+                    }
+                } else {
+                    /* Fisher-Yates shuffle seeded by cycle counter. */
+                    uint32_t seed = inst->looper_cycle * 1664525u + 1013904223u;
+                    uint16_t j;
+                    for (i = nc - 1; i > 0; i--) {
+                        seed = seed * 1664525u + 1013904223u;
+                        j = (uint16_t)(seed >> 16) % (i + 1);
+                        uint8_t tmp = pitches[i]; pitches[i] = pitches[j]; pitches[j] = tmp;
+                    }
+                }
+                /* Write permuted pitches back, indexed by raw event index. */
+                uint16_t ni = 0;
+                for (i = 0; i < ec; i++) {
+                    uint8_t st = inst->looper_events[i].status;
+                    if ((st & 0xF0) == 0x90 && inst->looper_events[i].d2 > 0)
+                        inst->perf_shuffle_pitches[i] = ni < nc ? pitches[ni++] : inst->looper_events[i].d1;
+                    else
+                        inst->perf_shuffle_pitches[i] = inst->looper_events[i].d1;
+                }
+            } else {
+                /* Compute note-on count for Ramp Gate even without shuffle. */
+                uint16_t nc = 0;
+                for (i = 0; i < ec; i++) {
+                    uint8_t st = inst->looper_events[i].status;
+                    if ((st & 0xF0) == 0x90 && inst->looper_events[i].d2 > 0) nc++;
+                }
+                inst->perf_note_on_count = nc;
+            }
+        }
+
+        /* Fire staccato/legato/phantom pending note-offs due at this position. */
         {
             int _si;
             for (_si = 0; _si < (int)inst->perf_staccato_count; ) {
@@ -1405,12 +1552,14 @@ static void looper_tick(seq8_instance_t *inst) {
                                  (uint8_t)(0x80 | inst->tracks[_tr].channel), _ep, 0);
                         inst->looper_emitting = 0;
                     }
+                    /* raw_pitch==0xFF is the phantom sentinel — not in emitted table. */
                     if (_rp < 128) inst->perf_emitted_pitch[_tr][_rp] = 0xFF;
                     inst->perf_staccato_notes[_si] =
                         inst->perf_staccato_notes[--inst->perf_staccato_count];
                 } else { _si++; }
             }
         }
+
         /* Emit captured events at this tick, applying perf modifiers. */
         while (inst->looper_play_idx < inst->looper_event_count &&
                inst->looper_events[inst->looper_play_idx].tick == (uint16_t)inst->looper_pos) {
@@ -1422,13 +1571,37 @@ static void looper_tick(seq8_instance_t *inst) {
             uint8_t raw_d1  = inst->looper_events[ei].d1;
             uint8_t d1      = raw_d1;
             uint8_t d2      = inst->looper_events[ei].d2;
+            inst->perf_current_event_idx = (uint16_t)ei;
             if (!perf_apply(inst, tr_idx, st, &d1, &d2)) continue;
             inst->looper_emitting = 1;
             pfx_send(fx, st, d1, d2);
             inst->looper_emitting = 0;
             uint8_t hi = st & 0xF0;
-            if (hi == 0x90 && d2 > 0)            looper_mark_active(inst, tr_idx, raw_d1, d1);
-            else if (hi == 0x80 || (hi == 0x90)) looper_mark_active(inst, tr_idx, raw_d1, 0xFF);
+            if (hi == 0x90 && d2 > 0) {
+                looper_mark_active(inst, tr_idx, raw_d1, d1);
+                /* Phantom: ghost note at pitch-12, vel/4, gate=cap/8.
+                 * raw_pitch=0xFF in queue is sentinel (not in emitted table). */
+                if ((inst->perf_mods_active & PERF_MOD_PHANTOM) &&
+                        inst->perf_staccato_count < 32) {
+                    int gp = (int)d1 - 12;
+                    if (gp >= 0) {
+                        uint8_t gpb = (uint8_t)gp;
+                        uint8_t gv  = d2 / 4 < 1 ? 1 : d2 / 4;
+                        uint16_t gap = cap / 8 < 2 ? 2 : cap / 8;
+                        uint16_t gfire = (uint16_t)((inst->looper_pos + gap) % cap);
+                        inst->looper_emitting = 1;
+                        pfx_send(fx, st, gpb, gv);
+                        inst->looper_emitting = 0;
+                        int si = (int)inst->perf_staccato_count++;
+                        inst->perf_staccato_notes[si].raw_pitch     = 0xFF;
+                        inst->perf_staccato_notes[si].emitted_pitch = gpb;
+                        inst->perf_staccato_notes[si].track         = tr_idx;
+                        inst->perf_staccato_notes[si].fire_at       = gfire;
+                    }
+                }
+            } else if (hi == 0x80 || (hi == 0x90)) {
+                looper_mark_active(inst, tr_idx, raw_d1, 0xFF);
+            }
         }
         inst->looper_pos++;
         if (inst->looper_pos >= cap) {
@@ -1470,6 +1643,8 @@ static void looper_stop(seq8_instance_t *inst) {
     inst->looper_pending_rate_ticks = 0;
     inst->looper_cycle              = 0;
     inst->perf_staccato_count       = 0;
+    inst->perf_drift_offset         = 0;
+    inst->perf_cycle_note_idx       = 0;
 }
 
 /* Brute-force note-off for all 128 notes on all active channels.
