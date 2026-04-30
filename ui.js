@@ -2474,7 +2474,7 @@ function drawPerfModeOled() {
         headerRight = perfLatchMode ? 'LATCH' : 'LATCHED';
     }
     let header = 'PERF';
-    if (perfHoldPadHeld) header += ' \xb7 HOLD';
+    if (perfHoldPadHeld || perfStickyLengths.size > 0) header += ' \xb7 HOLD';
     print(4, 4, header, 1);
     if (headerRight) print(128 - headerRight.length * 6 - 4, 4, headerRight, 1);
     /* Horizontal rule */
