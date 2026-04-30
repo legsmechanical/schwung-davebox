@@ -2481,14 +2481,16 @@ function drawPerfModeOled() {
     fill_rect(0, 13, 128, 1, 1);
     /* Active modifier names — up to 4 per line */
     const activeNames = [];
-    for (let i = 0; i < 8; i++)
+    for (let i = 0; i < PERF_MOD_NAMES.length; i++)
         if ((activeMods >> i) & 1) activeNames.push(PERF_MOD_NAMES[i]);
     if (activeNames.length === 0) {
         print(4, 24, 'No mods active', 1);
         print(4, 36, 'Hold pad to engage', 1);
     } else {
-        const line1 = activeNames.slice(0, 4).join('  ');
-        const line2 = activeNames.slice(4).join('  ');
+        const extra = activeNames.length > 6 ? '+' + (activeNames.length - 5) : '';
+        const show  = extra ? activeNames.slice(0, 5) : activeNames;
+        const line1 = show.slice(0, 3).join('  ');
+        const line2 = show.slice(3).join('  ') + (extra ? '  ' + extra : '');
         print(4, 24, line1, 1);
         if (line2) print(4, 36, line2, 1);
     }
