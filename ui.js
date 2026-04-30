@@ -2313,11 +2313,11 @@ function sendPerfMods() {
 function updatePerfModeLEDs() {
     if (!ledInitComplete) return;
     const activeMods = perfModsToggled | perfModsHeld | perfRecalledMods;
-    /* Step buttons: preset slots. Active = White, has content = PurpleBlue, empty = DarkPurple. */
+    /* Step buttons: preset slots. Active = White, has content = PurpleBlue, empty = dim white. */
     for (let i = 0; i < 16; i++) {
         if (i === perfRecalledSlot)         setLED(16 + i, White);
         else if (perfSnapshots[i] !== 0)    setLED(16 + i, PurpleBlue);
-        else                                setLED(16 + i, DarkPurple);
+        else                                setLED(16 + i, LightGrey);
     }
 
     /* R0 (68-75): rate pads 0-5, sync toggle (6), latch (7) */
