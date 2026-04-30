@@ -221,6 +221,10 @@ typedef struct {
     pfx_active_t active_notes[128];
     /* Routing */
     uint8_t      route;     /* ROUTE_SCHWUNG or ROUTE_MOVE */
+    /* Global MIDI Looper: 1 = this track's post-fx output is captured by the
+     * looper and silenced during playback; 0 = bypass entirely. Default 1. */
+    uint8_t      looper_on;
+    uint8_t      track_idx;  /* 0..NUM_TRACKS-1; back-pointer for looper events */
 } play_fx_t;
 
 /* ------------------------------------------------------------------ */
@@ -483,6 +487,37 @@ typedef struct {
 
     drum_rec_snap_lane_t drum_undo_lanes[DRUM_LANES];
     drum_rec_snap_lane_t drum_redo_lanes[DRUM_LANES];
+
+    /* Global MIDI Looper.
+     * State machine: IDLE -> ARMED (waiting for boundary) -> CAPTURING ->
+     * LOOPING. Stop drops back to IDLE.
+     * Capture/loop window length is in master 96-PPQN ticks. While CAPTURING
+     * or LOOPING, looper_pos counts 0..capture_ticks-1.
+     * pfx_send hooks: in CAPTURING, mirror note-on/off into looper_events[];
+     * in LOOPING, suppress emit from looper_on tracks (the playback path
+     * sets looper_emitting=1 to bypass the suppress). */
+#define LOOPER_STATE_IDLE      0
+#define LOOPER_STATE_ARMED     1
+#define LOOPER_STATE_CAPTURING 2
+#define LOOPER_STATE_LOOPING   3
+#define LOOPER_MAX_EVENTS      1024
+    uint8_t  looper_state;
+    uint8_t  looper_emitting;       /* set during playback emit; pfx_send skips capture/suppress */
+    uint16_t looper_capture_ticks;  /* total length of the loop window in master ticks */
+    uint32_t looper_pos;            /* 0..capture_ticks-1; advances each master tick while CAPTURING/LOOPING */
+    uint16_t looper_play_idx;       /* next event index during LOOPING playback */
+    uint16_t looper_event_count;
+    struct {
+        uint16_t tick;              /* 0..capture_ticks-1 */
+        uint8_t  status;
+        uint8_t  d1;
+        uint8_t  d2;
+        uint8_t  track;
+        uint8_t  pad[2];
+    } looper_events[LOOPER_MAX_EVENTS];
+    /* Bitmap of currently-sounding looper-emitted notes per track, for stop cleanup.
+     * 128 pitches × 8 tracks = 1024 bits = 128 bytes. */
+    uint8_t  looper_active_notes[NUM_TRACKS][16];
 } seq8_instance_t;
 
 static const host_api_v1_t *g_host = NULL;
@@ -634,6 +669,9 @@ static void seq8_save_state(seq8_instance_t *inst) {
         fprintf(fp, ",\"t%d_ch\":%d,\"t%d_rt\":%d",
                 t, (int)inst->tracks[t].channel,
                 t, (int)inst->tracks[t].pfx.route);
+    for (t = 0; t < NUM_TRACKS; t++)
+        if (inst->tracks[t].pfx.looper_on != 1)
+            fprintf(fp, ",\"t%d_lp\":%d", t, (int)inst->tracks[t].pfx.looper_on);
     for (t = 0; t < NUM_TRACKS; t++) {
         for (c = 0; c < NUM_CLIPS; c++) {
             clip_t *cl = &inst->tracks[t].clips[c];
@@ -824,6 +862,9 @@ static void seq8_load_state(seq8_instance_t *inst) {
         snprintf(key, sizeof(key), "t%d_rt", t);
         inst->tracks[t].pfx.route = (uint8_t)clamp_i(
             json_get_int(buf, key, ROUTE_SCHWUNG), ROUTE_SCHWUNG, ROUTE_MOVE);
+
+        snprintf(key, sizeof(key), "t%d_lp", t);
+        inst->tracks[t].pfx.looper_on = (uint8_t)(json_get_int(buf, key, 1) ? 1 : 0);
 
         for (c = 0; c < NUM_CLIPS; c++) {
             clip_t *cl = &inst->tracks[t].clips[c];
@@ -1124,6 +1165,26 @@ static void pfx_send(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
         }
         /* CC and other messages pass through. */
     }
+    /* Global MIDI Looper hook (post-arp emit). Capture into ring during
+     * CAPTURING; suppress emission during LOOPING. Looper-emitted playback
+     * sets g_inst->looper_emitting=1 to bypass both branches and pass through. */
+    if (g_inst && fx->looper_on && !g_inst->looper_emitting) {
+        uint8_t st = status & 0xF0;
+        if (g_inst->looper_state == LOOPER_STATE_CAPTURING &&
+                (st == 0x90 || st == 0x80) &&
+                g_inst->looper_event_count < LOOPER_MAX_EVENTS) {
+            int ei = (int)g_inst->looper_event_count++;
+            g_inst->looper_events[ei].tick   = (uint16_t)g_inst->looper_pos;
+            g_inst->looper_events[ei].status = status;
+            g_inst->looper_events[ei].d1     = d1;
+            g_inst->looper_events[ei].d2     = d2;
+            g_inst->looper_events[ei].track  = fx->track_idx;
+            /* fall through and emit normally so capture is parallel */
+        } else if (g_inst->looper_state == LOOPER_STATE_LOOPING) {
+            return; /* silenced track during loop playback */
+        }
+    }
+
     if (!g_host) return;
     if (fx->route == ROUTE_MOVE) {
         if (!g_host->midi_inject_to_move) return;
@@ -1133,6 +1194,110 @@ static void pfx_send(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
     }
     const uint8_t msg[4] = { (uint8_t)(status >> 4), status, d1, d2 };
     if (g_host->midi_send_internal) g_host->midi_send_internal(msg, 4);
+}
+
+/* ------------------------------------------------------------------ */
+/* Global MIDI Looper                                                   */
+/* ------------------------------------------------------------------ */
+
+static inline void looper_mark_active(seq8_instance_t *inst, uint8_t track,
+                                       uint8_t pitch, int on) {
+    if (track >= NUM_TRACKS) return;
+    int byte = pitch >> 3;
+    int bit  = pitch & 7;
+    if (on) inst->looper_active_notes[track][byte] |=  (uint8_t)(1u << bit);
+    else    inst->looper_active_notes[track][byte] &= (uint8_t)~(1u << bit);
+}
+
+/* Send note-offs for any looper-emitted note that's still sounding. Called
+ * when the looper stops mid-note. */
+static void looper_silence_active(seq8_instance_t *inst) {
+    int t, byte, bit;
+    inst->looper_emitting = 1;
+    for (t = 0; t < NUM_TRACKS; t++) {
+        play_fx_t *fx = &inst->tracks[t].pfx;
+        for (byte = 0; byte < 16; byte++) {
+            uint8_t b = inst->looper_active_notes[t][byte];
+            if (!b) continue;
+            for (bit = 0; bit < 8; bit++) {
+                if (b & (1u << bit)) {
+                    uint8_t pitch = (uint8_t)((byte << 3) | bit);
+                    pfx_send(fx, (uint8_t)(0x80 | inst->tracks[t].channel), pitch, 0);
+                }
+            }
+            inst->looper_active_notes[t][byte] = 0;
+        }
+    }
+    inst->looper_emitting = 0;
+}
+
+/* Per master tick. Drives ARMED→CAPTURING boundary detection, capture window
+ * advance, capture→loop transition, and event playback during LOOPING. */
+static void looper_tick(seq8_instance_t *inst) {
+    uint16_t cap = inst->looper_capture_ticks;
+    if (cap == 0) return;
+
+    if (inst->looper_state == LOOPER_STATE_ARMED) {
+        /* Wait for next master-tick boundary aligned to capture length. */
+        uint32_t total = inst->arp_master_tick;  /* free-running master clock */
+        if ((total % cap) == 0) {
+            inst->looper_state       = LOOPER_STATE_CAPTURING;
+            inst->looper_pos         = 0;
+            inst->looper_event_count = 0;
+            inst->looper_play_idx    = 0;
+        }
+        return;
+    }
+
+    if (inst->looper_state == LOOPER_STATE_CAPTURING) {
+        inst->looper_pos++;
+        if (inst->looper_pos >= cap) {
+            inst->looper_state    = LOOPER_STATE_LOOPING;
+            inst->looper_pos      = 0;
+            inst->looper_play_idx = 0;
+        }
+        return;
+    }
+
+    if (inst->looper_state == LOOPER_STATE_LOOPING) {
+        /* Emit any events whose tick == current pos. Events are stored in
+         * capture order (monotonically non-decreasing tick), so we walk
+         * play_idx forward. */
+        while (inst->looper_play_idx < inst->looper_event_count &&
+               inst->looper_events[inst->looper_play_idx].tick == (uint16_t)inst->looper_pos) {
+            int ei = inst->looper_play_idx++;
+            uint8_t tr_idx = inst->looper_events[ei].track;
+            if (tr_idx >= NUM_TRACKS) continue;
+            play_fx_t *fx = &inst->tracks[tr_idx].pfx;
+            uint8_t st  = inst->looper_events[ei].status;
+            uint8_t d1  = inst->looper_events[ei].d1;
+            uint8_t d2  = inst->looper_events[ei].d2;
+            inst->looper_emitting = 1;
+            pfx_send(fx, st, d1, d2);
+            inst->looper_emitting = 0;
+            uint8_t hi = st & 0xF0;
+            if (hi == 0x90 && d2 > 0)            looper_mark_active(inst, tr_idx, d1, 1);
+            else if (hi == 0x80 || (hi == 0x90)) looper_mark_active(inst, tr_idx, d1, 0);
+        }
+        inst->looper_pos++;
+        if (inst->looper_pos >= cap) {
+            inst->looper_pos      = 0;
+            inst->looper_play_idx = 0;
+        }
+    }
+}
+
+/* Cleanup: silence active notes, clear state, return to IDLE. Safe to call
+ * from any state. */
+static void looper_stop(seq8_instance_t *inst) {
+    if (inst->looper_state == LOOPER_STATE_LOOPING)
+        looper_silence_active(inst);
+    inst->looper_state       = LOOPER_STATE_IDLE;
+    inst->looper_pos         = 0;
+    inst->looper_play_idx    = 0;
+    inst->looper_event_count = 0;
+    inst->looper_capture_ticks = 0;
+    memset(inst->looper_active_notes, 0, sizeof(inst->looper_active_notes));
 }
 
 /* Brute-force note-off for all 128 notes on all active channels.
@@ -2279,6 +2444,8 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
             clip_init(&inst->tracks[t].clips[c]);
         drum_track_init(&inst->tracks[t]);
         pfx_init_defaults(&inst->tracks[t].pfx);
+        inst->tracks[t].pfx.looper_on = 1;
+        inst->tracks[t].pfx.track_idx = (uint8_t)t;
         /* Default routing: tracks 1-4 → Move (ch 1-4), tracks 5-8 → Schwung (ch 5-8) */
         if (t < 4) inst->tracks[t].pfx.route = ROUTE_MOVE;
     }
@@ -2454,6 +2621,9 @@ static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
         return snprintf(out, out_len, "%s",
                         fx->route == ROUTE_MOVE ? "move" : "schwung");
 
+    if (!strcmp(key, "track_looper"))
+        return snprintf(out, out_len, "%d", (int)fx->looper_on);
+
     /* Batch read: per-clip pfx params. Fields 0-16: NOTE FX K0-K4, HARMZ K0-K3,
      * MIDI DLY K0-K7 (legacy 17). Fields 17-22: SEQ ARP K1-K6 (style/rate/
      * octaves/gate/steps_mode/retrigger). Fields 23-30: SEQ ARP step_vel[0..7]. */
@@ -2577,12 +2747,12 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
     }
 
     /* state_snapshot: single call returning all poll-loop values.
-     * Format: "playing cs0..cs7 ac0..ac7 qc0..qc7 count_in cp0..cp7 wr0..wr7 ps0..ps7 flash_eighth flash_sixteenth metro_beat_count"
-     * 53 values total. Replaces individual get_param calls in pollDSP(). */
+     * Format: "playing cs0..cs7 ac0..ac7 qc0..qc7 count_in cp0..cp7 wr0..wr7 ps0..ps7 flash_eighth flash_sixteenth metro_beat_count master_pos looper_state"
+     * 55 values total. Replaces individual get_param calls in pollDSP(). */
     if (!strcmp(key, "state_snapshot")) {
         if (!inst) return snprintf(out, out_len,
             "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -1 -1 -1 -1 -1 -1 -1 -1 0"
-            " 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0");
+            " 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0");
         int t;
         int pos = 0;
         pos += snprintf(out + pos, (size_t)(out_len - pos), "%d", (int)inst->playing);
@@ -2603,6 +2773,8 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         pos += snprintf(out + pos, (size_t)(out_len - pos), " %d", (int)((inst->global_tick / 2) % 2));
         pos += snprintf(out + pos, (size_t)(out_len - pos), " %d", (int)(inst->global_tick % 2));
         pos += snprintf(out + pos, (size_t)(out_len - pos), " %d", (int)inst->metro_beat_count);
+        pos += snprintf(out + pos, (size_t)(out_len - pos), " %u", (unsigned)inst->arp_master_tick);
+        pos += snprintf(out + pos, (size_t)(out_len - pos), " %d", (int)inst->looper_state);
         return pos;
     }
 
@@ -3027,6 +3199,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
         inst->tick_accum += inst->tick_delta;
         while (inst->tick_accum >= inst->tick_threshold) {
             inst->tick_accum -= inst->tick_threshold;
+            looper_tick(inst);
             for (t = 0; t < NUM_TRACKS; t++) arp_tick(inst, &inst->tracks[t]);
             inst->arp_master_tick++;
         }
@@ -3036,6 +3209,11 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
     inst->tick_accum += inst->tick_delta;
     while (inst->tick_accum >= inst->tick_threshold) {
         inst->tick_accum -= inst->tick_threshold;
+
+        /* Looper: tick state machine + emit captured events for current pos.
+         * Runs before track logic so arp_emit captures land at the same
+         * pos that looper_tick just established. */
+        looper_tick(inst);
 
         /* Metro beat: mode 2 (On) = while recording; mode 3 (Rec+Ply) = always */
         if (inst->metro_on >= 2 && inst->master_tick_in_step == 0 && inst->global_tick % 4 == 0) {

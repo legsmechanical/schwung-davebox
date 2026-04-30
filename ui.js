@@ -102,7 +102,8 @@ const BANKS = [
         p('Ch',   'MIDI Channel', 'channel',  'track', 1, 16, 1, fmtPlain, 6),
         p('Rte',  'Route',        'route',    'track', 0, 1,  0, fmtRoute),
         p('Mode', 'Track Mode',   'pad_mode', 'track', 0, 1,  0, function(v) { return v ? 'Drums' : 'Keys'; }, 32),
-        _X, _X, _X, _X, _X,
+        _X, _X, _X, _X,
+        p('Lpr',  'Looper',       'track_looper', 'track', 0, 1, 1, fmtBool, 16),
     ]},
     /* 1 — CLIP (pad 93) — Beat Stretch, Clock Shift, Nudge, Resolution, Length, (stubs) */
     { name: 'CLIP', knobs: [
@@ -349,6 +350,16 @@ let ledInitIndex    = 0;
 let ledInitComplete = false;  /* false until init queue fully flushed; tick() blocks normal render */
 let shiftHeld       = false;
 let loopHeld        = false;
+/* Global MIDI Looper UI state. Active iff looperHeldStep >= 0 (a step button
+ * is currently held to keep the loop going). Pressing Loop+step in Session
+ * View arms; releasing either Loop or that step button stops the looper.
+ * Capture window: master 96-PPQN ticks per loop. */
+const LOOPER_PPQN = 24;  /* master ticks per 1/16 step */
+const LOOPER_RATES_STRAIGHT = [12, 24, 48, 96, 192, 384];           /* 1/32, 1/16, 1/8, 1/4, 1/2, 1bar */
+const LOOPER_RATES_TRIPLET  = [8,  16, 32, 64, 128, 384];           /* triplet variants for steps 1-5; step 6 stays 1bar */
+let looperTriplet      = false;
+let looperHeldStep     = -1;     /* 0..5 = which step button (1..6) is the active rate; -1 = inactive */
+let looperRateTicks    = 0;
 
 /* Live pad note input — isomorphic 4ths diatonic layout. */
 const SCALE_INTERVALS = [
@@ -449,6 +460,8 @@ let hasInitedOnce    = false;   /* false only on first init() call in this JS se
 let sceneRow         = 0;
 let flashEighth          = false;
 let flashSixteenth       = false;
+let masterPos            = 0;        /* DSP arp_master_tick (free-running 96-PPQN); used for arbitrary-rate music-synced flash */
+let dspLooperState       = 0;        /* 0=idle, 1=armed, 2=capturing, 3=looping */
 let tickCount            = 0;
 const POLL_INTERVAL  = 4;
 
@@ -1442,6 +1455,8 @@ function pollDSP() {
         metroPrevBeat = _beatCount;
         playMetronomeClick();
     }
+    if (v.length >= 54) masterPos      = (parseInt(v[53], 10) | 0) >>> 0;
+    if (v.length >= 55) dspLooperState = parseInt(v[54], 10) | 0;
 
     /* Drum playhead: poll active lane's current step for active drum track */
     if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {
@@ -2225,12 +2240,40 @@ function updateTrackLEDs() {
     }
 }
 
+/* Music-synced flash at an arbitrary master-tick rate. Returns true on the
+ * "high" half of the period. masterPos is polled from DSP; granularity is
+ * the poll interval (≈92ms). Works whether or not transport is running
+ * because masterPos uses the free-running arp_master_tick. */
+function flashAtRate(rateTicks) {
+    if (rateTicks <= 0) return false;
+    return (Math.floor(masterPos / rateTicks) & 1) === 1;
+}
+
+/* Draw step button LEDs (notes 16-31) for the Session View looper UI.
+ * Called when sessionView && loopHeld so the user gets a live music-synced
+ * preview of each capture length, plus the triplet toggle on step 16. */
+function updateLooperStepLEDs() {
+    if (!ledInitComplete) return;
+    const rates = looperTriplet ? LOOPER_RATES_TRIPLET : LOOPER_RATES_STRAIGHT;
+    for (let i = 0; i < 16; i++) {
+        let color = LED_OFF;
+        if (i <= 5) {
+            color = flashAtRate(rates[i]) ? White : PurpleBlue;
+        } else if (i === 15) {
+            color = looperTriplet ? (flashAtRate(32) ? PurpleBlue : DarkGrey) : PurpleBlue;
+        }
+        setLED(16 + i, color);
+    }
+}
+
 function forceRedraw() {
     screenDirty = true;
     if (!ledInitComplete) return;
     if (sessionView) {
         updateSessionLEDs();
         updateSceneMapLEDs();
+        if (loopHeld) updateLooperStepLEDs();
+        else for (let i = 0; i < 16; i++) setLED(16 + i, LED_OFF);
     } else {
         updateStepLEDs();
     }
@@ -3121,6 +3164,7 @@ globalThis.tick = function () {
         if (sessionView) {
             updateSessionLEDs();
             updateSceneMapLEDs();
+            if (loopHeld) updateLooperStepLEDs();
         } else {
             updateStepLEDs();
             /* Count-in flash: blink all step buttons white at quarter-note rate */
@@ -3482,7 +3526,25 @@ globalThis.onMidiMessageInternal = function (data) {
             }
         }
 
-        /* Loop button (CC 58): hold + step buttons sets clip length */
+        /* Loop button (CC 58, Session View): just track held state.
+         * Step button + Loop arms the global MIDI looper (handled in step
+         * button input). Releasing Loop while looper is active stops it. */
+        if (d1 === MoveLoop && sessionView) {
+            loopHeld = d2 === 127;
+            if (!loopHeld) {
+                /* Loop released: stop looper if active */
+                if (looperHeldStep >= 0) {
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('looper_stop', '1');
+                    looperHeldStep  = -1;
+                    looperRateTicks = 0;
+                }
+            }
+            forceRedraw();
+            return;
+        }
+
+        /* Loop button (CC 58, Track View): hold + step buttons sets clip length */
         if (d1 === MoveLoop && !sessionView) {
             if (d2 === 127 && shiftHeld) {
                 /* Shift+Loop: double-and-fill active clip or drum lane */
@@ -4340,6 +4402,22 @@ globalThis.onMidiMessageInternal = function (data) {
                     screenDirty = true;
                 }
                 /* Tap empty: no-op; muteHeld swallows all step buttons in Session View */
+            } else if (loopHeld) {
+                /* Loop + step button: arm the global MIDI looper.
+                 * Steps 1-6 = capture length (1/32, 1/16, 1/8, 1/4, 1/2, 1bar);
+                 * step 16 = toggle triplet (steps 1-5 use triplet rates; step 6 stays 1bar). */
+                if (idx === 15) {
+                    looperTriplet = !looperTriplet;
+                    forceRedraw();
+                } else if (idx <= 5) {
+                    const rates = looperTriplet ? LOOPER_RATES_TRIPLET : LOOPER_RATES_STRAIGHT;
+                    looperHeldStep  = idx;
+                    looperRateTicks = rates[idx];
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('looper_arm', String(looperRateTicks));
+                    forceRedraw();
+                }
+                /* steps 7-15: ignored */
             } else if (!deleteHeld && !shiftHeld) {
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('launch_scene', String(idx));
@@ -4927,6 +5005,18 @@ globalThis.onMidiMessageInternal = function (data) {
         if (d1 >= 16 && d1 <= 31) {
             stepOpTick = tickCount;
             const btn = d1 - 16;
+            /* Looper held-step release: stop the looper. Captures the
+             * minimum-hold rule: if release fires while DSP is still in
+             * ARMED or CAPTURING (looperState < LOOPING), nothing has been
+             * committed and the discard is automatic. */
+            if (sessionView && btn === looperHeldStep) {
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('looper_stop', '1');
+                looperHeldStep  = -1;
+                looperRateTicks = 0;
+                forceRedraw();
+                return;
+            }
             if (btn === heldStepBtn) {
                 if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {
                     /* Drum step release: tap toggles, hold-release exits + vel confirm */

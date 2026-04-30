@@ -534,6 +534,24 @@ static void set_param(void *instance, const char *key, const char *val) {
     }
 
     /* --- Scene launch (global): all tracks to clip M --- */
+    /* Global MIDI Looper: arm with capture length in master 96-PPQN ticks.
+     * Capture begins at the next master boundary aligned to that length.
+     * Re-arming while already ARMED/CAPTURING/LOOPING resets and starts over. */
+    if (!strcmp(key, "looper_arm")) {
+        int t = clamp_i(my_atoi(val), 1, 65535);
+        looper_stop(inst);
+        inst->looper_capture_ticks = (uint16_t)t;
+        inst->looper_state         = LOOPER_STATE_ARMED;
+        inst->looper_pos           = 0;
+        inst->looper_event_count   = 0;
+        inst->looper_play_idx      = 0;
+        return;
+    }
+    if (!strcmp(key, "looper_stop")) {
+        looper_stop(inst);
+        return;
+    }
+
     if (!strcmp(key, "launch_scene")) {
         int cidx = clamp_i(my_atoi(val), 0, NUM_CLIPS - 1);
         int t;
@@ -1100,6 +1118,12 @@ static void set_param(void *instance, const char *key, const char *val) {
                 tr->pfx.route = ROUTE_SCHWUNG;
             else if (!strcmp(val, "move"))
                 tr->pfx.route = ROUTE_MOVE;
+            return;
+        }
+
+        /* tN_track_looper: include/exclude this track from the global MIDI looper */
+        if (!strcmp(sub, "track_looper")) {
+            tr->pfx.looper_on = (uint8_t)(my_atoi(val) ? 1 : 0);
             return;
         }
 
