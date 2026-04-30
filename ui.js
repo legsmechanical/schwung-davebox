@@ -350,26 +350,40 @@ let ledInitIndex    = 0;
 let ledInitComplete = false;  /* false until init queue fully flushed; tick() blocks normal render */
 let shiftHeld       = false;
 let loopHeld        = false;
-/* Global MIDI Looper UI state. looperStack tracks every length step button
- * currently held (top = most recent, drives the active rate). Pressing a new
- * length while another is held queues a rate change at the next loop
- * boundary (DSP-side); releasing the newest pops back to the previous one.
- * Capture window: master 96-PPQN ticks per loop. */
+/* Performance Mode state. Session View + Loop held → pad grid shows Perf Mode.
+ * perfStack: currently-held R0 length pads (same stack semantics as old looper
+ * step stack; rate captured at press time). Top = active rate.
+ * perfModsToggled: latched modifier bitmask (Latch-toggle presses).
+ * perfModsHeld: momentary bitmask (held mod pads, not Latch-pressed).
+ * DSP receives (perfModsToggled | perfModsHeld) as perf_mods each change. */
 const LOOPER_RATES_STRAIGHT = [12, 24, 48, 96, 192, 384];   /* 1/32, 1/16, 1/8, 1/4, 1/2, 1bar */
-const LOOPER_RATES_TRIPLET  = [8,  16, 32, 64, 128, 384];   /* triplet variants for steps 1-5; step 6 stays 1bar */
-let looperTriplet = false;
-/* Stack of {idx, ticks} for currently-held length steps. Top = active rate.
- * Rate is captured at press time so toggling triplet mid-hold doesn't
- * retroactively change held steps' rates. */
-let looperStack = [];
-/* Looper-view lock: double-tap Loop in Session View to keep the looper UI
- * alive after Loop is released. Single tap while locked → unlock + stop.
- * Switching out of Session View also unlocks. */
-let looperViewLocked = false;
-let loopPressTick    = -1;     /* tickCount of most recent Loop press */
-let loopLastTapEndTick = -999; /* tickCount of last completed tap on Loop */
-const LOOP_TAP_TICKS  = 40;    /* ~200ms at 196Hz — press→release shorter than this is a tap, not a hold (matches STEP_HOLD_TICKS) */
-const LOOP_DBLTAP_GAP = 80;    /* ~410ms — between taps for double-tap recognition */
+const LOOPER_RATES_TRIPLET  = [8,  16, 32, 64, 128, 384];   /* triplet variants for idx 0-4; idx 5 stays 1bar */
+let perfTriplet      = false;
+let perfStack        = [];              /* [{idx, ticks}] — top is active rate */
+let perfModsToggled  = 0;              /* latched mods (persist after pad release) */
+let perfModsHeld     = 0;              /* momentary held mods */
+let perfLatchHeld    = false;
+let perfLatchPressedTick = -1;
+const PERF_LATCH_LONG_PRESS = 100;     /* ~510ms → clear all latched mods */
+/* Pad → modifier index map (note number → bit index into perf_mods_active) */
+const PERF_MOD_PAD_MAP = Object.freeze({
+    76: 0, /* OCT_UP    — R1 PITCH */
+    77: 1, /* SCALE_DOWN — R1 PITCH */
+    84: 2, /* CRESC     — R2 VEL */
+    85: 3, /* SOFT_DECAY — R2 VEL */
+    86: 4, /* STACCATO  — R2 VEL */
+    92: 5, /* HALFTIME  — R3 WILD */
+    93: 6, /* GLITCH    — R3 WILD */
+    94: 7, /* SPARSE    — R3 WILD */
+});
+const PERF_MOD_NAMES = ['Oct↑','Sc↓','Cresc','Soft','Stac','½time','Glitch','Sparse'];
+/* View lock: double-tap Loop keeps Perf Mode alive after Loop is released.
+ * Single tap while locked → unlock + stop loop. */
+let perfViewLocked   = false;
+let loopPressTick    = -1;
+let loopLastTapEndTick = -999;
+const LOOP_TAP_TICKS  = 40;
+const LOOP_DBLTAP_GAP = 80;
 
 /* Live pad note input — isomorphic 4ths diatonic layout. */
 const SCALE_INTERVALS = [
@@ -2259,20 +2273,62 @@ function flashAtRate(rateTicks) {
     return (Math.floor(masterPos / rateTicks) & 1) === 1;
 }
 
-/* Draw step button LEDs (notes 16-31) for the Session View looper UI.
- * Called when sessionView && loopHeld so the user gets a live music-synced
- * preview of each capture length, plus the triplet toggle on step 16. */
-function updateLooperStepLEDs() {
+/* Send current combined modifier bitmask to DSP. */
+function sendPerfMods() {
+    if (typeof host_module_set_param === 'function')
+        host_module_set_param('perf_mods', String(perfModsToggled | perfModsHeld));
+}
+
+/* Draw the full 4-row pad grid for Performance Mode.
+ * R0 (68-75): rate pads 1-6 (pulse at capture rate), triplet toggle, latch.
+ * R1 (76-83): PITCH modifier pads (HotMagenta family).
+ * R2 (84-91): VEL/GATE modifier pads (VividYellow family).
+ * R3 (92-99): WILD modifier pads (Cyan family).
+ * Also clears step buttons (16-31) — not used in Perf Mode. */
+function updatePerfModeLEDs() {
     if (!ledInitComplete) return;
-    const rates = looperTriplet ? LOOPER_RATES_TRIPLET : LOOPER_RATES_STRAIGHT;
-    for (let i = 0; i < 16; i++) {
-        let color = LED_OFF;
-        if (i <= 5) {
-            color = flashAtRate(rates[i]) ? White : PurpleBlue;
-        } else if (i === 15) {
-            color = looperTriplet ? (flashAtRate(32) ? PurpleBlue : DarkGrey) : PurpleBlue;
-        }
-        setLED(16 + i, color);
+    const activeMods = perfModsToggled | perfModsHeld;
+    const rates = perfTriplet ? LOOPER_RATES_TRIPLET : LOOPER_RATES_STRAIGHT;
+
+    /* Step buttons: clear (not used) */
+    for (let i = 0; i < 16; i++) setLED(16 + i, LED_OFF);
+
+    /* R0 (68-75): rate pads + triplet + latch */
+    for (let i = 0; i < 6; i++)
+        setLED(68 + i, flashAtRate(rates[i]) ? White : PurpleBlue);
+    /* Triplet: solid PurpleBlue normally; blink when active */
+    setLED(74, perfTriplet ? (flashAtRate(32) ? PurpleBlue : DarkGrey) : PurpleBlue);
+    /* Latch: lit yellow if any toggled mods, bright white if held, purple off */
+    setLED(75, perfLatchHeld ? White : (perfModsToggled ? VividYellow : PurpleBlue));
+
+    /* R1 (76-83): PITCH mods */
+    for (let i = 0; i < 8; i++) {
+        const note = 76 + i;
+        const modIdx = PERF_MOD_PAD_MAP[note];
+        if (modIdx !== undefined)
+            setLED(note, (activeMods >> modIdx) & 1 ? HotMagenta : DeepMagenta);
+        else
+            setLED(note, LED_OFF);
+    }
+
+    /* R2 (84-91): VEL/GATE mods */
+    for (let i = 0; i < 8; i++) {
+        const note = 84 + i;
+        const modIdx = PERF_MOD_PAD_MAP[note];
+        if (modIdx !== undefined)
+            setLED(note, (activeMods >> modIdx) & 1 ? VividYellow : Mustard);
+        else
+            setLED(note, LED_OFF);
+    }
+
+    /* R3 (92-99): WILD mods */
+    for (let i = 0; i < 8; i++) {
+        const note = 92 + i;
+        const modIdx = PERF_MOD_PAD_MAP[note];
+        if (modIdx !== undefined)
+            setLED(note, (activeMods >> modIdx) & 1 ? Cyan : DarkBlue);
+        else
+            setLED(note, LED_OFF);
     }
 }
 
@@ -2282,7 +2338,7 @@ function forceRedraw() {
     if (sessionView) {
         updateSessionLEDs();
         updateSceneMapLEDs();
-        if (loopHeld || looperViewLocked) updateLooperStepLEDs();
+        if (loopHeld || perfViewLocked) updatePerfModeLEDs();
         else for (let i = 0; i < 16; i++) setLED(16 + i, LED_OFF);
     } else {
         updateStepLEDs();
@@ -2375,9 +2431,44 @@ function drawTrackRow(y) {
     }
 }
 
+function drawPerfModeOled() {
+    clear_screen();
+    const activeMods = perfModsToggled | perfModsHeld;
+    /* Header */
+    print(4, 4, 'PERF' + (perfViewLocked ? ' \xb7 LOCKED' : ''), 1);
+    if (perfLatchHeld || perfModsToggled) {
+        const latchStr = perfModsToggled ? 'LATCH' : 'LATCH (hold)';
+        print(84, 4, latchStr, 1);
+    }
+    /* Horizontal rule */
+    fill_rect(0, 13, 128, 1, 1);
+    /* Active modifier names — up to 4 per line */
+    const activeNames = [];
+    for (let i = 0; i < 8; i++)
+        if ((activeMods >> i) & 1) activeNames.push(PERF_MOD_NAMES[i]);
+    if (activeNames.length === 0) {
+        print(4, 24, 'No mods active', 1);
+        print(4, 36, 'Hold pad to engage', 1);
+    } else {
+        const line1 = activeNames.slice(0, 4).join('  ');
+        const line2 = activeNames.slice(4).join('  ');
+        print(4, 24, line1, 1);
+        if (line2) print(4, 36, line2, 1);
+    }
+    /* Rate indicator */
+    if (perfStack.length > 0) {
+        const RATE_LABELS = ['1/32','1/16','1/8','1/4','1/2','1bar'];
+        const top = perfStack[perfStack.length - 1];
+        const label = RATE_LABELS[top.idx] + (perfTriplet && top.idx < 5 ? 'T' : '');
+        print(4, 52, '\xbb ' + label, 1);
+    }
+}
+
 function drawUI() {
     if (sessionOverlayHeld) { drawSessionOverview(); return; }
     if (globalMenuOpen) { drawGlobalMenu(); return; }
+    /* Perf Mode OLED takeover (Session View + Loop held or locked) */
+    if (sessionView && (loopHeld || perfViewLocked)) { drawPerfModeOled(); return; }
     clear_screen();
     if (sessionView) {
         if (actionPopupEndTick >= 0) {
@@ -3164,13 +3255,11 @@ globalThis.tick = function () {
         /* Transport LEDs */
         setButtonLED(MovePlay, playing ? Green : LED_OFF);
         setButtonLED(MoveRec,  recordArmed ? Red : LED_OFF);
-        /* Loop LED: flash White at 1/8 rate while looper view is locked (Session
-         * View only); dim DarkGrey while a press is held momentarily; off otherwise.
-         * Uses flashAtRate(48) so the blink stays musical whether transport is
-         * running or stopped. */
+        /* Loop LED: flash White at 1/8 rate while Perf Mode view is locked (Session
+         * View only); dim DarkGrey while Loop is held; off otherwise. */
         {
             let loopColor = LED_OFF;
-            if (sessionView && looperViewLocked) {
+            if (sessionView && perfViewLocked) {
                 loopColor = flashAtRate(48) ? White : LED_OFF;
             } else if (sessionView && loopHeld) {
                 loopColor = DarkGrey;
@@ -3187,7 +3276,7 @@ globalThis.tick = function () {
         if (sessionView) {
             updateSessionLEDs();
             updateSceneMapLEDs();
-            if (loopHeld || looperViewLocked) updateLooperStepLEDs();
+            if (loopHeld || perfViewLocked) updatePerfModeLEDs();
         } else {
             updateStepLEDs();
             /* Count-in flash: blink all step buttons white at quarter-note rate */
@@ -3536,14 +3625,17 @@ globalThis.onMidiMessageInternal = function (data) {
                     stepWasEmpty       = false;
                     stepWasHeld        = false;
                     stepBtnPressedTick.fill(-1);
-                    /* Leaving Session View clears any locked looper view + active loop. */
-                    if (!sessionView && (looperViewLocked || looperStack.length > 0)) {
-                        if (looperStack.length > 0 &&
+                    /* Leaving Session View clears Perf Mode state + stops any active loop. */
+                    if (!sessionView && (perfViewLocked || perfStack.length > 0)) {
+                        if (perfStack.length > 0 &&
                                 typeof host_module_set_param === 'function')
                             host_module_set_param('looper_stop', '1');
-                        looperStack       = [];
-                        looperViewLocked  = false;
-                        loopHeld          = false;
+                        perfStack        = [];
+                        perfViewLocked   = false;
+                        loopHeld         = false;
+                        perfModsHeld     = 0;
+                        perfLatchHeld    = false;
+                        sendPerfMods();
                     }
                     if (sessionView) {
                         for (let i = 0; i < 16; i++) setLED(16 + i, LED_OFF);
@@ -3558,9 +3650,9 @@ globalThis.onMidiMessageInternal = function (data) {
             }
         }
 
-        /* Loop button (CC 58, Session View): just track held state.
-         * Step button + Loop arms the global MIDI looper (handled in step
-         * button input). Releasing Loop while looper is active stops it. */
+        /* Loop button (CC 58, Session View): enter/exit Performance Mode.
+         * Pad presses in Perf Mode drive rate capture + modifier engage.
+         * Double-tap locks the view after Loop is released. */
         if (d1 === MoveLoop && sessionView) {
             if (d2 === 127) {
                 loopPressTick = tickCount;
@@ -3568,33 +3660,30 @@ globalThis.onMidiMessageInternal = function (data) {
                 forceRedraw();
                 return;
             }
-            /* Loop release. Double-tap detection: a tap = press→release within
-             * LOOP_TAP_TICKS. If two taps land within LOOP_DBLTAP_GAP, lock the
-             * looper view; the next single tap of Loop unlocks. */
             const heldDuration = tickCount - loopPressTick;
             const wasTap       = heldDuration < LOOP_TAP_TICKS;
 
-            if (looperViewLocked) {
-                /* Locked + tap of Loop → unlock + full stop. A long press
-                 * while locked just keeps the lock. */
+            if (perfViewLocked) {
+                /* Locked + tap → unlock + stop. Long press keeps lock. */
                 if (wasTap) {
-                    looperViewLocked   = false;
+                    perfViewLocked     = false;
                     loopHeld           = false;
                     loopLastTapEndTick = -999;
-                    if (looperStack.length > 0 &&
+                    if (perfStack.length > 0 &&
                             typeof host_module_set_param === 'function')
                         host_module_set_param('looper_stop', '1');
-                    looperStack = [];
+                    perfStack    = [];
+                    perfModsHeld = 0;
+                    perfLatchHeld = false;
+                    sendPerfMods();
                     forceRedraw();
                 }
                 return;
             }
 
             if (wasTap && (tickCount - loopLastTapEndTick) < LOOP_DBLTAP_GAP) {
-                /* Second tap within window → enter locked mode. Keep loopHeld=true
-                 * so updateLooperStepLEDs continues drawing the rate preview, and
-                 * preserve any active loop. */
-                looperViewLocked   = true;
+                /* Second tap → lock Perf Mode; preserve running loop + mods. */
+                perfViewLocked     = true;
                 loopHeld           = true;
                 loopLastTapEndTick = -999;
                 forceRedraw();
@@ -3603,12 +3692,15 @@ globalThis.onMidiMessageInternal = function (data) {
 
             if (wasTap) loopLastTapEndTick = tickCount;
 
-            /* Normal release: drop view, stop looper. */
-            loopHeld = false;
-            if (looperStack.length > 0 &&
+            /* Normal release: exit Perf Mode, stop loop, clear momentary mods. */
+            loopHeld     = false;
+            perfModsHeld = 0;
+            perfLatchHeld = false;
+            if (perfStack.length > 0 &&
                     typeof host_module_set_param === 'function')
                 host_module_set_param('looper_stop', '1');
-            looperStack = [];
+            perfStack = [];
+            sendPerfMods();
             forceRedraw();
             return;
         }
@@ -4471,26 +4563,6 @@ globalThis.onMidiMessageInternal = function (data) {
                     screenDirty = true;
                 }
                 /* Tap empty: no-op; muteHeld swallows all step buttons in Session View */
-            } else if (loopHeld || looperViewLocked) {
-                /* Loop + step button (or locked-view + step): arm the global MIDI looper.
-                 * Steps 1-6 = capture length (1/32, 1/16, 1/8, 1/4, 1/2, 1bar);
-                 * step 16 = toggle triplet (steps 1-5 use triplet rates; step 6 stays 1bar). */
-                if (idx === 15) {
-                    looperTriplet = !looperTriplet;
-                    forceRedraw();
-                } else if (idx <= 5) {
-                    /* Skip if this step is already in the stack (defensive — hardware
-                     * shouldn't fire two press events without a release, but guard anyway). */
-                    if (looperStack.findIndex(function(e) { return e.idx === idx; }) < 0) {
-                        const rates = looperTriplet ? LOOPER_RATES_TRIPLET : LOOPER_RATES_STRAIGHT;
-                        const ticks = rates[idx];
-                        looperStack.push({ idx: idx, ticks: ticks });
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('looper_arm', String(ticks));
-                        forceRedraw();
-                    }
-                }
-                /* steps 7-15: ignored */
             } else if (!deleteHeld && !shiftHeld) {
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('launch_scene', String(idx));
@@ -4696,6 +4768,39 @@ globalThis.onMidiMessageInternal = function (data) {
                     host_module_set_param('t' + t + '_seq_arp_step_vel', col + ' ' + newLvl);
                 forceRedraw();
             }
+            return;
+        }
+        /* Performance Mode pad intercept: absorb all pad presses when Perf Mode is active. */
+        if (sessionView && (loopHeld || perfViewLocked) && d1 >= 68 && d1 <= 99) {
+            if (d1 >= 68 && d1 <= 75) {
+                /* R0: rate pads 0-5 (arm/stack), triplet toggle (6), latch (7) */
+                const subIdx = d1 - 68;
+                if (subIdx === 7) {
+                    perfLatchHeld = true;
+                    perfLatchPressedTick = tickCount;
+                } else if (subIdx === 6) {
+                    perfTriplet = !perfTriplet;
+                } else {
+                    if (perfStack.findIndex(function(e) { return e.idx === subIdx; }) < 0) {
+                        const rates = perfTriplet ? LOOPER_RATES_TRIPLET : LOOPER_RATES_STRAIGHT;
+                        const ticks = rates[subIdx];
+                        perfStack.push({ idx: subIdx, ticks: ticks });
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('looper_arm', String(ticks));
+                    }
+                }
+            } else {
+                const modIdx = PERF_MOD_PAD_MAP[d1];
+                if (modIdx !== undefined) {
+                    if (perfLatchHeld) {
+                        perfModsToggled ^= (1 << modIdx);
+                    } else {
+                        perfModsHeld |= (1 << modIdx);
+                    }
+                    sendPerfMods();
+                }
+            }
+            forceRedraw();
             return;
         }
         if (sessionView) {
@@ -5074,33 +5179,48 @@ globalThis.onMidiMessageInternal = function (data) {
         if (!sessionView && activeBank === 5 && knobTouched === 4 &&
                 (bankParams[activeTrack][5][4] | 0) !== 0 &&
                 d1 >= 68 && d1 <= 99) return;
+        /* Perf Mode pad release: handle R0 rate pad pop + mod pad release. */
+        if (sessionView && (loopHeld || perfViewLocked) && d1 >= 68 && d1 <= 99) {
+            if (d1 >= 68 && d1 <= 75) {
+                const subIdx = d1 - 68;
+                if (subIdx === 7) {
+                    /* Latch release: long-press clears all toggled mods */
+                    const held = tickCount - perfLatchPressedTick;
+                    if (held >= PERF_LATCH_LONG_PRESS) {
+                        perfModsToggled = 0;
+                        sendPerfMods();
+                    }
+                    perfLatchHeld = false;
+                } else if (subIdx < 6) {
+                    /* Rate pad release: pop from stack */
+                    const sIdx = perfStack.findIndex(function(e) { return e.idx === subIdx; });
+                    if (sIdx >= 0) {
+                        perfStack.splice(sIdx, 1);
+                        if (perfStack.length === 0) {
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('looper_stop', '1');
+                        } else {
+                            const top = perfStack[perfStack.length - 1];
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('looper_arm', String(top.ticks));
+                        }
+                    }
+                }
+            } else {
+                /* Modifier pad release: clear momentary held bit */
+                const modIdx = PERF_MOD_PAD_MAP[d1];
+                if (modIdx !== undefined) {
+                    perfModsHeld &= ~(1 << modIdx);
+                    sendPerfMods();
+                }
+            }
+            forceRedraw();
+            return;
+        }
         /* Step button release: tap-toggle if within threshold, always exit step edit */
         if (d1 >= 16 && d1 <= 31) {
             stepOpTick = tickCount;
             const btn = d1 - 16;
-            /* Looper held-step release: pop the released step from the stack.
-             * If the stack is now empty, stop the looper (sends note-offs, drops
-             * captured content). Otherwise re-arm with the new top's rate —
-             * this either queues a switch back (if currently LOOPING) or cancels
-             * a not-yet-fired pending change (if rate now matches). The minimum-
-             * hold rule is automatic: if the release happens before LOOPING
-             * starts, looper_stop discards everything in flight. */
-            if (sessionView) {
-                const sIdx = looperStack.findIndex(function(e) { return e.idx === btn; });
-                if (sIdx >= 0) {
-                    looperStack.splice(sIdx, 1);
-                    if (looperStack.length === 0) {
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('looper_stop', '1');
-                    } else {
-                        const top = looperStack[looperStack.length - 1];
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('looper_arm', String(top.ticks));
-                    }
-                    forceRedraw();
-                    return;
-                }
-            }
             if (btn === heldStepBtn) {
                 if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {
                     /* Drum step release: tap toggles, hold-release exits + vel confirm */
