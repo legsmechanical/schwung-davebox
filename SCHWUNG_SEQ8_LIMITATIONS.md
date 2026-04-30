@@ -371,69 +371,82 @@ controller sends on.
 
 ---
 
-## 14. LED Message Batching — First Message Per Note Per Tick Wins
+## 14. LED Message Per-Tick Budget — Excess Messages Silently Dropped
 
-### The dual-cache architecture
+### What's actually happening
 
-LED state passes through two independent caches before reaching hardware:
+There is a per-tick budget on LED messages that reach the hardware. When a single
+tick queues more LED writes than the budget allows, the **later** messages in the
+tick are silently dropped. The exact budget size is unknown, but the threshold sits
+somewhere in the 30–48 message range.
 
-1. **`lastSentNoteLED[]`** in `ui.js` — gates `cachedSetLED()`. If the requested
-   color equals the last color sent for that note, `cachedSetLED` skips calling
-   `setLED` entirely.
+`setLED(note, 0)` (a Note On with velocity 0, equivalent to Note Off in MIDI) appears
+to be optimized somewhere below `move_midi_internal_send` and consumes either no
+budget or far less than a non-zero color message. This makes the ceiling sensitive
+to whether you're sending "off" or "color" messages — code that worked with `LED_OFF`
+fills the queue when the same call switches to a non-zero color.
 
-2. **`ledCache[]`** in `input_filter.mjs` — gates the raw `setLED()` export. If the
-   requested color equals `ledCache[note]`, `setLED` skips calling
-   `move_midi_internal_send`. `force=true` bypasses this layer only.
+### Dual-cache architecture
 
-`invalidateLEDCache()` (called on view switches) clears `lastSentNoteLED[]` only — it
-does NOT clear `ledCache[]` in `input_filter.mjs`.
+LED state passes through two independent caches before reaching `move_midi_internal_send`:
 
-### First-message-wins batching
+1. **`lastSentNoteLED[]`** in `ui.js` — gates `cachedSetLED()`. Cache hit → no call to
+   the imported `setLED`.
+2. **`ledCache[]`** in `input_filter.mjs` — gates raw `setLED()`. Cache hit → no call
+   to `move_midi_internal_send`. `force=true` bypasses this layer only.
 
-The Schwung framework batches LED messages per note number within a single JS tick
-and delivers only the **first** message queued for each note to the hardware. Any
-subsequent message for the same note in the same tick is silently dropped.
+Neither cache prevents the per-tick budget from being consumed once a message *does*
+go through. The budget enforcement happens below both caches.
 
-This means whichever call path queues its LED message first for a given note "wins"
-at the hardware level for that tick.
+`invalidateLEDCache()` clears only `lastSentNoteLED[]`, not `ledCache[]`.
 
-### How this caused the Perf Mode pad LED regression (2026-04-30)
+### How this caused the Perf Mode pad LED regression (2026-04-30, fixed in 8372434)
 
-`updateSessionLEDs()` runs before `updatePerfModeLEDs()` in both `forceRedraw()` and
-the periodic tick path. In Session View with Loop held, `updateSessionLEDs()` queued
-session clip colors for pads 68-99 first. `updatePerfModeLEDs()` then queued perf
-mode colors second — but those were dropped by the batching. Result: pads showed
-session colors while the OLED and step buttons correctly showed perf state.
+In Perf Mode (Session View + Loop held), the periodic tick was calling both
+`updateSceneMapLEDs()` (which writes notes 16–31 with scene colors) and
+`updatePerfModeLEDs()` (which writes 16–31 with perf colors *and* 68–99 with mod
+colors) — back to back, every tick. The two functions wrote conflicting values for
+notes 16–31, so each tick produced ~32 step-button messages plus pad messages.
 
-Step buttons (16-31) appeared to work *despite* the same ordering because
-`updateSceneMapLEDs()` uses raw `setLED`, and `ledCache[]` in `input_filter.mjs`
-already held the scene map colors from the prior tick — so `setLED` hit cache and
-queued no message. `updatePerfModeLEDs()` then queued the only/first message for
-those notes → perf preset colors won.
+In Phase 2 the empty preset slots used `setLED(slot, LED_OFF)` (vel=0). The vel=0
+messages were optimized below the budget, so the per-tick total stayed under the
+ceiling and pad messages reached the hardware. Phase 3's commit 78f190a switched
+empty preset slots to `setLED(slot, DarkPurple)` (a non-zero color). Now all 32
+step-button messages consumed budget; the pad messages — sent later in the same
+tick — were silently dropped. Result: pads kept showing session colors from the
+prior tick's `ledCache`, while step buttons and OLED rendered correctly because their
+messages came first.
 
-Adding `force=true` to `updatePerfModeLEDs()` calls did NOT fix the issue: it
-bypasses `ledCache[]` (layer 2) but `updateSessionLEDs()` was still queueing first,
-and the framework batching discards the second message regardless of `force`.
+This was a long debug because the symptom (pads stuck on session colors) looked like
+caching, ordering, or Move-overrides-the-pad-grid. None of those were the cause —
+the real signal was that even `setLED(99, color, true)` (force, raw send) couldn't
+move pad 99 when 32 step-button writes had already gone through earlier in the tick.
+
+### Earlier wrong hypothesis (corrected)
+
+A previous version of this section claimed "the framework keeps only the first
+message per note per tick." That was wrong — the same-note conflict is irrelevant.
+The actual mechanism is a global per-tick budget on the *number* of LED messages,
+across all notes.
 
 ### The correct pattern
 
-When two rendering paths compete for the same note range within a tick, ensure only
-one of them runs. The fix: add an early-return guard at the top of the lower-priority
-path:
+**Don't write the same LED twice from two functions in the same tick.** When a mode
+takeover (Perf Mode, etc.) wants to override an LED range that another update path
+also writes, call the takeover *instead of* the base update — not after it:
 
 ```js
-function updateSessionLEDs() {
-    if (!ledInitComplete) return;
-    // Perf Mode owns pads 68-99 entirely; skip session colors so the perf
-    // update wins (framework keeps only the first message per note per tick).
-    if (loopHeld || perfViewLocked) return;
-    ...
-}
+if (loopHeld || perfViewLocked) updatePerfModeLEDs();
+else updateSceneMapLEDs();
 ```
 
-**General rule**: if a new display mode needs to override the LED state for a note
-range normally owned by another update function, suppress the other function for
-that note range — not just force-push your colors after it has already queued.
+Running both wastes the LED budget on notes that will be overwritten anyway. With
+non-zero colors, that waste is enough to lose unrelated messages downstream in the
+same tick.
+
+**Secondary rule:** if you need to keep a base path running but also force a takeover
+on top of it, give the takeover priority by sending those messages *first* in the
+tick. Later messages are the ones at risk of being dropped, not the earlier ones.
 
 ---
 
