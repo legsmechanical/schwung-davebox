@@ -563,6 +563,10 @@ static void set_param(void *instance, const char *key, const char *val) {
         looper_stop(inst);
         return;
     }
+    if (!strcmp(key, "perf_mods")) {
+        inst->perf_mods_active = (uint32_t)(unsigned int)my_atoi(val);
+        return;
+    }
 
     if (!strcmp(key, "launch_scene")) {
         int cidx = clamp_i(my_atoi(val), 0, NUM_CLIPS - 1);

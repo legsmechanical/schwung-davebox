@@ -501,6 +501,15 @@ typedef struct {
 #define LOOPER_STATE_CAPTURING 2
 #define LOOPER_STATE_LOOPING   3
 #define LOOPER_MAX_EVENTS      1024
+/* Performance modifier bitmask: each bit enables one effect on the looping stream. */
+#define PERF_MOD_OCT_UP     (1u << 0)  /* PITCH:     +12 semitones */
+#define PERF_MOD_SCALE_DOWN (1u << 1)  /* PITCH:     -1 scale degree (scale-aware) */
+#define PERF_MOD_CRESC      (1u << 2)  /* VEL:       +13 per cycle, saturates at 127 */
+#define PERF_MOD_SOFT_DECAY (1u << 3)  /* VEL:       ×0.5 */
+#define PERF_MOD_STACCATO   (1u << 4)  /* GATE:      cap/8, via staccato_pending */
+#define PERF_MOD_HALFTIME   (1u << 5)  /* WILD:      suppress every odd cycle */
+#define PERF_MOD_GLITCH     (1u << 6)  /* WILD:      random pitch ±5 semitones */
+#define PERF_MOD_SPARSE     (1u << 7)  /* WILD:      ~50% random event suppression */
     uint8_t  looper_state;
     uint8_t  looper_emitting;       /* set during playback emit; pfx_send skips capture/suppress */
     uint16_t looper_capture_ticks;  /* total length of the loop window in master ticks */
@@ -519,9 +528,19 @@ typedef struct {
         uint8_t  track;
         uint8_t  pad[2];
     } looper_events[LOOPER_MAX_EVENTS];
-    /* Bitmap of currently-sounding looper-emitted notes per track, for stop cleanup.
-     * 128 pitches × 8 tracks = 1024 bits = 128 bytes. */
-    uint8_t  looper_active_notes[NUM_TRACKS][16];
+    /* Performance Mode state.
+     * perf_emitted_pitch[t][raw] = emitted pitch (0xFF = not sounding).
+     * Replaces the old 128-byte bitmap; carries pitch translation for cross-cycle
+     * note-off correctness and staccato pending cleanup. */
+    uint32_t perf_mods_active;
+    uint32_t looper_cycle;
+    uint8_t  perf_emitted_pitch[NUM_TRACKS][128];
+    struct {
+        uint8_t  raw_pitch, emitted_pitch, track;
+        uint8_t  _pad;
+        uint16_t fire_at;
+    } perf_staccato_notes[16];
+    uint8_t  perf_staccato_count;
 } seq8_instance_t;
 
 static const host_api_v1_t *g_host = NULL;
@@ -1147,10 +1166,11 @@ static void seq8_load_state(seq8_instance_t *inst) {
 /* Send 3-byte MIDI message. Routes on fx->route:
  *   ROUTE_SCHWUNG → midi_send_internal (Schwung chain, immediate)
  *   ROUTE_MOVE    → midi_inject_to_move (cable 2, CIN from status; NULL-safe) */
-/* Forward decls — arp engine is defined further down but pfx_send needs them. */
-static void arp_add_note   (arp_engine_t *a, uint8_t pitch, uint8_t vel);
-static void arp_remove_note(arp_engine_t *a, uint8_t pitch);
-static void arp_silence    (seq8_instance_t *inst, seq8_track_t *tr);
+/* Forward decls — arp engine and scale_transpose defined further down. */
+static void arp_add_note     (arp_engine_t *a, uint8_t pitch, uint8_t vel);
+static void arp_remove_note  (arp_engine_t *a, uint8_t pitch);
+static void arp_silence      (seq8_instance_t *inst, seq8_track_t *tr);
+static int  scale_transpose  (seq8_instance_t *inst, int note, int deg_offset);
 
 static void pfx_send(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
     /* SEQ ARP is the last chain stage. Any note-on/off coming out of the
@@ -1204,35 +1224,110 @@ static void pfx_send(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
 /* Global MIDI Looper                                                   */
 /* ------------------------------------------------------------------ */
 
+/* Record or clear the emitted pitch for a sounding looper note.
+ * raw = captured pitch; emitted = translated output pitch (0xFF = clear/inactive). */
 static inline void looper_mark_active(seq8_instance_t *inst, uint8_t track,
-                                       uint8_t pitch, int on) {
-    if (track >= NUM_TRACKS) return;
-    int byte = pitch >> 3;
-    int bit  = pitch & 7;
-    if (on) inst->looper_active_notes[track][byte] |=  (uint8_t)(1u << bit);
-    else    inst->looper_active_notes[track][byte] &= (uint8_t)~(1u << bit);
+                                       uint8_t raw_pitch, uint8_t emitted_pitch) {
+    if (track >= NUM_TRACKS || raw_pitch >= 128) return;
+    inst->perf_emitted_pitch[track][raw_pitch] = emitted_pitch;
 }
 
-/* Send note-offs for any looper-emitted note that's still sounding. Called
- * when the looper stops mid-note. */
+/* Send note-offs for every sounding looper note and drain staccato pending.
+ * Safe to call from any looper state. */
 static void looper_silence_active(seq8_instance_t *inst) {
-    int t, byte, bit;
+    int t, p;
     inst->looper_emitting = 1;
     for (t = 0; t < NUM_TRACKS; t++) {
         play_fx_t *fx = &inst->tracks[t].pfx;
-        for (byte = 0; byte < 16; byte++) {
-            uint8_t b = inst->looper_active_notes[t][byte];
-            if (!b) continue;
-            for (bit = 0; bit < 8; bit++) {
-                if (b & (1u << bit)) {
-                    uint8_t pitch = (uint8_t)((byte << 3) | bit);
-                    pfx_send(fx, (uint8_t)(0x80 | inst->tracks[t].channel), pitch, 0);
-                }
+        for (p = 0; p < 128; p++) {
+            uint8_t ep = inst->perf_emitted_pitch[t][p];
+            if (ep != 0xFF) {
+                pfx_send(fx, (uint8_t)(0x80 | inst->tracks[t].channel), ep, 0);
+                inst->perf_emitted_pitch[t][p] = 0xFF;
             }
-            inst->looper_active_notes[t][byte] = 0;
         }
     }
+    inst->perf_staccato_count = 0;
     inst->looper_emitting = 0;
+}
+
+/* Apply active Performance Mode modifiers to one looper event.
+ * Transforms pitch/velocity in-place; returns 0 to suppress (skip emit), 1 to emit.
+ * For note-on with STACCATO active, also enqueues a short note-off in staccato_notes[].
+ * For note-off, looks up the emitted pitch from the xlate table so cross-cycle gates
+ * land the note-off on the correct translated pitch. */
+static int perf_apply(seq8_instance_t *inst, uint8_t tr_idx,
+                      uint8_t status, uint8_t *d1, uint8_t *d2) {
+    uint32_t mods = inst->perf_mods_active;
+    if (!mods) return 1;
+
+    uint8_t hi    = status & 0xF0;
+    int     is_on  = (hi == 0x90 && *d2 > 0);
+    int     is_off = (hi == 0x80 || (hi == 0x90 && *d2 == 0));
+
+    /* Halftime: suppress every odd cycle entirely */
+    if ((mods & PERF_MOD_HALFTIME) && (inst->looper_cycle & 1u)) return 0;
+
+    if (is_off) {
+        /* Translate note-off via xlate table so pitch matches what we emitted */
+        if (tr_idx >= NUM_TRACKS || *d1 >= 128) return 0;
+        uint8_t ep = inst->perf_emitted_pitch[tr_idx][*d1];
+        if (ep == 0xFF) return 0;  /* not currently sounding — suppress */
+        *d1 = ep;
+        /* Staccato owns note-off timing via staccato_pending; suppress captured one */
+        if (mods & PERF_MOD_STACCATO) return 0;
+        return 1;
+    }
+
+    if (!is_on) return 1;  /* pass non-note events through unchanged */
+
+    uint8_t raw_d1 = *d1;
+    int pitch = (int)*d1;
+    int vel   = (int)*d2;
+
+    /* Sparse: ~50% suppression, deterministic per (pitch, pos, cycle) */
+    if (mods & PERF_MOD_SPARSE) {
+        unsigned s = (unsigned)pitch * 31337u + (unsigned)inst->looper_pos * 127u
+                   + (unsigned)inst->looper_cycle * 53u;
+        if ((s >> 7) & 1u) return 0;
+    }
+
+    /* Pitch transforms */
+    if (mods & PERF_MOD_OCT_UP)
+        pitch = pitch + 12 > 127 ? 127 : pitch + 12;
+    if ((mods & PERF_MOD_SCALE_DOWN) && tr_idx < NUM_TRACKS
+            && inst->tracks[tr_idx].pad_mode != PAD_MODE_DRUM)
+        pitch = scale_transpose(inst, pitch, -1);
+    if (mods & PERF_MOD_GLITCH) {
+        unsigned s = (unsigned)pitch * 31337u + (unsigned)inst->looper_pos * 7919u
+                   + (unsigned)inst->looper_cycle * 6271u;
+        int delta = (int)(s % 11u) - 5;  /* -5..+5 semitones */
+        pitch = pitch + delta < 0 ? 0 : (pitch + delta > 127 ? 127 : pitch + delta);
+    }
+
+    /* Velocity transforms */
+    if (mods & PERF_MOD_CRESC) {
+        int boost = (int)inst->looper_cycle * 13;
+        vel = vel + boost > 127 ? 127 : vel + boost;
+    }
+    if (mods & PERF_MOD_SOFT_DECAY)
+        vel = vel < 2 ? 1 : vel / 2;
+
+    *d1 = (uint8_t)(pitch < 0 ? 0 : pitch > 127 ? 127 : pitch);
+    *d2 = (uint8_t)(vel   < 1 ? 1 : vel   > 127 ? 127 : vel);
+
+    /* Staccato: enqueue a short note-off at looper_pos + cap/8 */
+    if ((mods & PERF_MOD_STACCATO) && inst->perf_staccato_count < 16) {
+        uint16_t cap = inst->looper_capture_ticks;
+        uint16_t gap = cap / 8 < 2 ? 2 : cap / 8;
+        uint16_t fire = (uint16_t)((inst->looper_pos + (uint32_t)gap) % cap);
+        int si = (int)inst->perf_staccato_count++;
+        inst->perf_staccato_notes[si].raw_pitch     = raw_d1;
+        inst->perf_staccato_notes[si].emitted_pitch = *d1;
+        inst->perf_staccato_notes[si].track         = tr_idx;
+        inst->perf_staccato_notes[si].fire_at        = fire;
+    }
+    return 1;
 }
 
 /* Per master tick. Drives ARMED→CAPTURING boundary detection, capture window
@@ -1264,31 +1359,48 @@ static void looper_tick(seq8_instance_t *inst) {
     }
 
     if (inst->looper_state == LOOPER_STATE_LOOPING) {
-        /* Emit any events whose tick == current pos. Events are stored in
-         * capture order (monotonically non-decreasing tick), so we walk
-         * play_idx forward. */
+        /* Fire staccato pending note-offs due at this position. */
+        {
+            int _si;
+            for (_si = 0; _si < (int)inst->perf_staccato_count; ) {
+                if (inst->perf_staccato_notes[_si].fire_at == (uint16_t)inst->looper_pos) {
+                    uint8_t _tr = inst->perf_staccato_notes[_si].track;
+                    uint8_t _ep = inst->perf_staccato_notes[_si].emitted_pitch;
+                    uint8_t _rp = inst->perf_staccato_notes[_si].raw_pitch;
+                    if (_tr < NUM_TRACKS) {
+                        inst->looper_emitting = 1;
+                        pfx_send(&inst->tracks[_tr].pfx,
+                                 (uint8_t)(0x80 | inst->tracks[_tr].channel), _ep, 0);
+                        inst->looper_emitting = 0;
+                    }
+                    if (_rp < 128) inst->perf_emitted_pitch[_tr][_rp] = 0xFF;
+                    inst->perf_staccato_notes[_si] =
+                        inst->perf_staccato_notes[--inst->perf_staccato_count];
+                } else { _si++; }
+            }
+        }
+        /* Emit captured events at this tick, applying perf modifiers. */
         while (inst->looper_play_idx < inst->looper_event_count &&
                inst->looper_events[inst->looper_play_idx].tick == (uint16_t)inst->looper_pos) {
             int ei = inst->looper_play_idx++;
-            uint8_t tr_idx = inst->looper_events[ei].track;
+            uint8_t tr_idx  = inst->looper_events[ei].track;
             if (tr_idx >= NUM_TRACKS) continue;
-            play_fx_t *fx = &inst->tracks[tr_idx].pfx;
-            uint8_t st  = inst->looper_events[ei].status;
-            uint8_t d1  = inst->looper_events[ei].d1;
-            uint8_t d2  = inst->looper_events[ei].d2;
+            play_fx_t *fx   = &inst->tracks[tr_idx].pfx;
+            uint8_t st      = inst->looper_events[ei].status;
+            uint8_t raw_d1  = inst->looper_events[ei].d1;
+            uint8_t d1      = raw_d1;
+            uint8_t d2      = inst->looper_events[ei].d2;
+            if (!perf_apply(inst, tr_idx, st, &d1, &d2)) continue;
             inst->looper_emitting = 1;
             pfx_send(fx, st, d1, d2);
             inst->looper_emitting = 0;
             uint8_t hi = st & 0xF0;
-            if (hi == 0x90 && d2 > 0)            looper_mark_active(inst, tr_idx, d1, 1);
-            else if (hi == 0x80 || (hi == 0x90)) looper_mark_active(inst, tr_idx, d1, 0);
+            if (hi == 0x90 && d2 > 0)            looper_mark_active(inst, tr_idx, raw_d1, d1);
+            else if (hi == 0x80 || (hi == 0x90)) looper_mark_active(inst, tr_idx, raw_d1, 0xFF);
         }
         inst->looper_pos++;
         if (inst->looper_pos >= cap) {
-            /* Loop boundary: drop a queued rate change here so the switch
-             * lands on-beat. Silence sounding looper notes, transition into
-             * ARMED with the new rate (which then waits for absolute master-
-             * clock alignment before re-capturing). */
+            /* Loop boundary: process queued rate change or increment cycle counter. */
             if (inst->looper_pending_rate_ticks != 0 &&
                     inst->looper_pending_rate_ticks != inst->looper_capture_ticks) {
                 looper_silence_active(inst);
@@ -1301,6 +1413,7 @@ static void looper_tick(seq8_instance_t *inst) {
                 return;
             }
             inst->looper_pending_rate_ticks = 0;
+            inst->looper_cycle++;
             inst->looper_pos      = 0;
             inst->looper_play_idx = 0;
         }
@@ -1318,7 +1431,9 @@ static void looper_stop(seq8_instance_t *inst) {
     inst->looper_event_count        = 0;
     inst->looper_capture_ticks      = 0;
     inst->looper_pending_rate_ticks = 0;
-    memset(inst->looper_active_notes, 0, sizeof(inst->looper_active_notes));
+    inst->looper_cycle              = 0;
+    inst->perf_staccato_count       = 0;
+    memset(inst->perf_emitted_pitch, 0xFF, sizeof(inst->perf_emitted_pitch));
 }
 
 /* Brute-force note-off for all 128 notes on all active channels.
@@ -2433,6 +2548,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     inst->launch_quant = 0;   /* Now */
     inst->metro_on     = 1;    /* default: Count (count-in only) */
     inst->metro_vol    = 80;
+    memset(inst->perf_emitted_pitch, 0xFF, sizeof(inst->perf_emitted_pitch));
     strncpy(inst->state_path, SEQ8_STATE_PATH_FALLBACK, sizeof(inst->state_path) - 1);
 
     /* Resolve per-set state path from active_set.txt */
