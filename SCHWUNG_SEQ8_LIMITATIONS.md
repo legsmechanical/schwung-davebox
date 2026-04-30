@@ -371,7 +371,73 @@ controller sends on.
 
 ---
 
-## 14. Opportunities Not Yet Taken
+## 14. LED Message Batching — First Message Per Note Per Tick Wins
+
+### The dual-cache architecture
+
+LED state passes through two independent caches before reaching hardware:
+
+1. **`lastSentNoteLED[]`** in `ui.js` — gates `cachedSetLED()`. If the requested
+   color equals the last color sent for that note, `cachedSetLED` skips calling
+   `setLED` entirely.
+
+2. **`ledCache[]`** in `input_filter.mjs` — gates the raw `setLED()` export. If the
+   requested color equals `ledCache[note]`, `setLED` skips calling
+   `move_midi_internal_send`. `force=true` bypasses this layer only.
+
+`invalidateLEDCache()` (called on view switches) clears `lastSentNoteLED[]` only — it
+does NOT clear `ledCache[]` in `input_filter.mjs`.
+
+### First-message-wins batching
+
+The Schwung framework batches LED messages per note number within a single JS tick
+and delivers only the **first** message queued for each note to the hardware. Any
+subsequent message for the same note in the same tick is silently dropped.
+
+This means whichever call path queues its LED message first for a given note "wins"
+at the hardware level for that tick.
+
+### How this caused the Perf Mode pad LED regression (2026-04-30)
+
+`updateSessionLEDs()` runs before `updatePerfModeLEDs()` in both `forceRedraw()` and
+the periodic tick path. In Session View with Loop held, `updateSessionLEDs()` queued
+session clip colors for pads 68-99 first. `updatePerfModeLEDs()` then queued perf
+mode colors second — but those were dropped by the batching. Result: pads showed
+session colors while the OLED and step buttons correctly showed perf state.
+
+Step buttons (16-31) appeared to work *despite* the same ordering because
+`updateSceneMapLEDs()` uses raw `setLED`, and `ledCache[]` in `input_filter.mjs`
+already held the scene map colors from the prior tick — so `setLED` hit cache and
+queued no message. `updatePerfModeLEDs()` then queued the only/first message for
+those notes → perf preset colors won.
+
+Adding `force=true` to `updatePerfModeLEDs()` calls did NOT fix the issue: it
+bypasses `ledCache[]` (layer 2) but `updateSessionLEDs()` was still queueing first,
+and the framework batching discards the second message regardless of `force`.
+
+### The correct pattern
+
+When two rendering paths compete for the same note range within a tick, ensure only
+one of them runs. The fix: add an early-return guard at the top of the lower-priority
+path:
+
+```js
+function updateSessionLEDs() {
+    if (!ledInitComplete) return;
+    // Perf Mode owns pads 68-99 entirely; skip session colors so the perf
+    // update wins (framework keeps only the first message per note per tick).
+    if (loopHeld || perfViewLocked) return;
+    ...
+}
+```
+
+**General rule**: if a new display mode needs to override the LED state for a note
+range normally owned by another update function, suppress the other function for
+that note range — not just force-push your colors after it has already queued.
+
+---
+
+## 15. Opportunities Not Yet Taken
 
 **DSP-side recording** would eliminate the biggest remaining source of JS-mirror
 complexity. Currently, live recording timing is computed in JS from polled
