@@ -1342,20 +1342,38 @@ static int perf_apply(seq8_instance_t *inst, uint8_t tr_idx,
     int is_drum = tr_idx < NUM_TRACKS
                   && inst->tracks[tr_idx].pad_mode == PAD_MODE_DRUM;
     if (!is_drum) {
-        if (mods & PERF_MOD_OCT_UP)
-            pitch = pitch + 12 > 127 ? 127 : pitch + 12;
-        if (mods & PERF_MOD_OCT_DOWN)
-            pitch = pitch - 12 < 0   ?   0 : pitch - 12;
-        if (mods & PERF_MOD_SCALE_UP)
-            pitch = scale_transpose(inst, pitch,  1);
-        if (mods & PERF_MOD_SCALE_DOWN)
-            pitch = scale_transpose(inst, pitch, -1);
-        /* 5th: +4 scale degrees (perfect 5th in major; scale-appropriate elsewhere). */
-        if (mods & PERF_MOD_FIFTH)
-            pitch = scale_transpose(inst, pitch, 4);
-        /* Tritone: +3 scale degrees (keeps result in-key). */
-        if (mods & PERF_MOD_TRITONE)
-            pitch = scale_transpose(inst, pitch, 3);
+        /* Cycle-based pitch mods. looper_cycle increments at each loop wrap;
+         * the mods animate over cycles instead of being static offsets.
+         * 76/77 alternate octave/original each cycle.
+         * 78-81 ascend (or descend) by their interval each cycle, then reset
+         * to the original on the 4th cycle (3 iterations + reset). */
+        const uint32_t cyc       = inst->looper_cycle;
+        const int      cyc_alt   = (int)(cyc & 1u);          /* 0,1,0,1,... */
+        const int      cyc_phase = (int)(cyc & 3u);          /* 0,1,2,3,...repeat */
+        if (mods & PERF_MOD_OCT_UP) {
+            if (cyc_alt == 0) pitch = pitch + 12 > 127 ? 127 : pitch + 12;
+        }
+        if (mods & PERF_MOD_OCT_DOWN) {
+            if (cyc_alt == 0) pitch = pitch - 12 < 0 ? 0 : pitch - 12;
+        }
+        if (mods & PERF_MOD_SCALE_UP) {
+            if (cyc_phase < 3)
+                pitch = scale_transpose(inst, pitch, cyc_phase + 1);
+        }
+        if (mods & PERF_MOD_SCALE_DOWN) {
+            if (cyc_phase < 3)
+                pitch = scale_transpose(inst, pitch, -(cyc_phase + 1));
+        }
+        /* 5th: +4 scale degrees per cycle (5th, octave+2nd, octave+5th, reset). */
+        if (mods & PERF_MOD_FIFTH) {
+            if (cyc_phase < 3)
+                pitch = scale_transpose(inst, pitch, 4 * (cyc_phase + 1));
+        }
+        /* Tritone: +3 scale degrees per cycle (4th, 6th, octave+2nd, reset). */
+        if (mods & PERF_MOD_TRITONE) {
+            if (cyc_phase < 3)
+                pitch = scale_transpose(inst, pitch, 3 * (cyc_phase + 1));
+        }
         /* Drift: accumulated scale-degree walk (±1 deg/cycle, clamped ±6). */
         if (mods & PERF_MOD_DRIFT)
             pitch = scale_transpose(inst, pitch, (int)inst->perf_drift_offset);
@@ -1620,9 +1638,10 @@ static void looper_tick(seq8_instance_t *inst) {
                 looper_silence_active(inst);
                 inst->looper_capture_ticks      = inst->looper_pending_rate_ticks;
                 inst->looper_pending_rate_ticks = 0;
-                inst->looper_state = inst->looper_sync
-                                     ? LOOPER_STATE_ARMED
-                                     : LOOPER_STATE_CAPTURING;
+                /* Rate change from a known loop boundary — already aligned, skip ARMED wait
+                 * so the gap between old loop end and new capture start doesn't let notes
+                 * play through uncaptured. */
+                inst->looper_state = LOOPER_STATE_CAPTURING;
                 inst->looper_pos                = 0;
                 inst->looper_event_count        = 0;
                 inst->looper_play_idx           = 0;
