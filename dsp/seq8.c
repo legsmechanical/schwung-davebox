@@ -408,6 +408,7 @@ typedef struct {
     uint32_t tick_delta;            /* MOVE_FRAMES_PER_BLOCK * BPM * PPQN */
     uint32_t master_tick_in_step;     /* drives global_tick and launch-quant at master 1/16 boundary */
     uint32_t global_tick;             /* steps elapsed since transport play; bar boundary = global_tick % 16 == 0 */
+    uint32_t arp_master_tick;         /* free-running master tick for SEQ ARP; advances even while stopped, resets on transport play / count-in fire */
 
     /* DSP-side count-in: counts down in DSP ticks; fires transport+recording when done */
     int32_t  count_in_ticks;        /* remaining ticks; 0 = inactive */
@@ -1772,9 +1773,10 @@ static void arp_fire_step(seq8_instance_t *inst, seq8_track_t *tr) {
     uint16_t rate = ARP_RATE_TICKS[a->rate_idx];
     if (rate == 0) rate = 24;
 
-    /* Editor column from absolute master clock — matches musical divisions. */
-    uint32_t master_pos = inst->global_tick * (uint32_t)TICKS_PER_STEP
-                        + inst->master_tick_in_step;
+    /* Editor column from absolute master clock — matches musical divisions.
+     * arp_master_tick free-runs (advances when stopped too) so live input
+     * arpeggiates even when transport is off. */
+    uint32_t master_pos = inst->arp_master_tick;
     int step_idx = (int)((master_pos / rate) & 7);
     a->step_pos = (uint8_t)step_idx;
 
@@ -1881,8 +1883,7 @@ static void arp_tick(seq8_instance_t *inst, seq8_track_t *tr) {
         /* Wait for next master-tick boundary aligned with rate. */
         uint16_t rate = ARP_RATE_TICKS[a->rate_idx];
         if (rate == 0) rate = 24;
-        uint32_t total = inst->global_tick * (uint32_t)TICKS_PER_STEP
-                       + inst->master_tick_in_step;
+        uint32_t total = inst->arp_master_tick;
         if ((total % rate) == 0) {
             a->pending_first_note = 0;
             arp_fire_step(inst, tr);
@@ -2198,6 +2199,7 @@ static void seq8_clear_state(seq8_instance_t *inst) {
             clip_init(&tr->clips[c]);
     }
     inst->master_tick_in_step = 0;
+    inst->arp_master_tick     = 0;
 }
 
 static void *create_instance(const char *module_dir, const char *json_defaults) {
@@ -2965,6 +2967,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 inst->tick_accum          = 0;
                 inst->master_tick_in_step = 0;
                 inst->global_tick         = 0;
+                inst->arp_master_tick     = 0;
                 for (t = 0; t < NUM_TRACKS; t++) {
                     inst->tracks[t].current_step      = 0;
                     inst->tracks[t].tick_in_step      = 0;
@@ -2986,7 +2989,20 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
         return; /* skip main sequencer while counting in (or this block after fire) */
     }
 
-    if (!inst->playing || inst->tick_threshold == 0) return;
+    if (inst->tick_threshold == 0) return;
+
+    /* When stopped: free-running clock for SEQ ARP only, so live input
+     * arpeggiates even with transport off. arp_master_tick advances; no
+     * sequencer work runs. */
+    if (!inst->playing) {
+        inst->tick_accum += inst->tick_delta;
+        while (inst->tick_accum >= inst->tick_threshold) {
+            inst->tick_accum -= inst->tick_threshold;
+            for (t = 0; t < NUM_TRACKS; t++) arp_tick(inst, &inst->tracks[t]);
+            inst->arp_master_tick++;
+        }
+        return;
+    }
 
     inst->tick_accum += inst->tick_delta;
     while (inst->tick_accum >= inst->tick_threshold) {
@@ -3198,6 +3214,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
             inst->master_tick_in_step = 0;
             inst->global_tick++;
         }
+        inst->arp_master_tick++;
     }
 }
 

@@ -241,6 +241,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 inst->global_tick         = 0;
                 inst->tick_accum          = 0;
                 inst->master_tick_in_step = 0;
+                inst->arp_master_tick     = 0;
                 for (t = 0; t < NUM_TRACKS; t++) {
                     inst->tracks[t].current_step      = 0;
                     inst->tracks[t].tick_in_step      = 0;
