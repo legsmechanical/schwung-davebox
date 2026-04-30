@@ -192,7 +192,23 @@ Settings are saved and restored with project state.
 
 ### 4.5 SEQ ARP Bank
 
-On/off, type, sort, hold, octave range, speed. Stub only — DSP not yet implemented.
+Per-clip arpeggiator. Sits as the **last stage** of the play-effects chain (after MIDI DLY), capturing every note-on/off coming out of the upstream stages — sequencer, live pads, external MIDI, even MIDI DLY echoes — into a held buffer, and re-emitting picks at its own clock. Free-runs even when transport is stopped, so live pads arpeggiate at any time.
+
+| Knob | Parameter | Notes |
+|---|---|---|
+| K1 | Style | Off · Up · Dn · U/D · D/U · Cnv · Div · Ord · Rnd · RnO. **Off bypasses the arp entirely** (notes pass through unchanged). Default Off. |
+| K2 | Rate | 1/32 · 1/16 · 1/16t · 1/8 · 1/8t · 1/4 · 1/4t · 1/2 · 1/2t · 1bar. Default 1/16. |
+| K3 | Octaves | Bipolar `-4..-1, +1..+4` (zero is skipped). Positive ascends by 12 semitones per octave; negative descends. Default `+1`. |
+| K4 | Gate | 1–200 % of the rate interval. Default 50 %. |
+| K5 | Steps Mode | `Off` (8-step pattern ignored) · `Mut` (level-0 step rests but cycle advances) · `Stp` (level-0 step skips entirely). Default Off. |
+| K6 | Retrigger | On/Off. **On**: cycle/pattern position restarts whenever a new note enters the buffer **and** at every active-clip loop wrap. **Off**: pattern free-runs anchored to the master clock. Default On. |
+| K7–K8 | — | unused |
+
+**Step-vel pad-grid editor** — when Steps Mode is `Mut` or `Stp`, holding K5 turns the pad grid into an 8-column × 4-row velocity-level editor for the 8-step pattern. Each column is a step; the row pressed sets the level (1=bottom row → vel 10, 4=top row → incoming vel; intermediate levels lerp). Pressing the bottom row again clears that step to level 0 (off).
+
+**Knob LEDs (CC 71–78)** light White when the corresponding parameter is non-default — i.e. anything other than Style=Off, Oct=+1, Steps=Off, Retrigger=On, etc.
+
+Style → Off silences any sounding output and clears the held buffer.
 
 ### 4.6 MIDI DLY Bank
 
@@ -371,11 +387,13 @@ Default: **1-bar**.
 
 **Transport stop/start:** When you stop transport, clips that were playing are remembered. When transport restarts, those clips automatically relaunch from the beginning.
 
-**Shift+Play:**
-- Transport running: stops all playing clips gracefully at the end of the current bar; cancels queued launches
-- Transport stopped: immediately clears all clip state across all tracks (panic); step data preserved
+**Shift+Play:** Restart transport.
+- Transport running: atomic stop + replay — all positions reset to step 0, currently-playing clips keep playing from the start, recording is finalized.
+- Transport stopped: starts transport (same as plain Play).
 
-**Delete+Play:** MIDI panic (sends all-notes-off).
+**Delete+Play:**
+- Transport running: stops all playing clips gracefully at the end of the current bar; cancels queued launches (same as the previous Shift+Play behavior).
+- Transport stopped: immediately clears all clip state across all tracks (panic); step data preserved.
 
 ### 7.5 Empty Clips
 
@@ -751,8 +769,8 @@ Two new knobs added to the HARMZ bank. Both are scale-aware (values are scale de
 **MIDI Delay — Dotted Timing and Rnd Refinement**
 Dotted is added as a third timing option alongside Straight and Triplet. Null timing is removed. Default changes to 1/8 Dotted. The Pitch Random knob (K8) is extended from a ±12 toggle to a 0–24 continuous range (0=off, 24=±24 semitones/degrees).
 
-**Arpeggiator — SEQ ARP and LIVE ARP**
-Both arpeggiator banks are currently stubs. SEQ ARP (per-clip) and LIVE ARP (per-track) will be implemented together, sharing a common DSP architecture.
+**Arpeggiator — LIVE ARP**
+SEQ ARP is implemented (see Section 4.5). LIVE ARP (per-track, sits before NOTE FX so its picks then flow through the rest of the chain — distinct from SEQ ARP which captures the chain output) is still a stub.
 
 **Swing**
 Global swing amount and resolution, applied last in the play effects chain. Currently a stub in the Global Menu.
