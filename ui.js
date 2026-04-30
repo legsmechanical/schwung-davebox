@@ -132,18 +132,7 @@ const BANKS = [
         p('Hrm2', 'Harmony 2',  'harm_interval2', 'track', -24, 24, 0, fmtSign, 8),
         _X, _X, _X, _X,
     ]},
-    /* 4 — SEQ ARP (pad 96) — per-clip arpeggiator; sits between NOTE FX and HARMZ */
-    { name: 'SEQ ARP', knobs: [
-        p('On',   'Arp On/Off',   'seq_arp_on',         'track', 0,    1,   0, fmtBool,     16),
-        p('Styl', 'Arp Style',    'seq_arp_style',      'track', 0,    8,   0, fmtArpStyle, 16),
-        p('Rate', 'Arp Rate',     'seq_arp_rate',       'track', 0,    9,   1, fmtArpRate,  16),
-        p('Oct',  'Octave Range', 'seq_arp_octaves',    'track', 1,    4,   1, fmtPlain,    16),
-        p('Gate', 'Arp Gate',     'seq_arp_gate',       'track', 1,    200, 50, fmtPct,     16),
-        p('Stps', 'Steps Mode',   'seq_arp_steps_mode', 'track', 0,    2,   0, fmtArpSteps, 16),
-        p('Decy', 'Vel Decay',    'seq_arp_vel_decay',  'track', -100, 100, 0, fmtSign,     16),
-        _X,
-    ]},
-    /* 5 — MIDI DLY (pad 97) — fully wired */
+    /* 4 — MIDI DLY (pad 96) — fully wired */
     { name: 'MIDI DLY', knobs: [
         p('Dly',  'Delay Time',     'delay_time',         'track', 0,    10,  0, fmtDly,   16),
         p('Lvl',  'Delay Level',    'delay_level',        'track', 0,    127, 0, fmtPlain),
@@ -153,6 +142,19 @@ const BANKS = [
         p('Gfb',  'Gate Feedback',  'delay_gate_fb',      'track', -100, 100, 0, fmtSign ),
         p('Clk',  'Clock Feedback', 'delay_clock_fb',     'track', -100, 100, 0, fmtSign ),
         p('Rnd',  'Pitch Random',   'delay_pitch_random', 'track', 0,    1,   0, fmtBool ),
+    ]},
+    /* 5 — SEQ ARP (pad 97) — per-clip arpeggiator; LAST stage of pfx chain
+     * (after MIDI DLY). Captures emitted notes from upstream into held buffer
+     * and emits picks raw to MIDI out. */
+    { name: 'SEQ ARP', knobs: [
+        p('On',   'Arp On/Off',   'seq_arp_on',         'track', 0,    1,   0, fmtBool,     16),
+        p('Styl', 'Arp Style',    'seq_arp_style',      'track', 0,    8,   0, fmtArpStyle, 16),
+        p('Rate', 'Arp Rate',     'seq_arp_rate',       'track', 0,    9,   1, fmtArpRate,  16),
+        p('Oct',  'Octave Range', 'seq_arp_octaves',    'track', 1,    4,   1, fmtPlain,    16),
+        p('Gate', 'Arp Gate',     'seq_arp_gate',       'track', 1,    200, 50, fmtPct,     16),
+        p('Stps', 'Steps Mode',   'seq_arp_steps_mode', 'track', 0,    2,   0, fmtArpSteps, 16),
+        p('Decy', 'Vel Decay',    'seq_arp_vel_decay',  'track', -100, 100, 0, fmtSign,     16),
+        _X,
     ]},
     /* 6 — LIVE ARP (pad 98) — stub: live arpeggiator not in DSP */
     { name: 'LIVE ARP', knobs: [
@@ -325,9 +327,11 @@ function doClearSession() {
     redoSeqArpSnapshot = null;
     for (let _t = 0; _t < NUM_TRACKS; _t++) {
         for (let _c = 0; _c < NUM_CLIPS; _c++) clipSeqFollow[_t][_c] = true;
-        for (let _k = 0; _k < 8; _k++) {
-            const _pm = BANKS[4].knobs[_k];
-            bankParams[_t][4][_k] = _pm ? _pm.def : 0;
+        for (let _b = 4; _b <= 5; _b++) {
+            for (let _k = 0; _k < 8; _k++) {
+                const _pm = BANKS[_b].knobs[_k];
+                bankParams[_t][_b][_k] = _pm ? _pm.def : 0;
+            }
         }
     }
     pendingSetLoad  = true;
@@ -1369,11 +1373,11 @@ function refreshPerClipBankParams(t) {
     for (let k = 0; k < 5; k++) bankParams[t][2][k] = parseInt(v[k], 10) | 0;
     /* HARMZ bank (3): K0=unis K1=oct K2=hrm1 K3=hrm2 */
     for (let k = 0; k < 4; k++) bankParams[t][3][k] = parseInt(v[5 + k], 10) | 0;
-    /* MIDI DLY bank (5): K0=dly K1=lvl K2=rep K3=vfb K4=pfb K5=gfb K6=clk K7=rnd */
-    for (let k = 0; k < 8; k++) bankParams[t][5][k] = parseInt(v[9 + k], 10) | 0;
-    /* SEQ ARP bank (4): K0=on K1=style K2=rate K3=oct K4=gate K5=steps K6=decay (length-aware) */
+    /* MIDI DLY bank (4): K0=dly K1=lvl K2=rep K3=vfb K4=pfb K5=gfb K6=clk K7=rnd */
+    for (let k = 0; k < 8; k++) bankParams[t][4][k] = parseInt(v[9 + k], 10) | 0;
+    /* SEQ ARP bank (5): K0=on K1=style K2=rate K3=oct K4=gate K5=steps K6=decay (length-aware) */
     if (v.length >= 24) {
-        for (let k = 0; k < 7; k++) bankParams[t][4][k] = parseInt(v[17 + k], 10) | 0;
+        for (let k = 0; k < 7; k++) bankParams[t][5][k] = parseInt(v[17 + k], 10) | 0;
     }
     /* step_vel[0..7] when present (length-aware) */
     if (v.length >= 32) {
@@ -2086,8 +2090,8 @@ function updateTrackLEDs() {
      *   level 1..4 = rows 0..3 lit from bottom up (topmost lit = bright,
      *                 lower lit = dim track color).
      * In Off mode the editor is suppressed and pads keep their normal mode. */
-    if (!sessionView && activeBank === 4 && knobTouched === 5 &&
-            (bankParams[activeTrack][4][5] | 0) !== 0) {
+    if (!sessionView && activeBank === 5 && knobTouched === 5 &&
+            (bankParams[activeTrack][5][5] | 0) !== 0) {
         const t  = activeTrack;
         const ac = effectiveClip(t);
         const sv = seqArpStepVel[t][ac];
@@ -3191,7 +3195,7 @@ globalThis.onMidiMessageInternal = function (data) {
                 if (d1 <= 7 && activeBank >= 0) {
                     knobTouched = d1; knobTurnedTick[d1] = -1; screenDirty = true;
                     /* SEQ ARP K6 touch: switch pads to vel-slider editor immediately. */
-                    if (activeBank === 4 && d1 === 5) forceRedraw();
+                    if (activeBank === 5 && d1 === 5) forceRedraw();
                 }
                 if (d1 === MoveMainTouch && !globalMenuOpen && !shiftHeld) { jogTouched = true; forceRedraw(); }
             } else if (d2 < 64) {
@@ -3213,7 +3217,7 @@ globalThis.onMidiMessageInternal = function (data) {
                         }
                     }
                     /* SEQ ARP K6 release: refresh pads (vel-slider editor → normal pads). */
-                    if (activeBank === 4 && d1 === 5) forceRedraw();
+                    if (activeBank === 5 && d1 === 5) forceRedraw();
                     knobTouched = -1;
                     knobLocked[d1] = false;
                     knobAccum[d1]  = 0;
@@ -3241,7 +3245,7 @@ globalThis.onMidiMessageInternal = function (data) {
                         bankParams[activeTrack][activeBank][d1] = 0;
                     }
                 }
-                if (activeBank === 4 && d1 === 5) forceRedraw();
+                if (activeBank === 5 && d1 === 5) forceRedraw();
                 knobTouched = -1;
                 knobLocked[d1] = false;
                 knobAccum[d1]  = 0;
@@ -3284,12 +3288,12 @@ globalThis.onMidiMessageInternal = function (data) {
                 /* Melodic: full reset — NOTE FX, HARMZ, MIDI DLY, + SEQ ARP */
                 const _arpTrack = activeTrack;
                 const _arpParams = Array.from({length: 8}, function(_, k) {
-                    const pm = BANKS[4].knobs[k]; return pm ? bankParams[_arpTrack][4][k] : 0;
+                    const pm = BANKS[5].knobs[k]; return pm ? bankParams[_arpTrack][5][k] : 0;
                 });
                 resetFxBanks(_arpTrack);
                 for (let k = 0; k < 8; k++) {
-                    const pm = BANKS[4].knobs[k];
-                    if (pm) bankParams[_arpTrack][4][k] = pm.def;
+                    const pm = BANKS[5].knobs[k];
+                    if (pm) bankParams[_arpTrack][5][k] = pm.def;
                 }
                 undoSeqArpSnapshot = { track: _arpTrack, params: _arpParams };
                 showActionPopup('CLIP PARAMS', 'RESET');
@@ -3560,7 +3564,7 @@ globalThis.onMidiMessageInternal = function (data) {
                 if (redoAvailable) {
                     if (redoSeqArpSnapshot) {
                         const _t = redoSeqArpSnapshot.track;
-                        undoSeqArpSnapshot = { track: _t, params: bankParams[_t][4].slice() };
+                        undoSeqArpSnapshot = { track: _t, params: bankParams[_t][5].slice() };
                     } else {
                         undoSeqArpSnapshot = null;
                     }
@@ -3569,8 +3573,8 @@ globalThis.onMidiMessageInternal = function (data) {
                     if (redoSeqArpSnapshot) {
                         const { track, params } = redoSeqArpSnapshot;
                         for (let k = 0; k < 8; k++) {
-                            const pm = BANKS[4].knobs[k];
-                            if (pm) bankParams[track][4][k] = params[k];
+                            const pm = BANKS[5].knobs[k];
+                            if (pm) bankParams[track][5][k] = params[k];
                         }
                     }
                     undoAvailable = true;
@@ -3585,7 +3589,7 @@ globalThis.onMidiMessageInternal = function (data) {
                 if (undoAvailable) {
                     if (undoSeqArpSnapshot) {
                         const _t = undoSeqArpSnapshot.track;
-                        redoSeqArpSnapshot = { track: _t, params: bankParams[_t][4].slice() };
+                        redoSeqArpSnapshot = { track: _t, params: bankParams[_t][5].slice() };
                     } else {
                         redoSeqArpSnapshot = null;
                     }
@@ -3594,8 +3598,8 @@ globalThis.onMidiMessageInternal = function (data) {
                     if (undoSeqArpSnapshot) {
                         const { track, params } = undoSeqArpSnapshot;
                         for (let k = 0; k < 8; k++) {
-                            const pm = BANKS[4].knobs[k];
-                            if (pm) bankParams[track][4][k] = params[k];
+                            const pm = BANKS[5].knobs[k];
+                            if (pm) bankParams[track][5][k] = params[k];
                         }
                     }
                     redoAvailable = true;
@@ -4518,8 +4522,8 @@ globalThis.onMidiMessageInternal = function (data) {
         /* SEQ ARP K6 (Steps Mode) touched + Mute/Step mode: pad press = level edit.
          * Column = step (0..7); row sets level (1=bottom..4=top). Bottom-row
          * press when already at level 1 → level 0 (step off). Off mode: ignored. */
-        if (!sessionView && activeBank === 4 && knobTouched === 5 &&
-                (bankParams[activeTrack][4][5] | 0) !== 0 &&
+        if (!sessionView && activeBank === 5 && knobTouched === 5 &&
+                (bankParams[activeTrack][5][5] | 0) !== 0 &&
                 d1 >= 68 && d1 <= 99) {
             const idx = d1 - 68;
             const col = idx % 8;
@@ -4909,8 +4913,8 @@ globalThis.onMidiMessageInternal = function (data) {
     if ((status & 0xF0) === 0x80 || ((status & 0xF0) === 0x90 && d2 === 0)) {
         if (tapTempoOpen && d1 >= 68 && d1 <= 99) return;
         /* Swallow pad releases while SEQ ARP step-level editor is open. */
-        if (!sessionView && activeBank === 4 && knobTouched === 5 &&
-                (bankParams[activeTrack][4][5] | 0) !== 0 &&
+        if (!sessionView && activeBank === 5 && knobTouched === 5 &&
+                (bankParams[activeTrack][5][5] | 0) !== 0 &&
                 d1 >= 68 && d1 <= 99) return;
         /* Step button release: tap-toggle if within threshold, always exit step edit */
         if (d1 >= 16 && d1 <= 31) {
