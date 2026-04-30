@@ -598,7 +598,6 @@ let stepOpTick = -99;  /* tickCount of last step button event; live_notes flush 
 
 let pendingSetLoad   = false;     /* true when set changed during init() but same DSP instance: save old, load new */
 let pendingDspSync   = 0;         /* ticks remaining before deferred syncClipsFromDsp() after set change */
-let pendingTransportRestart = false; /* Shift+Play: stop fired this tick, send play next tick (set_param coalesces per tick) */
 let pendingDefaultSetParams  = [];    /* [{key,val}] — drain one per tick after state fully settled */
 let uiDefaultsApplyAfterSync = false; /* apply first-run defaults after pendingDspSync completes */
 let pendingStepsReread      = 0;  /* ticks remaining before _steps re-read after _reassign */
@@ -2902,12 +2901,6 @@ globalThis.tick = function () {
         }
     }
 
-    /* Shift+Play restart: send 'play' the tick after 'stop' so DSP sees both. */
-    if (pendingTransportRestart && typeof host_module_set_param === 'function') {
-        pendingTransportRestart = false;
-        host_module_set_param('transport', 'play');
-    }
-
     /* Set change detected in init(): send UUID so DSP constructs path and loads. */
     if (pendingSetLoad && typeof host_module_set_param === 'function') {
         pendingSetLoad = false;
@@ -3644,14 +3637,10 @@ globalThis.onMidiMessageInternal = function (data) {
                     host_module_set_param('metro_on', String(metronomeOn));
                 showActionPopup('METRO ' + (metronomeOn === 0 ? 'OFF' : 'ON'));
             } else if (shiftHeld) {
-                /* Restart: stop now, then play next tick (set_param coalescing per tick). */
+                /* Restart: atomic DSP-side stop+play. Single set_param avoids
+                 * coalescing flakiness when stop+play land in same audio block. */
                 if (typeof host_module_set_param === 'function') {
-                    if (playing) {
-                        host_module_set_param('transport', 'stop');
-                        pendingTransportRestart = true;
-                    } else {
-                        host_module_set_param('transport', 'play');
-                    }
+                    host_module_set_param('transport', playing ? 'restart' : 'play');
                 }
             } else {
                 if (typeof host_module_set_param === 'function')

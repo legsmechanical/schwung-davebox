@@ -295,6 +295,55 @@ static void set_param(void *instance, const char *key, const char *val) {
                 send_panic(inst);
                 seq8_ilog(inst, "SEQ8 transport: stop");
             }
+        } else if (!strcmp(val, "restart")) {
+            /* Atomic stop+play: silence + finalize as in stop, then reset positions
+             * + replay as in play. Single set_param avoids coalescing flakiness. */
+            int t;
+            for (t = 0; t < NUM_TRACKS; t++) {
+                play_fx_t *fx = &inst->tracks[t].pfx;
+                silence_track_notes_v2(inst, &inst->tracks[t]);
+                if (fx->route == ROUTE_MOVE) {
+                    int ei;
+                    for (ei = 0; ei < fx->event_count; ei++)
+                        fx->events[ei].fire_at = fx->sample_counter;
+                    memset(fx->active_notes, 0, sizeof(fx->active_notes));
+                } else {
+                    fx->event_count = 0;
+                    memset(fx->active_notes, 0, sizeof(fx->active_notes));
+                }
+                inst->tracks[t].clips[inst->tracks[t].active_clip].clock_shift_pos = 0;
+                inst->tracks[t].pending_page_stop = 0;
+                inst->tracks[t].record_armed      = 0;
+                if (inst->tracks[t].recording) {
+                    finalize_pending_notes(&inst->tracks[t].clips[inst->tracks[t].active_clip],
+                                           &inst->tracks[t]);
+                    clip_clear_suppress(&inst->tracks[t].clips[inst->tracks[t].active_clip]);
+                }
+                inst->tracks[t].recording   = 0;
+                inst->tracks[t].queued_clip = -1;
+            }
+            send_panic(inst);
+
+            inst->global_tick         = 0;
+            inst->tick_accum          = 0;
+            inst->master_tick_in_step = 0;
+            inst->arp_master_tick     = 0;
+            inst->count_in_ticks      = 0;
+            for (t = 0; t < NUM_TRACKS; t++) {
+                inst->tracks[t].current_step      = 0;
+                inst->tracks[t].tick_in_step      = 0;
+                inst->tracks[t].note_active        = 0;
+                inst->tracks[t].pfx.sample_counter = 0;
+                memset(inst->tracks[t].drum_current_step, 0, sizeof(inst->tracks[t].drum_current_step));
+                memset(inst->tracks[t].drum_tick_in_step,  0, sizeof(inst->tracks[t].drum_tick_in_step));
+                if (inst->tracks[t].will_relaunch) {
+                    inst->tracks[t].clip_playing      = 1;
+                    inst->tracks[t].will_relaunch     = 0;
+                    inst->tracks[t].pending_page_stop = 0;
+                }
+            }
+            inst->playing = 1;
+            seq8_ilog(inst, "SEQ8 transport: restart");
         } else if (!strcmp(val, "panic")) {
             int t;
             for (t = 0; t < NUM_TRACKS; t++) {
