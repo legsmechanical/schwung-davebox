@@ -598,6 +598,7 @@ let stepOpTick = -99;  /* tickCount of last step button event; live_notes flush 
 
 let pendingSetLoad   = false;     /* true when set changed during init() but same DSP instance: save old, load new */
 let pendingDspSync   = 0;         /* ticks remaining before deferred syncClipsFromDsp() after set change */
+let pendingTransportRestart = false; /* Shift+Play: stop fired this tick, send play next tick (set_param coalesces per tick) */
 let pendingDefaultSetParams  = [];    /* [{key,val}] — drain one per tick after state fully settled */
 let uiDefaultsApplyAfterSync = false; /* apply first-run defaults after pendingDspSync completes */
 let pendingStepsReread      = 0;  /* ticks remaining before _steps re-read after _reassign */
@@ -2901,6 +2902,12 @@ globalThis.tick = function () {
         }
     }
 
+    /* Shift+Play restart: send 'play' the tick after 'stop' so DSP sees both. */
+    if (pendingTransportRestart && typeof host_module_set_param === 'function') {
+        pendingTransportRestart = false;
+        host_module_set_param('transport', 'play');
+    }
+
     /* Set change detected in init(): send UUID so DSP constructs path and loads. */
     if (pendingSetLoad && typeof host_module_set_param === 'function') {
         pendingSetLoad = false;
@@ -3614,19 +3621,9 @@ globalThis.onMidiMessageInternal = function (data) {
             screenDirty = true;
         }
 
-        /* Play: toggle transport; Shift+Play = deactivate_all; Delete+Play = panic; Mute+Play = toggle metro */
+        /* Play: toggle transport; Shift+Play = restart transport; Delete+Play = deactivate_all; Mute+Play = toggle metro */
         if (d1 === MovePlay && d2 === 127) {
             if (deleteHeld) {
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('transport', 'panic');
-            } else if (muteHeld) {
-                muteUsedAsModifier = true;
-                if (metronomeOn !== 0) metronomeOnLast = metronomeOn;
-                metronomeOn = metronomeOn === 0 ? metronomeOnLast : 0;
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('metro_on', String(metronomeOn));
-                showActionPopup('METRO ' + (metronomeOn === 0 ? 'OFF' : 'ON'));
-            } else if (shiftHeld) {
                 if (typeof host_module_set_param === 'function') {
                     if (!playing) {
                         /* Stopped: panic clears will_relaunch + all clip state atomically for all tracks. */
@@ -3637,6 +3634,23 @@ globalThis.onMidiMessageInternal = function (data) {
                         }
                     } else {
                         host_module_set_param('transport', 'deactivate_all');
+                    }
+                }
+            } else if (muteHeld) {
+                muteUsedAsModifier = true;
+                if (metronomeOn !== 0) metronomeOnLast = metronomeOn;
+                metronomeOn = metronomeOn === 0 ? metronomeOnLast : 0;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('metro_on', String(metronomeOn));
+                showActionPopup('METRO ' + (metronomeOn === 0 ? 'OFF' : 'ON'));
+            } else if (shiftHeld) {
+                /* Restart: stop now, then play next tick (set_param coalescing per tick). */
+                if (typeof host_module_set_param === 'function') {
+                    if (playing) {
+                        host_module_set_param('transport', 'stop');
+                        pendingTransportRestart = true;
+                    } else {
+                        host_module_set_param('transport', 'play');
                     }
                 }
             } else {
