@@ -25,7 +25,6 @@ import {
     DeepMagenta,
     Cyan,
     PurpleBlue,
-    DarkPurple,
     Bright,
     BurntOrange,
     White,
@@ -2313,7 +2312,7 @@ function sendPerfMods() {
 function updatePerfModeLEDs() {
     if (!ledInitComplete) return;
     const activeMods = perfModsToggled | perfModsHeld | perfRecalledMods;
-    /* Step buttons: preset slots. Active = White, has content = PurpleBlue, empty = dim white. */
+    /* Step buttons: preset slots. */
     for (let i = 0; i < 16; i++) {
         if (i === perfRecalledSlot)         setLED(16 + i, White);
         else if (perfSnapshots[i] !== 0)    setLED(16 + i, PurpleBlue);
@@ -2364,9 +2363,8 @@ function forceRedraw() {
     if (!ledInitComplete) return;
     if (sessionView) {
         updateSessionLEDs();
-        updateSceneMapLEDs();
         if (loopHeld || perfViewLocked) updatePerfModeLEDs();
-        else for (let i = 0; i < 16; i++) setLED(16 + i, LED_OFF);
+        else { updateSceneMapLEDs(); for (let i = 0; i < 16; i++) setLED(16 + i, LED_OFF); }
     } else {
         updateStepLEDs();
     }
@@ -3307,8 +3305,8 @@ globalThis.tick = function () {
 
         if (sessionView) {
             updateSessionLEDs();
-            updateSceneMapLEDs();
             if (loopHeld || perfViewLocked) updatePerfModeLEDs();
+            else updateSceneMapLEDs();
         } else {
             updateStepLEDs();
             /* Count-in flash: blink all step buttons white at quarter-note rate */
@@ -4573,16 +4571,14 @@ globalThis.onMidiMessageInternal = function (data) {
                 perfSnapshots[idx] = perfModsToggled | perfModsHeld | perfRecalledMods;
                 showActionPopup('SAVED');
             } else if (perfRecalledSlot === idx) {
-                /* Tap active slot again: deactivate and clear all mods */
+                /* Tap active slot again: deactivate recall */
                 perfRecalledSlot = -1;
                 perfRecalledMods = 0;
-                perfModsToggled = 0;
                 sendPerfMods();
             } else {
-                /* Tap a slot: recall its mods (clean load — clear any prior toggles) */
+                /* Tap a slot: recall its mods */
                 perfRecalledSlot = idx;
                 perfRecalledMods = perfSnapshots[idx];
-                perfModsToggled = 0;
                 sendPerfMods();
             }
             forceRedraw();
