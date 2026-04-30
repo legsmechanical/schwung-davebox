@@ -382,6 +382,11 @@ const PERF_MOD_NAMES = [
     'Decrsc','Swell','Cresc','Pulse','Sdchn','Stac','Lgto','RmpG',
     '½time','3Skip','Phnm','Sprs','Gltch','Stggr','Shfl','Back',
 ];
+const PERF_MOD_FULL_NAMES = [
+    'Octave Up','Octave Down','Scale Up','Scale Down','Fifth','Tritone','Drift','Storm',
+    'Decrescendo','Swell','Crescendo','Pulse','Sidechain','Staccato','Legato','Ramp Gate',
+    'Half Time','3 Skip','Phantom','Sparse','Glitch','Stagger','Shuffle','Backwards',
+];
 
 /* Preset snapshots: 16 slots (step buttons 1-16).
  * perfRecalledSlot: which slot is active (-1 = none).
@@ -404,6 +409,9 @@ let perfSnapshots    = PERF_FACTORY_PRESETS.map(function(p) { return p.mods; })
                            .concat(new Array(8).fill(0));  /* slots 8-15 empty */
 let perfRecalledSlot = -1;
 let perfRecalledMods = 0;
+let perfModPopupName    = '';  /* full name shown briefly on mod activate */
+let perfModPopupEndTick = -1;
+const PERF_MOD_POPUP_TICKS = 80; /* ~500ms at ~160 ticks/s */
 
 /* View lock: double-tap Loop keeps Perf Mode alive after Loop is released.
  * Single tap while locked → unlock + stop loop. */
@@ -2479,20 +2487,27 @@ function drawPerfModeOled() {
     if (headerRight) print(128 - headerRight.length * 6 - 4, 4, headerRight, 1);
     /* Horizontal rule */
     fill_rect(0, 13, 128, 1, 1);
-    /* Active modifier names — up to 4 per line */
-    const activeNames = [];
-    for (let i = 0; i < PERF_MOD_NAMES.length; i++)
-        if ((activeMods >> i) & 1) activeNames.push(PERF_MOD_NAMES[i]);
-    if (activeNames.length === 0) {
-        print(4, 24, 'No mods active', 1);
-        print(4, 36, 'Hold pad to engage', 1);
+    /* Brief full-name popup on mod activate */
+    if (perfModPopupEndTick >= 0 && tickCount <= perfModPopupEndTick && perfModPopupName) {
+        const px = Math.floor((128 - perfModPopupName.length * 6) / 2);
+        print(px < 0 ? 0 : px, 28, perfModPopupName, 1);
     } else {
-        const extra = activeNames.length > 6 ? '+' + (activeNames.length - 5) : '';
-        const show  = extra ? activeNames.slice(0, 5) : activeNames;
-        const line1 = show.slice(0, 3).join('  ');
-        const line2 = show.slice(3).join('  ') + (extra ? '  ' + extra : '');
-        print(4, 24, line1, 1);
-        if (line2) print(4, 36, line2, 1);
+        perfModPopupEndTick = -1;
+        /* Active modifier names — up to 3 per line, +N overflow */
+        const activeNames = [];
+        for (let i = 0; i < PERF_MOD_NAMES.length; i++)
+            if ((activeMods >> i) & 1) activeNames.push(PERF_MOD_NAMES[i]);
+        if (activeNames.length === 0) {
+            print(4, 24, 'No mods active', 1);
+            print(4, 36, 'Hold pad to engage', 1);
+        } else {
+            const extra = activeNames.length > 6 ? '+' + (activeNames.length - 5) : '';
+            const show  = extra ? activeNames.slice(0, 5) : activeNames;
+            const line1 = show.slice(0, 3).join('  ');
+            const line2 = show.slice(3).join('  ') + (extra ? '  ' + extra : '');
+            print(4, 24, line1, 1);
+            if (line2) print(4, 36, line2, 1);
+        }
     }
     /* Rate + slot indicator */
     if (perfStack.length > 0) {
@@ -4926,6 +4941,8 @@ globalThis.onMidiMessageInternal = function (data) {
                     } else {
                         perfModsHeld |= (1 << modIdx);
                     }
+                    perfModPopupName    = PERF_MOD_FULL_NAMES[modIdx] || '';
+                    perfModPopupEndTick = tickCount + PERF_MOD_POPUP_TICKS;
                     sendPerfMods();
                 }
             }
