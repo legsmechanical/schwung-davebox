@@ -59,19 +59,14 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
     if (!strcmp(key, "quantize"))
         { PFX_SET_BOTH(quantize, quantize, 0, 100); return; }
 
-    /* SEQ ARP — write to both live arp engine and per-clip params */
-    if (!strcmp(key, "seq_arp_on")) {
-        int _v = my_atoi(val) ? 1 : 0;
-        int _was = (int)fx->arp.on;
-        cp->seq_arp_on = _v;
-        fx->arp.on     = (uint8_t)_v;
-        if (_was && !_v) arp_silence(inst, tr);
-        return;
-    }
+    /* SEQ ARP — write to both live arp engine and per-clip params.
+     * Style 0 = Off (bypass): silence sounding output on transition into Off. */
     if (!strcmp(key, "seq_arp_style")) {
-        int _v = clamp_i(my_atoi(val), 0, 8);
+        int _v = clamp_i(my_atoi(val), 0, 9);
+        int _was = (int)fx->arp.style;
         cp->seq_arp_style = _v;
         fx->arp.style     = (uint8_t)_v;
+        if (_was != 0 && _v == 0) arp_silence(inst, tr);
         return;
     }
     if (!strcmp(key, "seq_arp_rate")) {
@@ -81,9 +76,10 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
         return;
     }
     if (!strcmp(key, "seq_arp_octaves")) {
-        int _v = clamp_i(my_atoi(val), 1, 4);
+        int _v = clamp_i(my_atoi(val), -4, 4);
+        if (_v == 0) _v = 1; /* skip zero */
         cp->seq_arp_octaves = _v;
-        fx->arp.octaves     = (uint8_t)_v;
+        fx->arp.octaves     = (int8_t)_v;
         return;
     }
     if (!strcmp(key, "seq_arp_gate")) {
@@ -98,10 +94,10 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
         fx->arp.steps_mode     = (uint8_t)_v;
         return;
     }
-    if (!strcmp(key, "seq_arp_vel_decay")) {
-        int _v = clamp_i(my_atoi(val), -100, 100);
-        cp->seq_arp_vel_decay = _v;
-        fx->arp.vel_decay     = (int8_t)_v;
+    if (!strcmp(key, "seq_arp_retrigger")) {
+        int _v = my_atoi(val) ? 1 : 0;
+        cp->seq_arp_retrigger = _v;
+        fx->arp.retrigger     = (uint8_t)_v;
         return;
     }
     if (!strcmp(key, "seq_arp_step_vel")) {
@@ -154,15 +150,14 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
         return;
     }
     if (!strcmp(key, "pfx_seq_arp_reset")) {
-        cp->seq_arp_on        = 0;
         cp->seq_arp_style     = 0;
         cp->seq_arp_rate      = ARP_RATE_DEFAULT;
         cp->seq_arp_octaves   = 1;
         cp->seq_arp_gate      = 50;
         cp->seq_arp_steps_mode = 0;
-        cp->seq_arp_vel_decay = 0;
+        cp->seq_arp_retrigger = 1;
         int _i;
-        for (_i = 0; _i < 8; _i++) cp->seq_arp_step_vel[_i] = 100;
+        for (_i = 0; _i < 8; _i++) cp->seq_arp_step_vel[_i] = 4;
         arp_silence(inst, tr);
         arp_init_defaults(&fx->arp);
         return;
