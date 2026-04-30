@@ -1260,17 +1260,14 @@ static void looper_silence_active(seq8_instance_t *inst) {
 static int perf_apply(seq8_instance_t *inst, uint8_t tr_idx,
                       uint8_t status, uint8_t *d1, uint8_t *d2) {
     uint32_t mods = inst->perf_mods_active;
-    if (!mods) return 1;
 
     uint8_t hi    = status & 0xF0;
     int     is_on  = (hi == 0x90 && *d2 > 0);
     int     is_off = (hi == 0x80 || (hi == 0x90 && *d2 == 0));
 
-    /* Halftime: suppress every odd cycle entirely */
-    if ((mods & PERF_MOD_HALFTIME) && (inst->looper_cycle & 1u)) return 0;
-
+    /* Note-off: always look up xlate table so pitch matches what was emitted,
+     * even if mods changed since the note-on was fired. */
     if (is_off) {
-        /* Translate note-off via xlate table so pitch matches what we emitted */
         if (tr_idx >= NUM_TRACKS || *d1 >= 128) return 0;
         uint8_t ep = inst->perf_emitted_pitch[tr_idx][*d1];
         if (ep == 0xFF) return 0;  /* not currently sounding — suppress */
@@ -1279,6 +1276,11 @@ static int perf_apply(seq8_instance_t *inst, uint8_t tr_idx,
         if (mods & PERF_MOD_STACCATO) return 0;
         return 1;
     }
+
+    if (!mods) return 1;  /* no active mods: pass note-on/CC through unchanged */
+
+    /* Halftime: suppress every odd cycle entirely */
+    if ((mods & PERF_MOD_HALFTIME) && (inst->looper_cycle & 1u)) return 0;
 
     if (!is_on) return 1;  /* pass non-note events through unchanged */
 

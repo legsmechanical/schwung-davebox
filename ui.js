@@ -112,8 +112,8 @@ const BANKS = [
         p('Ndg',  'Nudge',           'nudge',           'action', 0, 0,   0,   fmtSign,    8),
         p('Res',  'Resolution',      'clip_resolution', 'clip',   0, 5,   1,   fmtRes, 16),
         p('Len',  'Clip Length',     'clip_length',     'track',  1, 256, 16,  fmtLen, 8),
-        p('ClpS', 'Clip Start',      null,              'stub',   0, 0,   0,   fmtNA),
-        p('ClpE', 'Clip End',        null,              'stub',   0, 0,   0,   fmtNA),
+        _X,
+        _X,
         p('SqFl', 'Seq Follow',      null,              'seqfollow', 0, 1, 1,  fmtBool, 16),
     ]},
     /* 2 — NOTE FX (pad 94) — fully wired; Oct/Ofs slowed; Qnt moved here from TIMING */
@@ -3630,6 +3630,7 @@ globalThis.onMidiMessageInternal = function (data) {
                         perfViewLocked   = false;
                         loopHeld         = false;
                         perfModsHeld     = 0;
+                        perfModsToggled  = 0;
                         perfLatchMode    = false;
                         sendPerfMods();
                         invalidateLEDCache();
@@ -3669,9 +3670,10 @@ globalThis.onMidiMessageInternal = function (data) {
                     if (perfStack.length > 0 &&
                             typeof host_module_set_param === 'function')
                         host_module_set_param('looper_stop', '1');
-                    perfStack    = [];
-                    perfModsHeld = 0;
-                    perfLatchMode = false;
+                    perfStack       = [];
+                    perfModsHeld    = 0;
+                    perfModsToggled = 0;
+                    perfLatchMode   = false;
                     sendPerfMods();
                     invalidateLEDCache();
                     forceRedraw();
@@ -3690,10 +3692,11 @@ globalThis.onMidiMessageInternal = function (data) {
 
             if (wasTap) loopLastTapEndTick = tickCount;
 
-            /* Normal release: exit Perf Mode, stop loop, clear momentary mods. */
-            loopHeld     = false;
-            perfModsHeld = 0;
-            perfLatchMode = false;
+            /* Normal release: exit Perf Mode, stop loop, clear all mods. */
+            loopHeld        = false;
+            perfModsHeld    = 0;
+            perfModsToggled = 0;
+            perfLatchMode   = false;
             if (perfStack.length > 0 &&
                     typeof host_module_set_param === 'function')
                 host_module_set_param('looper_stop', '1');
@@ -5183,14 +5186,13 @@ globalThis.onMidiMessageInternal = function (data) {
             if (d1 >= 68 && d1 <= 75) {
                 const subIdx = d1 - 68;
                 if (subIdx === 7) {
-                    /* Latch release: short tap = toggle latch mode; long-press = clear all toggled */
-                    const held = tickCount - perfLatchPressedTick;
-                    if (held >= PERF_LATCH_LONG_PRESS) {
-                        perfModsToggled = 0;
-                        perfLatchMode   = false;
-                        sendPerfMods();
+                    /* Latch release: tap = toggle latch mode; exiting clears all toggled mods. */
+                    if (!perfLatchMode) {
+                        perfLatchMode = true;
                     } else {
-                        perfLatchMode = !perfLatchMode;
+                        perfLatchMode   = false;
+                        perfModsToggled = 0;
+                        sendPerfMods();
                     }
                 } else if (subIdx < 6) {
                     /* Rate pad release: pop from stack */
