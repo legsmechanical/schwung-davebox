@@ -4783,9 +4783,14 @@ globalThis.onMidiMessageInternal = function (data) {
                 } else {
                     if (perfStack.findIndex(function(e) { return e.idx === subIdx; }) < 0) {
                         const ticks = LOOPER_RATES_STRAIGHT[subIdx];
+                        const isSlice = perfStack.length > 0 && dspLooperState === 3;
                         perfStack.push({ idx: subIdx, ticks: ticks });
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('looper_arm', String(ticks));
+                        if (typeof host_module_set_param === 'function') {
+                            if (isSlice)
+                                host_module_set_param('looper_slice', String(ticks));
+                            else
+                                host_module_set_param('looper_arm', String(ticks));
+                        }
                     }
                 }
             } else {
@@ -5193,17 +5198,22 @@ globalThis.onMidiMessageInternal = function (data) {
                         perfLatchMode = !perfLatchMode;
                     }
                 } else if (subIdx < 6) {
-                    /* Rate pad release: pop from stack */
+                    /* Rate pad release: pop from stack; restore full loop or stop. */
                     const sIdx = perfStack.findIndex(function(e) { return e.idx === subIdx; });
                     if (sIdx >= 0) {
                         perfStack.splice(sIdx, 1);
                         if (perfStack.length === 0) {
                             if (typeof host_module_set_param === 'function')
                                 host_module_set_param('looper_stop', '1');
+                        } else if (perfStack.length === 1) {
+                            /* Back to base pad only: clear any active slice */
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('looper_slice', '0');
                         } else {
+                            /* Still slicing: update to new top-of-stack slice rate */
                             const top = perfStack[perfStack.length - 1];
                             if (typeof host_module_set_param === 'function')
-                                host_module_set_param('looper_arm', String(top.ticks));
+                                host_module_set_param('looper_slice', String(top.ticks));
                         }
                     }
                 }
