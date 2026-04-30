@@ -1758,7 +1758,11 @@ static int arp_compute_step(arp_engine_t *a, play_fx_t *fx,
  *   2 = Step  — level 0 step skips entirely (no note, no cycle advance).
  *
  * step_vel[i] is a 5-state level: 0 = step off, 1..4 = row 0..3 of the editor.
- * Active levels lerp between vel=10 (level 1) and incoming vel (level 4). */
+ * Active levels lerp between vel=10 (level 1) and incoming vel (level 4).
+ *
+ * Column = beat division of the arp rate (rate=1/16 → cols are 1/16 notes,
+ * rate=1/4 → cols are 1/4 notes). step_pos is derived from absolute master
+ * tick position so the editor pattern is musically anchored. */
 static void arp_fire_step(seq8_instance_t *inst, seq8_track_t *tr) {
     play_fx_t    *fx = &tr->pfx;
     arp_engine_t *a  = &fx->arp;
@@ -1767,14 +1771,18 @@ static void arp_fire_step(seq8_instance_t *inst, seq8_track_t *tr) {
     uint16_t rate = ARP_RATE_TICKS[a->rate_idx];
     if (rate == 0) rate = 24;
 
-    int step_idx = a->step_pos & 7;
+    /* Editor column from absolute master clock — matches musical divisions. */
+    uint32_t master_pos = inst->global_tick * (uint32_t)TICKS_PER_STEP
+                        + inst->master_tick_in_step;
+    int step_idx = (int)((master_pos / rate) & 7);
+    a->step_pos = (uint8_t)step_idx;
+
     uint8_t level = a->step_vel[step_idx];
     int step_off = (a->steps_mode != 0) && (level == 0);
 
     /* Step mode + step off: skip — no fire, no cycle advance, leave sounding alone.
      * Reset interval so we land on the next rate boundary, not the next render tick. */
     if (step_off && a->steps_mode == 2) {
-        a->step_pos = (uint8_t)((a->step_pos + 1) & 7);
         a->ticks_until_next = (int32_t)rate;
         return;
     }
@@ -1790,7 +1798,6 @@ static void arp_fire_step(seq8_instance_t *inst, seq8_track_t *tr) {
          * active step plays the note that would have played anyway. */
         uint8_t pitch_unused, vel_unused;
         (void)arp_compute_step(a, fx, &pitch_unused, &vel_unused);
-        a->step_pos = (uint8_t)((a->step_pos + 1) & 7);
         a->cycle_step_count++;
         a->ticks_until_next = (int32_t)rate;
         return;
@@ -1798,7 +1805,6 @@ static void arp_fire_step(seq8_instance_t *inst, seq8_track_t *tr) {
 
     uint8_t pitch, base_vel;
     if (!arp_compute_step(a, fx, &pitch, &base_vel)) {
-        a->step_pos = (uint8_t)((a->step_pos + 1) & 7);
         a->ticks_until_next = (int32_t)rate;
         return;
     }
@@ -1843,7 +1849,6 @@ static void arp_fire_step(seq8_instance_t *inst, seq8_track_t *tr) {
     if (gate >= rate)    gate = (uint32_t)rate - 1; /* note-off before next on */
     a->gate_remaining = gate;
 
-    a->step_pos = (uint8_t)((a->step_pos + 1) & 7);
     a->cycle_step_count++;
 }
 
