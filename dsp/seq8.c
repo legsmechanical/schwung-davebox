@@ -534,6 +534,7 @@ typedef struct {
      * note-off correctness and staccato pending cleanup. */
     uint32_t perf_mods_active;
     uint32_t looper_cycle;
+    uint8_t  looper_sync;               /* 1=wait for clock boundary (default), 0=start immediately */
     uint8_t  perf_emitted_pitch[NUM_TRACKS][128];
     struct {
         uint8_t  raw_pitch, emitted_pitch, track;
@@ -1292,26 +1293,37 @@ static int perf_apply(seq8_instance_t *inst, uint8_t tr_idx,
         if ((s >> 7) & 1u) return 0;
     }
 
-    /* Pitch transforms */
-    if (mods & PERF_MOD_OCT_UP)
-        pitch = pitch + 12 > 127 ? 127 : pitch + 12;
-    if ((mods & PERF_MOD_SCALE_DOWN) && tr_idx < NUM_TRACKS
-            && inst->tracks[tr_idx].pad_mode != PAD_MODE_DRUM)
-        pitch = scale_transpose(inst, pitch, -1);
-    if (mods & PERF_MOD_GLITCH) {
-        unsigned s = (unsigned)pitch * 31337u + (unsigned)inst->looper_pos * 7919u
-                   + (unsigned)inst->looper_cycle * 6271u;
-        int delta = (int)(s % 11u) - 5;  /* -5..+5 semitones */
-        pitch = pitch + delta < 0 ? 0 : (pitch + delta > 127 ? 127 : pitch + delta);
+    /* Pitch transforms: drum tracks bypass all pitch modifications. */
+    int is_drum = tr_idx < NUM_TRACKS
+                  && inst->tracks[tr_idx].pad_mode == PAD_MODE_DRUM;
+    if (!is_drum) {
+        /* Oct↑: climbs one octave per cycle (dynamic) */
+        if (mods & PERF_MOD_OCT_UP) {
+            int shift = 12 * (int)(inst->looper_cycle + 1);
+            pitch = pitch + shift > 127 ? 127 : pitch + shift;
+        }
+        /* Scale↓: descends one more scale degree per cycle (dynamic) */
+        if (mods & PERF_MOD_SCALE_DOWN)
+            pitch = scale_transpose(inst, pitch, -(int)(inst->looper_cycle + 1));
+        /* Glitch: random chromatic ±5 semitones (intentionally not scale-aware) */
+        if (mods & PERF_MOD_GLITCH) {
+            unsigned s = (unsigned)pitch * 31337u + (unsigned)inst->looper_pos * 7919u
+                       + (unsigned)inst->looper_cycle * 6271u;
+            int delta = (int)(s % 11u) - 5;
+            pitch = pitch + delta < 0 ? 0 : (pitch + delta > 127 ? 127 : pitch + delta);
+        }
     }
 
-    /* Velocity transforms */
+    /* Velocity transforms: apply to all tracks including drum. */
     if (mods & PERF_MOD_CRESC) {
         int boost = (int)inst->looper_cycle * 13;
         vel = vel + boost > 127 ? 127 : vel + boost;
     }
-    if (mods & PERF_MOD_SOFT_DECAY)
-        vel = vel < 2 ? 1 : vel / 2;
+    /* Soft Decay: mirrors Cresc — vel decreases 13 per cycle, floor 1 */
+    if (mods & PERF_MOD_SOFT_DECAY) {
+        int cut = (int)inst->looper_cycle * 13;
+        vel = vel - cut < 1 ? 1 : vel - cut;
+    }
 
     *d1 = (uint8_t)(pitch < 0 ? 0 : pitch > 127 ? 127 : pitch);
     *d2 = (uint8_t)(vel   < 1 ? 1 : vel   > 127 ? 127 : vel);
@@ -1337,9 +1349,9 @@ static void looper_tick(seq8_instance_t *inst) {
     if (cap == 0) return;
 
     if (inst->looper_state == LOOPER_STATE_ARMED) {
-        /* Wait for next master-tick boundary aligned to capture length. */
-        uint32_t total = inst->arp_master_tick;  /* free-running master clock */
-        if ((total % cap) == 0) {
+        /* Wait for next master-tick boundary (sync=1) or start immediately (sync=0). */
+        uint32_t total = inst->arp_master_tick;
+        if (!inst->looper_sync || (total % cap) == 0) {
             inst->looper_state       = LOOPER_STATE_CAPTURING;
             inst->looper_pos         = 0;
             inst->looper_event_count = 0;
@@ -1406,7 +1418,9 @@ static void looper_tick(seq8_instance_t *inst) {
                 looper_silence_active(inst);
                 inst->looper_capture_ticks      = inst->looper_pending_rate_ticks;
                 inst->looper_pending_rate_ticks = 0;
-                inst->looper_state              = LOOPER_STATE_ARMED;
+                inst->looper_state = inst->looper_sync
+                                     ? LOOPER_STATE_ARMED
+                                     : LOOPER_STATE_CAPTURING;
                 inst->looper_pos                = 0;
                 inst->looper_event_count        = 0;
                 inst->looper_play_idx           = 0;
@@ -2548,6 +2562,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     inst->launch_quant = 0;   /* Now */
     inst->metro_on     = 1;    /* default: Count (count-in only) */
     inst->metro_vol    = 80;
+    inst->looper_sync  = 1;
     memset(inst->perf_emitted_pitch, 0xFF, sizeof(inst->perf_emitted_pitch));
     strncpy(inst->state_path, SEQ8_STATE_PATH_FALLBACK, sizeof(inst->state_path) - 1);
 

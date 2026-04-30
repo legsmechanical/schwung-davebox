@@ -553,7 +553,9 @@ static void set_param(void *instance, const char *key, const char *val) {
         }
         looper_stop(inst);
         inst->looper_capture_ticks = (uint16_t)t;
-        inst->looper_state         = LOOPER_STATE_ARMED;
+        inst->looper_state = inst->looper_sync
+                             ? LOOPER_STATE_ARMED
+                             : LOOPER_STATE_CAPTURING;
         inst->looper_pos           = 0;
         inst->looper_event_count   = 0;
         inst->looper_play_idx      = 0;
@@ -561,6 +563,10 @@ static void set_param(void *instance, const char *key, const char *val) {
     }
     if (!strcmp(key, "looper_stop")) {
         looper_stop(inst);
+        return;
+    }
+    if (!strcmp(key, "looper_sync")) {
+        inst->looper_sync = my_atoi(val) ? 1 : 0;
         return;
     }
     if (!strcmp(key, "perf_mods")) {
