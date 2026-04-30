@@ -102,6 +102,14 @@ verified on hardware. Run through the checklist below before relying on them.
 
 **Looper — Loop LED 1/8 flash when locked** (commit `3a3c72a`): part of double-tap test. The blink rate should match a 1/8 note at the current BPM, and continue working when transport is stopped (uses `arp_master_tick` via `flashAtRate(48)`, not transport-dependent).
 
+**Perf Mode Phase 3** (commits `48ca134` / `79d2f3b`): full 24-mod set + scale-aware pitch + multiplicative vel. Deploy pending (Move was offline at commit time — run `./scripts/install.sh` then restart Move first).
+1. All 24 pads lit: R1=magenta, R2=yellow, R3=cyan. R0 rate pads still functional.
+2. **R1 pitch** — hold each pad while loop plays melodic track: Oct↑/Oct↓ shift exactly ±12st. Scale↑/Scale↓ shift one scale degree. 5th = +4 scale degrees (in C major → perfect 5th). Tritone = +3 scale degrees. Drift: each cycle shifts pitch ±1 scale degree, accumulates. Storm: each event shifts ±6 random scale degrees. All results should stay in-key.
+3. **R2 vel** — Decrsc: vel drops 15%/cycle (soft note should drop noticeably slower than loud note — proportional). Swell: vel rises/falls over 16 cycles (starts loud, quietest at cycle 8, returns). Cresc: vel multiplies up 15%/cycle (loud note grows faster than soft note). Pulse: even cycles full, odd cycles quiet. Sidechain: first note loudest, each successive note 15% quieter (proportional to incoming vel). Staccato/Legato/Ramp Gate gate overrides as before.
+4. **R3 wild** — ½time/3Skip suppress correct cycles. Phantom: ghost note at -12st, short gate, works on melodic + drum. Sparse: ~50% suppress. Glitch: random ±2 scale degrees (stays in-key). Stagger: note N gets +N scale degrees. Shuffle: pitch order randomises each cycle; on drum track, hit order shuffles. Backwards: pitch order reverses each cycle; drum track same.
+5. **Drums + Shuffle/Backwards**: capture a drum loop, engage Shuffle — different drum sounds should swap positions each cycle. Pitch mods (Oct↑ etc.) should have NO effect on drum tracks.
+6. **Factory presets** (step buttons 1-8): Float=Sc↑+Lgto, Sink=Oct↓+Decrsc+Stac, Heartbt=Pulse+½time, F.Dust=Storm+Swell+Sprs, Robot=Triton+Pulse+3Skip, Dissolve=Drift+Decrsc+Phnm, Chaos=Storm+Gltch+Back, Lift=Sc↑+Cresc+RmpG. Recall each and confirm mods engage.
+
 Once verified, delete the relevant entries here.
 
 ## Upcoming tasks
