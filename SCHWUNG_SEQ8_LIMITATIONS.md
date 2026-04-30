@@ -437,7 +437,124 @@ that note range — not just force-push your colors after it has already queued.
 
 ---
 
-## 15. Opportunities Not Yet Taken
+## 15. `pfx_send` Is the Playback Pipeline; Stage Order Is Load-Bearing
+
+All note-on and note-off events flow through `pfx_send`. The call order is:
+
+```
+NOTE FX → HARMZ → MIDI DLY (queues echoes) → SEQ ARP → Looper capture → Perf Mode apply
+```
+
+This order determines what each stage sees:
+- The Looper captures the post-ARP, post-effect stream — so looped notes are already
+  processed. A new stage inserted *after* looper capture won't be looped.
+- Perf Mode runs on looper-emitted events only (`looper_emitting=1`). A new effect
+  inserted before the looper capture point would affect both live and looped playback.
+
+Any new DSP playback stage must be deliberately positioned in this chain. Getting the
+position wrong produces subtle bugs (notes unaffected by the looper, effects applied
+twice, etc.) that are hard to diagnose without knowing the pipeline order.
+
+**`pfx_send` is also called from `set_param` context** (e.g. pad presses). Set-param
+context does not release Move synth voices (see §10), so stages that need to send
+note-offs on ROUTE_MOVE tracks must defer to `render_block` via a flag.
+
+---
+
+## 16. Re-Entry Guard: Every `pfx_send`-Calling Stage Needs an "Emitting" Flag
+
+Any stage that calls `pfx_send` to emit its output must carry a boolean flag
+(`arp_emitting`, `looper_emitting`, etc.) and check it at the top of `pfx_send`:
+
+```c
+if (arp.style != 0 && !arp_emitting)  // intercept into arp buffer
+    ...
+else
+    // pass through to next stage / MIDI out
+```
+
+Without this guard, the stage's own emitted output re-enters the stage as new input
+— infinite re-capture. The SEQ ARP and Looper both use this pattern; any future
+playback stage that emits via `pfx_send` must do the same.
+
+---
+
+## 17. Per-Clip Pfx Params Reload on Every Clip Switch
+
+Each clip carries its own `clip_pfx_params_t` (NOTE FX, HARMZ, MIDI DLY, SEQ ARP
+params). `pfx_sync_from_clip` is called whenever the active clip changes (launch,
+track switch, state load). The live DSP state is overwritten with the clip's stored
+params.
+
+**Two consequences**:
+
+1. "Why did my knob value change when I switched clips?" — `pfx_sync_from_clip`
+   replaced it with the new clip's stored value. Always the answer.
+
+2. Any new per-clip param must be added to `pfx_sync_from_clip` (DSP) and to
+   `refreshPerClipBankParams` (JS). Missing either means the param doesn't reload
+   when switching away and back.
+
+JS mirrors per-clip params in `bankParams[t][b][k]`, refreshed via
+`tN_cC_pfx_snapshot` on clip/track switch. New per-clip ARP fields must be added to
+the `pfx_snapshot` response format and the JS parser (`parsePfxSnapshot`).
+
+---
+
+## 18. Pitch-Transforming Stages Must Track Raw→Emitted for Note-Off Matching
+
+Any DSP stage that changes a note's pitch on note-on must store the mapping from
+input pitch to emitted pitch, then look up that mapping on note-off to send the
+correct pitch. Sending the original raw pitch on note-off doesn't silence the note
+that was actually started — it leaves a stuck voice.
+
+Perf Mode uses `perf_emitted_pitch[track][raw_pitch]` (128-entry per-track table,
+`0xFF` = not sounding) for this purpose. On note-on, store
+`perf_emitted_pitch[tr][raw] = emitted`. On note-off, look up
+`perf_emitted_pitch[tr][raw]`, send that pitch, reset to `0xFF`.
+
+This pattern generalizes to any future pitch effect (transpose, harmonizer, live
+tuning shift). Forgetting it produces stuck notes that persist until a panic.
+
+---
+
+## 19. Drum Lane DSP Reads Are Active-Clip-Implicit; Defer After Clip Switch
+
+Melodic clip reads (`tN_cC_steps`, `tN_cC_step_S_notes`, etc.) take an explicit clip
+index `C` and can be issued at any time.
+
+Drum lane reads (`tN_lL_steps`, `tN_lL_length`, `tN_lL_note_count`, etc.) have no
+clip index — they implicitly read whichever clip is currently active for that track
+in the DSP. After calling `tN_launch_clip` to switch the active clip, the DSP hasn't
+processed the switch yet (set_param is async). Issuing a drum lane read in the same
+tick or the next tick reads stale data from the old clip.
+
+**Fix**: set `pendingDrumResync = 2` after any clip switch on a drum track, and
+gate all drum lane reads on `pendingDrumResync == 0`. Two ticks is enough for the
+DSP to process `tN_launch_clip` before JS reads back lane state.
+
+The lightweight variant (`pendingDrumLaneResync`) re-reads only the active lane's
+steps (3 IPC calls vs full resync), used by per-detent K2/K3 edits while stopped.
+
+---
+
+## 20. State Version Bump Required for Any Structural State Change
+
+State files with `v` < current version are silently deleted on load and the module
+starts from scratch with no error or warning. The current version is `v=15`.
+
+Any change that alters the state file format — new persisted field, changed key name,
+changed serialization format — requires incrementing the version constant in the DSP
+`state_save`/`state_load` handlers. Without a bump, old state files load silently
+but may be missing expected fields, producing wrong defaults or undefined behavior.
+
+If the new format is backwards-compatible (new optional fields only), the load
+handler can accept both `v=N` and `v=N+1` and write `v=N+1`. If not
+backwards-compatible, bump and delete old files.
+
+---
+
+## 21. Opportunities Not Yet Taken
 
 **DSP-side recording** would eliminate the biggest remaining source of JS-mirror
 complexity. Currently, live recording timing is computed in JS from polled
