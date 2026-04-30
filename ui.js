@@ -368,8 +368,8 @@ let looperStack = [];
 let looperViewLocked = false;
 let loopPressTick    = -1;     /* tickCount of most recent Loop press */
 let loopLastTapEndTick = -999; /* tickCount of last completed tap on Loop */
-const LOOP_TAP_TICKS  = 8;     /* ~190ms — press→release shorter than this is a tap, not a hold */
-const LOOP_DBLTAP_GAP = 16;    /* ~370ms — between taps for double-tap recognition */
+const LOOP_TAP_TICKS  = 40;    /* ~200ms at 196Hz — press→release shorter than this is a tap, not a hold (matches STEP_HOLD_TICKS) */
+const LOOP_DBLTAP_GAP = 80;    /* ~410ms — between taps for double-tap recognition */
 
 /* Live pad note input — isomorphic 4ths diatonic layout. */
 const SCALE_INTERVALS = [
