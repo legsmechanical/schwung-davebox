@@ -376,6 +376,26 @@ const PERF_MOD_PAD_MAP = Object.freeze({
     94: 7, /* SPARSE    — R3 WILD */
 });
 const PERF_MOD_NAMES = ['Oct↑','Sc↓','Cresc','Soft','Stac','½time','Glitch','Sparse'];
+
+/* Preset snapshots: 16 slots (step buttons 1-16).
+ * perfRecalledSlot: which slot is active (-1 = none).
+ * perfRecalledMods: bitmask from the recalled slot (ORed into sendPerfMods).
+ * Factory presets populate slots 0-7 (steps 1-8) at init. */
+const PERF_FACTORY_PRESETS = [
+    { name: 'Float',   mods: 0x18 }, /* Soft Decay + Staccato */
+    { name: 'Sink',    mods: 0x0A }, /* Scale↓ + Soft Decay */
+    { name: 'Heartbt', mods: 0x24 }, /* Cresc + Halftime */
+    { name: 'F.Dust',  mods: 0x88 }, /* Soft Decay + Sparse */
+    { name: 'Robot',   mods: 0x50 }, /* Staccato + Glitch */
+    { name: 'Dissolve',mods: 0x82 }, /* Scale↓ + Sparse */
+    { name: 'Chaos',   mods: 0xE0 }, /* Halftime + Glitch + Sparse */
+    { name: 'Lift',    mods: 0x05 }, /* Oct↑ + Cresc */
+];
+let perfSnapshots    = PERF_FACTORY_PRESETS.map(function(p) { return p.mods; })
+                           .concat(new Array(8).fill(0));  /* slots 8-15 empty */
+let perfRecalledSlot = -1;
+let perfRecalledMods = 0;
+
 /* View lock: double-tap Loop keeps Perf Mode alive after Loop is released.
  * Single tap while locked → unlock + stop loop. */
 let perfViewLocked   = false;
@@ -2275,7 +2295,7 @@ function flashAtRate(rateTicks) {
 /* Send current combined modifier bitmask to DSP. */
 function sendPerfMods() {
     if (typeof host_module_set_param === 'function')
-        host_module_set_param('perf_mods', String(perfModsToggled | perfModsHeld));
+        host_module_set_param('perf_mods', String(perfModsToggled | perfModsHeld | perfRecalledMods));
 }
 
 /* Draw the full 4-row pad grid for Performance Mode.
@@ -2286,9 +2306,13 @@ function sendPerfMods() {
  * Also clears step buttons (16-31) — not used in Perf Mode. */
 function updatePerfModeLEDs() {
     if (!ledInitComplete) return;
-    const activeMods = perfModsToggled | perfModsHeld;
-    /* Step buttons: clear (not used) */
-    for (let i = 0; i < 16; i++) setLED(16 + i, LED_OFF);
+    const activeMods = perfModsToggled | perfModsHeld | perfRecalledMods;
+    /* Step buttons: preset slots. Active = White, has content = PurpleBlue, empty = off. */
+    for (let i = 0; i < 16; i++) {
+        if (i === perfRecalledSlot)         setLED(16 + i, White);
+        else if (perfSnapshots[i] !== 0)    setLED(16 + i, PurpleBlue);
+        else                                setLED(16 + i, LED_OFF);
+    }
 
     /* R0 (68-75): rate pads 0-5, sync toggle (6), latch (7) */
     for (let i = 0; i < 6; i++)
@@ -2430,12 +2454,17 @@ function drawTrackRow(y) {
 
 function drawPerfModeOled() {
     clear_screen();
-    const activeMods = perfModsToggled | perfModsHeld;
-    /* Header */
-    print(4, 4, 'PERF' + (perfViewLocked ? ' \xb7 LOCKED' : ''), 1);
-    if (perfLatchMode || perfModsToggled) {
-        print(84, 4, perfLatchMode ? 'LATCH' : 'LATCHED', 1);
+    const activeMods = perfModsToggled | perfModsHeld | perfRecalledMods;
+    /* Header: show preset name if a slot is recalled */
+    let headerRight = '';
+    if (perfRecalledSlot >= 0) {
+        const fp = PERF_FACTORY_PRESETS[perfRecalledSlot];
+        headerRight = fp ? fp.name : ('P' + (perfRecalledSlot + 1));
+    } else if (perfLatchMode || perfModsToggled) {
+        headerRight = perfLatchMode ? 'LATCH' : 'LATCHED';
     }
+    print(4, 4, 'PERF' + (perfViewLocked ? ' \xb7 LOCKED' : ''), 1);
+    if (headerRight) print(128 - headerRight.length * 6 - 4, 4, headerRight, 1);
     /* Horizontal rule */
     fill_rect(0, 13, 128, 1, 1);
     /* Active modifier names — up to 4 per line */
@@ -2451,12 +2480,13 @@ function drawPerfModeOled() {
         print(4, 24, line1, 1);
         if (line2) print(4, 36, line2, 1);
     }
-    /* Rate indicator */
+    /* Rate + slot indicator */
     if (perfStack.length > 0) {
         const RATE_LABELS = ['1/32','1/16','1/8','1/4','1/2','1bar'];
         const top = perfStack[perfStack.length - 1];
         const label = RATE_LABELS[top.idx];
-        print(4, 52, '\xbb ' + label, 1);
+        const slotStr = perfRecalledSlot >= 0 ? '  S' + (perfRecalledSlot + 1) : '';
+        print(4, 52, '\xbb ' + label + slotStr, 1);
     }
 }
 
@@ -3631,6 +3661,8 @@ globalThis.onMidiMessageInternal = function (data) {
                         loopHeld         = false;
                         perfModsHeld     = 0;
                         perfModsToggled  = 0;
+                        perfRecalledMods = 0;
+                        perfRecalledSlot = -1;
                         perfLatchMode    = false;
                         sendPerfMods();
                         invalidateLEDCache();
@@ -3670,10 +3702,12 @@ globalThis.onMidiMessageInternal = function (data) {
                     if (perfStack.length > 0 &&
                             typeof host_module_set_param === 'function')
                         host_module_set_param('looper_stop', '1');
-                    perfStack       = [];
-                    perfModsHeld    = 0;
-                    perfModsToggled = 0;
-                    perfLatchMode   = false;
+                    perfStack        = [];
+                    perfModsHeld     = 0;
+                    perfModsToggled  = 0;
+                    perfRecalledMods = 0;
+                    perfRecalledSlot = -1;
+                    perfLatchMode    = false;
                     sendPerfMods();
                     invalidateLEDCache();
                     forceRedraw();
@@ -3693,10 +3727,12 @@ globalThis.onMidiMessageInternal = function (data) {
             if (wasTap) loopLastTapEndTick = tickCount;
 
             /* Normal release: exit Perf Mode, stop loop, clear all mods. */
-            loopHeld        = false;
-            perfModsHeld    = 0;
-            perfModsToggled = 0;
-            perfLatchMode   = false;
+            loopHeld         = false;
+            perfModsHeld     = 0;
+            perfModsToggled  = 0;
+            perfRecalledMods = 0;
+            perfRecalledSlot = -1;
+            perfLatchMode    = false;
             if (perfStack.length > 0 &&
                     typeof host_module_set_param === 'function')
                 host_module_set_param('looper_stop', '1');
@@ -4524,6 +4560,26 @@ globalThis.onMidiMessageInternal = function (data) {
         if (tapTempoOpen) return;
         stepOpTick = tickCount;
         const idx = d1 - 16;
+        /* Perf Mode: step buttons are preset snapshot slots. */
+        if (sessionView && (loopHeld || perfViewLocked)) {
+            if (shiftHeld) {
+                /* Shift+step: save current active mods to this slot */
+                perfSnapshots[idx] = perfModsToggled | perfModsHeld | perfRecalledMods;
+                showActionPopup('SAVED');
+            } else if (perfRecalledSlot === idx) {
+                /* Tap active slot again: deactivate recall */
+                perfRecalledSlot = -1;
+                perfRecalledMods = 0;
+                sendPerfMods();
+            } else {
+                /* Tap a slot: recall its mods */
+                perfRecalledSlot = idx;
+                perfRecalledMods = perfSnapshots[idx];
+                sendPerfMods();
+            }
+            forceRedraw();
+            return;
+        }
         if (sessionView) {
             if (muteHeld) {
                 /* All 16 step buttons are snapshot slots 0-15 */
