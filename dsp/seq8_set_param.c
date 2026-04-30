@@ -566,6 +566,20 @@ static void set_param(void *instance, const char *key, const char *val) {
         looper_stop(inst);
         return;
     }
+    if (!strcmp(key, "looper_retrigger")) {
+        /* Atomic stop + arm. Always re-captures fresh, regardless of current state.
+         * Used by the JS held-loop re-trigger gesture (press same length pad while held). */
+        int t = clamp_i(my_atoi(val), 1, 65535);
+        looper_stop(inst);
+        inst->looper_capture_ticks = (uint16_t)t;
+        inst->looper_state = inst->looper_sync
+                             ? LOOPER_STATE_ARMED
+                             : LOOPER_STATE_CAPTURING;
+        inst->looper_pos         = 0;
+        inst->looper_event_count = 0;
+        inst->looper_play_idx    = 0;
+        return;
+    }
     if (!strcmp(key, "looper_sync")) {
         inst->looper_sync = my_atoi(val) ? 1 : 0;
         return;

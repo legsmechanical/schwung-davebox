@@ -358,10 +358,11 @@ let loopHeld        = false;
  * perfModsToggled: latched modifier bitmask (Latch-toggle presses).
  * perfModsHeld: momentary bitmask (held mod pads, not Latch-pressed).
  * DSP receives (perfModsToggled | perfModsHeld) as perf_mods each change. */
-const LOOPER_RATES_STRAIGHT = [12, 24, 48, 96, 192, 384];   /* 1/32, 1/16, 1/8, 1/4, 1/2, 1bar */
+const LOOPER_RATES_STRAIGHT = [12, 24, 48, 96, 192];   /* 1/32, 1/16, 1/8, 1/4, 1/2 */
 let perfSync         = true;           /* true=wait for clock boundary; false=start immediately */
 let perfStack        = [];              /* [{idx, ticks}] — top is active rate */
 let perfStickyLengths = new Set();       /* length-pad indices toggled sticky via Shift+pad */
+let perfHoldPadHeld   = false;           /* "hold pad" (note 73) momentary state */
 let perfModsToggled  = 0;              /* sticky mods set while in Latch mode */
 let perfModsHeld     = 0;              /* momentary held mod bitmask */
 let perfLatchMode    = false;          /* true=Latch mode on: mod presses are toggles */
@@ -2322,11 +2323,13 @@ function updatePerfModeLEDs() {
         else                                setLED(16 + i, LightGrey);
     }
 
-    /* R0 (68-75): rate pads 0-5, sync toggle (6), latch (7) */
-    for (let i = 0; i < 6; i++)
+    /* R0 (68-75): rate pads 0-4 (1/32..1/2), hold (5), sync (6), latch (7) */
+    for (let i = 0; i < 5; i++)
         setLED(68 + i, flashAtRate(LOOPER_RATES_STRAIGHT[i]) ? White : LightGrey);
-    /* Sync (pad 74): blink dim/bright red at 1/4 when sync=on; solid Red when sync=off */
-    setLED(74, perfSync ? (flashAtRate(96) ? Red : DeepRed) : Red);
+    /* Hold pad (73): White when held, Red otherwise */
+    setLED(73, perfHoldPadHeld ? White : Red);
+    /* Sync (pad 74): blink dim/bright green at 1/4 when sync=on; solid Green when sync=off */
+    setLED(74, perfSync ? (flashAtRate(96) ? Green : DeepGreen) : Green);
     /* Latch (pad 75): Yellow when latch mode is on (mods sticky); Purple when off */
     setLED(75, perfLatchMode ? VividYellow : PurpleBlue);
 
@@ -2470,7 +2473,9 @@ function drawPerfModeOled() {
     } else if (perfLatchMode || perfModsToggled) {
         headerRight = perfLatchMode ? 'LATCH' : 'LATCHED';
     }
-    print(4, 4, 'PERF' + (perfViewLocked ? ' \xb7 LOCKED' : ''), 1);
+    let header = 'PERF';
+    if (perfHoldPadHeld) header += ' \xb7 HOLD';
+    print(4, 4, header, 1);
     if (headerRight) print(128 - headerRight.length * 6 - 4, 4, headerRight, 1);
     /* Horizontal rule */
     fill_rect(0, 13, 128, 1, 1);
@@ -2489,7 +2494,7 @@ function drawPerfModeOled() {
     }
     /* Rate + slot indicator */
     if (perfStack.length > 0) {
-        const RATE_LABELS = ['1/32','1/16','1/8','1/4','1/2','1bar'];
+        const RATE_LABELS = ['1/32','1/16','1/8','1/4','1/2'];
         const top = perfStack[perfStack.length - 1];
         const label = RATE_LABELS[top.idx];
         const slotStr = perfRecalledSlot >= 0 ? '  S' + (perfRecalledSlot + 1) : '';
@@ -3663,6 +3668,7 @@ globalThis.onMidiMessageInternal = function (data) {
                         const _hadLoop = perfStack.length > 0;
                         perfStack         = [];
                         perfStickyLengths = new Set();
+                        perfHoldPadHeld   = false;
                         perfViewLocked    = false;
                         loopHeld         = false;
                         perfModsHeld     = 0;
@@ -3710,6 +3716,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     loopLastTapEndTick = -999;
                     perfStack         = [];
                     perfStickyLengths = new Set();
+                    perfHoldPadHeld   = false;
                     perfModsHeld     = 0;
                     perfModsToggled  = 0;
                     perfRecalledMods = 0;
@@ -3736,14 +3743,15 @@ globalThis.onMidiMessageInternal = function (data) {
 
             if (wasTap) loopLastTapEndTick = tickCount;
 
-            /* Normal release: if sticky lengths exist, keep perf mode locked + loop running.
+            /* Normal release: if sticky lengths or hold pad keep loops alive, lock perf mode.
              * Otherwise exit Perf Mode, stop loop, clear all mods. */
             loopHeld     = false;
             perfModsHeld = 0;
-            if (perfStickyLengths.size > 0) {
+            if (perfStickyLengths.size > 0 || perfHoldPadHeld) {
                 perfViewLocked = true;
-                /* Filter perfStack down to sticky entries only */
-                perfStack = perfStack.filter(function(e) { return perfStickyLengths.has(e.idx); });
+                /* Keep all stack entries when hold pad is engaged; otherwise filter to sticky */
+                if (!perfHoldPadHeld)
+                    perfStack = perfStack.filter(function(e) { return perfStickyLengths.has(e.idx); });
                 if (perfStack.length > 0 && typeof host_module_set_param === 'function')
                     host_module_set_param('looper_arm', String(perfStack[perfStack.length - 1].ticks));
             } else {
@@ -4850,7 +4858,7 @@ globalThis.onMidiMessageInternal = function (data) {
         /* Performance Mode pad intercept: absorb all pad presses when Perf Mode is active. */
         if (sessionView && (loopHeld || perfViewLocked) && d1 >= 68 && d1 <= 99) {
             if (d1 >= 68 && d1 <= 75) {
-                /* R0: rate pads 0-5 (arm/stack), triplet toggle (6), latch (7) */
+                /* R0: rate pads 0-4 (arm/stack), hold (5), sync (6), latch (7) */
                 const subIdx = d1 - 68;
                 if (subIdx === 7) {
                     perfLatchPressedTick = tickCount;
@@ -4858,6 +4866,18 @@ globalThis.onMidiMessageInternal = function (data) {
                     perfSync = !perfSync;
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('looper_sync', perfSync ? '1' : '0');
+                } else if (subIdx === 5) {
+                    /* Hold pad: in sticky mode → cancel sticky + stop loop.
+                     * Otherwise → momentary hold (length releases don't pop while held). */
+                    if (perfStickyLengths.size > 0) {
+                        perfStickyLengths = new Set();
+                        perfStack         = [];
+                        if (!loopHeld) perfViewLocked = false;
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('looper_stop', '1');
+                    } else {
+                        perfHoldPadHeld = true;
+                    }
                 } else {
                     const ticks = LOOPER_RATES_STRAIGHT[subIdx];
                     if (shiftHeld) {
@@ -4882,10 +4902,18 @@ globalThis.onMidiMessageInternal = function (data) {
                             }
                             perfViewLocked = true;
                         }
-                    } else if (perfStack.findIndex(function(e) { return e.idx === subIdx; }) < 0) {
-                        perfStack.push({ idx: subIdx, ticks: ticks });
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('looper_arm', String(ticks));
+                    } else {
+                        const inStack = perfStack.findIndex(function(e) { return e.idx === subIdx; }) >= 0;
+                        const inHeld  = perfStickyLengths.has(subIdx) || perfHoldPadHeld;
+                        if (!inStack) {
+                            perfStack.push({ idx: subIdx, ticks: ticks });
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('looper_arm', String(ticks));
+                        } else if (inHeld) {
+                            /* Re-trigger capture for a held loop: atomic stop + arm */
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('looper_retrigger', String(ticks));
+                        }
                     }
                 }
             } else {
@@ -5291,9 +5319,19 @@ globalThis.onMidiMessageInternal = function (data) {
                         perfModsToggled = 0;
                         sendPerfMods();
                     }
-                } else if (subIdx < 6) {
-                    /* Rate pad release: pop from stack — unless sticky-held */
-                    if (!perfStickyLengths.has(subIdx)) {
+                } else if (subIdx === 5) {
+                    /* Hold pad release: drop momentary state + stop all loops it was holding */
+                    if (perfHoldPadHeld) {
+                        perfHoldPadHeld = false;
+                        if (perfStack.length > 0) {
+                            perfStack = [];
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('looper_stop', '1');
+                        }
+                    }
+                } else if (subIdx < 5) {
+                    /* Rate pad release: pop from stack — unless sticky-held or hold-pad held */
+                    if (!perfStickyLengths.has(subIdx) && !perfHoldPadHeld) {
                         const sIdx = perfStack.findIndex(function(e) { return e.idx === subIdx; });
                         if (sIdx >= 0) {
                             perfStack.splice(sIdx, 1);
