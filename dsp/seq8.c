@@ -393,6 +393,13 @@ typedef struct {
     /* Per-lane mute/solo bitmasks (persisted). bit l = lane l. */
     uint32_t drum_lane_mute;
     uint32_t drum_lane_solo;
+    /* TRACK ARP — per-track live arpeggiator, first stage of pfx chain.
+     * Intercepts live pad + external MIDI note-on/off only; sequenced notes
+     * bypass tarp and enter pfx_note_on directly. Bypassed on drum tracks. */
+    arp_engine_t tarp;
+    uint8_t      tarp_on;       /* K1: 0=bypassed, 1=enabled */
+    uint8_t      tarp_latch;    /* K8: 0=release clears held, 1=latch keeps running */
+    uint8_t      tarp_physical; /* runtime: physical keys currently held (not persisted) */
 } seq8_track_t;
 #define LRS_SET(tr, s)  ((tr)->live_recorded_steps[(s)>>3] |=  (uint8_t)(1u<<((s)&7)))
 #define LRS_TEST(tr, s) ((tr)->live_recorded_steps[(s)>>3] &   (1u<<((s)&7)))
@@ -706,7 +713,7 @@ static void seq8_save_state(seq8_instance_t *inst) {
     FILE *fp = fopen(inst->state_path, "w");
     if (!fp) return;
     int t, c;
-    fprintf(fp, "{\"v\":15,\"playing\":%d", inst->playing);
+    fprintf(fp, "{\"v\":16,\"playing\":%d", inst->playing);
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
     for (t = 0; t < NUM_TRACKS; t++)
@@ -718,6 +725,23 @@ static void seq8_save_state(seq8_instance_t *inst) {
     for (t = 0; t < NUM_TRACKS; t++)
         if (inst->tracks[t].pfx.looper_on != 1)
             fprintf(fp, ",\"t%d_lp\":%d", t, (int)inst->tracks[t].pfx.looper_on);
+    /* TRACK ARP — per-track, sparse (only non-default values) */
+    for (t = 0; t < NUM_TRACKS; t++) {
+        const seq8_track_t *tr2 = &inst->tracks[t];
+        if (tr2->tarp_on)                              fprintf(fp, ",\"t%d_taon\":1",     t);
+        if (tr2->tarp.style != 1)                      fprintf(fp, ",\"t%d_tast\":%d",    t, (int)tr2->tarp.style);
+        if (tr2->tarp.rate_idx != ARP_RATE_DEFAULT)    fprintf(fp, ",\"t%d_tart\":%d",    t, (int)tr2->tarp.rate_idx);
+        if (tr2->tarp.octaves != 1)                    fprintf(fp, ",\"t%d_taoc\":%d",    t, (int)tr2->tarp.octaves);
+        if (tr2->tarp.gate_pct != 50)                  fprintf(fp, ",\"t%d_tagt\":%d",    t, (int)tr2->tarp.gate_pct);
+        if (tr2->tarp.steps_mode != 0)                 fprintf(fp, ",\"t%d_tasm\":%d",    t, (int)tr2->tarp.steps_mode);
+        if (tr2->tarp_latch)                           fprintf(fp, ",\"t%d_talc\":1",     t);
+        {
+            int _i;
+            for (_i = 0; _i < 8; _i++)
+                if (tr2->tarp.step_vel[_i] != 4)
+                    fprintf(fp, ",\"t%d_tasv%d\":%d", t, _i, (int)tr2->tarp.step_vel[_i]);
+        }
+    }
     for (t = 0; t < NUM_TRACKS; t++) {
         for (c = 0; c < NUM_CLIPS; c++) {
             clip_t *cl = &inst->tracks[t].clips[c];
@@ -878,11 +902,10 @@ static void seq8_load_state(seq8_instance_t *inst) {
     if (!n) { free(buf); remove(inst->state_path); return; }
     buf[n] = '\0';
 
-    /* Version gate: v=15 only (SEQ ARP schema change: style 0=Off, signed
-     * octaves, retrigger replaces vel_decay; no longer compatible with v=14). */
+    /* Version gate: v=15 or v=16 (v=16 adds TRACK ARP per-track params). */
     {
         int sv = json_get_int(buf, "v", -1);
-        if (sv != 15) {
+        if (sv != 15 && sv != 16) {
             free(buf);
             remove(inst->state_path);
             seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
@@ -1012,6 +1035,35 @@ static void seq8_load_state(seq8_instance_t *inst) {
         inst->tracks[t].drum_lane_mute = json_get_uint(buf, key, 0);
         snprintf(key, sizeof(key), "t%ddls", t);
         inst->tracks[t].drum_lane_solo = json_get_uint(buf, key, 0);
+    }
+    /* TRACK ARP — per-track params (sparse; missing = defaults) */
+    for (t = 0; t < NUM_TRACKS; t++) {
+        seq8_track_t *tr2 = &inst->tracks[t];
+        snprintf(key, sizeof(key), "t%d_taon", t);
+        tr2->tarp_on = (uint8_t)(json_get_int(buf, key, 0) ? 1 : 0);
+        snprintf(key, sizeof(key), "t%d_tast", t);
+        tr2->tarp.style = (uint8_t)clamp_i(json_get_int(buf, key, 1), 1, 9);
+        snprintf(key, sizeof(key), "t%d_tart", t);
+        tr2->tarp.rate_idx = (uint8_t)clamp_i(json_get_int(buf, key, ARP_RATE_DEFAULT), 0, 9);
+        snprintf(key, sizeof(key), "t%d_taoc", t);
+        {
+            int _oc = clamp_i(json_get_int(buf, key, 1), -ARP_MAX_OCTAVES, ARP_MAX_OCTAVES);
+            if (_oc == 0) _oc = 1;
+            tr2->tarp.octaves = (int8_t)_oc;
+        }
+        snprintf(key, sizeof(key), "t%d_tagt", t);
+        tr2->tarp.gate_pct = (uint16_t)clamp_i(json_get_int(buf, key, 50), 1, 200);
+        snprintf(key, sizeof(key), "t%d_tasm", t);
+        tr2->tarp.steps_mode = (uint8_t)clamp_i(json_get_int(buf, key, 0), 0, 2);
+        snprintf(key, sizeof(key), "t%d_talc", t);
+        tr2->tarp_latch = (uint8_t)(json_get_int(buf, key, 0) ? 1 : 0);
+        {
+            int _i;
+            for (_i = 0; _i < 8; _i++) {
+                snprintf(key, sizeof(key), "t%d_tasv%d", t, _i);
+                tr2->tarp.step_vel[_i] = (uint8_t)clamp_i(json_get_int(buf, key, 4), 0, 4);
+            }
+        }
     }
     /* Per-clip play-effect params (sparse — missing keys default to neutral) */
     for (t = 0; t < NUM_TRACKS; t++) {
@@ -2462,6 +2514,211 @@ static void arp_tick(seq8_instance_t *inst, seq8_track_t *tr) {
     if (a->ticks_until_next <= 0) arp_fire_step(inst, tr);
 }
 
+/* ------------------------------------------------------------------ */
+/* TRACK ARP engine (per-track, live-input first stage)               */
+/* ------------------------------------------------------------------ */
+
+static void tarp_init_defaults(seq8_track_t *tr) {
+    tr->tarp_on    = 0;
+    tr->tarp_latch = 0;
+    arp_init_defaults(&tr->tarp);
+    tr->tarp.style = 1; /* default pattern: Up (tarp_on=0 bypasses; style never 0) */
+}
+
+/* Silence TRACK ARP sounding note (via immediate note-off through the chain)
+ * and reset runtime state. */
+static void tarp_silence(seq8_instance_t *inst, seq8_track_t *tr) {
+    arp_engine_t *a = &tr->tarp;
+    if (a->sounding_active) {
+        pfx_note_off_imm(inst, tr, a->sounding_pitch);
+        a->sounding_active = 0;
+    }
+    arp_clear_runtime(a);
+    tr->tarp_physical = 0; /* reset physical-key counter on any full silence */
+}
+
+/* Intercept wrapper for live note-on. Routes through TRACK ARP when enabled;
+ * bypasses TRACK ARP (→ pfx_note_on directly) for drum tracks or when off. */
+static void live_note_on(seq8_instance_t *inst, seq8_track_t *tr,
+                         uint8_t pitch, uint8_t vel) {
+    if (!tr->tarp_on || tr->pad_mode == PAD_MODE_DRUM) {
+        pfx_note_on(inst, tr, pitch, vel);
+        return;
+    }
+    if (tr->tarp_latch && tr->tarp_physical == 0)
+        tarp_silence(inst, tr); /* new chord gesture: replace latched buffer */
+    arp_add_note(&tr->tarp, pitch, vel);
+    tr->tarp_physical++;
+}
+
+/* Intercept wrapper for live note-off. Removes from TRACK ARP held buffer;
+ * when latch=0 and buffer empties, silences arp output. */
+static void live_note_off(seq8_instance_t *inst, seq8_track_t *tr,
+                          uint8_t pitch) {
+    if (!tr->tarp_on || tr->pad_mode == PAD_MODE_DRUM) {
+        pfx_note_off_imm(inst, tr, pitch);
+        return;
+    }
+    if (tr->tarp_physical > 0) tr->tarp_physical--;
+    if (!tr->tarp_latch) {
+        arp_remove_note(&tr->tarp, pitch);
+        if (tr->tarp.held_count == 0)
+            tarp_silence(inst, tr);
+    }
+    /* Safety belt: if pfx chain has this pitch active (e.g., tarp toggled on
+     * while pad was held), release it now. No-op if already inactive. */
+    pfx_note_off_imm(inst, tr, pitch);
+}
+
+/* Fire one TRACK ARP step: silence prior sounding, emit next picked note
+ * through pfx_note_on so it enters the full pfx chain (NOTE FX → HARMZ →
+ * MIDI DLY → SEQ ARP). Mirror of arp_fire_step but emits via pfx chain. */
+static void tarp_fire_step(seq8_instance_t *inst, seq8_track_t *tr) {
+    arp_engine_t *a = &tr->tarp;
+    play_fx_t   *fx = &tr->pfx;
+    if (a->held_count == 0) return;
+
+    uint16_t rate = ARP_RATE_TICKS[a->rate_idx];
+    if (rate == 0) rate = 24;
+
+    uint32_t master_pos = inst->arp_master_tick - a->master_anchor;
+    int step_idx = (int)((master_pos / rate) & 7);
+    a->step_pos = (uint8_t)step_idx;
+
+    uint8_t level = a->step_vel[step_idx];
+    int step_off = (a->steps_mode != 0) && (level == 0);
+
+    if (step_off && a->steps_mode == 2) {
+        a->ticks_until_next = (int32_t)rate;
+        return;
+    }
+
+    if (a->sounding_active) {
+        pfx_note_off_imm(inst, tr, a->sounding_pitch);
+        a->sounding_active = 0;
+    }
+
+    if (step_off) {
+        uint8_t pitch_unused, vel_unused;
+        (void)arp_compute_step(a, fx, &pitch_unused, &vel_unused);
+        a->cycle_step_count++;
+        a->ticks_until_next = (int32_t)rate;
+        return;
+    }
+
+    uint8_t pitch, base_vel;
+    if (!arp_compute_step(a, fx, &pitch, &base_vel)) {
+        a->ticks_until_next = (int32_t)rate;
+        return;
+    }
+
+    int v = (int)base_vel;
+    if (a->steps_mode != 0 && level >= 1 && level <= 4) {
+        if (level == 4) {
+            v = (int)base_vel;
+        } else {
+            int span = (int)base_vel - 10;
+            v = 10 + (span * (level - 1)) / 3;
+        }
+    }
+    if (v < 1)   v = 1;
+    if (v > 127) v = 127;
+
+    /* Emit through pfx chain (NOTE FX → HARMZ → MIDI DLY → SEQ ARP). */
+    pfx_note_on(inst, tr, pitch, (uint8_t)v);
+
+    a->sounding_pitch  = pitch;
+    a->sounding_active = 1;
+
+    a->ticks_until_next = (int32_t)rate;
+    uint32_t gate = ((uint32_t)rate * (uint32_t)a->gate_pct) / 100U;
+    if (gate < 1)     gate = 1;
+    if (gate >= rate) gate = (uint32_t)rate - 1;
+    a->gate_remaining = gate;
+
+    /* Record arp output into clip when recording. */
+    if (tr->recording) {
+        clip_t  *cl         = &tr->clips[tr->active_clip];
+        uint16_t tps        = cl->ticks_per_step;
+        uint32_t clip_ticks = (uint32_t)cl->length * tps;
+        if (clip_ticks > 0) {
+            uint32_t abs_tick = tr->current_clip_tick % clip_ticks;
+            if (inst->inp_quant)
+                abs_tick = (abs_tick / tps) * tps;
+            uint16_t gticks = (uint16_t)(gate > 65535u ? 65535u : gate);
+            int rni = clip_insert_note(cl, abs_tick, gticks, pitch, (uint8_t)v);
+            if (rni >= 0) {
+                cl->notes[rni].suppress_until_wrap = 1;
+                uint16_t sidx = (uint16_t)(abs_tick / tps);
+                int16_t  off  = (int16_t)((int32_t)abs_tick - (int32_t)sidx * tps);
+                if (sidx < SEQ_STEPS) {
+                    if (!cl->steps[sidx] && cl->step_note_count[sidx] > 0) {
+                        int si;
+                        for (si = 0; si < 8; si++) {
+                            cl->step_notes[sidx][si]        = 0;
+                            cl->note_tick_offset[sidx][si]  = 0;
+                        }
+                        cl->step_note_count[sidx] = 0;
+                        cl->step_vel[sidx]  = (uint8_t)SEQ_VEL;
+                        cl->step_gate[sidx] = gticks;
+                    }
+                    if (cl->step_note_count[sidx] < 8) {
+                        int ni2 = (int)cl->step_note_count[sidx];
+                        if (ni2 == 0) {
+                            cl->step_vel[sidx]  = (uint8_t)v;
+                            cl->step_gate[sidx] = gticks;
+                        }
+                        cl->step_notes[sidx][ni2]       = pitch;
+                        cl->note_tick_offset[sidx][ni2] = off;
+                        cl->step_note_count[sidx]++;
+                        cl->steps[sidx] = 1;
+                        cl->active      = 1;
+                        LRS_SET(tr, sidx);
+                    }
+                }
+            }
+        }
+    }
+
+    a->cycle_step_count++;
+}
+
+/* Per master tick — called alongside arp_tick from render_block. */
+static void tarp_tick(seq8_instance_t *inst, seq8_track_t *tr) {
+    arp_engine_t *a = &tr->tarp;
+    if (!tr->tarp_on || a->style == 0) return;
+    if (tr->pad_mode == PAD_MODE_DRUM) return;
+
+    if (a->pending_retrigger) {
+        a->pending_retrigger = 0;
+        arp_retrigger(a, inst->arp_master_tick);
+    }
+
+    if (a->sounding_active && a->gate_remaining > 0) {
+        a->gate_remaining--;
+        if (a->gate_remaining == 0) {
+            pfx_note_off_imm(inst, tr, a->sounding_pitch);
+            a->sounding_active = 0;
+        }
+    }
+
+    if (a->held_count == 0) return;
+
+    if (a->pending_first_note) {
+        uint16_t rate = ARP_RATE_TICKS[a->rate_idx];
+        if (rate == 0) rate = 24;
+        uint32_t total = inst->arp_master_tick - a->master_anchor;
+        if ((total % rate) == 0) {
+            a->pending_first_note = 0;
+            tarp_fire_step(inst, tr);
+        }
+        return;
+    }
+
+    if (a->ticks_until_next > 0) a->ticks_until_next--;
+    if (a->ticks_until_next <= 0) tarp_fire_step(inst, tr);
+}
+
 static void silence_muted_tracks(seq8_instance_t *inst) {
     int t;
     for (t = 0; t < NUM_TRACKS; t++) {
@@ -2822,6 +3079,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
             clip_init(&inst->tracks[t].clips[c]);
         drum_track_init(&inst->tracks[t]);
         pfx_init_defaults(&inst->tracks[t].pfx);
+        tarp_init_defaults(&inst->tracks[t]);
         inst->tracks[t].pfx.looper_on = 1;
         inst->tracks[t].pfx.track_idx = (uint8_t)t;
         /* Default routing: tracks 1-4 → Move (ch 1-4), tracks 5-8 → Schwung (ch 5-8) */
@@ -3043,6 +3301,22 @@ static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
                                                 fx->fb_note_random ? "on" : "off");
     if (!strcmp(key, "delay_gate_fb"))      return snprintf(out, out_len, "%d", fx->fb_gate_time);
     if (!strcmp(key, "delay_clock_fb"))     return snprintf(out, out_len, "%d", fx->fb_clock);
+
+    /* TRACK ARP — per-track params read individually by readBankParams(t, 6) */
+    if (!strcmp(key, "tarp_on"))         return snprintf(out, out_len, "%d", (int)tr->tarp_on);
+    if (!strcmp(key, "tarp_style"))      return snprintf(out, out_len, "%d", (int)tr->tarp.style);
+    if (!strcmp(key, "tarp_rate"))       return snprintf(out, out_len, "%d", (int)tr->tarp.rate_idx);
+    if (!strcmp(key, "tarp_octaves"))    return snprintf(out, out_len, "%d", (int)tr->tarp.octaves);
+    if (!strcmp(key, "tarp_gate"))       return snprintf(out, out_len, "%d", (int)tr->tarp.gate_pct);
+    if (!strcmp(key, "tarp_steps_mode")) return snprintf(out, out_len, "%d", (int)tr->tarp.steps_mode);
+    if (!strcmp(key, "tarp_latch"))      return snprintf(out, out_len, "%d", (int)tr->tarp_latch);
+    /* Batch read: TRACK ARP step_vel[0..7] */
+    if (!strcmp(key, "tarp_sv"))
+        return snprintf(out, out_len, "%d %d %d %d %d %d %d %d",
+            (int)tr->tarp.step_vel[0], (int)tr->tarp.step_vel[1],
+            (int)tr->tarp.step_vel[2], (int)tr->tarp.step_vel[3],
+            (int)tr->tarp.step_vel[4], (int)tr->tarp.step_vel[5],
+            (int)tr->tarp.step_vel[6], (int)tr->tarp.step_vel[7]);
 
     return -1;
 }
@@ -3476,6 +3750,8 @@ static void silence_track_notes_v2(seq8_instance_t *inst, seq8_track_t *tr) {
     tr->play_pending_count = 0;
     tr->note_active = 0;
     tr->pending_note_count = 0;
+    /* TRACK ARP: drop held buffer + silence sounding. */
+    tarp_silence(inst, tr);
     /* SEQ ARP: drop held buffer + silence any sounding emitted note. */
     arp_silence(inst, tr);
 }
@@ -3578,7 +3854,10 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
         while (inst->tick_accum >= inst->tick_threshold) {
             inst->tick_accum -= inst->tick_threshold;
             looper_tick(inst);
-            for (t = 0; t < NUM_TRACKS; t++) arp_tick(inst, &inst->tracks[t]);
+            for (t = 0; t < NUM_TRACKS; t++) {
+                tarp_tick(inst, &inst->tracks[t]);
+                arp_tick(inst, &inst->tracks[t]);
+            }
             inst->arp_master_tick++;
         }
         return;
@@ -3745,9 +4024,9 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 }
             }
 
-            /* SEQ ARP: tick AFTER note-on scan so this tick's chord (just
-             * added to the held buffer) can fire immediately when
-             * pending_first_note=1 lands on a rate boundary. */
+            /* TRACK ARP + SEQ ARP: tarp fires first (live arp → pfx chain →
+             * SEQ ARP held buffer), then SEQ ARP fires from combined buffer. */
+            tarp_tick(inst, tr);
             arp_tick(inst, tr);
         }
 

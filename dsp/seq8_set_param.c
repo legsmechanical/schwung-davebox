@@ -1655,6 +1655,68 @@ static void set_param(void *instance, const char *key, const char *val) {
         }
         if (!strcmp(sub, "pad_mode")) {
             tr->pad_mode = (uint8_t)clamp_i(my_atoi(val), 0, 1);
+            tarp_silence(inst, tr); /* silence tarp when switching to drum mode */
+            return;
+        }
+
+        /* TRACK ARP set_param handlers */
+        if (!strcmp(sub, "tarp_on")) {
+            int _v = my_atoi(val) ? 1 : 0;
+            if (tr->tarp_on && !_v) tarp_silence(inst, tr);
+            tr->tarp_on = (uint8_t)_v;
+            seq8_save_state(inst);
+            return;
+        }
+        if (!strcmp(sub, "tarp_style")) {
+            int _v = clamp_i(my_atoi(val), 1, 9);
+            tr->tarp.style = (uint8_t)_v;
+            seq8_save_state(inst);
+            return;
+        }
+        if (!strcmp(sub, "tarp_rate")) {
+            int _v = clamp_i(my_atoi(val), 0, 9);
+            tr->tarp.rate_idx = (uint8_t)_v;
+            seq8_save_state(inst);
+            return;
+        }
+        if (!strcmp(sub, "tarp_octaves")) {
+            int _v = clamp_i(my_atoi(val), -4, 4);
+            if (_v == 0) _v = 1;
+            tr->tarp.octaves = (int8_t)_v;
+            seq8_save_state(inst);
+            return;
+        }
+        if (!strcmp(sub, "tarp_gate")) {
+            int _v = clamp_i(my_atoi(val), 1, 200);
+            tr->tarp.gate_pct = (uint16_t)_v;
+            seq8_save_state(inst);
+            return;
+        }
+        if (!strcmp(sub, "tarp_steps_mode")) {
+            int _v = clamp_i(my_atoi(val), 0, 2);
+            tr->tarp.steps_mode = (uint8_t)_v;
+            seq8_save_state(inst);
+            return;
+        }
+        if (!strcmp(sub, "tarp_step_vel")) {
+            /* Format: "S L" — step index 0..7, level 0..4 */
+            const char *p = val;
+            int s = 0, lv = 0;
+            while (*p == ' ') p++;
+            while (*p >= '0' && *p <= '9') { s = s * 10 + (*p - '0'); p++; }
+            while (*p == ' ') p++;
+            while (*p >= '0' && *p <= '9') { lv = lv * 10 + (*p - '0'); p++; }
+            if (s < 0 || s > 7) return;
+            lv = clamp_i(lv, 0, 4);
+            tr->tarp.step_vel[s] = (uint8_t)lv;
+            seq8_save_state(inst);
+            return;
+        }
+        if (!strcmp(sub, "tarp_latch")) {
+            int _v = my_atoi(val) ? 1 : 0;
+            if (tr->tarp_latch && !_v) tarp_silence(inst, tr);
+            tr->tarp_latch = (uint8_t)_v;
+            seq8_save_state(inst);
             return;
         }
 
@@ -2303,6 +2365,9 @@ static void set_param(void *instance, const char *key, const char *val) {
                     undo_begin_single(inst, tidx, snap_clip);
                 /* Fresh recording session: clear pass mask so existing notes play back */
                 memset(tr->live_recorded_steps, 0, 32);
+                /* Clear any tarp notes held before recording started — their note-offs
+                 * can't reach live_note_off once activelyRecording=true in JS. */
+                tarp_silence(inst, tr);
                 if (tr->clip_playing) {
                     tr->recording = 1;
                 } else if (tr->queued_clip >= 0) {
@@ -2353,6 +2418,13 @@ static void set_param(void *instance, const char *key, const char *val) {
                 }
                 if (inst->input_vel > 0) vel = (int)inst->input_vel;
 
+                /* TRACK ARP active: arp output will be recorded in tarp_fire_step.
+                 * Feed raw input only into the arp held buffer. */
+                if (tr->tarp_on && tr->pad_mode != PAD_MODE_DRUM) {
+                    live_note_on(inst, tr, (uint8_t)pitch, (uint8_t)vel);
+                    continue;
+                }
+
                 int ni = clip_insert_note(cl, abs_tick, (uint16_t)GATE_TICKS,
                                           (uint8_t)pitch, (uint8_t)vel);
                 if (ni >= 0) {
@@ -2400,7 +2472,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                  * performer hears it without a separate live_notes set_param that
                  * would race/coalesce with this record_note_on call. */
                 if (tr->pfx.route == ROUTE_MOVE)
-                    pfx_note_on(inst, tr, (uint8_t)pitch, (uint8_t)vel);
+                    live_note_on(inst, tr, (uint8_t)pitch, (uint8_t)vel);
             }
             return;
         }
@@ -2426,6 +2498,13 @@ static void set_param(void *instance, const char *key, const char *val) {
                 int pitch = 0;
                 while (*sp >= '0' && *sp <= '9') { pitch = pitch * 10 + (*sp++ - '0'); }
                 pitch = clamp_i(pitch, 0, 127);
+
+                /* TRACK ARP active: note was never written to rec_pending; update
+                 * arp held buffer and let tarp_fire_step own clip recording. */
+                if (tr->tarp_on && tr->pad_mode != PAD_MODE_DRUM) {
+                    live_note_off(inst, tr, (uint8_t)pitch);
+                    continue;
+                }
 
                 /* Find matching rec_pending entry */
                 int ri;
@@ -2473,7 +2552,7 @@ static void set_param(void *instance, const char *key, const char *val) {
 
                 /* Live monitoring for ROUTE_MOVE */
                 if (tr->pfx.route == ROUTE_MOVE)
-                    pfx_note_off_imm(inst, tr, (uint8_t)pitch);
+                    live_note_off(inst, tr, (uint8_t)pitch);
             }
             return;
         }
@@ -2574,9 +2653,9 @@ static void set_param(void *instance, const char *key, const char *val) {
                         while (*sp >= '0' && *sp <= '9') { vel = vel * 10 + (*sp++ - '0'); }
                     }
                     if (inst->input_vel > 0) vel = (int)inst->input_vel;
-                    pfx_note_on(inst, tr, (uint8_t)pitch, (uint8_t)clamp_i(vel, 1, 127));
+                    live_note_on(inst, tr, (uint8_t)pitch, (uint8_t)clamp_i(vel, 1, 127));
                 } else {
-                    pfx_note_off_imm(inst, tr, (uint8_t)pitch);
+                    live_note_off(inst, tr, (uint8_t)pitch);
                 }
             }
             return;

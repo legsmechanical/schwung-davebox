@@ -159,15 +159,17 @@ const BANKS = [
         _X,
         _X,
     ]},
-    /* 6 — LIVE ARP (pad 98) — stub: live arpeggiator not in DSP */
-    { name: 'LIVE ARP', knobs: [
-        p('On',   'Arp On/Off',   null, 'stub', 0, 0, 0, fmtNA),
-        p('Type', 'Arp Type',     null, 'stub', 0, 0, 0, fmtNA),
-        p('Sort', 'Note Sort',    null, 'stub', 0, 0, 0, fmtNA),
-        p('Hold', 'Hold',         null, 'stub', 0, 0, 0, fmtNA),
-        p('OctR', 'Octave Range', null, 'stub', 0, 0, 0, fmtNA),
-        p('Spd',  'Speed',        null, 'stub', 0, 0, 0, fmtNA),
-        _X, _X,
+    /* 6 — TRACK ARP (pad 98) — per-track live arpeggiator; FIRST stage of pfx
+     * chain. Intercepts live pad + external MIDI; sequenced notes bypass it. */
+    { name: 'TRACK ARP', knobs: [
+        p('On',   'Track ARP On',  'tarp_on',         'track', 0,   1,   0,  fmtBool,     16), /* K1 */
+        p('Styl', 'Arp Style',     'tarp_style',      'track', 1,   9,   1,  fmtArpStyle, 16), /* K2 */
+        p('Rate', 'Arp Rate',      'tarp_rate',       'track', 0,   9,   1,  fmtArpRate,  16), /* K3 */
+        p('Oct',  'Octave Range',  'tarp_octaves',    'track', -4,  4,   1,  fmtArpOct,   16), /* K4 */
+        p('Gate', 'Arp Gate',      'tarp_gate',       'track', 1,   200, 50, fmtPct,      16), /* K5 */
+        p('Stps', 'Steps Mode',    'tarp_steps_mode', 'track', 0,   2,   0,  fmtArpSteps, 16), /* K6 */
+        _X,                                                                                      /* K7 */
+        p('Ltch', 'Latch',         'tarp_latch',      'track', 0,   1,   0,  fmtBool,     16), /* K8 */
     ]},
     /* 7 — Reserved (pad 99) — ignore pad press */
     { name: 'RESERVED', knobs: [_X, _X, _X, _X, _X, _X, _X, _X] },
@@ -503,6 +505,8 @@ let drumSeqQnt   = new Array(NUM_TRACKS).fill(0); /* last-set K6 drum Qnt macro 
  *   4 = top row (vel = incoming) — default. */
 let seqArpStepVel = Array.from({length: NUM_TRACKS}, () =>
     Array.from({length: NUM_CLIPS}, () => new Array(8).fill(4)));
+/* TRACK ARP per-track step_vel[8] mirror (per-track, not per-clip). */
+let tarpStepVel = Array.from({length: NUM_TRACKS}, () => new Array(8).fill(4));
 const DRUM_FLASH_TICKS = 8; /* ~130ms pad flash duration after a drum hit */
 /* drumClipNonEmpty[t][c] — true if any lane in drum clip c of track t has content */
 let drumClipNonEmpty  = Array.from({length: NUM_TRACKS}, () => new Array(NUM_CLIPS).fill(false));
@@ -1410,7 +1414,7 @@ function drainLedInit() {
 
 /* Per-clip banks: NOTE FX (2), HARMZ (3), SEQ ARP (4), MIDI DLY (5) */
 const PER_CLIP_BANKS  = [2, 3, 4, 5];
-const PARAM_LED_BANKS = [2, 3, 4, 5]; /* NOTE FX, HARMZ, SEQ ARP, MIDI DLY */
+const PARAM_LED_BANKS = [2, 3, 4, 5, 6]; /* NOTE FX, HARMZ, SEQ ARP, MIDI DLY, TRACK ARP */
 
 /* Read per-clip bank params from DSP into bankParams for track t.
  * Reads from clip[active_clip].pfx_params directly — immune to pfx_sync timing. */
@@ -1463,6 +1467,16 @@ function refreshPerClipBankParams(t) {
     bankParams[t][1][4] = clipLength[t][ac] || 16;
     bankParams[t][1][7] = clipSeqFollow[t][ac] ? 1 : 0;
     screenDirty = true;
+}
+
+/* Read TRACK ARP step_vel[8] from DSP for track t. Called on init and track switch. */
+function readTarpStepVel(t) {
+    if (typeof host_module_get_param !== 'function') return;
+    const raw = host_module_get_param('t' + t + '_tarp_sv');
+    if (!raw) return;
+    const v = raw.split(' ');
+    for (let s = 0; s < 8; s++)
+        tarpStepVel[t][s] = parseInt(v[s], 10) | 0;
 }
 
 /* Reset per-clip bankParams to defaults for track t (no DSP call needed —
@@ -2170,6 +2184,27 @@ function updateTrackLEDs() {
         const t  = activeTrack;
         const ac = effectiveClip(t);
         const sv = seqArpStepVel[t][ac];
+        const tc = TRACK_COLORS[t];
+        const td = TRACK_DIM_COLORS[t];
+        for (let i = 0; i < 32; i++) {
+            const col = i % 8;
+            const row = Math.floor(i / 8);
+            const lvl = sv[col] | 0;
+            let color = LED_OFF;
+            if (lvl > 0 && row < lvl) {
+                color = (row === lvl - 1) ? tc : td;
+            }
+            cachedSetLED(TRACK_PAD_BASE + i, color);
+        }
+        return;
+    }
+
+    /* TRACK ARP K6 (Steps Mode) touched + Steps Mode != Off: same vel-level editor
+     * using per-track tarpStepVel (no per-clip dimension). */
+    if (!sessionView && activeBank === 6 && knobTouched === 5 &&
+            (bankParams[activeTrack][6][5] | 0) !== 0) {
+        const t  = activeTrack;
+        const sv = tarpStepVel[t];
         const tc = TRACK_COLORS[t];
         const td = TRACK_DIM_COLORS[t];
         for (let i = 0; i < 32; i++) {
@@ -2924,6 +2959,7 @@ function syncClipsFromDsp() {
         const po = host_module_get_param('t' + t + '_pad_octave');
         if (po !== null && po !== undefined) padOctave[t] = parseInt(po, 10) | 0;
         for (let b = 0; b < 8; b++) readBankParams(t, b);
+        readTarpStepVel(t);
         /* Drum track: sync clip content flags and active lane data */
         if (bankParams[t][0][2] === PAD_MODE_DRUM) {
             syncDrumClipContent(t);
@@ -3422,8 +3458,8 @@ globalThis.onMidiMessageInternal = function (data) {
             if (d2 === 127) {
                 if (d1 <= 7 && activeBank >= 0) {
                     knobTouched = d1; knobTurnedTick[d1] = -1; screenDirty = true;
-                    /* SEQ ARP K5 touch: switch pads to vel-slider editor immediately. */
-                    if (activeBank === 5 && d1 === 4) forceRedraw();
+                    /* SEQ ARP K5 / TRACK ARP K6 touch: switch pads to vel-slider editor immediately. */
+                    if ((activeBank === 5 && d1 === 4) || (activeBank === 6 && d1 === 5)) forceRedraw();
                 }
                 if (d1 === MoveMainTouch && !globalMenuOpen && !shiftHeld) { jogTouched = true; forceRedraw(); }
             } else if (d2 < 64) {
@@ -3444,8 +3480,8 @@ globalThis.onMidiMessageInternal = function (data) {
                             bankParams[activeTrack][activeBank][d1] = 0;
                         }
                     }
-                    /* SEQ ARP K5 release: refresh pads (vel-slider editor → normal pads). */
-                    if (activeBank === 5 && d1 === 4) forceRedraw();
+                    /* SEQ ARP K5 / TRACK ARP K6 release: refresh pads (vel-slider editor → normal pads). */
+                    if ((activeBank === 5 && d1 === 4) || (activeBank === 6 && d1 === 5)) forceRedraw();
                     knobTouched = -1;
                     knobLocked[d1] = false;
                     knobAccum[d1]  = 0;
@@ -3473,7 +3509,7 @@ globalThis.onMidiMessageInternal = function (data) {
                         bankParams[activeTrack][activeBank][d1] = 0;
                     }
                 }
-                if (activeBank === 5 && d1 === 5) forceRedraw();
+                if ((activeBank === 5 && d1 === 5) || (activeBank === 6 && d1 === 5)) forceRedraw();
                 knobTouched = -1;
                 knobLocked[d1] = false;
                 knobAccum[d1]  = 0;
@@ -4879,6 +4915,24 @@ globalThis.onMidiMessageInternal = function (data) {
             }
             return;
         }
+        /* TRACK ARP K6 (Steps Mode) touched + Mute/Step mode: pad press = level edit. */
+        if (!sessionView && activeBank === 6 && knobTouched === 5 &&
+                (bankParams[activeTrack][6][5] | 0) !== 0 &&
+                d1 >= 68 && d1 <= 99) {
+            const idx = d1 - 68;
+            const col = idx % 8;
+            const row = Math.floor(idx / 8);
+            const t   = activeTrack;
+            const cur = tarpStepVel[t][col] | 0;
+            const newLvl = (row === 0 && cur === 1) ? 0 : (row + 1);
+            if (newLvl !== cur) {
+                tarpStepVel[t][col] = newLvl;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + t + '_tarp_step_vel', col + ' ' + newLvl);
+                forceRedraw();
+            }
+            return;
+        }
         /* Performance Mode pad intercept: absorb all pad presses when Perf Mode is active. */
         if (sessionView && (loopHeld || perfViewLocked) && d1 >= 68 && d1 <= 99) {
             if (d1 >= 68 && d1 <= 75) {
@@ -5331,6 +5385,10 @@ globalThis.onMidiMessageInternal = function (data) {
         /* Swallow pad releases while SEQ ARP step-level editor is open. */
         if (!sessionView && activeBank === 5 && knobTouched === 4 &&
                 (bankParams[activeTrack][5][4] | 0) !== 0 &&
+                d1 >= 68 && d1 <= 99) return;
+        /* Swallow pad releases while TRACK ARP step-level editor is open. */
+        if (!sessionView && activeBank === 6 && knobTouched === 5 &&
+                (bankParams[activeTrack][6][5] | 0) !== 0 &&
                 d1 >= 68 && d1 <= 99) return;
         /* Perf Mode pad release: handle R0 rate pad pop + mod pad release. */
         if (sessionView && (loopHeld || perfViewLocked) && d1 >= 68 && d1 <= 99) {
