@@ -16,7 +16,7 @@ Banks via **Shift + top-row pad** (92–99). Same bank again → TRACK (0).
 | 3 HARMZ | 95 | Unis (sens=4) | Oct (sens=4) | Hrm1 (sens=4) | Hrm2 (sens=4) | — | — | — | — |
 | 4 MIDI DLY | 96 | Dly | Lvl | Rep (max=16) | Vfb | Pfb | Gfb | Clk | Rnd |
 | 5 SEQ ARP | 97 | Styl (0=Off..9=RnO) | Rate | Oct (-4..+4 skip 0) | Gate | Stps | Rtrg | — | — |
-| 6 LIVE ARP | 98 | On | Type | Sort | Hold | OctR | Spd | — | — |
+| 6 TRACK ARP | 98 | On (0/1) | Styl (1..9) | Rate (0..9) | Oct (-4..+4 skip 0) | Gate (1..200%) | Stps (0..2) | — | Ltch (0/1) |
 
 ## DSP Parameter Keys
 
@@ -57,6 +57,15 @@ All `tN_` keys: N = 0..7. All writes save state unless noted.
 | `tN_seq_arp_gate` | set | 1..200% | |
 | `tN_seq_arp_steps_mode` | set | 0/1/2 | Off/Mute/Skip. |
 | `tN_seq_arp_retrigger` | set | 0/1 | Default 1. |
+| `tN_tarp_on` | set/get | 0/1 | Enable/disable TRACK ARP for track N. Turning off calls tarp_silence. |
+| `tN_tarp_style` | set/get | 1–9 | Pattern: Up/Dn/U-D/D-U/Cnv/Div/Ord/Rnd/RnO. Never 0 (On/Off handled by tarp_on). |
+| `tN_tarp_rate` | set/get | 0–9 | 1/32..1-bar (same table as SEQ ARP). |
+| `tN_tarp_octaves` | set/get | -4..-1, +1..+4 | 0 skipped. |
+| `tN_tarp_gate` | set/get | 1–200 | Gate percent. |
+| `tN_tarp_steps_mode` | set/get | 0/1/2 | Off/Mute/Skip. |
+| `tN_tarp_latch` | set/get | 0/1 | Latch. Turning off calls tarp_silence. |
+| `tN_tarp_step_vel` | set | `"S L"` | Set step S (0..7) to level L (0..4). |
+| `tN_tarp_sv` | get | 8 space-sep ints | step_vel[0..7] for batch read. |
 
 **Perf Mode**: `perf_mods` (set, uint32 bitmask 24 bits; JS ORs toggled+held+recalled, sends on every change; see `PERF_MOD_*` in seq8.c and `PERF_MOD_PAD_MAP` in ui.js). `looper_retrigger "ticks"` (atomic stop+arm at new rate).
 
