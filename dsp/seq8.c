@@ -2647,6 +2647,23 @@ static void drum_repeat_tick(seq8_instance_t *inst, seq8_track_t *tr) {
               }
             }
             pfx_note_on(inst, tr, pitch, (uint8_t)vel);
+            /* Record into sequencer if armed */
+            if (tr->recording) {
+                int ac = (int)tr->active_clip;
+                clip_t *rlc = &tr->drum_clips[ac].lanes[lane].clip;
+                uint16_t rs = tr->drum_current_step[lane];
+                if (rs < rlc->length && rlc->step_note_count[rs] == 0) {
+                    rlc->step_notes[rs][0]       = pitch;
+                    rlc->step_note_count[rs]     = 1;
+                    rlc->step_vel[rs]            = (uint8_t)vel;
+                    rlc->step_gate[rs]           = (uint16_t)GATE_TICKS;
+                    rlc->note_tick_offset[rs][0] = inst->inp_quant
+                        ? 0 : (int16_t)tr->drum_tick_in_step[lane];
+                    rlc->steps[rs]               = 1;
+                    rlc->active                  = 1;
+                    clip_migrate_to_notes(rlc);
+                }
+            }
             /* Schedule note-off: half the step interval */
             uint16_t gate = rate / 2;
             if (gate < 1) gate = 1;

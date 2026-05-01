@@ -3957,13 +3957,15 @@ globalThis.onMidiMessageInternal = function (data) {
             }
             loopHeld = d2 === 127;
             if (loopHeld) {
-                /* Clear any latched drum repeat on the active track */
+                /* Latch or clear drum repeat on the active track */
                 const _lrt = activeTrack;
                 if (drumRepeatLatched[_lrt]) {
                     drumRepeatLatched[_lrt]  = false;
                     drumRepeatHeldPad[_lrt]  = -1;
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + _lrt + '_drum_repeat_stop', '1');
+                } else if (drumRepeatHeldPad[_lrt] >= 0) {
+                    drumRepeatLatched[_lrt] = true;
                 }
                 heldStepBtn        = -1;
                 heldStep           = -1;
@@ -5349,11 +5351,11 @@ globalThis.onMidiMessageInternal = function (data) {
                                 host_module_set_param('t' + t + '_l' + lane + '_repeat_defaults', String(step));
                         } else {
                             /* Tap: toggle gate bit */
-                            drumRepeatGate[t][lane] ^= (1 << step);
+                            drumRepeatGate[t][lane] = (drumRepeatGate[t][lane] ^ (1 << step)) & 0xFF;
                             if (typeof host_module_set_param === 'function')
                                 host_module_set_param('t' + t + '_l' + lane + '_repeat_gate_toggle', String(step));
                         }
-                        screenDirty = true;
+                        forceRedraw();
                         return;
                     }
                 }
