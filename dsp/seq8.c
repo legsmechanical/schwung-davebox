@@ -417,6 +417,12 @@ typedef struct {
     uint8_t  drum_repeat_vel;
     uint8_t  drum_repeat_step;
     uint32_t drum_repeat_phase;
+    /* Repeat 2 engine: multi-lane simultaneous repeat (runtime, not persisted) */
+    uint32_t drum_repeat2_active;          /* bitmask: bit l = lane l held in Rpt 2 */
+    uint8_t  drum_repeat2_rate_idx;        /* 0-7, shared rate */
+    uint8_t  drum_repeat2_step;            /* shared gate mask step 0-7 */
+    uint32_t drum_repeat2_phase;           /* shared phase within step */
+    uint8_t  drum_repeat2_vel[DRUM_LANES]; /* per-lane velocity in Rpt 2 */
 } seq8_track_t;
 #define LRS_SET(tr, s)  ((tr)->live_recorded_steps[(s)>>3] |=  (uint8_t)(1u<<((s)&7)))
 #define LRS_TEST(tr, s) ((tr)->live_recorded_steps[(s)>>3] &   (1u<<((s)&7)))
@@ -2684,6 +2690,69 @@ static void drum_repeat_tick(seq8_instance_t *inst, seq8_track_t *tr) {
     }
 }
 
+/* Rpt 2 repeat tick — fires all held lanes (bitmask) at shared rate/step/phase.
+ * Each lane uses its own nudge+gate+vel_scale against the shared phase. */
+static void drum_repeat2_tick(seq8_instance_t *inst, seq8_track_t *tr) {
+    if (!tr->drum_repeat2_active) return;
+    uint8_t  step = tr->drum_repeat2_step;
+    uint16_t rate = DRUM_REPEAT_RATE_TICKS[tr->drum_repeat2_rate_idx];
+    int l;
+    for (l = 0; l < DRUM_LANES; l++) {
+        if (!(tr->drum_repeat2_active & (1u << (unsigned)l))) continue;
+        int nudge_ticks = (int)(int8_t)tr->drum_repeat_nudge[l][step] * (int)rate / 100;
+        int fire_at     = nudge_ticks >= 0 ? nudge_ticks : (int)rate + nudge_ticks;
+        if ((int)tr->drum_repeat2_phase != fire_at) continue;
+        if (!(tr->drum_repeat_gate[l] & (uint8_t)(1u << step))) continue;
+        int vel   = effective_vel(tr, (int)tr->drum_repeat2_vel[l]);
+        int scale = (int)tr->drum_repeat_vel_scale[l][step];
+        vel = vel * scale / 100;
+        if (vel < 1) vel = 1;
+        if (vel > 127) vel = 127;
+        drum_lane_t *dlane = &tr->drum_clips[tr->active_clip].lanes[l];
+        uint8_t pitch = dlane->midi_note;
+        { int pp;
+          for (pp = 0; pp < (int)tr->play_pending_count; pp++) {
+              if (tr->play_pending[pp].pitch == pitch) {
+                  pfx_note_off(inst, tr, pitch);
+                  tr->play_pending[pp] = tr->play_pending[tr->play_pending_count - 1];
+                  tr->play_pending_count--;
+                  break;
+              }
+          }
+        }
+        pfx_note_on(inst, tr, pitch, (uint8_t)vel);
+        if (tr->recording) {
+            int ac = (int)tr->active_clip;
+            clip_t *rlc = &tr->drum_clips[ac].lanes[l].clip;
+            uint16_t rs = tr->drum_current_step[l];
+            if (rs < rlc->length && rlc->step_note_count[rs] == 0) {
+                rlc->step_notes[rs][0]       = pitch;
+                rlc->step_note_count[rs]     = 1;
+                rlc->step_vel[rs]            = (uint8_t)vel;
+                rlc->step_gate[rs]           = (uint16_t)GATE_TICKS;
+                rlc->note_tick_offset[rs][0] = inst->inp_quant
+                    ? 0 : (int16_t)tr->drum_tick_in_step[l];
+                rlc->steps[rs]               = 1;
+                rlc->active                  = 1;
+                clip_migrate_to_notes(rlc);
+            }
+        }
+        uint16_t gate = rate / 2;
+        if (gate < 1) gate = 1;
+        if (tr->play_pending_count < 32) {
+            tr->play_pending[tr->play_pending_count].pitch           = pitch;
+            tr->play_pending[tr->play_pending_count].ticks_remaining = gate;
+            tr->play_pending_count++;
+            tr->note_active = 1;
+        }
+    }
+    tr->drum_repeat2_phase++;
+    if (tr->drum_repeat2_phase >= (uint32_t)rate) {
+        tr->drum_repeat2_phase = 0;
+        tr->drum_repeat2_step  = (tr->drum_repeat2_step + 1) % 8;
+    }
+}
+
 /* Intercept wrapper for live note-on. Routes through TRACK ARP when enabled;
  * bypasses TRACK ARP (→ pfx_note_on directly) for drum tracks or when off. */
 static void live_note_on(seq8_instance_t *inst, seq8_track_t *tr,
@@ -4026,6 +4095,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                   }
                 }
                 drum_repeat_tick(inst, tr_s);
+                drum_repeat2_tick(inst, tr_s);
                 tarp_tick(inst, tr_s);
                 arp_tick(inst, tr_s);
             }
@@ -4197,6 +4267,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
 
             /* Drum Repeat: fire held-rate-pad retriggers independent of sequencer. */
             drum_repeat_tick(inst, tr);
+            drum_repeat2_tick(inst, tr);
             /* TRACK ARP + SEQ ARP: tarp fires first (live arp → pfx chain →
              * SEQ ARP held buffer), then SEQ ARP fires from combined buffer. */
             tarp_tick(inst, tr);

@@ -2672,6 +2672,71 @@ static void set_param(void *instance, const char *key, const char *val) {
             return;
         }
 
+        if (!strcmp(sub, "drum_repeat_lane")) {
+            /* tN_drum_repeat_lane "lane" — switch active lane without resetting phase/step */
+            tr->drum_repeat_lane = (uint8_t)clamp_i(my_atoi(val), 0, DRUM_LANES - 1);
+            return;
+        }
+
+        if (!strcmp(sub, "drum_repeat2_lane_on")) {
+            /* tN_drum_repeat2_lane_on "lane vel" — add lane to Rpt2 bitmask */
+            const char *sp = val;
+            while (*sp == ' ') sp++;
+            int lane_r = 0;
+            while (*sp >= '0' && *sp <= '9') { lane_r = lane_r * 10 + (*sp++ - '0'); }
+            lane_r = clamp_i(lane_r, 0, DRUM_LANES - 1);
+            while (*sp == ' ') sp++;
+            int vel_r = 100;
+            if (*sp >= '0' && *sp <= '9') {
+                vel_r = 0;
+                while (*sp >= '0' && *sp <= '9') { vel_r = vel_r * 10 + (*sp++ - '0'); }
+            }
+            vel_r = clamp_i(vel_r, 1, 127);
+            tr->drum_repeat2_vel[lane_r]    = (uint8_t)vel_r;
+            tr->drum_repeat2_active        |= (1u << (unsigned)lane_r);
+            return;
+        }
+
+        if (!strcmp(sub, "drum_repeat2_lane_off")) {
+            /* tN_drum_repeat2_lane_off "lane" — remove lane from Rpt2 bitmask */
+            int lane_r = clamp_i(my_atoi(val), 0, DRUM_LANES - 1);
+            tr->drum_repeat2_active &= ~(1u << (unsigned)lane_r);
+            return;
+        }
+
+        if (!strcmp(sub, "drum_repeat2_rate")) {
+            /* tN_drum_repeat2_rate "rate_idx" — update shared rate; clamp phase */
+            int rate_r = clamp_i(my_atoi(val), 0, 7);
+            tr->drum_repeat2_rate_idx = (uint8_t)rate_r;
+            uint16_t new_rate = DRUM_REPEAT_RATE_TICKS[rate_r];
+            if (tr->drum_repeat2_phase >= (uint32_t)new_rate)
+                tr->drum_repeat2_phase = 0;
+            return;
+        }
+
+        if (!strcmp(sub, "drum_repeat2_stop")) {
+            /* tN_drum_repeat2_stop — clear all active Rpt2 lanes */
+            tr->drum_repeat2_active = 0;
+            return;
+        }
+
+        if (!strcmp(sub, "drum_repeat2_vel")) {
+            /* tN_drum_repeat2_vel "lane vel" — update per-lane velocity (aftertouch) */
+            const char *sp = val;
+            while (*sp == ' ') sp++;
+            int lane_r = 0;
+            while (*sp >= '0' && *sp <= '9') { lane_r = lane_r * 10 + (*sp++ - '0'); }
+            lane_r = clamp_i(lane_r, 0, DRUM_LANES - 1);
+            while (*sp == ' ') sp++;
+            int vel_r = 100;
+            if (*sp >= '0' && *sp <= '9') {
+                vel_r = 0;
+                while (*sp >= '0' && *sp <= '9') { vel_r = vel_r * 10 + (*sp++ - '0'); }
+            }
+            tr->drum_repeat2_vel[lane_r] = (uint8_t)clamp_i(vel_r, 1, 127);
+            return;
+        }
+
         if (!strcmp(sub, "drum_record_note_on")) {
             /* tN_drum_record_note_on "pitch vel"
              * Routes to the drum lane whose midi_note matches pitch.

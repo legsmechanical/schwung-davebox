@@ -332,6 +332,9 @@ function doClearSession() {
         drumPerformMode[_t]   = 0;
         drumRepeatHeldPad[_t] = -1;
         drumRepeatLatched[_t] = false;
+        drumRepeat2HeldLanes[_t].clear();
+        drumRepeat2RateIdx[_t]  = 0;
+        drumRepeat2RatePad[_t]  = -1;
         for (let _l = 0; _l < DRUM_LANES; _l++) {
             drumRepeatGate[_t][_l] = 0xFF;
             for (let _s = 0; _s < 8; _s++) {
@@ -501,9 +504,13 @@ let drumLaneMute = new Array(NUM_TRACKS).fill(0);
 let drumLaneSolo = new Array(NUM_TRACKS).fill(0);
 let drumSeqQnt   = new Array(NUM_TRACKS).fill(0); /* last-set K6 drum Qnt macro value (display only) */
 /* Drum Repeat state */
-let drumPerformMode = new Array(NUM_TRACKS).fill(0); /* 0=Velocity, 1=Repeat */
+let drumPerformMode = new Array(NUM_TRACKS).fill(0); /* 0=Velocity, 1=Rpt, 2=Rpt2 */
 let drumRepeatHeldPad   = new Array(NUM_TRACKS).fill(-1);    /* pad idx of active rate pad (-1=none) */
 let drumRepeatLatched   = new Array(NUM_TRACKS).fill(false); /* true when rate pad is loop-latched */
+/* Rpt2 state */
+let drumRepeat2HeldLanes = Array.from({length: NUM_TRACKS}, () => new Set());
+let drumRepeat2RateIdx   = new Array(NUM_TRACKS).fill(0);
+let drumRepeat2RatePad   = new Array(NUM_TRACKS).fill(-1);
 /* Per-track per-lane repeat groove state mirrors */
 let drumRepeatGate     = Array.from({length: NUM_TRACKS}, () => new Array(DRUM_LANES).fill(0xFF));
 let drumRepeatVelScale = Array.from({length: NUM_TRACKS}, () =>
@@ -2301,11 +2308,25 @@ function updateTrackLEDs() {
                             copySrc.track === t && copySrc.lane === lane) {
                         color = (Math.floor(tickCount / 24) % 2) ? White : LED_OFF;
                     }
+                    /* Rpt2: highlight held lanes */
+                    if (drumPerformMode[t] === 2 && drumRepeat2HeldLanes[t].has(lane)) {
+                        color = White;
+                    }
                 } else if (drumPerformMode[t] === 1) {
                     /* Repeat mode: right 4×4 — rows 0-1 = rate pads, rows 2-3 = gate mask */
                     if (row < 2) {
                         const isHeld = drumRepeatHeldPad[t] === i;
                         color = isHeld ? White : LightGrey;
+                    } else {
+                        const maskStep = (row - 2) * 4 + (col - 4);
+                        const isOn = !!(drumRepeatGate[t][selLane] & (1 << maskStep));
+                        color = isOn ? tc : LED_OFF;
+                    }
+                } else if (drumPerformMode[t] === 2) {
+                    /* Rpt2 mode: right 4×4 — rows 0-1 = rate selectors, rows 2-3 = gate mask */
+                    if (row < 2) {
+                        const rateIdx = row * 4 + (col - 4);
+                        color = (rateIdx === drumRepeat2RateIdx[t]) ? White : LightGrey;
                     } else {
                         const maskStep = (row - 2) * 4 + (col - 4);
                         const isOn = !!(drumRepeatGate[t][selLane] & (1 << maskStep));
@@ -2786,7 +2807,7 @@ function drawUI() {
                 fmtRes(tpsIdx),
                 fmtLen(len),
                 fmtPct(drumSeqQnt[t]),
-                drumPerformMode[t] ? 'Rpt' : 'Vel',
+                drumPerformMode[t] === 2 ? 'Rpt2' : drumPerformMode[t] === 1 ? 'Rpt' : 'Vel',
                 fmtBool(sqfl),
             ];
             print(4, 0, '[ DRUM SEQ ]', 1);
@@ -3661,12 +3682,16 @@ globalThis.onMidiMessageInternal = function (data) {
         if (d1 === 3 && d2 === 127 && !shiftHeld && !deleteHeld && !copyHeld && !muteHeld &&
                 !sessionView && bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {
             const t = activeTrack;
-            if (drumPerformMode[t] === 1 && drumRepeatHeldPad[t] >= 0 && !drumRepeatLatched[t]) {
+            if (drumPerformMode[t] === 1 && drumRepeatHeldPad[t] >= 0) {
                 host_module_set_param('t' + t + '_drum_repeat_stop', '1');
                 drumRepeatHeldPad[t] = -1;
             }
+            if (drumPerformMode[t] === 2) {
+                drumRepeat2HeldLanes[t].clear();
+                host_module_set_param('t' + t + '_drum_repeat2_stop', '1');
+            }
             drumRepeatLatched[t]  = false;
-            drumPerformMode[t]    = drumPerformMode[t] === 1 ? 0 : 1;
+            drumPerformMode[t]    = (drumPerformMode[t] + 1) % 3;
             screenDirty = true;
             return;
         }
@@ -4579,18 +4604,23 @@ globalThis.onMidiMessageInternal = function (data) {
                     return;
                 }
                 if (knobIdx === 6) {
-                    /* K7 = Perf (perform mode: Velocity ↔ Repeat), sens=16 */
+                    /* K7 = Perf (perform mode: Vel → Rpt → Rpt2), sens=16 */
                     knobAccum[knobIdx]++;
                     if (knobAccum[knobIdx] >= 16) {
                         knobAccum[knobIdx] = 0;
-                        const nv = dir > 0 ? 1 : 0;
+                        const nv = Math.max(0, Math.min(2, drumPerformMode[t] + (dir > 0 ? 1 : -1)));
                         if (nv !== drumPerformMode[t]) {
                             if (drumPerformMode[t] === 1 && drumRepeatHeldPad[t] >= 0) {
-                                /* Stop any active repeat when leaving Repeat mode */
                                 if (typeof host_module_set_param === 'function')
                                     host_module_set_param('t' + t + '_drum_repeat_stop', '1');
                                 drumRepeatHeldPad[t] = -1;
                             }
+                            if (drumPerformMode[t] === 2) {
+                                drumRepeat2HeldLanes[t].clear();
+                                if (typeof host_module_set_param === 'function')
+                                    host_module_set_param('t' + t + '_drum_repeat2_stop', '1');
+                            }
+                            drumRepeatLatched[t] = false;
                             drumPerformMode[t] = nv;
                         }
                         screenDirty = true;
@@ -5357,6 +5387,65 @@ globalThis.onMidiMessageInternal = function (data) {
                         }
                         forceRedraw();
                         return;
+                    } else if (col < 4 && drumRepeatHeldPad[t] >= 0) {
+                        /* Lane pad while rate pad held: switch active lane without reset */
+                        const lane = drumPadToLane(padIdx);
+                        if (lane >= 0 && lane < DRUM_LANES) {
+                            activeDrumLane[t] = lane;
+                            syncDrumLaneSteps(t, lane);
+                            refreshDrumLaneBankParams(t, lane);
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_drum_repeat_lane', String(lane));
+                            forceRedraw();
+                        }
+                        return;
+                    }
+                }
+                /* Drum Repeat 2 mode pad handling (multi-lane simultaneous repeat) */
+                if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM && drumPerformMode[activeTrack] === 2 &&
+                        !shiftHeld && !copyHeld && !muteHeld) {
+                    const t   = activeTrack;
+                    const col = padIdx % 8;
+                    const row = Math.floor(padIdx / 8);
+                    if (col >= 4 && row < 2) {
+                        /* Rate pad: select rate only (no trigger) */
+                        const rateIdx = row * 4 + (col - 4);
+                        drumRepeat2RateIdx[t] = rateIdx;
+                        drumRepeat2RatePad[t] = padIdx;
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + t + '_drum_repeat2_rate', String(rateIdx));
+                        screenDirty = true;
+                        return;
+                    } else if (col >= 4 && row >= 2) {
+                        /* Gate mask: same as Rpt mode */
+                        const lane = activeDrumLane[t];
+                        const step = (row - 2) * 4 + (col - 4);
+                        if (deleteHeld) {
+                            drumRepeatVelScale[t][lane][step] = 100;
+                            drumRepeatNudge[t][lane][step]    = 0;
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_l' + lane + '_repeat_defaults', String(step));
+                        } else {
+                            drumRepeatGate[t][lane] = (drumRepeatGate[t][lane] ^ (1 << step)) & 0xFF;
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_l' + lane + '_repeat_gate_toggle', String(step));
+                        }
+                        forceRedraw();
+                        return;
+                    } else if (col < 4 && !deleteHeld) {
+                        /* Lane pad: add to multi-lane repeat set */
+                        const lane = drumPadToLane(padIdx);
+                        if (lane >= 0 && lane < DRUM_LANES) {
+                            activeDrumLane[t] = lane;
+                            syncDrumLaneSteps(t, lane);
+                            refreshDrumLaneBankParams(t, lane);
+                            drumRepeat2HeldLanes[t].add(lane);
+                            padPitch[padIdx] = -1; /* DSP handles all output */
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_drum_repeat2_lane_on', lane + ' ' + d2);
+                            forceRedraw();
+                        }
+                        return;
                     }
                 }
                 /* Drum mode pad handling */
@@ -5768,6 +5857,24 @@ globalThis.onMidiMessageInternal = function (data) {
                 screenDirty = true;
                 return;
             }
+            /* Rpt2 mode: lane pad release removes from held set */
+            if (bankParams[t][0][2] === PAD_MODE_DRUM && drumPerformMode[t] === 2 &&
+                    (padIdx % 8) < 4) {
+                const lane = drumPadToLane(padIdx);
+                if (lane >= 0 && lane < DRUM_LANES && drumRepeat2HeldLanes[t].has(lane)) {
+                    drumRepeat2HeldLanes[t].delete(lane);
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_drum_repeat2_lane_off', String(lane));
+                    screenDirty = true;
+                }
+                return;
+            }
+            /* Rpt2 mode: swallow all right-grid releases */
+            if (bankParams[t][0][2] === PAD_MODE_DRUM && drumPerformMode[t] === 2 &&
+                    (padIdx % 8) >= 4) {
+                screenDirty = true;
+                return;
+            }
             const pitch = padPitch[padIdx] >= 0 ? padPitch[padIdx] : padNoteMap[padIdx];
             liveActiveNotes.delete(pitch);
             padPitch[padIdx] = -1;
@@ -5784,6 +5891,16 @@ globalThis.onMidiMessageInternal = function (data) {
                 drumRepeatHeldPad[t] === padIdx && d2 > 0) {
             if (typeof host_module_set_param === 'function')
                 host_module_set_param('t' + t + '_drum_repeat_vel', String(d2));
+        }
+        if (bankParams[t][0][2] === PAD_MODE_DRUM && drumPerformMode[t] === 2 && d2 > 0) {
+            const col2 = padIdx % 8;
+            if (col2 < 4) {
+                const lane = drumPadToLane(padIdx);
+                if (lane >= 0 && drumRepeat2HeldLanes[t].has(lane)) {
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_drum_repeat2_vel', lane + ' ' + d2);
+                }
+            }
         }
     }
 };
