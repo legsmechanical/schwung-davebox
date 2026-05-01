@@ -92,9 +92,9 @@ While holding a lane pad, **aftertouch** dynamically updates that lane's repeat 
 ### Latching
 
 - **Loop + lane pad**: Starts the lane and latches it
-- **Loop tap** (while lanes are held): Latches all currently held lanes
-- **Loop tap** (while lanes are latched, none held): Stops and unlatches all
-- **Lane pad tap** (already latched): Unlatches and stops that lane
+- **Hold lane pad + press Loop**: Latches all currently held lanes
+- **Loop hold + release** (no pad touched during hold): Stops and unlatches all
+- **Lane pad tap** (already latched): Unlatches and stops that lane only
 
 ---
 
