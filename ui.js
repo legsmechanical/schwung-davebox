@@ -71,7 +71,7 @@ import {
     TPS_VALUES, NOTE_KEYS, SCALE_NAMES, SCALE_DISPLAY, DELAY_LABELS,
     fmtSign, fmtStretch, fmtLen, fmtRes, fmtPct, fmtNote, fmtPages, fmtUnis,
     fmtDly, fmtBool, fmtRoute, fmtPlain, fmtNA,
-    fmtArpStyle, fmtArpRate, fmtArpSteps, fmtArpOct,
+    fmtArpStyle, fmtArpRate, fmtArpSteps, fmtArpOct, fmtVelOverride,
     col4, parseActionRaw, MCUFONT, pixelPrint, pixelPrintC
 } from './ui_constants.mjs';
 
@@ -104,7 +104,9 @@ const BANKS = [
         p('Ch',   'MIDI Channel', 'channel',  'track', 1, 16, 1, fmtPlain, 6),
         p('Rte',  'Route',        'route',    'track', 0, 1,  0, fmtRoute),
         p('Mode', 'Track Mode',   'pad_mode', 'track', 0, 1,  0, function(v) { return v ? 'Drums' : 'Keys'; }, 32),
-        _X, _X, _X, _X,
+        _X,
+        p('Vel',  'Vel Override', 'track_vel_override', 'track', 0, 128, 0, fmtVelOverride, 1),
+        _X, _X,
         p('Lpr',  'Looper',       'track_looper', 'track', 0, 1, 1, fmtBool, 16),
     ]},
     /* 1 — CLIP (pad 93) — Beat Stretch, Clock Shift, Nudge, Resolution, Length, (stubs) */
@@ -1815,6 +1817,12 @@ function liveSendNote(t, type, pitch, vel) {
     const ch    = (bankParams[t][0][0] - 1) & 0x0F;  /* Ch knob: 1-indexed → 0-indexed */
     const route = bankParams[t][0][1];                /* Rte knob: 0=Schwung, 1=Move */
     const status = type | ch;
+    /* Per-track vel override (K5): absolute overrides effectiveVelocity; Live passes raw.
+     * For ROUTE_MOVE, DSP effective_vel() handles it in the live_notes/record_note_on path. */
+    if (type === 0x90 && vel > 0 && route !== 1) {
+        const tvo = bankParams[t][0][4];
+        if (tvo > 0 && tvo < 128) vel = tvo;
+    }
     if (route === 1) {
         /* When recording is active, record_note_on/off DSP handlers do live monitoring
          * inline — skip buffering here to avoid coalescing with those set_params. */
@@ -2330,6 +2338,10 @@ function updateTrackLEDs() {
             if (pm && pm.abbrev && pm.scope !== 'stub') {
                 ledVal = (bankParams[activeTrack][activeBank][k] !== pm.def) ? White : LED_OFF;
             }
+        } else if (activeBank === 0 && k === 4) {
+            /* Vel Override (TRACK K5): dirty LED when not at default (Global) */
+            const pm = BANKS[0].knobs[4];
+            if (pm && pm.abbrev) ledVal = (bankParams[activeTrack][0][4] !== pm.def) ? White : LED_OFF;
         }
         cachedSetButtonLED(71 + k, ledVal);
     }

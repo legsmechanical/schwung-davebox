@@ -400,6 +400,7 @@ typedef struct {
     uint8_t      tarp_on;       /* K1: 0=bypassed, 1=enabled */
     uint8_t      tarp_latch;    /* K8: 0=release clears held, 1=latch keeps running */
     uint8_t      tarp_physical; /* runtime: physical keys currently held (not persisted) */
+    uint8_t      track_vel_override; /* TRACK K5: 0=Global, 1-127=absolute, 128=Live */
 } seq8_track_t;
 #define LRS_SET(tr, s)  ((tr)->live_recorded_steps[(s)>>3] |=  (uint8_t)(1u<<((s)&7)))
 #define LRS_TEST(tr, s) ((tr)->live_recorded_steps[(s)>>3] &   (1u<<((s)&7)))
@@ -742,6 +743,10 @@ static void seq8_save_state(seq8_instance_t *inst) {
                     fprintf(fp, ",\"t%d_tasv%d\":%d", t, _i, (int)tr2->tarp.step_vel[_i]);
         }
     }
+    /* Vel Override — per-track, sparse */
+    for (t = 0; t < NUM_TRACKS; t++)
+        if (inst->tracks[t].track_vel_override != 0)
+            fprintf(fp, ",\"t%d_tvo\":%d", t, (int)inst->tracks[t].track_vel_override);
     for (t = 0; t < NUM_TRACKS; t++) {
         for (c = 0; c < NUM_CLIPS; c++) {
             clip_t *cl = &inst->tracks[t].clips[c];
@@ -1064,6 +1069,11 @@ static void seq8_load_state(seq8_instance_t *inst) {
                 tr2->tarp.step_vel[_i] = (uint8_t)clamp_i(json_get_int(buf, key, 4), 0, 4);
             }
         }
+    }
+    /* Vel Override — per-track, sparse (missing = 0 = Global) */
+    for (t = 0; t < NUM_TRACKS; t++) {
+        snprintf(key, sizeof(key), "t%d_tvo", t);
+        inst->tracks[t].track_vel_override = (uint8_t)clamp_i(json_get_int(buf, key, 0), 0, 128);
     }
     /* Per-clip play-effect params (sparse — missing keys default to neutral) */
     for (t = 0; t < NUM_TRACKS; t++) {
@@ -2537,6 +2547,16 @@ static void tarp_silence(seq8_instance_t *inst, seq8_track_t *tr) {
     tr->tarp_physical = 0; /* reset physical-key counter on any full silence */
 }
 
+/* Resolve effective input velocity for a track.
+ * Per-track override takes precedence: abs (1-127) → fixed; Live (128) → pass raw;
+ * Global (0) → defer to inst->input_vel (0=raw, 1-127=fixed). */
+static int effective_vel(seq8_instance_t *inst, seq8_track_t *tr, int raw_vel) {
+    if (tr->track_vel_override == 128) return raw_vel;
+    if (tr->track_vel_override > 0)    return (int)tr->track_vel_override;
+    if (inst->input_vel > 0)           return (int)inst->input_vel;
+    return raw_vel;
+}
+
 /* Intercept wrapper for live note-on. Routes through TRACK ARP when enabled;
  * bypasses TRACK ARP (→ pfx_note_on directly) for drum tracks or when off. */
 static void live_note_on(seq8_instance_t *inst, seq8_track_t *tr,
@@ -3309,7 +3329,8 @@ static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
     if (!strcmp(key, "tarp_octaves"))    return snprintf(out, out_len, "%d", (int)tr->tarp.octaves);
     if (!strcmp(key, "tarp_gate"))       return snprintf(out, out_len, "%d", (int)tr->tarp.gate_pct);
     if (!strcmp(key, "tarp_steps_mode")) return snprintf(out, out_len, "%d", (int)tr->tarp.steps_mode);
-    if (!strcmp(key, "tarp_latch"))      return snprintf(out, out_len, "%d", (int)tr->tarp_latch);
+    if (!strcmp(key, "tarp_latch"))         return snprintf(out, out_len, "%d", (int)tr->tarp_latch);
+    if (!strcmp(key, "track_vel_override")) return snprintf(out, out_len, "%d", (int)tr->track_vel_override);
     /* Batch read: TRACK ARP step_vel[0..7] */
     if (!strcmp(key, "tarp_sv"))
         return snprintf(out, out_len, "%d %d %d %d %d %d %d %d",

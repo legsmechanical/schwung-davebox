@@ -93,6 +93,7 @@ export function fmtArpStyle(v) { return ['Off','Up','Dn','U/D','D/U','Cnv','Div'
 export function fmtArpRate(v)  { return ['1/32','1/16','1/16t','1/8','1/8t','1/4','1/4t','1/2','1/2t','1bar'][v] || '1/16'; }
 export function fmtArpSteps(v) { return ['Off','Mut','Stp'][v] || 'Off'; }
 export function fmtArpOct(v)   { if (v === 0) v = 1; return (v > 0 ? '+' : '') + v; }
+export function fmtVelOverride(v) { return v === 0 ? 'Global' : v === 128 ? 'Live' : String(v); }
 
 /* Fixed 4-char left-aligned column for overview display */
 export function col4(s) {

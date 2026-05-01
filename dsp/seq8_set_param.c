@@ -1698,6 +1698,11 @@ static void set_param(void *instance, const char *key, const char *val) {
             seq8_save_state(inst);
             return;
         }
+        if (!strcmp(sub, "track_vel_override")) {
+            tr->track_vel_override = (uint8_t)clamp_i(my_atoi(val), 0, 128);
+            seq8_save_state(inst);
+            return;
+        }
         if (!strcmp(sub, "tarp_step_vel")) {
             /* Format: "S L" — step index 0..7, level 0..4 */
             const char *p = val;
@@ -2416,7 +2421,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                     while (*sp >= '0' && *sp <= '9') { vel = vel * 10 + (*sp++ - '0'); }
                     vel = clamp_i(vel, 0, 127);
                 }
-                if (inst->input_vel > 0) vel = (int)inst->input_vel;
+                vel = effective_vel(inst, tr, vel);
 
                 /* TRACK ARP active: arp output will be recorded in tarp_fire_step.
                  * Feed raw input only into the arp held buffer. */
@@ -2597,7 +2602,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                     while (*sp >= '0' && *sp <= '9') { vel = vel * 10 + (*sp++ - '0'); }
                 }
                 vel = clamp_i(vel, 1, 127);
-                if (inst->input_vel > 0) vel = (int)inst->input_vel;
+                vel = effective_vel(inst, tr, vel);
                 /* Find lane by matching midi_note */
                 int lane = -1;
                 { int l; for (l = 0; l < DRUM_LANES; l++) {
@@ -2652,7 +2657,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                         vel = 0;
                         while (*sp >= '0' && *sp <= '9') { vel = vel * 10 + (*sp++ - '0'); }
                     }
-                    if (inst->input_vel > 0) vel = (int)inst->input_vel;
+                    vel = effective_vel(inst, tr, vel);
                     live_note_on(inst, tr, (uint8_t)pitch, (uint8_t)clamp_i(vel, 1, 127));
                 } else {
                     live_note_off(inst, tr, (uint8_t)pitch);
