@@ -2689,7 +2689,7 @@ static void set_param(void *instance, const char *key, const char *val) {
         }
 
         if (!strcmp(sub, "drum_repeat2_lane_on")) {
-            /* tN_drum_repeat2_lane_on "lane vel" — add lane with current selected rate */
+            /* tN_drum_repeat2_lane_on "lane vel" — add lane; uses lane's stored rate */
             const char *sp = val;
             while (*sp == ' ') sp++;
             int lane_r = 0;
@@ -2702,11 +2702,10 @@ static void set_param(void *instance, const char *key, const char *val) {
                 while (*sp >= '0' && *sp <= '9') { vel_r = vel_r * 10 + (*sp++ - '0'); }
             }
             vel_r = clamp_i(vel_r, 1, 127);
-            tr->drum_repeat2_vel[lane_r]      = (uint8_t)vel_r;
-            tr->drum_repeat2_rate_idx[lane_r] = tr->drum_repeat2_selected_rate;
-            tr->drum_repeat2_phase[lane_r]    = 0;
-            tr->drum_repeat2_step[lane_r]     = 0;
-            tr->drum_repeat2_active          |= (1u << (unsigned)lane_r);
+            tr->drum_repeat2_vel[lane_r]   = (uint8_t)vel_r;
+            tr->drum_repeat2_phase[lane_r] = 0;
+            tr->drum_repeat2_step[lane_r]  = 0;
+            tr->drum_repeat2_active       |= (1u << (unsigned)lane_r);
             return;
         }
 
@@ -2718,9 +2717,22 @@ static void set_param(void *instance, const char *key, const char *val) {
         }
 
         if (!strcmp(sub, "drum_repeat2_rate")) {
-            /* tN_drum_repeat2_rate "rate_idx" — store selected rate for next lane_on */
-            int rate_r = clamp_i(my_atoi(val), 0, 7);
-            tr->drum_repeat2_selected_rate = (uint8_t)rate_r;
+            /* tN_drum_repeat2_rate "lane rate_idx" — set per-lane rate */
+            const char *sp = val;
+            while (*sp == ' ') sp++;
+            int lane_r = 0;
+            while (*sp >= '0' && *sp <= '9') { lane_r = lane_r * 10 + (*sp++ - '0'); }
+            lane_r = clamp_i(lane_r, 0, DRUM_LANES - 1);
+            while (*sp == ' ') sp++;
+            int rate_r = 0;
+            while (*sp >= '0' && *sp <= '9') { rate_r = rate_r * 10 + (*sp++ - '0'); }
+            rate_r = clamp_i(rate_r, 0, 7);
+            tr->drum_repeat2_rate_idx[lane_r] = (uint8_t)rate_r;
+            if (tr->drum_repeat2_active & (1u << (unsigned)lane_r)) {
+                uint16_t new_rate = DRUM_REPEAT_RATE_TICKS[rate_r];
+                if (tr->drum_repeat2_phase[lane_r] >= (uint32_t)new_rate)
+                    tr->drum_repeat2_phase[lane_r] = 0;
+            }
             return;
         }
 

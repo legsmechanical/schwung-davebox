@@ -423,7 +423,6 @@ typedef struct {
     uint8_t  drum_repeat2_step[DRUM_LANES];     /* per-lane gate mask step 0-7 */
     uint32_t drum_repeat2_phase[DRUM_LANES];    /* per-lane phase within step */
     uint8_t  drum_repeat2_vel[DRUM_LANES];      /* per-lane velocity in Rpt 2 */
-    uint8_t  drum_repeat2_selected_rate;        /* last rate pad selection (for next lane_on) */
 } seq8_track_t;
 #define LRS_SET(tr, s)  ((tr)->live_recorded_steps[(s)>>3] |=  (uint8_t)(1u<<((s)&7)))
 #define LRS_TEST(tr, s) ((tr)->live_recorded_steps[(s)>>3] &   (1u<<((s)&7)))

@@ -333,8 +333,7 @@ function doClearSession() {
         drumRepeatHeldPad[_t] = -1;
         drumRepeatLatched[_t] = false;
         drumRepeat2HeldLanes[_t].clear();
-        drumRepeat2RateIdx[_t]  = 0;
-        drumRepeat2RatePad[_t]  = -1;
+        for (let _l = 0; _l < DRUM_LANES; _l++) drumRepeat2RatePerLane[_t][_l] = 0;
         for (let _l = 0; _l < DRUM_LANES; _l++) {
             drumRepeatGate[_t][_l] = 0xFF;
             for (let _s = 0; _s < 8; _s++) {
@@ -508,9 +507,8 @@ let drumPerformMode = new Array(NUM_TRACKS).fill(0); /* 0=Velocity, 1=Rpt, 2=Rpt
 let drumRepeatHeldPad   = new Array(NUM_TRACKS).fill(-1);    /* pad idx of active rate pad (-1=none) */
 let drumRepeatLatched   = new Array(NUM_TRACKS).fill(false); /* true when rate pad is loop-latched */
 /* Rpt2 state */
-let drumRepeat2HeldLanes = Array.from({length: NUM_TRACKS}, () => new Set());
-let drumRepeat2RateIdx   = new Array(NUM_TRACKS).fill(0);
-let drumRepeat2RatePad   = new Array(NUM_TRACKS).fill(-1);
+let drumRepeat2HeldLanes   = Array.from({length: NUM_TRACKS}, () => new Set());
+let drumRepeat2RatePerLane = Array.from({length: NUM_TRACKS}, () => new Array(DRUM_LANES).fill(0));
 /* Per-track per-lane repeat groove state mirrors */
 let drumRepeatGate     = Array.from({length: NUM_TRACKS}, () => new Array(DRUM_LANES).fill(0xFF));
 let drumRepeatVelScale = Array.from({length: NUM_TRACKS}, () =>
@@ -2334,7 +2332,7 @@ function updateTrackLEDs() {
                     /* Rpt2 mode: right 4×4 — Cyan theme for visual distinction */
                     if (row < 2) {
                         const rateIdx = row * 4 + (col - 4);
-                        color = (rateIdx === drumRepeat2RateIdx[t]) ? Cyan : PurpleBlue;
+                        color = (rateIdx === drumRepeat2RatePerLane[t][selLane]) ? Cyan : PurpleBlue;
                     } else {
                         const maskStep = (row - 2) * 4 + (col - 4);
                         const isOn = !!(drumRepeatGate[t][selLane] & (1 << maskStep));
@@ -2697,15 +2695,20 @@ function drawUI() {
     /* Action confirmation pop-up: ~500ms; defers to step edit and active-knob bank overview */
     if (actionPopupEndTick >= 0 && heldStep < 0 && knobTouched < 0) {
         if (actionPopupHighlight >= 0 && actionPopupLines.length >= 3) {
-            const _y0 = 6;
-            print(4, _y0, actionPopupLines[0], 1);
+            const _title = actionPopupLines[0];
+            const _tw = _title.length * 6;
+            const _tx = Math.floor((128 - _tw) / 2);
+            print(_tx, 4, _title, 1);
+            fill_rect(_tx, 13, _tw, 1, 1);
             for (let _li = 1; _li < actionPopupLines.length; _li++) {
-                const _ly = _y0 + _li * 14;
+                const _ly = 12 + _li * 14;
+                const _lw = actionPopupLines[_li].length * 6;
+                const _lx = Math.floor((128 - _lw) / 2);
                 if (_li === actionPopupHighlight) {
                     fill_rect(0, _ly - 1, 128, 13, 1);
-                    print(4, _ly, actionPopupLines[_li], 0);
+                    print(_lx, _ly, actionPopupLines[_li], 0);
                 } else {
-                    print(4, _ly, actionPopupLines[_li], 1);
+                    print(_lx, _ly, actionPopupLines[_li], 1);
                 }
             }
         } else if (actionPopupLines.length >= 2) {
@@ -3734,8 +3737,6 @@ globalThis.onMidiMessageInternal = function (data) {
             }
             drumRepeatLatched[t]  = false;
             drumPerformMode[t]    = (drumPerformMode[t] + 1) % 3;
-            if (drumPerformMode[t] > 0) activeBank = 6;
-            else activeBank = 0;
             showModePopup('PERFORMANCE PADS',
                 ['Velocity', 'Repeat Play (Rpt1)', 'Repeat Set (Rpt2)'],
                 drumPerformMode[t]);
@@ -4668,8 +4669,6 @@ globalThis.onMidiMessageInternal = function (data) {
                             }
                             drumRepeatLatched[t] = false;
                             drumPerformMode[t] = nv;
-                            if (nv > 0) activeBank = 6;
-                            else activeBank = 0;
                         }
                         showModePopup('PERFORMANCE PADS',
                             ['Velocity', 'Repeat Play (Rpt1)', 'Repeat Set (Rpt2)'],
@@ -5458,12 +5457,12 @@ globalThis.onMidiMessageInternal = function (data) {
                     const col = padIdx % 8;
                     const row = Math.floor(padIdx / 8);
                     if (col >= 4 && row < 2) {
-                        /* Rate pad: select rate only (no trigger) */
+                        /* Rate pad: assign rate to active lane */
                         const rateIdx = row * 4 + (col - 4);
-                        drumRepeat2RateIdx[t] = rateIdx;
-                        drumRepeat2RatePad[t] = padIdx;
+                        const lane = activeDrumLane[t];
+                        drumRepeat2RatePerLane[t][lane] = rateIdx;
                         if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + t + '_drum_repeat2_rate', String(rateIdx));
+                            host_module_set_param('t' + t + '_drum_repeat2_rate', lane + ' ' + rateIdx);
                         screenDirty = true;
                         return;
                     } else if (col >= 4 && row >= 2) {
