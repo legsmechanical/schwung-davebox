@@ -83,7 +83,7 @@ File: `/data/UserData/schwung/set_state/<UUID>/seq8-state.json`.
 JS `init()` reads UUID, compares with `state_uuid` get_param. Mismatch → `state_load=UUID` next tick → `pendingDspSync=5` → `syncClipsFromDsp()`.
 
 **Critical constraints**:
-- **Coalescing**: only the LAST `set_param` per JS tick reaches DSP. Multi-field operations require a single atomic DSP command.
+- **Coalescing**: only the LAST `set_param` per audio buffer reaches DSP. `shadow_send_midi_to_dsp` shares the same delivery channel and also coalesces with `set_param`. In `onMidiMessage`, if both a `set_param` and `shadow_send_midi_to_dsp` fire, the set_param is lost. Workaround: defer set_params to the tick function via a pending variable (see `pendingRepeatLane` pattern). Multi-field operations require a single atomic DSP command.
 - **get_param from onMidiMessage**: `host_module_get_param` silently returns null when called from `onMidiMessage` context. Only works from tick/render callbacks. Sync functions called from pad handlers (e.g., `refreshDrumLaneBankParams` on lane switch) cannot rely on get_param. Workaround: sync JS state from DSP in the render/tick path instead.
 - **No MIDI panic before state_load** — floods MIDI buffer, drops the load param.
 - **Shift+Back does not reload JS** — `init()` re-runs in same runtime. Full reboot required for JS changes.
