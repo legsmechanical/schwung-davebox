@@ -419,10 +419,11 @@ typedef struct {
     uint32_t drum_repeat_phase;
     /* Repeat 2 engine: multi-lane simultaneous repeat (runtime, not persisted) */
     uint32_t drum_repeat2_active;          /* bitmask: bit l = lane l held in Rpt 2 */
-    uint8_t  drum_repeat2_rate_idx;        /* 0-7, shared rate */
-    uint8_t  drum_repeat2_step;            /* shared gate mask step 0-7 */
-    uint32_t drum_repeat2_phase;           /* shared phase within step */
-    uint8_t  drum_repeat2_vel[DRUM_LANES]; /* per-lane velocity in Rpt 2 */
+    uint8_t  drum_repeat2_rate_idx[DRUM_LANES]; /* per-lane rate index 0-7 */
+    uint8_t  drum_repeat2_step[DRUM_LANES];     /* per-lane gate mask step 0-7 */
+    uint32_t drum_repeat2_phase[DRUM_LANES];    /* per-lane phase within step */
+    uint8_t  drum_repeat2_vel[DRUM_LANES];      /* per-lane velocity in Rpt 2 */
+    uint8_t  drum_repeat2_selected_rate;        /* last rate pad selection (for next lane_on) */
 } seq8_track_t;
 #define LRS_SET(tr, s)  ((tr)->live_recorded_steps[(s)>>3] |=  (uint8_t)(1u<<((s)&7)))
 #define LRS_TEST(tr, s) ((tr)->live_recorded_steps[(s)>>3] &   (1u<<((s)&7)))
@@ -2690,66 +2691,69 @@ static void drum_repeat_tick(seq8_instance_t *inst, seq8_track_t *tr) {
     }
 }
 
-/* Rpt 2 repeat tick — fires all held lanes (bitmask) at shared rate/step/phase.
- * Each lane uses its own nudge+gate+vel_scale against the shared phase. */
+/* Rpt 2 repeat tick — fires all held lanes at independent per-lane rates.
+ * Each lane has its own rate_idx, phase, step, nudge, gate, vel_scale. */
 static void drum_repeat2_tick(seq8_instance_t *inst, seq8_track_t *tr) {
     if (!tr->drum_repeat2_active) return;
-    uint8_t  step = tr->drum_repeat2_step;
-    uint16_t rate = DRUM_REPEAT_RATE_TICKS[tr->drum_repeat2_rate_idx];
     int l;
     for (l = 0; l < DRUM_LANES; l++) {
         if (!(tr->drum_repeat2_active & (1u << (unsigned)l))) continue;
+        uint8_t  step = tr->drum_repeat2_step[l];
+        uint16_t rate = DRUM_REPEAT_RATE_TICKS[tr->drum_repeat2_rate_idx[l]];
         int nudge_ticks = (int)(int8_t)tr->drum_repeat_nudge[l][step] * (int)rate / 100;
         int fire_at     = nudge_ticks >= 0 ? nudge_ticks : (int)rate + nudge_ticks;
-        if ((int)tr->drum_repeat2_phase != fire_at) continue;
-        if (!(tr->drum_repeat_gate[l] & (uint8_t)(1u << step))) continue;
-        int vel   = effective_vel(tr, (int)tr->drum_repeat2_vel[l]);
-        int scale = (int)tr->drum_repeat_vel_scale[l][step];
-        vel = vel * scale / 100;
-        if (vel < 1) vel = 1;
-        if (vel > 127) vel = 127;
-        drum_lane_t *dlane = &tr->drum_clips[tr->active_clip].lanes[l];
-        uint8_t pitch = dlane->midi_note;
-        { int pp;
-          for (pp = 0; pp < (int)tr->play_pending_count; pp++) {
-              if (tr->play_pending[pp].pitch == pitch) {
-                  pfx_note_off(inst, tr, pitch);
-                  tr->play_pending[pp] = tr->play_pending[tr->play_pending_count - 1];
-                  tr->play_pending_count--;
-                  break;
+        if ((int)tr->drum_repeat2_phase[l] != fire_at) goto advance_l;
+        if (!(tr->drum_repeat_gate[l] & (uint8_t)(1u << step))) goto advance_l;
+        {
+            int vel   = effective_vel(tr, (int)tr->drum_repeat2_vel[l]);
+            int scale = (int)tr->drum_repeat_vel_scale[l][step];
+            vel = vel * scale / 100;
+            if (vel < 1) vel = 1;
+            if (vel > 127) vel = 127;
+            drum_lane_t *dlane = &tr->drum_clips[tr->active_clip].lanes[l];
+            uint8_t pitch = dlane->midi_note;
+            { int pp;
+              for (pp = 0; pp < (int)tr->play_pending_count; pp++) {
+                  if (tr->play_pending[pp].pitch == pitch) {
+                      pfx_note_off(inst, tr, pitch);
+                      tr->play_pending[pp] = tr->play_pending[tr->play_pending_count - 1];
+                      tr->play_pending_count--;
+                      break;
+                  }
               }
-          }
-        }
-        pfx_note_on(inst, tr, pitch, (uint8_t)vel);
-        if (tr->recording) {
-            int ac = (int)tr->active_clip;
-            clip_t *rlc = &tr->drum_clips[ac].lanes[l].clip;
-            uint16_t rs = tr->drum_current_step[l];
-            if (rs < rlc->length && rlc->step_note_count[rs] == 0) {
-                rlc->step_notes[rs][0]       = pitch;
-                rlc->step_note_count[rs]     = 1;
-                rlc->step_vel[rs]            = (uint8_t)vel;
-                rlc->step_gate[rs]           = (uint16_t)GATE_TICKS;
-                rlc->note_tick_offset[rs][0] = inst->inp_quant
-                    ? 0 : (int16_t)tr->drum_tick_in_step[l];
-                rlc->steps[rs]               = 1;
-                rlc->active                  = 1;
-                clip_migrate_to_notes(rlc);
+            }
+            pfx_note_on(inst, tr, pitch, (uint8_t)vel);
+            if (tr->recording) {
+                int ac = (int)tr->active_clip;
+                clip_t *rlc = &tr->drum_clips[ac].lanes[l].clip;
+                uint16_t rs = tr->drum_current_step[l];
+                if (rs < rlc->length && rlc->step_note_count[rs] == 0) {
+                    rlc->step_notes[rs][0]       = pitch;
+                    rlc->step_note_count[rs]     = 1;
+                    rlc->step_vel[rs]            = (uint8_t)vel;
+                    rlc->step_gate[rs]           = (uint16_t)GATE_TICKS;
+                    rlc->note_tick_offset[rs][0] = inst->inp_quant
+                        ? 0 : (int16_t)tr->drum_tick_in_step[l];
+                    rlc->steps[rs]               = 1;
+                    rlc->active                  = 1;
+                    clip_migrate_to_notes(rlc);
+                }
+            }
+            uint16_t gate = rate / 2;
+            if (gate < 1) gate = 1;
+            if (tr->play_pending_count < 32) {
+                tr->play_pending[tr->play_pending_count].pitch           = pitch;
+                tr->play_pending[tr->play_pending_count].ticks_remaining = gate;
+                tr->play_pending_count++;
+                tr->note_active = 1;
             }
         }
-        uint16_t gate = rate / 2;
-        if (gate < 1) gate = 1;
-        if (tr->play_pending_count < 32) {
-            tr->play_pending[tr->play_pending_count].pitch           = pitch;
-            tr->play_pending[tr->play_pending_count].ticks_remaining = gate;
-            tr->play_pending_count++;
-            tr->note_active = 1;
+advance_l:
+        tr->drum_repeat2_phase[l]++;
+        if (tr->drum_repeat2_phase[l] >= (uint32_t)rate) {
+            tr->drum_repeat2_phase[l] = 0;
+            tr->drum_repeat2_step[l]  = (tr->drum_repeat2_step[l] + 1) % 8;
         }
-    }
-    tr->drum_repeat2_phase++;
-    if (tr->drum_repeat2_phase >= (uint32_t)rate) {
-        tr->drum_repeat2_phase = 0;
-        tr->drum_repeat2_step  = (tr->drum_repeat2_step + 1) % 8;
     }
 }
 

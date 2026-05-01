@@ -588,6 +588,7 @@ let trackOctave = new Array(NUM_TRACKS).fill(0);  /* per-track live pad octave s
 const KNOB_TURN_HIGHLIGHT_TICKS = 120;            /* ~600ms at 196Hz — highlight after turn without touch */
 let actionPopupEndTick = -1;   /* tickCount deadline for action confirmation pop-up; -1 = inactive */
 let actionPopupLines   = [];   /* 1 or 2 strings to display */
+let actionPopupHighlight = -1; /* line index to render inverted (-1 = none) */
 const ACTION_POPUP_TICKS = 98; /* ~500ms at 196Hz */
 let clockShiftTouchDelta = 0;                     /* per-touch cumulative step delta; reset on release */
 let screenDirty = true;   /* true = OLED must redraw this tick */
@@ -780,8 +781,15 @@ function clearStep(t, ac, absIdx) {
 }
 
 function showActionPopup(...lines) {
+    actionPopupHighlight = -1;
     actionPopupLines   = lines;
     actionPopupEndTick = tickCount + ACTION_POPUP_TICKS;
+    screenDirty = true;
+}
+function showModePopup(title, items, activeIdx) {
+    actionPopupLines     = [title, ...items];
+    actionPopupHighlight = activeIdx + 1;
+    actionPopupEndTick   = tickCount + ACTION_POPUP_TICKS;
     screenDirty = true;
 }
 
@@ -2308,9 +2316,9 @@ function updateTrackLEDs() {
                             copySrc.track === t && copySrc.lane === lane) {
                         color = (Math.floor(tickCount / 24) % 2) ? White : LED_OFF;
                     }
-                    /* Rpt2: highlight held lanes */
+                    /* Rpt2: highlight held lanes in Cyan */
                     if (drumPerformMode[t] === 2 && drumRepeat2HeldLanes[t].has(lane)) {
-                        color = White;
+                        color = Cyan;
                     }
                 } else if (drumPerformMode[t] === 1) {
                     /* Repeat mode: right 4×4 — rows 0-1 = rate pads, rows 2-3 = gate mask */
@@ -2323,10 +2331,10 @@ function updateTrackLEDs() {
                         color = isOn ? tc : LED_OFF;
                     }
                 } else if (drumPerformMode[t] === 2) {
-                    /* Rpt2 mode: right 4×4 — rows 0-1 = rate selectors, rows 2-3 = gate mask */
+                    /* Rpt2 mode: right 4×4 — Cyan theme for visual distinction */
                     if (row < 2) {
                         const rateIdx = row * 4 + (col - 4);
-                        color = (rateIdx === drumRepeat2RateIdx[t]) ? White : LightGrey;
+                        color = (rateIdx === drumRepeat2RateIdx[t]) ? Cyan : PurpleBlue;
                     } else {
                         const maskStep = (row - 2) * 4 + (col - 4);
                         const isOn = !!(drumRepeatGate[t][selLane] & (1 << maskStep));
@@ -2688,7 +2696,19 @@ function drawUI() {
 
     /* Action confirmation pop-up: ~500ms; defers to step edit and active-knob bank overview */
     if (actionPopupEndTick >= 0 && heldStep < 0 && knobTouched < 0) {
-        if (actionPopupLines.length >= 2) {
+        if (actionPopupHighlight >= 0 && actionPopupLines.length >= 3) {
+            const _y0 = 6;
+            print(4, _y0, actionPopupLines[0], 1);
+            for (let _li = 1; _li < actionPopupLines.length; _li++) {
+                const _ly = _y0 + _li * 14;
+                if (_li === actionPopupHighlight) {
+                    fill_rect(0, _ly - 1, 128, 13, 1);
+                    print(4, _ly, actionPopupLines[_li], 0);
+                } else {
+                    print(4, _ly, actionPopupLines[_li], 1);
+                }
+            }
+        } else if (actionPopupLines.length >= 2) {
             print(4, 22, actionPopupLines[0], 1);
             print(4, 34, actionPopupLines[1], 1);
         } else {
@@ -2807,7 +2827,7 @@ function drawUI() {
                 fmtRes(tpsIdx),
                 fmtLen(len),
                 fmtPct(drumSeqQnt[t]),
-                drumPerformMode[t] === 2 ? 'Rpt2' : drumPerformMode[t] === 1 ? 'Rpt' : 'Vel',
+                drumPerformMode[t] === 2 ? 'Rpt2' : drumPerformMode[t] === 1 ? 'Rpt1' : 'Vel',
                 fmtBool(sqfl),
             ];
             print(4, 0, '[ DRUM SEQ ]', 1);
@@ -3342,6 +3362,14 @@ globalThis.tick = function () {
         }
     }
 
+    /* Refresh step LEDs while drum repeat is recording into the active lane */
+    if (recordArmed && playing && !sessionView &&
+            bankParams[activeTrack][0][2] === PAD_MODE_DRUM &&
+            (drumRepeatHeldPad[activeTrack] >= 0 || drumRepeat2HeldLanes[activeTrack].size > 0)) {
+        syncDrumLaneSteps(activeTrack, activeDrumLane[activeTrack]);
+        forceRedraw();
+    }
+
     /* Real-time preview while editing any global menu parameter.
      * Only send set_param when the edit value actually changes — avoids flooding
      * the DSP param queue (which would starve tN_launch_clip / transport commands). */
@@ -3665,11 +3693,25 @@ globalThis.onMidiMessageInternal = function (data) {
         }
         if (d1 === 3 && d2 === 127 && deleteHeld && !sessionView) {
             if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {
-                /* Drum: Delete+jog = reset only the active real-time FX bank */
-                const REAL_TIME_BANKS = [2, 3, 5];
-                if (REAL_TIME_BANKS.indexOf(activeBank) >= 0) {
-                    resetSingleFxBank(activeTrack, activeBank);
-                    showActionPopup('BANK RESET');
+                if (drumPerformMode[activeTrack] > 0) {
+                    /* Rpt/Rpt2 mode: Delete+jog = reset current lane groove params */
+                    const _rt = activeTrack;
+                    const _rl = activeDrumLane[_rt];
+                    drumRepeatGate[_rt][_rl] = 0xFF;
+                    for (let _s = 0; _s < 8; _s++) {
+                        drumRepeatVelScale[_rt][_rl][_s] = 100;
+                        drumRepeatNudge[_rt][_rl][_s]    = 0;
+                    }
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + _rt + '_l' + _rl + '_repeat_groove_reset', '1');
+                    showActionPopup('RPT GROOVE', 'RESET');
+                } else {
+                    /* Drum: Delete+jog = reset only the active real-time FX bank */
+                    const REAL_TIME_BANKS = [2, 3, 5];
+                    if (REAL_TIME_BANKS.indexOf(activeBank) >= 0) {
+                        resetSingleFxBank(activeTrack, activeBank);
+                        showActionPopup('BANK RESET');
+                    }
                 }
             } else {
                 resetFxBanks(activeTrack);
@@ -3692,7 +3734,11 @@ globalThis.onMidiMessageInternal = function (data) {
             }
             drumRepeatLatched[t]  = false;
             drumPerformMode[t]    = (drumPerformMode[t] + 1) % 3;
-            screenDirty = true;
+            if (drumPerformMode[t] > 0) activeBank = 6;
+            else activeBank = 0;
+            showModePopup('PERFORMANCE PADS',
+                ['Velocity', 'Repeat Play (Rpt1)', 'Repeat Set (Rpt2)'],
+                drumPerformMode[t]);
             return;
         }
 
@@ -4622,8 +4668,12 @@ globalThis.onMidiMessageInternal = function (data) {
                             }
                             drumRepeatLatched[t] = false;
                             drumPerformMode[t] = nv;
+                            if (nv > 0) activeBank = 6;
+                            else activeBank = 0;
                         }
-                        screenDirty = true;
+                        showModePopup('PERFORMANCE PADS',
+                            ['Velocity', 'Repeat Play (Rpt1)', 'Repeat Set (Rpt2)'],
+                            drumPerformMode[t]);
                     }
                     return;
                 }

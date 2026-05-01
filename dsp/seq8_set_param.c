@@ -2406,6 +2406,16 @@ static void set_param(void *instance, const char *key, const char *val) {
                 seq8_save_state(inst);
                 return;
             }
+            /* tN_lL_repeat_groove_reset — reset all groove params for this lane */
+            if (!strcmp(p2, "_repeat_groove_reset")) {
+                tr->drum_repeat_gate[lane_idx] = 0xFF;
+                { int s; for (s = 0; s < 8; s++) {
+                    tr->drum_repeat_vel_scale[lane_idx][s] = 100;
+                    tr->drum_repeat_nudge[lane_idx][s]     = 0;
+                }}
+                seq8_save_state(inst);
+                return;
+            }
             return;
         }
 
@@ -2679,7 +2689,7 @@ static void set_param(void *instance, const char *key, const char *val) {
         }
 
         if (!strcmp(sub, "drum_repeat2_lane_on")) {
-            /* tN_drum_repeat2_lane_on "lane vel" — add lane to Rpt2 bitmask */
+            /* tN_drum_repeat2_lane_on "lane vel" — add lane with current selected rate */
             const char *sp = val;
             while (*sp == ' ') sp++;
             int lane_r = 0;
@@ -2692,8 +2702,11 @@ static void set_param(void *instance, const char *key, const char *val) {
                 while (*sp >= '0' && *sp <= '9') { vel_r = vel_r * 10 + (*sp++ - '0'); }
             }
             vel_r = clamp_i(vel_r, 1, 127);
-            tr->drum_repeat2_vel[lane_r]    = (uint8_t)vel_r;
-            tr->drum_repeat2_active        |= (1u << (unsigned)lane_r);
+            tr->drum_repeat2_vel[lane_r]      = (uint8_t)vel_r;
+            tr->drum_repeat2_rate_idx[lane_r] = tr->drum_repeat2_selected_rate;
+            tr->drum_repeat2_phase[lane_r]    = 0;
+            tr->drum_repeat2_step[lane_r]     = 0;
+            tr->drum_repeat2_active          |= (1u << (unsigned)lane_r);
             return;
         }
 
@@ -2705,12 +2718,9 @@ static void set_param(void *instance, const char *key, const char *val) {
         }
 
         if (!strcmp(sub, "drum_repeat2_rate")) {
-            /* tN_drum_repeat2_rate "rate_idx" — update shared rate; clamp phase */
+            /* tN_drum_repeat2_rate "rate_idx" — store selected rate for next lane_on */
             int rate_r = clamp_i(my_atoi(val), 0, 7);
-            tr->drum_repeat2_rate_idx = (uint8_t)rate_r;
-            uint16_t new_rate = DRUM_REPEAT_RATE_TICKS[rate_r];
-            if (tr->drum_repeat2_phase >= (uint32_t)new_rate)
-                tr->drum_repeat2_phase = 0;
+            tr->drum_repeat2_selected_rate = (uint8_t)rate_r;
             return;
         }
 
