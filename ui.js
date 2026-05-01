@@ -105,7 +105,7 @@ const BANKS = [
         p('Rte',  'Route',        'route',    'track', 0, 1,  0, fmtRoute),
         p('Mode', 'Track Mode',   'pad_mode', 'track', 0, 1,  0, function(v) { return v ? 'Drums' : 'Keys'; }, 32),
         _X,
-        p('Vel',  'Vel Override', 'track_vel_override', 'track', 0, 128, 0, fmtVelOverride, 1),
+        p('InVel', 'Input Velocity', 'track_vel_override', 'track', 0, 127, 0, fmtVelOverride, 1),
         _X, _X,
         p('Lpr',  'Looper',       'track_looper', 'track', 0, 1, 1, fmtBool, 16),
     ]},
@@ -184,7 +184,6 @@ const BANKS = [
 /* Stub state for not-yet-wired global menu params */
 let stubSwingAmt = 0;
 let stubSwingRes = 0;
-let stubInputVel = 0;
 let inpQuant = false;
 let midiInChannel = 0;  /* 0=All, 1-16=specific channel */
 
@@ -260,16 +259,6 @@ function buildGlobalMenuItems() {
             set: function(v) { stubSwingRes = v; },
             options: [0, 1],
             format: function(v) { return ['1/16','1/8'][v] || '1/16'; }
-        }),
-        createValue('Input Vel', {
-            get: function() { return stubInputVel; },
-            set: function(v) {
-                stubInputVel = v;
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('input_vel', String(v));
-            },
-            min: 0, max: 127,
-            format: function(v) { return v === 0 ? 'Live' : String(v); }
         }),
         createToggle('Inp Quant', {
             get: function() { return inpQuant; },
@@ -1052,10 +1041,7 @@ function handoffRecordingToTrack(newTrack) {
     }
 }
 
-/* Returns the velocity to use for a pad hit: stubInputVel=0 → live, else fixed. */
-function effectiveVelocity(rawVel) {
-    return stubInputVel > 0 ? stubInputVel : rawVel;
-}
+function effectiveVelocity(rawVel) { return rawVel; }
 
 function flushChordBatch() {}
 
@@ -1817,11 +1803,11 @@ function liveSendNote(t, type, pitch, vel) {
     const ch    = (bankParams[t][0][0] - 1) & 0x0F;  /* Ch knob: 1-indexed → 0-indexed */
     const route = bankParams[t][0][1];                /* Rte knob: 0=Schwung, 1=Move */
     const status = type | ch;
-    /* Per-track vel override (K5): absolute overrides effectiveVelocity; Live passes raw.
-     * For ROUTE_MOVE, DSP effective_vel() handles it in the live_notes/record_note_on path. */
+    /* Per-track InVel override (K5, ROUTE_SCHWUNG only): absolute (1-127) overrides raw vel.
+     * ROUTE_MOVE handled by DSP effective_vel() in the live_notes/record_note_on path. */
     if (type === 0x90 && vel > 0 && route !== 1) {
         const tvo = bankParams[t][0][4];
-        if (tvo > 0 && tvo < 128) vel = tvo;
+        if (tvo > 0) vel = tvo;
     }
     if (route === 1) {
         /* When recording is active, record_note_on/off DSP handlers do live monitoring
@@ -2985,8 +2971,6 @@ function syncClipsFromDsp() {
     if (sp !== null && sp !== undefined) padScale = parseInt(sp, 10) | 0;
     const lqp = host_module_get_param('launch_quant');
     if (lqp !== null && lqp !== undefined) launchQuant = parseInt(lqp, 10) | 0;
-    const ivp = host_module_get_param('input_vel');
-    if (ivp !== null && ivp !== undefined) stubInputVel = parseInt(ivp, 10) | 0;
     const iqp = host_module_get_param('inp_quant');
     if (iqp !== null && iqp !== undefined) inpQuant = iqp === '1';
     const micp = host_module_get_param('midi_in_channel');
@@ -3123,8 +3107,7 @@ globalThis.init = function () {
             } else {
                 pendingDefaultSetParams = [
                     { key: 'scale_aware', val: '1' },
-                    { key: 'metro_vol',   val: '100' },
-                    { key: 'input_vel',   val: '0' }
+                    { key: 'metro_vol',   val: '100' }
                 ];
             }
         }
@@ -3214,8 +3197,7 @@ globalThis.tick = function () {
                 metronomeVol = 100;
                 pendingDefaultSetParams = [
                     { key: 'scale_aware', val: '1' },
-                    { key: 'metro_vol',   val: '100' },
-                    { key: 'input_vel',   val: '0' }
+                    { key: 'metro_vol',   val: '100' }
                 ];
             }
             computePadNoteMap();

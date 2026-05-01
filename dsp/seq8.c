@@ -461,8 +461,6 @@ typedef struct {
 
     /* Scale-aware play effects: interpret Ofs/Hrm/delay-pitch in scale degrees */
     uint8_t scale_aware;
-    /* Input velocity: 0=live (pass-through), 1-127=fixed */
-    uint8_t input_vel;
     /* Input quantize: 1=snap live recording to step grid (zero offset), 0=unquantized */
     uint8_t inp_quant;
     /* External MIDI channel filter: 0=All, 1-16=specific channel */
@@ -884,7 +882,6 @@ static void seq8_save_state(seq8_instance_t *inst) {
     fprintf(fp, ",\"bpm\":%.0f", inst->tracks[0].pfx.cached_bpm > 0
             ? inst->tracks[0].pfx.cached_bpm : (double)BPM_DEFAULT);
     fprintf(fp, ",\"saw\":%d", (int)inst->scale_aware);
-    fprintf(fp, ",\"iv\":%d",  (int)inst->input_vel);
     fprintf(fp, ",\"iq\":%d",  (int)inst->inp_quant);
     fprintf(fp, ",\"mic\":%d", (int)inst->midi_in_channel);
     if (inst->metro_on != 1)   fprintf(fp, ",\"metro_on\":%d", (int)inst->metro_on);
@@ -1073,7 +1070,8 @@ static void seq8_load_state(seq8_instance_t *inst) {
     /* Vel Override — per-track, sparse (missing = 0 = Global) */
     for (t = 0; t < NUM_TRACKS; t++) {
         snprintf(key, sizeof(key), "t%d_tvo", t);
-        inst->tracks[t].track_vel_override = (uint8_t)clamp_i(json_get_int(buf, key, 0), 0, 128);
+        { int _v = clamp_i(json_get_int(buf, key, 0), 0, 128);
+          inst->tracks[t].track_vel_override = (uint8_t)(_v == 128 ? 0 : _v); }
     }
     /* Per-clip play-effect params (sparse — missing keys default to neutral) */
     for (t = 0; t < NUM_TRACKS; t++) {
@@ -1219,7 +1217,6 @@ static void seq8_load_state(seq8_instance_t *inst) {
         }
     }
     inst->scale_aware = (uint8_t)(json_get_int(buf, "saw", 0) != 0);
-    inst->input_vel      = (uint8_t)clamp_i(json_get_int(buf, "iv",  0), 0, 127);
     inst->inp_quant      = (uint8_t)(json_get_int(buf, "iq", 0) != 0);
     inst->midi_in_channel = (uint8_t)clamp_i(json_get_int(buf, "mic", 0), 0, 16);
     inst->metro_on  = (uint8_t)clamp_i(json_get_int(buf, "metro_on", 1), 0, 3);
@@ -2548,12 +2545,9 @@ static void tarp_silence(seq8_instance_t *inst, seq8_track_t *tr) {
 }
 
 /* Resolve effective input velocity for a track.
- * Per-track override takes precedence: abs (1-127) → fixed; Live (128) → pass raw;
- * Global (0) → defer to inst->input_vel (0=raw, 1-127=fixed). */
-static int effective_vel(seq8_instance_t *inst, seq8_track_t *tr, int raw_vel) {
-    if (tr->track_vel_override == 128) return raw_vel;
-    if (tr->track_vel_override > 0)    return (int)tr->track_vel_override;
-    if (inst->input_vel > 0)           return (int)inst->input_vel;
+ * 0=Live (pass raw), 1-127=fixed absolute. */
+static int effective_vel(seq8_track_t *tr, int raw_vel) {
+    if (tr->track_vel_override > 0) return (int)tr->track_vel_override;
     return raw_vel;
 }
 
@@ -3362,8 +3356,6 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         return snprintf(out, out_len, "%d", inst ? (int)inst->scale_aware : 0);
     if (!strcmp(key, "inp_quant"))
         return snprintf(out, out_len, "%d", inst ? (int)inst->inp_quant : 0);
-    if (!strcmp(key, "input_vel"))
-        return snprintf(out, out_len, "%d", inst ? (int)inst->input_vel : 0);
     if (!strcmp(key, "midi_in_channel"))
         return snprintf(out, out_len, "%d", inst ? (int)inst->midi_in_channel : 0);
     if (!strcmp(key, "metro_on"))
