@@ -3771,6 +3771,22 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                     pos += snprintf(out + pos, out_len - pos, " %d", (int)(int8_t)tr->drum_repeat_nudge[lidx][s]);
                 return pos;
             }
+            /* _repeat_debug: live engine state + nudge for all 8 steps */
+            if (!strcmp(p2, "_repeat_debug")) {
+                int s;
+                uint8_t rl = tr->drum_repeat_lane;
+                int pos = snprintf(out, out_len, "%d %d %d %d %d %d",
+                    (int)tr->drum_repeat_active,
+                    (int)rl,
+                    (int)tr->drum_repeat_gate[rl],
+                    (int)tr->drum_repeat_step,
+                    (int)tr->drum_repeat_phase,
+                    (int)tr->drum_repeat_rate_idx);
+                for (s = 0; s < 8 && pos < out_len - 6; s++)
+                    pos += snprintf(out + pos, out_len - pos, " %d",
+                        (int)(int8_t)tr->drum_repeat_nudge[rl][s]);
+                return pos;
+            }
             return -1;
         }
         if (!strcmp(sub, "clock_shift_pos"))
