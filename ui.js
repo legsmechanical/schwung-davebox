@@ -105,7 +105,7 @@ const BANKS = [
         p('Rte',  'Route',        'route',    'track', 0, 1,  0, fmtRoute),
         p('Mode', 'Track Mode',   'pad_mode', 'track', 0, 1,  0, function(v) { return v ? 'Drums' : 'Keys'; }, 32),
         _X,
-        p('InVel', 'Input Velocity', 'track_vel_override', 'track', 0, 127, 0, fmtVelOverride, 1),
+        p('VelIn', 'Input Velocity', 'track_vel_override', 'track', 0, 127, 0, fmtVelOverride, 1),
         _X, _X,
         p('Lpr',  'Looper',       'track_looper', 'track', 0, 1, 1, fmtBool, 16),
     ]},
@@ -2751,7 +2751,7 @@ function drawUI() {
             const rowY = k < 4 ? 12 : 36;
             const hi   = (knobTouched === k);
             if (hi) fill_rect(colX, rowY, 24, 24, 1);
-            print(colX, rowY,      col4(knobs[k].abbrev), hi ? 0 : 1);
+            print(colX, rowY,      knobs[k].abbrev || '-', hi ? 0 : 1);
             print(colX, rowY + 12, col4(knobs[k].abbrev ? knobs[k].fmt(vals[k]) : null), hi ? 0 : 1);
         }
 
@@ -2783,7 +2783,7 @@ function drawUI() {
             const rowY = k < 4 ? 12 : 36;
             const hi   = (knobTouched === k);
             if (hi) fill_rect(colX, rowY, 24, 24, 1);
-            print(colX, rowY,      col4(knobs[k].abbrev), hi ? 0 : 1);
+            print(colX, rowY,      knobs[k].abbrev || '-', hi ? 0 : 1);
             print(colX, rowY + 12, col4(knobs[k].abbrev ? knobs[k].fmt(vals[k]) : null), hi ? 0 : 1);
         }
         }
