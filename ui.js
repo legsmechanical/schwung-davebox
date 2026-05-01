@@ -513,6 +513,7 @@ let pendingRepeatLaneTrack = 0;
 let drumRepeat2HeldLanes    = Array.from({length: NUM_TRACKS}, () => new Set());
 let drumRepeat2LatchedLanes = Array.from({length: NUM_TRACKS}, () => new Set());
 let drumRepeat2RatePerLane  = Array.from({length: NUM_TRACKS}, () => new Array(DRUM_LANES).fill(0));
+let rpt2LoopPadUsed         = false; /* true if a lane pad was touched while Loop held in Rpt2 */
 /* Per-track per-lane repeat groove state mirrors */
 let drumRepeatGate     = Array.from({length: NUM_TRACKS}, () => new Array(DRUM_LANES).fill(0xFF));
 let drumRepeatVelScale = Array.from({length: NUM_TRACKS}, () =>
@@ -4061,14 +4062,12 @@ globalThis.onMidiMessageInternal = function (data) {
                 /* Latch or clear drum repeat on the active track */
                 const _lrt = activeTrack;
                 if (drumPerformMode[_lrt] === 2) {
+                    rpt2LoopPadUsed = false;
                     if (drumRepeat2HeldLanes[_lrt].size > 0) {
                         for (const _ll of drumRepeat2HeldLanes[_lrt]) {
                             drumRepeat2LatchedLanes[_lrt].add(_ll);
                         }
-                    } else if (drumRepeat2LatchedLanes[_lrt].size > 0) {
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + _lrt + '_drum_repeat2_stop', '1');
-                        drumRepeat2LatchedLanes[_lrt].clear();
+                        rpt2LoopPadUsed = true;
                     }
                 } else if (drumRepeatLatched[_lrt]) {
                     drumRepeatLatched[_lrt]  = false;
@@ -4084,6 +4083,15 @@ globalThis.onMidiMessageInternal = function (data) {
                 stepWasEmpty       = false;
                 stepWasHeld        = false;
                 stepBtnPressedTick.fill(-1);
+            } else {
+                /* Loop released — Rpt2: unlatch all if no pad was touched during hold */
+                const _lrt = activeTrack;
+                if (drumPerformMode[_lrt] === 2 && !rpt2LoopPadUsed &&
+                        drumRepeat2LatchedLanes[_lrt].size > 0) {
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + _lrt + '_drum_repeat2_stop', '1');
+                    drumRepeat2LatchedLanes[_lrt].clear();
+                }
             }
             forceRedraw();
         }
@@ -5520,9 +5528,10 @@ globalThis.onMidiMessageInternal = function (data) {
                                 drumRepeat2LatchedLanes[t].delete(lane);
                                 if (typeof host_module_set_param === 'function')
                                     host_module_set_param('t' + t + '_drum_repeat2_lane_off', String(lane));
+                                if (loopHeld) rpt2LoopPadUsed = true;
                             } else {
                                 drumRepeat2HeldLanes[t].add(lane);
-                                if (loopHeld) drumRepeat2LatchedLanes[t].add(lane);
+                                if (loopHeld) { drumRepeat2LatchedLanes[t].add(lane); rpt2LoopPadUsed = true; }
                                 padPitch[padIdx] = -1;
                                 if (typeof host_module_set_param === 'function')
                                     host_module_set_param('t' + t + '_drum_repeat2_lane_on', lane + ' ' + d2);
