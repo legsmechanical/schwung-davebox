@@ -2259,17 +2259,7 @@ function updateTrackLEDs() {
                 const col = i % 8;
                 const row = Math.floor(i / 8);
                 let color;
-                if (col < 4 && drumPerformMode[t] === 1) {
-                    /* Repeat mode: rows 0-1 = rate pads, rows 2-3 = gate mask */
-                    if (row < 2) {
-                        const isHeld = drumRepeatHeldPad[t] === (row * 8 + col);
-                        color = isHeld ? White : (row === 0 ? tc : td);
-                    } else {
-                        const maskStep = (row - 2) * 4 + col;
-                        const isOn = !!(drumRepeatGate[t][selLane] & (1 << maskStep));
-                        color = isOn ? tc : DarkGrey;
-                    }
-                } else if (col < 4) {
+                if (col < 4) {
                     const lane = drumLanePage[t] * 16 + row * 4 + col;
                     const isActive = (lane === selLane);
                     const hasHits  = drumLaneHasNotes[t][lane];
@@ -2294,6 +2284,16 @@ function updateTrackLEDs() {
                     if (copySrc && (copySrc.kind === 'drum_lane' || copySrc.kind === 'cut_drum_lane') &&
                             copySrc.track === t && copySrc.lane === lane) {
                         color = (Math.floor(tickCount / 24) % 2) ? White : LED_OFF;
+                    }
+                } else if (drumPerformMode[t] === 1) {
+                    /* Repeat mode: right 4×4 — rows 0-1 = rate pads, rows 2-3 = gate mask */
+                    if (row < 2) {
+                        const isHeld = drumRepeatHeldPad[t] === i;
+                        color = isHeld ? White : (row === 0 ? tc : td);
+                    } else {
+                        const maskStep = (row - 2) * 4 + (col - 4);
+                        const isOn = !!(drumRepeatGate[t][selLane] & (1 << maskStep));
+                        color = isOn ? tc : DarkGrey;
                     }
                 } else {
                     const zone = row * 4 + (col - 4);
@@ -5278,9 +5278,9 @@ globalThis.onMidiMessageInternal = function (data) {
                     const t   = activeTrack;
                     const col = padIdx % 8;
                     const row = Math.floor(padIdx / 8);
-                    if (col < 4 && row < 2) {
-                        /* Rate pad: start/retrigger repeat */
-                        const rateIdx = row * 4 + col;
+                    if (col >= 4 && row < 2) {
+                        /* Rate pad (right side, bottom 2 rows): start/retrigger repeat */
+                        const rateIdx = row * 4 + (col - 4);
                         const lane    = activeDrumLane[t];
                         const vel     = d2;
                         drumRepeatHeldPad[t] = padIdx;
@@ -5288,10 +5288,10 @@ globalThis.onMidiMessageInternal = function (data) {
                             host_module_set_param('t' + t + '_drum_repeat_start', lane + ' ' + rateIdx + ' ' + vel);
                         screenDirty = true;
                         return;
-                    } else if (col < 4 && row >= 2) {
-                        /* Gate mask pad */
+                    } else if (col >= 4 && row >= 2) {
+                        /* Gate mask pad (right side, top 2 rows) */
                         const lane = activeDrumLane[t];
-                        const step = (row - 2) * 4 + col;
+                        const step = (row - 2) * 4 + (col - 4);
                         if (deleteHeld) {
                             /* Delete + gate pad: reset vel_scale and nudge for this step */
                             drumRepeatVelScale[t][lane][step] = 100;
@@ -5706,9 +5706,9 @@ globalThis.onMidiMessageInternal = function (data) {
         if (d1 >= TRACK_PAD_BASE && d1 < TRACK_PAD_BASE + 32) {
             const padIdx = d1 - TRACK_PAD_BASE;
             const t = activeTrack;
-            /* Repeat mode: swallow all left-grid (col 0-3) releases; stop repeat on rate pad release */
+            /* Repeat mode: swallow all right-grid (col 4-7) releases; stop repeat on rate pad release */
             if (bankParams[t][0][2] === PAD_MODE_DRUM && drumPerformMode[t] === 1 &&
-                    (padIdx % 8) < 4) {
+                    (padIdx % 8) >= 4) {
                 if (drumRepeatHeldPad[t] === padIdx) {
                     drumRepeatHeldPad[t] = -1;
                     if (typeof host_module_set_param === 'function')
