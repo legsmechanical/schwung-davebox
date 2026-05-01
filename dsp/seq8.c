@@ -146,6 +146,11 @@ typedef struct {
  * 0=1/32, 1=1/16, 2=1/16t, 3=1/8, 4=1/8t, 5=1/4, 6=1/4t, 7=1/2, 8=1/2t, 9=1-bar. */
 static const uint16_t ARP_RATE_TICKS[10] = { 12, 24, 16, 48, 32, 96, 64, 192, 128, 384 };
 
+/* Drum Repeat rate pad index → ticks per repeat step (96 PPQN).
+ * Pad 0-3 (bottom row): 1/32 1/16 1/8 1/4
+ * Pad 4-7 (row 2):      1/32T 1/16T 1/8T 1/4T */
+static const uint16_t DRUM_REPEAT_RATE_TICKS[8] = { 12, 24, 48, 96, 8, 16, 32, 64 };
+
 typedef struct {
     /* Live params mirrored from clip_pfx_params_t via pfx_apply_params */
     uint8_t  style;        /* 0=Off (bypass), 1..9=Up/Dn/U-D/D-U/Cnv/Div/Ord/Rnd/RnO */
@@ -401,6 +406,17 @@ typedef struct {
     uint8_t      tarp_latch;    /* K8: 0=release clears held, 1=latch keeps running */
     uint8_t      tarp_physical; /* runtime: physical keys currently held (not persisted) */
     uint8_t      track_vel_override; /* TRACK K5: 0=Global, 1-127=absolute, 128=Live */
+    /* Drum Repeat: gate mask, vel scale, nudge (per-lane, persisted) */
+    uint8_t drum_repeat_gate[DRUM_LANES];         /* 8-step bitmask; bit s=step s; default 0xFF */
+    uint8_t drum_repeat_vel_scale[DRUM_LANES][8]; /* 0..200, default 100 */
+    int8_t  drum_repeat_nudge[DRUM_LANES][8];     /* -50..50 pct, default 0 */
+    /* Repeat engine (runtime, not persisted) */
+    uint8_t  drum_repeat_active;
+    uint8_t  drum_repeat_lane;
+    uint8_t  drum_repeat_rate_idx;
+    uint8_t  drum_repeat_vel;
+    uint8_t  drum_repeat_step;
+    uint32_t drum_repeat_phase;
 } seq8_track_t;
 #define LRS_SET(tr, s)  ((tr)->live_recorded_steps[(s)>>3] |=  (uint8_t)(1u<<((s)&7)))
 #define LRS_TEST(tr, s) ((tr)->live_recorded_steps[(s)>>3] &   (1u<<((s)&7)))
@@ -712,7 +728,7 @@ static void seq8_save_state(seq8_instance_t *inst) {
     FILE *fp = fopen(inst->state_path, "w");
     if (!fp) return;
     int t, c;
-    fprintf(fp, "{\"v\":16,\"playing\":%d", inst->playing);
+    fprintf(fp, "{\"v\":17,\"playing\":%d", inst->playing);
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
     for (t = 0; t < NUM_TRACKS; t++)
@@ -876,6 +892,22 @@ static void seq8_save_state(seq8_instance_t *inst) {
         if (inst->tracks[t].drum_lane_solo)
             fprintf(fp, ",\"t%ddls\":%u", t, inst->tracks[t].drum_lane_solo);
     }
+    /* Per-track: drum repeat gate/vel_scale/nudge (sparse — only non-default) */
+    { int l, s;
+      for (t = 0; t < NUM_TRACKS; t++) {
+          const seq8_track_t *tr_r = &inst->tracks[t];
+          for (l = 0; l < DRUM_LANES; l++) {
+              if (tr_r->drum_repeat_gate[l] != 0xFF)
+                  fprintf(fp, ",\"t%dl%drg\":%d", t, l, (int)tr_r->drum_repeat_gate[l]);
+              for (s = 0; s < 8; s++) {
+                  if (tr_r->drum_repeat_vel_scale[l][s] != 100)
+                      fprintf(fp, ",\"t%dl%drvs%d\":%d", t, l, s, (int)tr_r->drum_repeat_vel_scale[l][s]);
+                  if (tr_r->drum_repeat_nudge[l][s] != 0)
+                      fprintf(fp, ",\"t%dl%drn%d\":%d", t, l, s, (int)(int8_t)tr_r->drum_repeat_nudge[l][s]);
+              }
+          }
+      }
+    }
     /* Global settings */
     fprintf(fp, ",\"key\":%d,\"scale\":%d,\"lq\":%d",
             (int)inst->pad_key, (int)inst->pad_scale, (int)inst->launch_quant);
@@ -904,10 +936,10 @@ static void seq8_load_state(seq8_instance_t *inst) {
     if (!n) { free(buf); remove(inst->state_path); return; }
     buf[n] = '\0';
 
-    /* Version gate: v=15 or v=16 (v=16 adds TRACK ARP per-track params). */
+    /* Version gate: v=15, v=16, or v=17 (v=17 adds drum repeat state). */
     {
         int sv = json_get_int(buf, "v", -1);
-        if (sv != 15 && sv != 16) {
+        if (sv != 15 && sv != 16 && sv != 17) {
             free(buf);
             remove(inst->state_path);
             seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
@@ -1037,6 +1069,22 @@ static void seq8_load_state(seq8_instance_t *inst) {
         inst->tracks[t].drum_lane_mute = json_get_uint(buf, key, 0);
         snprintf(key, sizeof(key), "t%ddls", t);
         inst->tracks[t].drum_lane_solo = json_get_uint(buf, key, 0);
+    }
+    /* Drum repeat gate/vel_scale/nudge (sparse; missing = defaults set by drum_repeat_init_defaults) */
+    { int l, s;
+      for (t = 0; t < NUM_TRACKS; t++) {
+          seq8_track_t *tr_r = &inst->tracks[t];
+          for (l = 0; l < DRUM_LANES; l++) {
+              snprintf(key, sizeof(key), "t%dl%drg", t, l);
+              tr_r->drum_repeat_gate[l] = (uint8_t)(json_get_int(buf, key, 255) & 0xFF);
+              for (s = 0; s < 8; s++) {
+                  snprintf(key, sizeof(key), "t%dl%drvs%d", t, l, s);
+                  tr_r->drum_repeat_vel_scale[l][s] = (uint8_t)clamp_i(json_get_int(buf, key, 100), 0, 200);
+                  snprintf(key, sizeof(key), "t%dl%drn%d", t, l, s);
+                  tr_r->drum_repeat_nudge[l][s] = (int8_t)clamp_i(json_get_int(buf, key, 0), -50, 50);
+              }
+          }
+      }
     }
     /* TRACK ARP — per-track params (sparse; missing = defaults) */
     for (t = 0; t < NUM_TRACKS; t++) {
@@ -2532,6 +2580,17 @@ static void tarp_init_defaults(seq8_track_t *tr) {
     tr->tarp.style = 1; /* default pattern: Up (tarp_on=0 bypasses; style never 0) */
 }
 
+static void drum_repeat_init_defaults(seq8_track_t *tr) {
+    int l, s;
+    for (l = 0; l < DRUM_LANES; l++) {
+        tr->drum_repeat_gate[l] = 0xFF;
+        for (s = 0; s < 8; s++) {
+            tr->drum_repeat_vel_scale[l][s] = 100;
+            tr->drum_repeat_nudge[l][s]     = 0;
+        }
+    }
+}
+
 /* Silence TRACK ARP sounding note (via immediate note-off through the chain)
  * and reset runtime state. */
 static void tarp_silence(seq8_instance_t *inst, seq8_track_t *tr) {
@@ -2549,6 +2608,63 @@ static void tarp_silence(seq8_instance_t *inst, seq8_track_t *tr) {
 static int effective_vel(seq8_track_t *tr, int raw_vel) {
     if (tr->track_vel_override > 0) return (int)tr->track_vel_override;
     return raw_vel;
+}
+
+/* Fire the drum repeat note for the current step if conditions are met.
+ * Called each render tick for drum tracks with repeat active.
+ * Check-then-advance order: fires at phase==fire_at, then phase wraps to 0 and
+ * step increments, so the first fire happens immediately on the tick after activation. */
+static void drum_repeat_tick(seq8_instance_t *inst, seq8_track_t *tr) {
+    if (!tr->drum_repeat_active) return;
+    uint8_t  lane = tr->drum_repeat_lane;
+    uint8_t  step = tr->drum_repeat_step;
+    uint16_t rate = DRUM_REPEAT_RATE_TICKS[tr->drum_repeat_rate_idx];
+
+    /* Determine fire time within this step (nudge shifts ±50% from step start) */
+    int nudge_ticks = (int)(int8_t)tr->drum_repeat_nudge[lane][step] * (int)rate / 100;
+    int fire_at = nudge_ticks >= 0 ? nudge_ticks : (int)rate + nudge_ticks;
+
+    if ((int)tr->drum_repeat_phase == fire_at) {
+        if (tr->drum_repeat_gate[lane] & (uint8_t)(1u << step)) {
+            int vel = effective_vel(tr, (int)tr->drum_repeat_vel);
+            int scale = (int)tr->drum_repeat_vel_scale[lane][step];
+            vel = vel * scale / 100;
+            if (vel < 1) vel = 1;
+            if (vel > 127) vel = 127;
+
+            drum_lane_t *dlane = &tr->drum_clips[tr->active_clip].lanes[lane];
+            uint8_t pitch = dlane->midi_note;
+
+            /* Cancel pending note-off for this pitch if still open */
+            { int pp;
+              for (pp = 0; pp < (int)tr->play_pending_count; pp++) {
+                  if (tr->play_pending[pp].pitch == pitch) {
+                      pfx_note_off(inst, tr, pitch);
+                      tr->play_pending[pp] = tr->play_pending[tr->play_pending_count - 1];
+                      tr->play_pending_count--;
+                      break;
+                  }
+              }
+            }
+            pfx_note_on(inst, tr, pitch, (uint8_t)vel);
+            /* Schedule note-off: half the step interval */
+            uint16_t gate = rate / 2;
+            if (gate < 1) gate = 1;
+            if (tr->play_pending_count < 32) {
+                tr->play_pending[tr->play_pending_count].pitch            = pitch;
+                tr->play_pending[tr->play_pending_count].ticks_remaining  = gate;
+                tr->play_pending_count++;
+                tr->note_active = 1;
+            }
+        }
+    }
+
+    /* Advance phase; wrap and advance step at end of period */
+    tr->drum_repeat_phase++;
+    if (tr->drum_repeat_phase >= (uint32_t)rate) {
+        tr->drum_repeat_phase = 0;
+        tr->drum_repeat_step  = (tr->drum_repeat_step + 1) % 8;
+    }
 }
 
 /* Intercept wrapper for live note-on. Routes through TRACK ARP when enabled;
@@ -3094,6 +3210,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
         drum_track_init(&inst->tracks[t]);
         pfx_init_defaults(&inst->tracks[t].pfx);
         tarp_init_defaults(&inst->tracks[t]);
+        drum_repeat_init_defaults(&inst->tracks[t]);
         inst->tracks[t].pfx.looper_on = 1;
         inst->tracks[t].pfx.track_idx = (uint8_t)t;
         /* Default routing: tracks 1-4 → Move (ch 1-4), tracks 5-8 → Schwung (ch 5-8) */
@@ -3555,6 +3672,16 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                     (int)cp->seq_arp_step_vel[4], (int)cp->seq_arp_step_vel[5],
                     (int)cp->seq_arp_step_vel[6], (int)cp->seq_arp_step_vel[7]);
             }
+            /* _repeat_state: gate vs0..vs7 n0..n7 (18 space-separated values) */
+            if (!strcmp(p2, "_repeat_state")) {
+                int s;
+                int pos = snprintf(out, out_len, "%d", (int)tr->drum_repeat_gate[lidx]);
+                for (s = 0; s < 8 && pos < out_len - 4; s++)
+                    pos += snprintf(out + pos, out_len - pos, " %d", (int)tr->drum_repeat_vel_scale[lidx][s]);
+                for (s = 0; s < 8 && pos < out_len - 4; s++)
+                    pos += snprintf(out + pos, out_len - pos, " %d", (int)(int8_t)tr->drum_repeat_nudge[lidx][s]);
+                return pos;
+            }
             return -1;
         }
         if (!strcmp(sub, "clock_shift_pos"))
@@ -3868,8 +3995,22 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
             inst->tick_accum -= inst->tick_threshold;
             looper_tick(inst);
             for (t = 0; t < NUM_TRACKS; t++) {
-                tarp_tick(inst, &inst->tracks[t]);
-                arp_tick(inst, &inst->tracks[t]);
+                seq8_track_t *tr_s = &inst->tracks[t];
+                /* Gate countdown: needed for repeat note-offs while stopped */
+                { int pp;
+                  for (pp = 0; pp < (int)tr_s->play_pending_count; ) {
+                      if (tr_s->play_pending[pp].ticks_remaining > 0)
+                          tr_s->play_pending[pp].ticks_remaining--;
+                      if (tr_s->play_pending[pp].ticks_remaining == 0) {
+                          pfx_note_off(inst, tr_s, tr_s->play_pending[pp].pitch);
+                          tr_s->play_pending[pp] = tr_s->play_pending[tr_s->play_pending_count - 1];
+                          tr_s->play_pending_count--;
+                      } else pp++;
+                  }
+                }
+                drum_repeat_tick(inst, tr_s);
+                tarp_tick(inst, tr_s);
+                arp_tick(inst, tr_s);
             }
             inst->arp_master_tick++;
         }
@@ -4037,6 +4178,8 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 }
             }
 
+            /* Drum Repeat: fire held-rate-pad retriggers independent of sequencer. */
+            drum_repeat_tick(inst, tr);
             /* TRACK ARP + SEQ ARP: tarp fires first (live arp → pfx chain →
              * SEQ ARP held buffer), then SEQ ARP fires from combined buffer. */
             tarp_tick(inst, tr);

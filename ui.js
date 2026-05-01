@@ -329,6 +329,15 @@ function doClearSession() {
                 bankParams[_t][_b][_k] = _pm ? _pm.def : 0;
             }
         }
+        drumPerformMode[_t]  = 0;
+        drumRepeatHeldPad[_t] = -1;
+        for (let _l = 0; _l < DRUM_LANES; _l++) {
+            drumRepeatGate[_t][_l] = 0xFF;
+            for (let _s = 0; _s < 8; _s++) {
+                drumRepeatVelScale[_t][_l][_s] = 100;
+                drumRepeatNudge[_t][_l][_s]    = 0;
+            }
+        }
     }
     pendingSetLoad  = true;
     globalMenuOpen  = false;
@@ -490,6 +499,15 @@ let drumLaneFlashTick = Array.from({length: NUM_TRACKS}, () => new Array(DRUM_LA
 let drumLaneMute = new Array(NUM_TRACKS).fill(0);
 let drumLaneSolo = new Array(NUM_TRACKS).fill(0);
 let drumSeqQnt   = new Array(NUM_TRACKS).fill(0); /* last-set K6 drum Qnt macro value (display only) */
+/* Drum Repeat state */
+let drumPerformMode = new Array(NUM_TRACKS).fill(0); /* 0=Velocity, 1=Repeat */
+let drumRepeatHeldPad = new Array(NUM_TRACKS).fill(-1); /* pad idx of held rate pad (-1=none) */
+/* Per-track per-lane repeat groove state mirrors */
+let drumRepeatGate     = Array.from({length: NUM_TRACKS}, () => new Array(DRUM_LANES).fill(0xFF));
+let drumRepeatVelScale = Array.from({length: NUM_TRACKS}, () =>
+    Array.from({length: DRUM_LANES}, () => new Array(8).fill(100)));
+let drumRepeatNudge    = Array.from({length: NUM_TRACKS}, () =>
+    Array.from({length: DRUM_LANES}, () => new Array(8).fill(0)));
 /* SEQ ARP per-clip step_vel[8] mirror. Stored as level 0..4:
  *   0 = step off (no note)
  *   1 = bottom row (vel 10)
@@ -1420,7 +1438,20 @@ function refreshDrumLaneBankParams(t, lane) {
     bankParams[t][1][3] = tpsIdx >= 0 ? tpsIdx : 1;
     bankParams[t][1][4] = drumLaneLength[t] || 16;
     bankParams[t][1][7] = clipSeqFollow[t][trackActiveClip[t]] ? 1 : 0;
+    /* Repeat Groove state for this lane */
+    syncDrumRepeatState(t, lane);
     screenDirty = true;
+}
+
+function syncDrumRepeatState(t, lane) {
+    if (typeof host_module_get_param !== 'function') return;
+    const raw = host_module_get_param('t' + t + '_l' + lane + '_repeat_state');
+    if (!raw) return;
+    const v = raw.split(' ');
+    if (v.length < 18) return;
+    drumRepeatGate[t][lane] = parseInt(v[0], 10) & 0xFF;
+    for (let s = 0; s < 8; s++) drumRepeatVelScale[t][lane][s] = parseInt(v[1 + s], 10) | 0;
+    for (let s = 0; s < 8; s++) drumRepeatNudge[t][lane][s]    = parseInt(v[9 + s], 10) | 0;
 }
 
 function refreshPerClipBankParams(t) {
@@ -2228,7 +2259,17 @@ function updateTrackLEDs() {
                 const col = i % 8;
                 const row = Math.floor(i / 8);
                 let color;
-                if (col < 4) {
+                if (col < 4 && drumPerformMode[t] === 1) {
+                    /* Repeat mode: rows 0-1 = rate pads, rows 2-3 = gate mask */
+                    if (row < 2) {
+                        const isHeld = drumRepeatHeldPad[t] === (row * 8 + col);
+                        color = isHeld ? White : (row === 0 ? tc : td);
+                    } else {
+                        const maskStep = (row - 2) * 4 + col;
+                        const isOn = !!(drumRepeatGate[t][selLane] & (1 << maskStep));
+                        color = isOn ? tc : DarkGrey;
+                    }
+                } else if (col < 4) {
                     const lane = drumLanePage[t] * 16 + row * 4 + col;
                     const isActive = (lane === selLane);
                     const hasHits  = drumLaneHasNotes[t][lane];
@@ -2314,11 +2355,18 @@ function updateTrackLEDs() {
 
     /* Knob LEDs (CC 71-78):
      *   Session View              → White on activeTrack (active-track indicator)
-     *   Track View + PARAM_LED_BANKS → White when param ≠ default for activeTrack/activeBank */
+     *   Track View + PARAM_LED_BANKS → White when param ≠ default for activeTrack/activeBank
+     *   Drum RPT GROOVE bank (6)  → White when vel scale ≠ 100 or nudge ≠ 0 */
     for (let k = 0; k < NUM_TRACKS; k++) {
         let ledVal = LED_OFF;
         if (sessionView) {
             ledVal = (k === activeTrack) ? White : LED_OFF;
+        } else if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM && activeBank === 6) {
+            /* Repeat Groove: lit when step k has non-default vel scale or nudge */
+            const lane = activeDrumLane[activeTrack];
+            const isDirty = (drumRepeatVelScale[activeTrack][lane][k] !== 100) ||
+                            (drumRepeatNudge[activeTrack][lane][k] !== 0);
+            ledVal = isDirty ? White : LED_OFF;
         } else if (PARAM_LED_BANKS.indexOf(activeBank) >= 0) {
             const pm = BANKS[activeBank].knobs[k];
             if (pm && pm.abbrev && pm.scope !== 'stub') {
@@ -2713,7 +2761,7 @@ function drawUI() {
             const len  = drumLaneLength[t];
             const tpsIdx = Math.max(0, TPS_VALUES.indexOf(drumLaneTPS[t]));
             const sqfl   = clipSeqFollow[t][ac] ? 1 : 0;
-            const drumSeqLabels = ['Stch', 'Shft', 'Ndg', 'Res', 'Len', 'Qnt', null, 'SqFl'];
+            const drumSeqLabels = ['Stch', 'Shft', 'Ndg', 'Res', 'Len', 'Qnt', 'Perf', 'SqFl'];
             const drumSeqVals   = [
                 fmtStretch(bankParams[t][1][0]),
                 fmtSign(bankParams[t][1][1]),
@@ -2721,7 +2769,7 @@ function drawUI() {
                 fmtRes(tpsIdx),
                 fmtLen(len),
                 fmtPct(drumSeqQnt[t]),
-                null,
+                drumPerformMode[t] ? 'Rpt' : 'Vel',
                 fmtBool(sqfl),
             ];
             print(4, 0, '[ DRUM SEQ ]', 1);
@@ -2773,6 +2821,24 @@ function drawUI() {
         const noteX = LX + Math.floor((LW - noteStr.length * 6) / 2);
         print(noteX, LY + 13, noteStr, lc);
 
+        } else if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM && bank === 6) {
+        /* Drum RPT GROOVE bank overview — 8 steps, vel scale (unshifted) or nudge (Shift) */
+        const t    = activeTrack;
+        const lane = activeDrumLane[t];
+        print(4, 0, '[ RPT GROOVE ]', 1);
+        for (let k = 0; k < 8; k++) {
+            const colX = 4 + (k % 4) * 30;
+            const rowY = k < 4 ? 12 : 36;
+            const hi   = (knobTouched === k);
+            if (hi) fill_rect(colX, rowY, 24, 24, 1);
+            print(colX, rowY, col4('S' + (k + 1)), hi ? 0 : 1);
+            const vs   = drumRepeatVelScale[t][lane][k];
+            const ndg  = drumRepeatNudge[t][lane][k];
+            const disp = shiftHeld
+                ? (ndg === 0 ? ' 0%' : (ndg > 0 ? '+' : '') + ndg + '%')
+                : (vs === 100 ? 'Live' : vs + '%');
+            print(colX, rowY + 12, col4(disp), hi ? 0 : 1);
+        }
         } else {
         /* Bank overview — 5 rows; touched knob column inverted */
         const knobs = BANKS[bank].knobs;
@@ -2797,7 +2863,7 @@ function drawUI() {
         const oct       = Math.floor(note / 12) - 2;
         const name      = NOTE_KEYS[note % 12];
         const bankGroup = pg === 0 ? 'Bank: A' : 'Bank: B';
-        const bankName  = activeBank === 1 ? 'DRUM SEQ' : activeBank === 2 ? 'NOTE/NOTEFX' : BANKS[activeBank].name;
+        const bankName  = activeBank === 1 ? 'DRUM SEQ' : activeBank === 2 ? 'NOTE/NOTEFX' : activeBank === 6 ? 'RPT GROOVE' : BANKS[activeBank].name;
         print(4, 0,  'Knob: [ ' + bankName + ' ]', 1);
         print(4, 10, bankGroup + '  Pad: ' + name + oct + ' (' + note + ')', 1);
         const laneBit = 1 << lane;
@@ -4471,6 +4537,25 @@ globalThis.onMidiMessageInternal = function (data) {
                     }
                     return;
                 }
+                if (knobIdx === 6) {
+                    /* K7 = Perf (perform mode: Velocity ↔ Repeat), sens=16 */
+                    knobAccum[knobIdx]++;
+                    if (knobAccum[knobIdx] >= 16) {
+                        knobAccum[knobIdx] = 0;
+                        const nv = dir > 0 ? 1 : 0;
+                        if (nv !== drumPerformMode[t]) {
+                            if (drumPerformMode[t] === 1 && drumRepeatHeldPad[t] >= 0) {
+                                /* Stop any active repeat when leaving Repeat mode */
+                                if (typeof host_module_set_param === 'function')
+                                    host_module_set_param('t' + t + '_drum_repeat_stop', '1');
+                                drumRepeatHeldPad[t] = -1;
+                            }
+                            drumPerformMode[t] = nv;
+                        }
+                        screenDirty = true;
+                    }
+                    return;
+                }
                 if (knobIdx === 7) {
                     /* K8 = SqFl: sens=16 — matches melodic */
                     knobAccum[knobIdx]++;
@@ -4486,7 +4571,6 @@ globalThis.onMidiMessageInternal = function (data) {
                     }
                     return;
                 }
-                return; /* K7 = stub */
             }
             /* Drum NOTE FX bank: K7 (lane oct, coarse ±12) and K8 (lane note, fine ±1) */
             if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM && bank === 2 &&
@@ -4506,6 +4590,35 @@ globalThis.onMidiMessageInternal = function (data) {
                             host_module_set_param('t' + t + '_l' + lane + '_lane_note', String(nv));
                         screenDirty = true;
                     }
+                }
+                return;
+            }
+            /* Repeat Groove bank (bank 6 on drum tracks): vel scale (unshifted) or nudge (Shift) */
+            if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM && bank === 6) {
+                const t    = activeTrack;
+                const lane = activeDrumLane[t];
+                const dir  = (d2 >= 1 && d2 <= 63) ? 1 : -1;
+                if (dir !== knobLastDir[knobIdx]) { knobAccum[knobIdx] = 0; knobLastDir[knobIdx] = dir; }
+                knobAccum[knobIdx]++;
+                if (knobAccum[knobIdx] >= 4) {
+                    knobAccum[knobIdx] = 0;
+                    const step = knobIdx;
+                    if (shiftHeld) {
+                        const nv = Math.max(-50, Math.min(50, (drumRepeatNudge[t][lane][step] | 0) + dir));
+                        if (nv !== drumRepeatNudge[t][lane][step]) {
+                            drumRepeatNudge[t][lane][step] = nv;
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_l' + lane + '_repeat_nudge', step + ' ' + nv);
+                        }
+                    } else {
+                        const nv = Math.max(0, Math.min(200, (drumRepeatVelScale[t][lane][step] | 0) + dir));
+                        if (nv !== drumRepeatVelScale[t][lane][step]) {
+                            drumRepeatVelScale[t][lane][step] = nv;
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_l' + lane + '_repeat_vel_scale', step + ' ' + nv);
+                        }
+                    }
+                    screenDirty = true;
                 }
                 return;
             }
@@ -5159,6 +5272,42 @@ globalThis.onMidiMessageInternal = function (data) {
                     }
                     return;
                 }
+                /* Drum Repeat mode pad handling (intercepts left 4 cols when drumPerformMode===1) */
+                if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM && drumPerformMode[activeTrack] === 1 &&
+                        !shiftHeld && !copyHeld && !muteHeld) {
+                    const t   = activeTrack;
+                    const col = padIdx % 8;
+                    const row = Math.floor(padIdx / 8);
+                    if (col < 4 && row < 2) {
+                        /* Rate pad: start/retrigger repeat */
+                        const rateIdx = row * 4 + col;
+                        const lane    = activeDrumLane[t];
+                        const vel     = d2;
+                        drumRepeatHeldPad[t] = padIdx;
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + t + '_drum_repeat_start', lane + ' ' + rateIdx + ' ' + vel);
+                        screenDirty = true;
+                        return;
+                    } else if (col < 4 && row >= 2) {
+                        /* Gate mask pad */
+                        const lane = activeDrumLane[t];
+                        const step = (row - 2) * 4 + col;
+                        if (deleteHeld) {
+                            /* Delete + gate pad: reset vel_scale and nudge for this step */
+                            drumRepeatVelScale[t][lane][step] = 100;
+                            drumRepeatNudge[t][lane][step]    = 0;
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_l' + lane + '_repeat_defaults', String(step));
+                        } else {
+                            /* Tap: toggle gate bit */
+                            drumRepeatGate[t][lane] ^= (1 << step);
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_l' + lane + '_repeat_gate_toggle', String(step));
+                        }
+                        screenDirty = true;
+                        return;
+                    }
+                }
                 /* Drum mode pad handling */
                 if (bankParams[activeTrack][0][2] === PAD_MODE_DRUM && (!shiftHeld || muteHeld)) {
                     const t = activeTrack;
@@ -5342,6 +5491,7 @@ globalThis.onMidiMessageInternal = function (data) {
                         syncDrumLanesMeta(padIdx);
                         syncDrumLaneSteps(padIdx, activeDrumLane[padIdx]);
                         syncDrumClipContent(padIdx);
+                        refreshDrumLaneBankParams(padIdx, activeDrumLane[padIdx]);
                     }
                     screenDirty = true;
                 } else if (!shiftHeld) {
@@ -5555,11 +5705,34 @@ globalThis.onMidiMessageInternal = function (data) {
         }
         if (d1 >= TRACK_PAD_BASE && d1 < TRACK_PAD_BASE + 32) {
             const padIdx = d1 - TRACK_PAD_BASE;
+            const t = activeTrack;
+            /* Repeat mode: swallow all left-grid (col 0-3) releases; stop repeat on rate pad release */
+            if (bankParams[t][0][2] === PAD_MODE_DRUM && drumPerformMode[t] === 1 &&
+                    (padIdx % 8) < 4) {
+                if (drumRepeatHeldPad[t] === padIdx) {
+                    drumRepeatHeldPad[t] = -1;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_drum_repeat_stop', '1');
+                }
+                screenDirty = true;
+                return;
+            }
             const pitch = padPitch[padIdx] >= 0 ? padPitch[padIdx] : padNoteMap[padIdx];
             liveActiveNotes.delete(pitch);
             padPitch[padIdx] = -1;
             if (!sessionView) liveSendNote(activeTrack, 0x80, pitch, 0);
             if (recordArmed && !recordCountingIn) recordNoteOff(pitch);
+        }
+    }
+
+    /* Poly aftertouch: update repeat velocity while rate pad is held */
+    if ((status & 0xF0) === 0xA0 && d1 >= TRACK_PAD_BASE && d1 < TRACK_PAD_BASE + 32) {
+        const t      = activeTrack;
+        const padIdx = d1 - TRACK_PAD_BASE;
+        if (bankParams[t][0][2] === PAD_MODE_DRUM && drumPerformMode[t] === 1 &&
+                drumRepeatHeldPad[t] === padIdx && d2 > 0) {
+            if (typeof host_module_set_param === 'function')
+                host_module_set_param('t' + t + '_drum_repeat_vel', String(d2));
         }
     }
 };

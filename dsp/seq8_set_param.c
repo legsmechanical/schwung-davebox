@@ -2353,6 +2353,48 @@ static void set_param(void *instance, const char *key, const char *val) {
                     return;
                 }
             }
+
+            /* tN_lL_repeat_gate_toggle "step" — toggle gate bit for step 0-7 */
+            if (!strcmp(p2, "_repeat_gate_toggle")) {
+                int step_r = clamp_i(my_atoi(val), 0, 7);
+                tr->drum_repeat_gate[lane_idx] ^= (uint8_t)(1u << step_r);
+                seq8_save_state(inst);
+                return;
+            }
+            /* tN_lL_repeat_vel_scale "step pct" — set velocity scaling 0-200 for step */
+            if (!strcmp(p2, "_repeat_vel_scale")) {
+                const char *sp_r = val;
+                while (*sp_r == ' ') sp_r++;
+                int step_r = 0;
+                while (*sp_r >= '0' && *sp_r <= '9') { step_r = step_r * 10 + (*sp_r++ - '0'); }
+                step_r = clamp_i(step_r, 0, 7);
+                while (*sp_r == ' ') sp_r++;
+                int pct_r = clamp_i(my_atoi(sp_r), 0, 200);
+                tr->drum_repeat_vel_scale[lane_idx][step_r] = (uint8_t)pct_r;
+                seq8_save_state(inst);
+                return;
+            }
+            /* tN_lL_repeat_nudge "step pct" — set nudge -50..50 for step */
+            if (!strcmp(p2, "_repeat_nudge")) {
+                const char *sp_r = val;
+                while (*sp_r == ' ') sp_r++;
+                int step_r = 0;
+                while (*sp_r >= '0' && *sp_r <= '9') { step_r = step_r * 10 + (*sp_r++ - '0'); }
+                step_r = clamp_i(step_r, 0, 7);
+                while (*sp_r == ' ') sp_r++;
+                int pct_r = clamp_i(my_atoi(sp_r), -50, 50);
+                tr->drum_repeat_nudge[lane_idx][step_r] = (int8_t)pct_r;
+                seq8_save_state(inst);
+                return;
+            }
+            /* tN_lL_repeat_defaults "step" — reset vel_scale and nudge to defaults (not gate) */
+            if (!strcmp(p2, "_repeat_defaults")) {
+                int step_r = clamp_i(my_atoi(val), 0, 7);
+                tr->drum_repeat_vel_scale[lane_idx][step_r] = 100;
+                tr->drum_repeat_nudge[lane_idx][step_r]     = 0;
+                seq8_save_state(inst);
+                return;
+            }
             return;
         }
 
@@ -2574,6 +2616,48 @@ static void set_param(void *instance, const char *key, const char *val) {
             for (l = 0; l < DRUM_LANES; l++)
                 dc->lanes[l].clip.pfx_params.quantize = (uint8_t)v;
             seq8_save_state(inst);
+            return;
+        }
+
+        if (!strcmp(sub, "drum_repeat_start")) {
+            /* tN_drum_repeat_start "lane rate_idx vel" — activate repeat for a drum lane */
+            const char *sp = val;
+            while (*sp == ' ') sp++;
+            int lane_r = 0;
+            while (*sp >= '0' && *sp <= '9') { lane_r = lane_r * 10 + (*sp++ - '0'); }
+            lane_r = clamp_i(lane_r, 0, DRUM_LANES - 1);
+            while (*sp == ' ') sp++;
+            int rate_r = 0;
+            while (*sp >= '0' && *sp <= '9') { rate_r = rate_r * 10 + (*sp++ - '0'); }
+            rate_r = clamp_i(rate_r, 0, 7);
+            while (*sp == ' ') sp++;
+            int vel_r = 100;
+            if (*sp >= '0' && *sp <= '9') {
+                vel_r = 0;
+                while (*sp >= '0' && *sp <= '9') { vel_r = vel_r * 10 + (*sp++ - '0'); }
+            }
+            vel_r = clamp_i(vel_r, 1, 127);
+            tr->drum_repeat_lane     = (uint8_t)lane_r;
+            tr->drum_repeat_rate_idx = (uint8_t)rate_r;
+            tr->drum_repeat_vel      = (uint8_t)vel_r;
+            tr->drum_repeat_step     = 0;
+            tr->drum_repeat_phase    = 0;
+            tr->drum_repeat_active   = 1;
+            return;
+        }
+
+        if (!strcmp(sub, "drum_repeat_vel")) {
+            /* tN_drum_repeat_vel "vel" — update repeat velocity from pad pressure */
+            tr->drum_repeat_vel = (uint8_t)clamp_i(my_atoi(val), 1, 127);
+            return;
+        }
+
+        if (!strcmp(sub, "drum_repeat_stop")) {
+            /* tN_drum_repeat_stop — deactivate repeat; silence any open note */
+            if (tr->drum_repeat_active) {
+                tr->drum_repeat_active = 0;
+                /* Let play_pending gate countdown handle the note-off naturally */
+            }
             return;
         }
 

@@ -15,6 +15,7 @@
     "capabilities": {
         "midi_in": true,
         "midi_out": true,
+        "aftertouch": true,
         "button_passthrough": [79]
     }
 }
