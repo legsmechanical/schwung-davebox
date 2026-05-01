@@ -75,6 +75,7 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 4. MIDI Delay Rnd refinement · 5. Full instance reset · 6. State snapshots (16 slots) · 7. ~~LIVE ARP~~ **done** (TRACK ARP, bank 6, pad 98) · 8. Swing · 9. MIDI clock sync
 10. **Track conversion** (`tN_convert_to_drum`/`tN_convert_to_melodic`): TRACK bank K3 dialog.
 11. ~~**VelIn**~~ **done** (TRACK bank K5, per-track input velocity override).
+12. ~~**Note Repeat**~~ **done** (Rpt1/Rpt2, RPT GROOVE, gate/vel_scale/nudge per lane).
 
 ## Per-set state
 
@@ -121,6 +122,8 @@ nm -D dist/seq8/dsp.so | grep GLIBC             # verify ≤ 2.35
 ssh ableton@move.local "tail -f /data/UserData/schwung/seq8.log"
 ```
 
-**JS**: `ui.js` (~5659 lines) + `ui_constants.mjs` (217 lines). Both must deploy together.
+**DSP logging**: Use `seq8_ilog(inst, msg)` — writes to seq8.log via `inst->log_fp`. `fprintf(stderr, ...)` goes to MoveOriginal's uncaptured stderr and will NOT appear in any log file.
+
+**JS**: `ui.js` (~5670 lines) + `ui_constants.mjs` (217 lines). Both must deploy together.
 **DSP**: `dsp/seq8.c` (~4119 lines) `#include`s `dsp/seq8_set_param.c` (~2986 lines). Single translation unit — no extern declarations.
 Schwung core: v0.9.7. GLIBC ≤ 2.35. `~/schwung-notetwist` — NoteTwist reference.
