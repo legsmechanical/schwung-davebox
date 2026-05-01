@@ -2621,7 +2621,7 @@ static int effective_vel(seq8_track_t *tr, int raw_vel) {
  * Check-then-advance order: fires at phase==fire_at, then phase wraps to 0 and
  * step increments, so the first fire happens immediately on the tick after activation. */
 static void drum_repeat_tick(seq8_instance_t *inst, seq8_track_t *tr) {
-    if (!tr->drum_repeat_active) return;
+    if (!tr->drum_repeat_active || tr->pad_mode != PAD_MODE_DRUM) return;
     uint8_t  lane = tr->drum_repeat_lane;
     uint8_t  step = tr->drum_repeat_step;
     uint16_t rate = DRUM_REPEAT_RATE_TICKS[tr->drum_repeat_rate_idx];
@@ -2693,7 +2693,7 @@ static void drum_repeat_tick(seq8_instance_t *inst, seq8_track_t *tr) {
 /* Rpt 2 repeat tick — fires all held lanes at independent per-lane rates.
  * Each lane has its own rate_idx, phase, step, nudge, gate, vel_scale. */
 static void drum_repeat2_tick(seq8_instance_t *inst, seq8_track_t *tr) {
-    if (!tr->drum_repeat2_active) return;
+    if (!tr->drum_repeat2_active || tr->pad_mode != PAD_MODE_DRUM) return;
     int l;
     for (l = 0; l < DRUM_LANES; l++) {
         if (!(tr->drum_repeat2_active & (1u << (unsigned)l))) continue;

@@ -521,9 +521,12 @@ static void set_param(void *instance, const char *key, const char *val) {
                 tr2->current_step        = 0;
                 tr2->step_dispatch_mask  = 0;
                 tr2->next_early_mask     = 0;
+                tr2->drum_repeat_active  = 0;
+                tr2->drum_repeat2_active = 0;
                 for (c2 = 0; c2 < NUM_CLIPS; c2++)
                     clip_init(&tr2->clips[c2]);
                 drum_track_init(tr2);
+                drum_repeat_init_defaults(tr2);
             }
         }
         seq8_load_state(inst);
