@@ -2175,6 +2175,10 @@ static void set_param(void *instance, const char *key, const char *val) {
                     dst->clip.active        = dlc->active;
                     dst->midi_note          = dst_midi_note;
                     clip_migrate_to_notes(&dst->clip);
+                    /* Copy repeat groove params */
+                    tr->drum_repeat_gate[dstLane] = tr->drum_repeat_gate[lane_idx];
+                    memcpy(tr->drum_repeat_vel_scale[dstLane], tr->drum_repeat_vel_scale[lane_idx], 8);
+                    memcpy(tr->drum_repeat_nudge[dstLane],     tr->drum_repeat_nudge[lane_idx],     8);
                     seq8_save_state(inst);
                 }
                 return;
@@ -2200,6 +2204,13 @@ static void set_param(void *instance, const char *key, const char *val) {
                     dst->clip.active        = dlc->active;
                     dst->midi_note          = dst_midi_note;
                     clip_migrate_to_notes(&dst->clip);
+                    /* Move repeat groove params */
+                    tr->drum_repeat_gate[dstLane] = tr->drum_repeat_gate[lane_idx];
+                    memcpy(tr->drum_repeat_vel_scale[dstLane], tr->drum_repeat_vel_scale[lane_idx], 8);
+                    memcpy(tr->drum_repeat_nudge[dstLane],     tr->drum_repeat_nudge[lane_idx],     8);
+                    tr->drum_repeat_gate[lane_idx] = 0xFF;
+                    memset(tr->drum_repeat_vel_scale[lane_idx], 100, 8);
+                    memset(tr->drum_repeat_nudge[lane_idx],     0,   8);
                     pfx_note_off_imm(inst, tr, src_midi_note);
                     clip_init(dlc);
                     dlane->midi_note = src_midi_note;
