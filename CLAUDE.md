@@ -37,7 +37,7 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 
 **CLIP bank**: Stretch(K1,lock), Clock Shift(K2), Nudge(K3,crosses ±tps/2), Resolution(K4,proportional; Shift+K4=zoom,blocked>256→"NOTES OUT OF RANGE"), Length(K5), Seq Follow(K8,JS-only,default ON,not persisted). NOTE FX K5 Quantize: `effective_tick_offset = raw*(100-q)/100`.
 
-**Global menu** (Shift+CC 50): BPM·Tap Tempo·Key·Scale·Scale Aware·Launch·Swing Amt/Res·Input Vel·Inp Quant·MIDI In·Metro(Off/Count/On/Rec+Ply; Mute+Play shortcut)·Quit·Clear Sess (writes `{"v":0}`, wipes UI sidecar, triggers DSP fresh-init).
+**Global menu** (Shift+CC 50): BPM·Tap Tempo·Key·Scale·Scale Aware·Launch·Swing Amt/Res·Inp Quant·MIDI In·Metro(Off/Count/On/Rec+Ply; Mute+Play shortcut)·Quit·Clear Sess (writes `{"v":0}`, wipes UI sidecar, triggers DSP fresh-init).
 
 **External MIDI**: →`activeTrack`. **ROUTE_MOVE**: `liveSendNote` NOT called — injecting causes echo cascade→crash. External MIDI plays on Move track matching keyboard's MIDI channel, ignoring SEQ8's Ch knob. Pads unaffected (cable-0). Recording echo filter: `seqActiveNotes.has(d1)` guards ROUTE_MOVE `recordNoteOn`. Fix: `/schwung-ext-midi-remap` shim (spec in `SCHWUNG_SEQ8_LIMITATIONS.md §13`).
 
@@ -47,11 +47,13 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 
 **Play effects chain**: TRACK ARP→NOTE FX→HARMZ→MIDI DLY→SEQ ARP. TRACK ARP intercepts live input (pads + external MIDI) only; sequenced notes enter at NOTE FX. Per-clip params (`clip_pfx_params_t`); clip switch→`pfx_sync_from_clip`. See `SEQ8_API.md` for arp algorithm details. TRACK ARP bypassed on drum tracks.
 
+**TRACK bank** (bank 0): Ch(K1)·Rte(K2)·Mode(K3)·VelIn(K5)·Lpr(K8). **VelIn** (per-track, `t%d_tvo`): 0=Live (raw velocity, default), 1–127=absolute fixed. Applies pre-pfx-chain to all note input (pads, ext MIDI, recording). DSP `effective_vel(tr, raw)` replaces old global `input_vel`. Global Input Velocity removed.
+
 **Mute/Solo**: `effective_mute(t)=mute[t]||(any_solo&&!solo[t])`. **Mutually exclusive** — setting one clears the other (recall paths bypass). Snapshots: Shift+Mute+step=save; Mute+step=recall; stores `snap_drum_eff_mute[16][NUM_TRACKS]`. Per-lane: `drum_lane_mute`/`drum_lane_solo` bitmasks; Delete+Mute clears all. Persisted as `t%ddlm`/`t%ddls`.
 
 **Scale**: 14 scales, `SCALE_IVLS[14][8]`. `scale_transpose(inst,note,deg_offset)` for scale-aware play effects.
 
-**State persistence**: v=16 (v=15 also accepted). Format: `tick:pitch:vel:gate:sm;`. SEQ ARP keys: `_arst/_arrt/_aroc/_argt/_arsm/_artg`. TRACK ARP keys: `t%d_taon/tast/tart/taoc/tagt/tasm/talc/tasv%d`. Drum lane data sparse. v<15 rejected+deleted. `state_load` calls `drum_track_init` first.
+**State persistence**: v=16 (v=15 also accepted). Format: `tick:pitch:vel:gate:sm;`. SEQ ARP keys: `_arst/_arrt/_aroc/_argt/_arsm/_artg`. TRACK ARP keys: `t%d_taon/tast/tart/taoc/tagt/tasm/talc/tasv%d`. VelIn key: `t%d_tvo` (sparse, missing=0=Live). Drum lane data sparse. v<15 rejected+deleted. `state_load` calls `drum_track_init` first.
 
 **JS internals** (key gotchas):
 - `pendingDrumResync` deferred 2 ticks after drum clip switch — `tN_lL_steps` reads active_clip implicitly; must wait for `tN_launch_clip` to process first. Melodic `tN_cC_steps` is clip-indexed, no defer needed.
@@ -60,7 +62,7 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 - `clipTPS[t][c]`: JS mirror of per-clip tps; synced via `t{n}_c{c}_tps` get_param.
 - `bankParams[t][b][k]`: refreshed via `tN_cC_pfx_snapshot` on clip/track switch.
 - `tarpStepVel[t][s]`: per-track TRACK ARP step vel mirror; read via `tN_tarp_sv` batch get on init/track switch.
-- `pendingDefaultSetParams`: first-run defaults (`scale_aware=1`, `metro_vol=100`, `input_vel=0`).
+- `pendingDefaultSetParams`: first-run defaults (`scale_aware=1`, `metro_vol=100`).
 - UI sidecar (`seq8-ui-state.json`): restores `activeTrack`, `trackActiveClip[]`, `sessionView`; written Shift+Back; wiped on Clear Session.
 
 ## Upcoming tasks
@@ -70,6 +72,7 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 3. **Step/note editing fixes** — see pending fixes in planning doc.
 4. MIDI Delay Rnd refinement · 5. Full instance reset · 6. State snapshots (16 slots) · 7. ~~LIVE ARP~~ **done** (TRACK ARP, bank 6, pad 98) · 8. Swing · 9. MIDI clock sync
 10. **Track conversion** (`tN_convert_to_drum`/`tN_convert_to_melodic`): TRACK bank K3 dialog.
+11. ~~**VelIn**~~ **done** (TRACK bank K5, per-track input velocity override).
 
 ## Per-set state
 
@@ -115,6 +118,6 @@ nm -D dist/seq8/dsp.so | grep GLIBC             # verify ≤ 2.35
 ssh ableton@move.local "tail -f /data/UserData/schwung/seq8.log"
 ```
 
-**JS**: `ui.js` (~5665 lines) + `ui_constants.mjs` (206 lines). Both must deploy together.
-**DSP**: `dsp/seq8.c` (~4106 lines) `#include`s `dsp/seq8_set_param.c` (~2985 lines). Single translation unit — no extern declarations.
+**JS**: `ui.js` (~5659 lines) + `ui_constants.mjs` (217 lines). Both must deploy together.
+**DSP**: `dsp/seq8.c` (~4119 lines) `#include`s `dsp/seq8_set_param.c` (~2986 lines). Single translation unit — no extern declarations.
 Schwung core: v0.9.7. GLIBC ≤ 2.35. `~/schwung-notetwist` — NoteTwist reference.
