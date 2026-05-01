@@ -507,6 +507,8 @@ let drumSeqQnt   = new Array(NUM_TRACKS).fill(0); /* last-set K6 drum Qnt macro 
 let drumPerformMode = new Array(NUM_TRACKS).fill(0); /* 0=Velocity, 1=Rpt, 2=Rpt2 */
 let drumRepeatHeldPad   = new Array(NUM_TRACKS).fill(-1);    /* pad idx of active rate pad (-1=none) */
 let drumRepeatLatched   = new Array(NUM_TRACKS).fill(false); /* true when rate pad is loop-latched */
+let pendingRepeatLane   = -1; /* deferred drum_repeat_lane set_param (coalescing workaround) */
+let pendingRepeatLaneTrack = 0;
 /* Rpt2 state */
 let drumRepeat2HeldLanes    = Array.from({length: NUM_TRACKS}, () => new Set());
 let drumRepeat2LatchedLanes = Array.from({length: NUM_TRACKS}, () => new Set());
@@ -3292,6 +3294,12 @@ globalThis.tick = function () {
         }
     }
 
+    /* Deferred Rpt1 lane switch (coalescing workaround: must be sole set_param in its tick) */
+    if (pendingRepeatLane >= 0) {
+        host_module_set_param('t' + pendingRepeatLaneTrack + '_drum_repeat_lane', String(pendingRepeatLane));
+        pendingRepeatLane = -1;
+    }
+
     /* Set change detected in init(): send UUID so DSP constructs path and loads. */
     if (pendingSetLoad && typeof host_module_set_param === 'function') {
         pendingSetLoad = false;
@@ -4058,10 +4066,8 @@ globalThis.onMidiMessageInternal = function (data) {
                             drumRepeat2LatchedLanes[_lrt].add(_ll);
                         }
                     } else if (drumRepeat2LatchedLanes[_lrt].size > 0) {
-                        for (const _ll of drumRepeat2LatchedLanes[_lrt]) {
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + _lrt + '_drum_repeat2_lane_off', String(_ll));
-                        }
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + _lrt + '_drum_repeat2_stop', '1');
                         drumRepeat2LatchedLanes[_lrt].clear();
                     }
                 } else if (drumRepeatLatched[_lrt]) {
@@ -5635,11 +5641,6 @@ globalThis.onMidiMessageInternal = function (data) {
                             activeDrumLane[t] = lane;
                             syncDrumLaneSteps(t, lane);
                             refreshDrumLaneBankParams(t, lane);
-                            /* Rpt1: switch DSP repeat lane if active */
-                            if (drumPerformMode[t] === 1 && drumRepeatHeldPad[t] >= 0) {
-                                if (typeof host_module_set_param === 'function')
-                                    host_module_set_param('t' + t + '_drum_repeat_lane', String(lane));
-                            }
                             /* Preview lane note at actual pad velocity */
                             const vel = effectiveVelocity(d2);
                             const laneNote = drumLaneNote[t][lane];
@@ -5653,6 +5654,11 @@ globalThis.onMidiMessageInternal = function (data) {
                                 pendingDrumLaneResync      = 3;
                                 pendingDrumLaneResyncTrack = t;
                                 pendingDrumLaneResyncLane  = lane;
+                            }
+                            /* Rpt1: defer lane switch to tick (onMidiMessage set_params coalesce) */
+                            if (drumPerformMode[t] === 1 && (drumRepeatHeldPad[t] >= 0 || drumRepeatLatched[t])) {
+                                pendingRepeatLane = lane;
+                                pendingRepeatLaneTrack = t;
                             }
                             forceRedraw();
                         }
