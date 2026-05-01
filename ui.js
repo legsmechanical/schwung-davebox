@@ -2309,7 +2309,7 @@ function updateTrackLEDs() {
                     } else {
                         const maskStep = (row - 2) * 4 + (col - 4);
                         const isOn = !!(drumRepeatGate[t][selLane] & (1 << maskStep));
-                        color = isOn ? White : LED_OFF;
+                        color = isOn ? tc : LED_OFF;
                     }
                 } else {
                     const zone = row * 4 + (col - 4);
@@ -2767,7 +2767,8 @@ function drawUI() {
         return;
     }
 
-    if (bank >= 0 && (knobTouched >= 0 || inTimeout)) {
+    if (bank >= 0 && (knobTouched >= 0 || inTimeout ||
+            (shiftHeld && bank === 6 && bankParams[activeTrack][0][2] === PAD_MODE_DRUM))) {
         const isDrumSeqBank = (bankParams[activeTrack][0][2] === PAD_MODE_DRUM && bank === 1);
         if (isDrumSeqBank) {
             /* DRUM SEQ bank overview: mirrors CLIP bank at lane level */
@@ -2848,7 +2849,7 @@ function drawUI() {
             const rowY = k < 4 ? 12 : 36;
             const hi   = (knobTouched === k);
             if (hi) fill_rect(colX, rowY, 24, 24, 1);
-            fill_rect(colX + 6, rowY + 2, 12, 8, hi ? 0 : 1);
+            fill_rect(colX + 11, rowY + 4, 2, 4, hi ? 0 : 1);
             const vs   = drumRepeatVelScale[t][lane][k];
             const ndg  = drumRepeatNudge[t][lane][k];
             const disp = shiftHeld
@@ -3654,6 +3655,19 @@ globalThis.onMidiMessageInternal = function (data) {
                 undoSeqArpSnapshot = null;
                 showActionPopup('BANK RESET');
             }
+            return;
+        }
+        /* Plain jog click on drum track: toggle Velocity / Repeat pad mode */
+        if (d1 === 3 && d2 === 127 && !shiftHeld && !deleteHeld && !copyHeld && !muteHeld &&
+                !sessionView && bankParams[activeTrack][0][2] === PAD_MODE_DRUM) {
+            const t = activeTrack;
+            if (drumPerformMode[t] === 1 && drumRepeatHeldPad[t] >= 0 && !drumRepeatLatched[t]) {
+                host_module_set_param('t' + t + '_drum_repeat_stop', '1');
+                drumRepeatHeldPad[t] = -1;
+            }
+            drumRepeatLatched[t]  = false;
+            drumPerformMode[t]    = drumPerformMode[t] === 1 ? 0 : 1;
+            screenDirty = true;
             return;
         }
 
@@ -4636,7 +4650,7 @@ globalThis.onMidiMessageInternal = function (data) {
                                 host_module_set_param('t' + t + '_l' + lane + '_repeat_nudge', step + ' ' + nv);
                         }
                     } else {
-                        const nv = Math.max(0, Math.min(200, (drumRepeatVelScale[t][lane][step] | 0) + dir * 5));
+                        const nv = Math.max(0, Math.min(200, (drumRepeatVelScale[t][lane][step] | 0) + dir * 3));
                         if (nv !== drumRepeatVelScale[t][lane][step]) {
                             drumRepeatVelScale[t][lane][step] = nv;
                             if (typeof host_module_set_param === 'function')
