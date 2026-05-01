@@ -5436,18 +5436,6 @@ globalThis.onMidiMessageInternal = function (data) {
                         }
                         forceRedraw();
                         return;
-                    } else if (col < 4 && drumRepeatHeldPad[t] >= 0) {
-                        /* Lane pad while rate pad held: switch active lane without reset */
-                        const lane = drumPadToLane(padIdx);
-                        if (lane >= 0 && lane < DRUM_LANES) {
-                            activeDrumLane[t] = lane;
-                            syncDrumLaneSteps(t, lane);
-                            refreshDrumLaneBankParams(t, lane);
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + t + '_drum_repeat_lane', String(lane));
-                            forceRedraw();
-                        }
-                        return;
                     }
                 }
                 /* Drum Repeat 2 mode pad handling (multi-lane simultaneous repeat) */
@@ -5606,6 +5594,11 @@ globalThis.onMidiMessageInternal = function (data) {
                             activeDrumLane[t] = lane;
                             syncDrumLaneSteps(t, lane);
                             refreshDrumLaneBankParams(t, lane);
+                            /* Rpt1: switch DSP repeat lane if active */
+                            if (drumPerformMode[t] === 1 && drumRepeatHeldPad[t] >= 0) {
+                                if (typeof host_module_set_param === 'function')
+                                    host_module_set_param('t' + t + '_drum_repeat_lane', String(lane));
+                            }
                             /* Preview lane note at actual pad velocity */
                             const vel = effectiveVelocity(d2);
                             const laneNote = drumLaneNote[t][lane];
