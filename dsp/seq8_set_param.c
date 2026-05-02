@@ -1827,6 +1827,8 @@ static void set_param(void *instance, const char *key, const char *val) {
             memset(tr->clip_cc_auto[_c].ticks[_k], 0,
                    CC_AUTO_MAX_POINTS * sizeof(uint16_t));
             memset(tr->clip_cc_auto[_c].vals[_k], 0, CC_AUTO_MAX_POINTS);
+            if (_c == (int)tr->active_clip)
+                tr->cc_auto_last_sent[_k] = 0xFF;
             seq8_save_state(inst);
             return;
         }
@@ -1838,6 +1840,8 @@ static void set_param(void *instance, const char *key, const char *val) {
             while (*_p >= '0' && *_p <= '9') { _c = _c * 10 + (*_p - '0'); _p++; }
             if (_c < 0 || _c >= NUM_CLIPS) return;
             memset(&tr->clip_cc_auto[_c], 0, sizeof(cc_auto_t));
+            if (_c == (int)tr->active_clip)
+                memset(tr->cc_auto_last_sent, 0xFF, 8);
             seq8_save_state(inst);
             return;
         }

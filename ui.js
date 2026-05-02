@@ -3863,6 +3863,17 @@ globalThis.onMidiMessageInternal = function (data) {
             if (d2 === 127) {
                 if (d1 <= 7 && activeBank >= 0) {
                     knobTouched = d1; knobTurnedTick[d1] = -1; screenDirty = true;
+                    /* CC bank: Delete+touch clears this knob's automation immediately */
+                    if (activeBank === 6 && deleteHeld && !shiftHeld &&
+                            trackPadMode[activeTrack] !== PAD_MODE_DRUM) {
+                        const _dt = activeTrack, _dac = trackActiveClip[_dt];
+                        trackCCAutoBits[_dt][_dac] &= ~(1 << d1);
+                        trackCCLiveVal[_dt][d1] = -1;
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + _dt + '_cc_auto_clear_k', _dac + ' ' + d1);
+                        showActionPopup('CC AUTO', 'CLEAR');
+                        invalidateLEDCache();
+                    }
                     /* SEQ ARP K5 / TRACK ARP K6 touch: switch pads to vel-slider editor immediately. */
                     if ((activeBank === 4 && d1 === 4) || (activeBank === 5 && d1 === 5)) forceRedraw();
                 }
@@ -3996,9 +4007,11 @@ globalThis.onMidiMessageInternal = function (data) {
                 if (activeBank === 6) {
                     const _t = activeTrack, _c = trackActiveClip[_t];
                     trackCCAutoBits[_t][_c] = 0;
+                    trackCCLiveVal[_t] = new Array(8).fill(-1);
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + _t + '_cc_auto_clear', String(_c));
                     showActionPopup('CC AUTO', 'CLEAR');
+                    invalidateLEDCache();
                     return;
                 }
                 resetFxBanks(activeTrack);
@@ -5072,12 +5085,12 @@ globalThis.onMidiMessageInternal = function (data) {
                 /* Delete+turn: clear this knob's automation for the active clip */
                 if (deleteHeld && !shiftHeld) {
                     const ac = trackActiveClip[t];
-                    if ((trackCCAutoBits[t][ac] >> knobIdx) & 1) {
-                        trackCCAutoBits[t][ac] &= ~(1 << knobIdx);
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + t + '_cc_auto_clear_k', ac + ' ' + knobIdx);
-                        showActionPopup('CC AUTO', 'CLEAR');
-                    }
+                    trackCCAutoBits[t][ac] &= ~(1 << knobIdx);
+                    trackCCLiveVal[t][knobIdx] = -1;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_cc_auto_clear_k', ac + ' ' + knobIdx);
+                    showActionPopup('CC AUTO', 'CLEAR');
+                    invalidateLEDCache();
                     return;
                 }
                 const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
