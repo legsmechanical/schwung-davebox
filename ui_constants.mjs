@@ -23,6 +23,8 @@ export const MoveLoop            = 58;
 export const MoveCopy            = 60;  /* Copy modifier button (CC) */
 export const MoveMainTouch       = 9;   /* jog wheel capacitive touch */
 export const MoveRec             = 86;  /* Record button + LED (CC) */
+export const MoveCapture         = 52;  /* Capture button (CC) */
+export const MoveSample          = 118; /* Sample button (CC); same hardware CC as MoveRecord */
 export const MoveMainButton      = 3;   /* jog wheel click (CC, fires as 0xB0 d1=3) */
 export const MoveMainKnob        = 14;  /* jog wheel rotate (CC) */
 

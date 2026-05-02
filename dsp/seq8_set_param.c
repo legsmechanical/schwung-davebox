@@ -285,6 +285,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                     inst->tracks[t].recording         = 0;
                     inst->tracks[t].queued_clip       = -1;
                 }
+                merge_finalize(inst);
                 inst->playing        = 0;
                 inst->count_in_ticks = 0;
                 send_panic(inst);
@@ -366,6 +367,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 inst->tracks[t].recording         = 0;
                 inst->tracks[t].queued_clip       = -1;
             }
+            merge_finalize(inst);
             inst->playing        = 0;
             inst->count_in_ticks = 0;
             send_panic(inst);
@@ -503,6 +505,8 @@ static void set_param(void *instance, const char *key, const char *val) {
         /* Reset internal state without MIDI panic to avoid flooding the MIDI buffer. */
         {
             int t2, c2;
+            inst->merge_state         = MERGE_STATE_IDLE;
+            inst->merge_pending_count = 0;
             inst->playing        = 0;
             inst->count_in_ticks = 0;
             for (t2 = 0; t2 < NUM_TRACKS; t2++) {
@@ -581,6 +585,39 @@ static void set_param(void *instance, const char *key, const char *val) {
     }
     if (!strcmp(key, "looper_sync")) {
         inst->looper_sync = my_atoi(val) ? 1 : 0;
+        return;
+    }
+    if (!strcmp(key, "merge_arm")) {
+        /* val = track index (0-based). Find first empty melodic clip slot. */
+        int mt = my_atoi(val);
+        if (mt < 0 || mt >= NUM_TRACKS) return;
+        int dst = -1, c;
+        for (c = 0; c < NUM_CLIPS; c++) {
+            if (inst->tracks[mt].clips[c].note_count == 0) { dst = c; break; }
+        }
+        if (dst < 0) return; /* no empty melodic clip slot */
+        /* Determine TPS from active clip (use TICKS_PER_STEP for drum tracks) */
+        uint16_t tps = (inst->tracks[mt].pad_mode == PAD_MODE_DRUM)
+                       ? (uint16_t)TICKS_PER_STEP
+                       : inst->tracks[mt].clips[inst->tracks[mt].active_clip].ticks_per_step;
+        if (tps == 0) tps = (uint16_t)TICKS_PER_STEP;
+        clip_init(&inst->tracks[mt].clips[dst]);
+        inst->tracks[mt].clips[dst].ticks_per_step = tps;
+        inst->merge_track         = (uint8_t)mt;
+        inst->merge_dst_clip      = (uint8_t)dst;
+        inst->merge_tps           = (uint32_t)tps;
+        inst->merge_pending_count = 0;
+        /* Go straight to CAPTURING if transport is already running; otherwise ARMED */
+        if (inst->playing && inst->master_tick_in_step == 0) {
+            inst->merge_state     = MERGE_STATE_CAPTURING;
+            inst->merge_start_abs = inst->global_tick * TICKS_PER_STEP;
+        } else {
+            inst->merge_state = MERGE_STATE_ARMED;
+        }
+        return;
+    }
+    if (!strcmp(key, "merge_stop")) {
+        merge_finalize(inst);
         return;
     }
     if (!strcmp(key, "perf_mods")) {

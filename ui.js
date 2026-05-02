@@ -63,7 +63,7 @@ import {
 
 import {
     MoveNoteSession, MoveUndo, MoveLoop, MoveCopy, MoveMainTouch, MoveRec,
-    MoveMainButton, MoveMainKnob,
+    MoveCapture, MoveSample, MoveMainButton, MoveMainKnob,
     LED_OFF, LED_STEP_ACTIVE, LED_STEP_CURSOR, SCENE_BTN_FLASH_TICKS,
     LEDS_PER_FRAME, NUM_TRACKS, NUM_CLIPS,
     FLAG_JUMP_TO_OVERTAKE, FLAG_JUMP_TO_TOOLS, SEQ8_NAV_FLAGS, NUM_STEPS,
@@ -578,6 +578,8 @@ let flashEighth          = false;
 let flashSixteenth       = false;
 let masterPos            = 0;        /* DSP arp_master_tick (free-running 96-PPQN); used for arbitrary-rate music-synced flash */
 let dspLooperState       = 0;        /* 0=idle, 1=armed, 2=capturing, 3=looping */
+let dspMergeState        = 0;        /* 0=idle, 1=armed, 2=capturing */
+let dspMergeDstClip      = 0;        /* destination clip index of active merge */
 let tickCount            = 0;
 const POLL_INTERVAL  = 4;
 
@@ -1684,7 +1686,9 @@ function pollDSP() {
         playMetronomeClick();
     }
     if (v.length >= 54) masterPos      = (parseInt(v[53], 10) | 0) >>> 0;
-    if (v.length >= 55) dspLooperState = parseInt(v[54], 10) | 0;
+    if (v.length >= 55) dspLooperState  = parseInt(v[54], 10) | 0;
+    if (v.length >= 56) dspMergeState   = parseInt(v[55], 10) | 0;
+    if (v.length >= 57) dspMergeDstClip = parseInt(v[56], 10) | 0;
 
     /* Drum playhead: poll active lane's current step for active drum track */
     if (trackPadMode[activeTrack] === PAD_MODE_DRUM) {
@@ -3596,8 +3600,9 @@ globalThis.tick = function () {
             reapplyPalette();
             /* reapplyPalette resets CC LED hardware states; force-resend transport LEDs
              * so input_filter.mjs buttonCache doesn't silently suppress them. */
-            setButtonLED(MovePlay, playing ? Green : LED_OFF, true);
-            setButtonLED(MoveRec,  recordArmed ? Red : LED_OFF, true);
+            setButtonLED(MovePlay,   playing ? Green : LED_OFF, true);
+            setButtonLED(MoveRec,    recordArmed ? Red : LED_OFF, true);
+            setButtonLED(MoveSample, dspMergeState === 2 ? Green : dspMergeState === 1 ? Red : LED_OFF, true);
         }
     }
 
@@ -3840,6 +3845,7 @@ globalThis.tick = function () {
         /* Transport LEDs */
         setButtonLED(MovePlay, playing ? Green : LED_OFF);
         setButtonLED(MoveRec,  recordArmed ? Red : LED_OFF);
+        setButtonLED(MoveSample, dspMergeState === 2 ? Green : dspMergeState === 1 ? Red : LED_OFF);
         /* Loop LED: flash White at 1/8 rate while Perf Mode view is locked (Session
          * View only) or drum repeat latched; dim DarkGrey while Loop is held; off otherwise. */
         {
@@ -4604,6 +4610,17 @@ globalThis.onMidiMessageInternal = function (data) {
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('t' + activeTrack + '_recording', '1');
                 undoAvailable = true; redoAvailable = false; undoSeqArpSnapshot = null;
+            }
+        }
+
+        /* Shift+Sample (CC 118): arm / disarm Live Merge for activeTrack */
+        if (d1 === MoveSample && d2 === 127 && shiftHeld) {
+            if (dspMergeState !== 0) {
+                host_module_set_param('merge_stop', '1');
+                setButtonLED(MoveSample, LED_OFF);
+            } else {
+                host_module_set_param('merge_arm', String(activeTrack));
+                setButtonLED(MoveSample, Red);
             }
         }
 
