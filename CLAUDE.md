@@ -41,7 +41,7 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 
 **Global menu** (Shift+CC 50): BPM·Tap Tempo·Key·Scale·Scale Aware·Launch·Swing Amt/Res·Inp Quant·MIDI In·Metro(Off/Count/On/Rec+Ply; Mute+Play shortcut)·Quit·Clear Sess (writes `{"v":0}`, wipes UI sidecar, triggers DSP fresh-init). Close: Shift+CC50 toggles; NoteSession (CC50 tap) closes menu/tap-tempo/confirm dialogs (Back no longer reaches module).
 
-**External MIDI**: →`activeTrack`. **ROUTE_MOVE**: `liveSendNote` NOT called — injecting causes echo cascade→crash. Pads unaffected (cable-0). Recording echo filter: `seqActiveNotes.has(d1)` guards ROUTE_MOVE `recordNoteOn`. External MIDI monitoring on rechannelized ROUTE_MOVE tracks not yet implemented (channel remap API exists in Schwung v0.9.8+ but causes crashes — reverted; see `ADDRESSING_MOVE_SYNTHS.md` in Schwung docs for DSP inject approach). **ROUTE_EXTERNAL** (K2=Ext): sequenced notes go DSP `pfx_send`→`ext_queue` ring buffer→JS tick() drains via `get_param('ext_queue')`→`move_midi_external_send` (USB-A). Live pad/MIDI input sent directly from JS via `move_midi_external_send` (no DSP round-trip). VelIn override applies. **NOT YET VERIFIED ON DEVICE** — see test checklist below.
+**External MIDI**: →`activeTrack`. **ROUTE_MOVE**: `liveSendNote` NOT called — injecting causes echo cascade→crash. Pads unaffected (cable-0). Recording echo filter: `seqActiveNotes.has(d1)` guards ROUTE_MOVE `recordNoteOn`. External MIDI monitoring on rechannelized ROUTE_MOVE tracks not yet implemented (channel remap API exists in Schwung v0.9.8+ but causes crashes — reverted; see `ADDRESSING_MOVE_SYNTHS.md` in Schwung docs for DSP inject approach). **ROUTE_EXTERNAL** (K2=Ext): sequenced notes go DSP `pfx_send`→`ext_queue` ring buffer→JS tick() drains via `get_param('ext_queue')`→`move_midi_external_send` (USB-A). Live pad/MIDI input sent directly from JS via `move_midi_external_send` (no DSP round-trip). VelIn override applies. Verified on device. See `EXTERNAL_MIDI_USER_GUIDE.md`.
 
 **Global MIDI Looper** (Session View): Loop+step arms. Steps 1–6=length(1/32..1bar; triplets with step 16 held). DSP: IDLE→ARMED→CAPTURING→LOOPING. Hook runs after SEQ ARP gate. Mid-loop rate: `looper_pending_rate_ticks` consumed at next boundary. JS: `looperStack {idx,ticks}`, `loopHeld`, `looperTriplet`, `dspLooperState`.
 
@@ -78,14 +78,7 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 10. **Track conversion** (`tN_convert_to_drum`/`tN_convert_to_melodic`): TRACK bank K3 dialog.
 11. ~~**VelIn**~~ **done** (TRACK bank K5, per-track input velocity override).
 12. ~~**Note Repeat**~~ **done** (Rpt1/Rpt2, RPT GROOVE, gate/vel_scale/nudge per lane).
-13. **ROUTE_EXTERNAL — awaiting device verification** (built+deployed, branch `external-midi`). Test checklist:
-    - Set track Route to Ext (TRACK bank K2), connect MIDI device via USB-A
-    - Play pads → notes arrive on external device on correct MIDI channel
-    - Start sequencer → sequenced notes arrive on external device
-    - Stop transport mid-playback → no stuck notes on external device (panic test)
-    - VelIn override (K5) → fixed velocity reaches external device
-    - Switch route back to Swng/Move → external output stops, chain/Move output resumes
-    - State persistence: save (suspend or Shift+Back), reload → route=Ext restored
+13. ~~**ROUTE_EXTERNAL**~~ **done** (TRACK bank K2=Ext, USB-A output, verified on device).
 
 ## Per-set state
 
@@ -138,3 +131,13 @@ ssh ableton@move.local "tail -f /data/UserData/schwung/seq8.log"
 **JS**: `ui.js` (~5670 lines) + `ui_constants.mjs` (217 lines). Both must deploy together.
 **DSP**: `dsp/seq8.c` (~4119 lines) `#include`s `dsp/seq8_set_param.c` (~2986 lines). Single translation unit — no extern declarations.
 Schwung core: v0.9.9. GLIBC ≤ 2.35. `~/schwung-notetwist` — NoteTwist reference.
+
+## graphify
+
+This project has a graphify knowledge graph at graphify-out/.
+
+Rules:
+- Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md for god nodes and community structure
+- If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
+- For cross-module "how does X relate to Y" questions, prefer `graphify query "<question>"`, `graphify path "<A>" "<B>"`, or `graphify explain "<concept>"` over grep — these traverse the graph's EXTRACTED + INFERRED edges instead of scanning files
+- After modifying code files in this session, run `graphify update .` to keep the graph current (AST-only, no API cost)

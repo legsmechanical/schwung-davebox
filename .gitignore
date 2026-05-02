@@ -56,3 +56,6 @@ Thumbs.db
 
 # Claude local settings
 .claude/settings.local.json
+
+# Graphify knowledge graph
+graphify-out/
