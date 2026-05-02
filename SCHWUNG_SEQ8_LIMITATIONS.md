@@ -291,83 +291,27 @@ If the incoming note-on pitch is already active in the sequencer, it is a playba
 echo — skip recording. Known edge case: if the user holds the exact same pitch as
 a currently-playing sequencer note, the gate for that keyboard note may be missed.
 
-### Shim-level fix (not yet implemented — see section 13)
+### Fix: cable-2 channel remap (Schwung v0.9.8+)
 
-True channel remapping requires shim intervention. See section 13 for the full spec.
+Schwung v0.9.8 added `host_ext_midi_remap_set/clear/enable` — the shim rewrites
+cable-2 channel bytes in-place before Move processes them. No inject cascade.
+
+SEQ8 uses `applyExtMidiRemap()` which activates when:
+- Active track route = ROUTE_MOVE
+- MIDI In = All (channel 0)
+
+All 16 input channels are remapped to the active track's Ch knob value.
+When MIDI In is set to a specific channel, remap is disabled — the user has
+chosen explicit routing and the JS filter handles it with the original channel.
+
+Shim auto-clears the remap table on overtake exit.
 
 ---
 
-## 13. Shim Feature Request: Cable-2 MIDI Channel Remapping
+## 13. (Historical) Cable-2 MIDI Channel Remapping Spec
 
-This section is a specification for the Schwung shim developer. It describes a
-general-purpose shim feature that would allow any overtake module to channelize
-incoming external MIDI to Move's native track instruments without cascade.
-
-### Problem
-
-Move plays cable-2 MIDI_IN on whichever native track has a matching MIDI In channel.
-There is no way from JS or DSP to intercept and remap that channel before Move
-processes it — without also triggering an inject echo cascade (see section 12).
-
-### Proposed shim feature: cable-2 channel remap table
-
-Add a small shared memory segment (suggested name: `/schwung-ext-midi-remap`) with
-the following layout:
-
-```c
-typedef struct {
-    uint8_t version;          /* bump to 1 when feature is live */
-    uint8_t remap[16];        /* remap[in_ch] = out_ch (both 0-indexed).
-                               * 0xFF = passthrough (no remap).
-                               * Written by module; read by shim on each SPI ioctl. */
-    uint8_t _pad[47];         /* reserved, zero-fill */
-} schwung_ext_midi_remap_t;   /* 64 bytes total */
-```
-
-The shim opens this SHM on startup (create if absent, zero-init). On each SPI ioctl,
-for every cable-2 event in the MIDI_IN buffer, before passing the buffer to Move:
-
-```c
-uint8_t in_ch  = pkt[1] & 0x0F;
-uint8_t mapped = remap->remap[in_ch];
-if (mapped != 0xFF) {
-    pkt[1] = (pkt[1] & 0xF0) | (mapped & 0x0F);
-}
-```
-
-Move sees the remapped channel, plays the correct track, and echoes the remapped
-channel on MIDI_OUT — so the echo also arrives at the correct channel with no
-double-note on the wrong track. No inject required, no cascade possible.
-
-### Module responsibilities
-
-On load (overtake init): open `/schwung-ext-midi-remap`, write the desired remap.
-On unload: set all 16 entries back to `0xFF` (passthrough) and close.
-
-SEQ8 example: when `activeTrack` changes or the Ch knob changes on a ROUTE_MOVE
-track, write `remap[0] = activeTrack_channel` (assuming the controller sends on
-ch1). This remaps all incoming ch1 to the current track's configured channel.
-
-### Why not shadow_control_t?
-
-`shadow_control_t` is currently exactly 64 bytes. Extending it risks breaking binary
-compatibility with existing shim/module pairs. A separate SHM segment is cleaner
-and allows the feature to be added without touching the existing control struct.
-
-### SEQ8 implementation plan (once shim feature is available)
-
-1. Open `/schwung-ext-midi-remap` in `init()`.
-2. Write `remap[0] = bankParams[activeTrack][0][0] - 1` (Ch knob, 0-indexed) on
-   any track/channel change that involves a ROUTE_MOVE track.
-3. Re-enable `liveSendNote` for ROUTE_MOVE in `onMidiMessageExternal` (with the
-   shim remapping, the echo arrives on the correct channel — but since it's already
-   being played by native passthrough at the correct channel, the inject is still
-   unnecessary; the remap alone is sufficient without any SEQ8 inject).
-4. Clear all remap entries to `0xFF` on unload.
-
-With this in place, external MIDI on ROUTE_MOVE tracks behaves identically to the
-sequencer: notes play on the correct Move track regardless of which channel the
-controller sends on.
+Implemented in Schwung v0.9.8 as `host_ext_midi_remap_set/clear/enable`.
+See `schwung_ext_midi_remap_t` in `shadow_constants.h` for the SHM layout.
 
 ---
 
