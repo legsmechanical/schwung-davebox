@@ -344,7 +344,9 @@ function doClearSession() {
         trackChannel[_t] = 1; trackRoute[_t] = 0; trackPadMode[_t] = 0;
         trackVelOverride[_t] = 0; trackLooper[_t] = 1;
         trackCCAssign[_t] = CC_ASSIGN_DEFAULTS.slice();
-        trackCCVal[_t] = new Array(8).fill(0);
+        trackCCVal[_t]    = new Array(8).fill(0);
+        trackCCAutoBits[_t] = new Array(NUM_CLIPS).fill(0);
+        trackCCLiveVal[_t] = new Array(8).fill(-1);
         for (let _b = 3; _b <= 4; _b++) {
             for (let _k = 0; _k < 8; _k++) {
                 const _pm = BANKS[_b].knobs[_k];
@@ -632,8 +634,43 @@ let bankParams = Array.from({length: NUM_TRACKS}, () =>
 
 /* CC PARAM bank (bank 6) — per-track state, JS-authoritative */
 const CC_ASSIGN_DEFAULTS = [7, 74, 71, 73, 72, 91, 93, 10];
-let trackCCAssign = Array.from({length: NUM_TRACKS}, () => CC_ASSIGN_DEFAULTS.slice());
-let trackCCVal    = Array.from({length: NUM_TRACKS}, () => new Array(8).fill(0));
+let trackCCAssign    = Array.from({length: NUM_TRACKS}, () => CC_ASSIGN_DEFAULTS.slice());
+let trackCCVal       = Array.from({length: NUM_TRACKS}, () => new Array(8).fill(0));
+let trackCCAutoBits  = Array.from({length: NUM_TRACKS}, () => new Array(NUM_CLIPS).fill(0));
+let trackCCLiveVal   = Array.from({length: NUM_TRACKS}, () => new Array(8).fill(-1)); /* -1 = no automation fired */
+
+/* Scratch palette indices for CC bank live value display (51-58, all undefined in palette).
+ * Updated dynamically via SysEx each tick — one entry per knob. */
+const CC_SCRATCH_PALETTE_BASE = 51;
+
+/* Pack a SysEx byte array into 4-byte USB-MIDI SysEx packets for move_midi_internal_send. */
+function _sysexPkts(bytes) {
+    const out = [];
+    for (let i = 0; i < bytes.length; i += 3) {
+        const rem = bytes.length - i;
+        const cin = rem >= 3 ? (rem === 3 ? 0x07 : 0x04) : (rem === 2 ? 0x06 : 0x05);
+        out.push(cin, bytes[i], rem > 1 ? bytes[i + 1] : 0, rem > 2 ? bytes[i + 2] : 0);
+    }
+    return out;
+}
+
+/* Pre-packed reapply SysEx: [F0 00 21 1D 01 01 05 F7] */
+const _CC_REAPPLY_PKT = _sysexPkts([0xF0, 0x00, 0x21, 0x1D, 0x01, 0x01, 0x05, 0xF7]);
+
+/* Set palette entry idx to RGB (0-255 each), then call reapplyPalette to push to LEDs. */
+function setPaletteEntryRGB(idx, r, g, b) {
+    move_midi_internal_send(_sysexPkts([
+        0xF0, 0x00, 0x21, 0x1D, 0x01, 0x01, 0x03,
+        idx & 0x7F,
+        r & 0x7F, r >> 7,
+        g & 0x7F, g >> 7,
+        b & 0x7F, b >> 7,
+        0, 0,   /* white channel = 0 */
+        0xF7
+    ]));
+}
+
+function reapplyPalette() { move_midi_internal_send(_CC_REAPPLY_PKT); }
 
 /* Format CC number as a 4-char display label: CC7→"CC7 ", CC74→"CC74", C100→"C100" */
 function fmtCCLabel(cc) {
@@ -1827,6 +1864,10 @@ function readBankParams(t, bankIdx) {
             for (let k = 0; k < 8; k++)
                 trackCCAssign[t][k] = parseInt(parts[k], 10) || CC_ASSIGN_DEFAULTS[k];
         }
+        for (let c = 0; c < NUM_CLIPS; c++) {
+            const bits = host_module_get_param('t' + t + '_c' + c + '_cc_auto_bits');
+            trackCCAutoBits[t][c] = bits !== null ? (parseInt(bits, 10) || 0) : 0;
+        }
         return;
     }
     const knobs = BANKS[bankIdx].knobs;
@@ -2510,7 +2551,18 @@ function updateTrackLEDs() {
                             (drumRepeatNudge[activeTrack][lane][k] !== 0);
             ledVal = isDirty ? White : LED_OFF;
         } else if (activeBank === 6) {
-            ledVal = (trackCCVal[activeTrack][k] !== 0) ? White : LED_OFF;
+            const _t6 = activeTrack, _c6 = trackActiveClip[_t6];
+            const _autoHas = (trackCCAutoBits[_t6][_c6] >> k) & 1;
+            const _liveV = trackCCLiveVal[_t6][k];
+            if (recordArmed) {
+                ledVal = CC_SCRATCH_PALETTE_BASE + k;
+            } else if (playing && _liveV >= 0) {
+                ledVal = CC_SCRATCH_PALETTE_BASE + k;
+            } else if (_autoHas) {
+                ledVal = VividYellow;
+            } else {
+                ledVal = trackCCVal[_t6][k] !== 0 ? White : LED_OFF;
+            }
         } else if (PARAM_LED_BANKS.indexOf(activeBank) >= 0) {
             const pm = BANKS[activeBank].knobs[k];
             if (pm && pm.abbrev && pm.scope !== 'stub') {
@@ -3431,6 +3483,38 @@ globalThis.tick = function () {
         }
     }
 
+    /* Poll live CC automation values for LED feedback when CC bank is visible and playing */
+    if (activeBank === 6 && playing && !sessionView) {
+        const _lv = host_module_get_param('t' + activeTrack + '_cc_live_vals');
+        if (_lv) {
+            const _lp = _lv.split(' ');
+            for (let _k = 0; _k < 8 && _k < _lp.length; _k++) {
+                const _v = parseInt(_lp[_k], 10);
+                trackCCLiveVal[activeTrack][_k] = (_v >= 0 && _v <= 127) ? _v : -1;
+            }
+        }
+    }
+
+    /* Update scratch palette entries for CC bank LED brightness */
+    if (activeBank === 6 && !sessionView && (recordArmed || playing)) {
+        let _paletteChanged = false;
+        for (let _k = 0; _k < 8; _k++) {
+            if (recordArmed) {
+                const _rv = Math.round(trackCCVal[activeTrack][_k] / 127 * 255);
+                setPaletteEntryRGB(CC_SCRATCH_PALETTE_BASE + _k, _rv, 0, 0);
+                _paletteChanged = true;
+            } else {
+                const _lv2 = trackCCLiveVal[activeTrack][_k];
+                if (_lv2 >= 0) {
+                    const _gv = Math.round(_lv2 / 127 * 255);
+                    setPaletteEntryRGB(CC_SCRATCH_PALETTE_BASE + _k, 0, _gv, 0);
+                    _paletteChanged = true;
+                }
+            }
+        }
+        if (_paletteChanged) reapplyPalette();
+    }
+
     /* Deferred Rpt1 lane switch (coalescing workaround: must be sole set_param in its tick) */
     if (pendingRepeatLane >= 0) {
         host_module_set_param('t' + pendingRepeatLaneTrack + '_drum_repeat_lane', String(pendingRepeatLane));
@@ -3882,6 +3966,15 @@ globalThis.onMidiMessageInternal = function (data) {
                     }
                 }
             } else {
+                /* CC PARAM bank: Delete+jog clears all CC automation for active clip */
+                if (activeBank === 6) {
+                    const _t = activeTrack, _c = trackActiveClip[_t];
+                    trackCCAutoBits[_t][_c] = 0;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + _t + '_cc_auto_clear', String(_c));
+                    showActionPopup('CC AUTO', 'CLEAR');
+                    return;
+                }
                 resetFxBanks(activeTrack);
                 undoSeqArpSnapshot = null;
                 showActionPopup('BANK RESET');
@@ -4928,7 +5021,18 @@ globalThis.onMidiMessageInternal = function (data) {
             }
             /* CC PARAM bank (bank 6): normal turn = transmit CC, Shift+turn = reassign CC number */
             if (bank === 6) {
-                const t   = activeTrack;
+                const t = activeTrack;
+                /* Delete+turn: clear this knob's automation for the active clip */
+                if (deleteHeld && !shiftHeld) {
+                    const ac = trackActiveClip[t];
+                    if ((trackCCAutoBits[t][ac] >> knobIdx) & 1) {
+                        trackCCAutoBits[t][ac] &= ~(1 << knobIdx);
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + t + '_cc_auto_clear_k', ac + ' ' + knobIdx);
+                        showActionPopup('CC AUTO', 'CLEAR');
+                    }
+                    return;
+                }
                 const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
                 if (dir !== knobLastDir[knobIdx]) { knobAccum[knobIdx] = 0; knobLastDir[knobIdx] = dir; }
                 knobAccum[knobIdx]++;
@@ -4951,8 +5055,21 @@ globalThis.onMidiMessageInternal = function (data) {
                         const nv = Math.max(0, Math.min(127, trackCCVal[t][knobIdx] + dir));
                         if (nv !== trackCCVal[t][knobIdx]) {
                             trackCCVal[t][knobIdx] = nv;
-                            if (typeof host_module_set_param === 'function')
+                            if (typeof host_module_set_param === 'function') {
                                 host_module_set_param('t' + t + '_cc_send', knobIdx + ' ' + nv);
+                                const ac = trackActiveClip[t];
+                                /* Step edit: write automation point at held step's tick */
+                                if (heldStep >= 0 && trackPadMode[t] !== PAD_MODE_DRUM) {
+                                    const stepTick = heldStep * (clipTPS[t][ac] || 24);
+                                    host_module_set_param('t' + t + '_cc_auto_set',
+                                        ac + ' ' + knobIdx + ' ' + stepTick + ' ' + nv);
+                                    trackCCAutoBits[t][ac] |= (1 << knobIdx);
+                                }
+                                /* Live record: mark automation bit so LED updates immediately */
+                                if (recordArmed && !recordCountingIn && recordArmedTrack === t) {
+                                    trackCCAutoBits[t][ac] |= (1 << knobIdx);
+                                }
+                            }
                             screenDirty = true;
                         }
                     }

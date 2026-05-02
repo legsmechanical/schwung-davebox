@@ -155,6 +155,17 @@ static const uint16_t DRUM_REPEAT_RATE_TICKS[8] = { 12, 24, 48, 96, 8, 16, 32, 6
 /* Default CC assignments for CC PARAM bank knobs K1-K8 */
 static const uint8_t CC_ASSIGN_DEFAULT[8] = { 7, 74, 71, 73, 72, 91, 93, 10 };
 
+#define CC_AUTO_MAX_POINTS 64
+#define CC_TOUCH_GRACE_BLOCKS 8  /* blocks (~46ms) to suppress automation after a live knob turn */
+
+/* Per-clip CC automation: up to 64 sorted {tick, val} points per knob.
+ * Playback interpolates linearly between adjacent points. */
+typedef struct {
+    uint8_t  count[8];
+    uint16_t ticks[8][CC_AUTO_MAX_POINTS];
+    uint8_t  vals[8][CC_AUTO_MAX_POINTS];
+} cc_auto_t;
+
 typedef struct {
     /* Live params mirrored from clip_pfx_params_t via pfx_apply_params */
     uint8_t  style;        /* 0=Off (bypass), 1..9=Up/Dn/U-D/D-U/Cnv/Div/Ord/Rnd/RnO */
@@ -429,6 +440,12 @@ typedef struct {
     uint8_t  drum_repeat2_vel[DRUM_LANES];      /* per-lane velocity in Rpt 2 */
     /* CC PARAM bank (bank 6): per-track CC assignments for 8 knobs (persisted) */
     uint8_t  cc_assign[8];
+    /* Per-clip CC automation (melodic clips; persisted) */
+    cc_auto_t clip_cc_auto[NUM_CLIPS];
+    /* Last CC value sent per knob during automation playback; 0xFF = force resend */
+    uint8_t   cc_auto_last_sent[8];
+    /* block_count when each knob was last live-turned during recording (0 = never) */
+    uint32_t  cc_auto_touch_frame[8];
 } seq8_track_t;
 #define LRS_SET(tr, s)  ((tr)->live_recorded_steps[(s)>>3] |=  (uint8_t)(1u<<((s)&7)))
 #define LRS_TEST(tr, s) ((tr)->live_recorded_steps[(s)>>3] &   (1u<<((s)&7)))
@@ -927,6 +944,21 @@ static void seq8_save_state(seq8_instance_t *inst) {
               if (inst->tracks[_t2].cc_assign[_k] != CC_ASSIGN_DEFAULT[_k])
                   fprintf(fp, ",\"t%dcca%d\":%d", _t2, _k, (int)inst->tracks[_t2].cc_assign[_k]);
     }
+    /* CC automation (melodic clips, sparse per track/clip/knob) */
+    { int _ta, _ca2, _ka, _ia;
+      for (_ta = 0; _ta < NUM_TRACKS; _ta++)
+          for (_ca2 = 0; _ca2 < NUM_CLIPS; _ca2++) {
+              const cc_auto_t *_cca = &inst->tracks[_ta].clip_cc_auto[_ca2];
+              for (_ka = 0; _ka < 8; _ka++) {
+                  if (_cca->count[_ka] == 0) continue;
+                  fprintf(fp, ",\"t%dc%dck%d\":\"", _ta, _ca2, _ka);
+                  for (_ia = 0; _ia < (int)_cca->count[_ka]; _ia++)
+                      fprintf(fp, "%d:%d;",
+                              (int)_cca->ticks[_ka][_ia], (int)_cca->vals[_ka][_ia]);
+                  fputc('"', fp);
+              }
+          }
+    }
     /* Global settings */
     fprintf(fp, ",\"key\":%d,\"scale\":%d,\"lq\":%d",
             (int)inst->pad_key, (int)inst->pad_scale, (int)inst->launch_quant);
@@ -1147,6 +1179,38 @@ static void seq8_load_state(seq8_instance_t *inst) {
               snprintf(key, sizeof(key), "t%dcca%d", t, _k);
               inst->tracks[t].cc_assign[_k] = (uint8_t)clamp_i(
                   json_get_int(buf, key, CC_ASSIGN_DEFAULT[_k]), 0, 127);
+          }
+    }
+    /* CC automation (melodic clips, sparse) */
+    { int _ta, _ca2, _ka;
+      char _srch[48];
+      for (_ta = 0; _ta < NUM_TRACKS; _ta++)
+          for (_ca2 = 0; _ca2 < NUM_CLIPS; _ca2++) {
+              cc_auto_t *_cca = &inst->tracks[_ta].clip_cc_auto[_ca2];
+              for (_ka = 0; _ka < 8; _ka++) {
+                  snprintf(_srch, sizeof(_srch), "\"t%dc%dck%d\":\"", _ta, _ca2, _ka);
+                  const char *_qp = strstr(buf, _srch);
+                  if (!_qp) continue;
+                  _qp += strlen(_srch);
+                  while (*_qp && *_qp != '"'
+                         && _cca->count[_ka] < CC_AUTO_MAX_POINTS) {
+                      int _tv = 0, _vv = 0;
+                      while (*_qp >= '0' && *_qp <= '9')
+                          _tv = _tv * 10 + (*_qp++ - '0');
+                      if (*_qp != ':') {
+                          while (*_qp && *_qp != ';' && *_qp != '"') _qp++;
+                          if (*_qp == ';') _qp++;
+                          continue;
+                      }
+                      _qp++;
+                      while (*_qp >= '0' && *_qp <= '9')
+                          _vv = _vv * 10 + (*_qp++ - '0');
+                      if (*_qp == ';') _qp++;
+                      uint8_t _idx = _cca->count[_ka]++;
+                      _cca->ticks[_ka][_idx] = (uint16_t)clamp_i(_tv, 0, 65535);
+                      _cca->vals[_ka][_idx]  = (uint8_t)clamp_i(_vv, 0, 127);
+                  }
+              }
           }
     }
     /* Per-clip play-effect params (sparse — missing keys default to neutral) */
@@ -1827,10 +1891,18 @@ static void looper_stop(seq8_instance_t *inst) {
 static void send_panic(seq8_instance_t *inst) {
     int t, n;
     for (t = 0; t < NUM_TRACKS; t++) {
-        if (inst->tracks[t].pfx.route == ROUTE_MOVE) continue; /* deferred via pfx_q_fire */
+        play_fx_t *fx = &inst->tracks[t].pfx;
+        if (fx->route == ROUTE_MOVE) continue; /* deferred via pfx_q_fire */
+        if (fx->route == ROUTE_EXTERNAL) {
+            /* 128 individual note-offs would overflow the 64-slot ext_queue;
+             * CC 120 + 123 silences everything in 2 messages. */
+            uint8_t cc_s = (uint8_t)(0xB0 | inst->tracks[t].channel);
+            pfx_send(fx, cc_s, 120, 0); /* All Sound Off */
+            pfx_send(fx, cc_s, 123, 0); /* All Notes Off */
+            continue;
+        }
         for (n = 0; n < 128; n++)
-            pfx_send(&inst->tracks[t].pfx,
-                     (uint8_t)(0x80 | inst->tracks[t].channel), (uint8_t)n, 0);
+            pfx_send(fx, (uint8_t)(0x80 | inst->tracks[t].channel), (uint8_t)n, 0);
     }
 }
 
@@ -3335,6 +3407,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
         tarp_init_defaults(&inst->tracks[t]);
         drum_repeat_init_defaults(&inst->tracks[t]);
         { int _k; for (_k = 0; _k < 8; _k++) inst->tracks[t].cc_assign[_k] = CC_ASSIGN_DEFAULT[_k]; }
+        memset(inst->tracks[t].cc_auto_last_sent, 0xFF, 8);
         inst->tracks[t].pfx.looper_on = 1;
         inst->tracks[t].pfx.track_idx = (uint8_t)t;
         /* Default routing: tracks 1-4 → Move (ch 1-4), tracks 5-8 → Schwung (ch 5-8) */
@@ -3356,10 +3429,9 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     {
         char szlog[128];
         snprintf(szlog, sizeof(szlog),
-                 "SEQ8 drum-mode init: sizeof_inst=%zu sizeof_drum_clip=%zu get_bpm=%s bpm=%.1f",
-                 sizeof(seq8_instance_t),
-                 sizeof(drum_clip_t),
-                 (g_host && g_host->get_bpm) ? "ok" : "null",
+                 "SEQ8 init: inst=%zu track=%zu ccauto=%zu drum=%zu bpm=%.1f",
+                 sizeof(seq8_instance_t), sizeof(seq8_track_t),
+                 sizeof(cc_auto_t), sizeof(drum_clip_t),
                  inst->tracks[0].pfx.cached_bpm);
         seq8_ilog(inst, szlog);
     }
@@ -3494,6 +3566,28 @@ static void apply_clip_restore(seq8_instance_t *inst,
         if (is_active_clip)
             pfx_sync_from_clip(tr);
     }
+}
+
+/* Insert or update a sorted automation point for knob k in cc_auto_t a.
+ * If a point at this tick already exists its value is overwritten.
+ * Drops silently when the array is full. */
+static void cc_auto_set_point(cc_auto_t *a, int k, uint16_t tick, uint8_t val) {
+    int i, n = (int)a->count[k];
+    for (i = 0; i < n; i++) {
+        if (a->ticks[k][i] == tick) { a->vals[k][i] = val; return; }
+    }
+    if (n >= CC_AUTO_MAX_POINTS) return;
+    int ins = n;
+    for (i = 0; i < n; i++) {
+        if (a->ticks[k][i] > tick) { ins = i; break; }
+    }
+    for (i = n; i > ins; i--) {
+        a->ticks[k][i] = a->ticks[k][i - 1];
+        a->vals[k][i]  = a->vals[k][i - 1];
+    }
+    a->ticks[k][ins] = tick;
+    a->vals[k][ins]  = val;
+    a->count[k]++;
 }
 
 #include "seq8_set_param.c"
@@ -3699,6 +3793,13 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                 (int)tr->cc_assign[2], (int)tr->cc_assign[3],
                 (int)tr->cc_assign[4], (int)tr->cc_assign[5],
                 (int)tr->cc_assign[6], (int)tr->cc_assign[7]);
+        if (!strcmp(sub, "cc_live_vals"))
+            /* Returns cc_auto_last_sent[0..7]; 255 = automation hasn't fired yet */
+            return snprintf(out, out_len, "%d %d %d %d %d %d %d %d",
+                (int)tr->cc_auto_last_sent[0], (int)tr->cc_auto_last_sent[1],
+                (int)tr->cc_auto_last_sent[2], (int)tr->cc_auto_last_sent[3],
+                (int)tr->cc_auto_last_sent[4], (int)tr->cc_auto_last_sent[5],
+                (int)tr->cc_auto_last_sent[6], (int)tr->cc_auto_last_sent[7]);
         if (!strcmp(sub, "current_step"))
             return snprintf(out, out_len, "%d", (int)tr->current_step);
         if (!strcmp(sub, "active_clip"))
@@ -3924,6 +4025,13 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
             }
             if (!strncmp(p, "_tps", 4))
                 return snprintf(out, out_len, "%d", (int)cl->ticks_per_step);
+            if (!strncmp(p, "_cc_auto_bits", 13)) {
+                int _bits = 0, _kb;
+                cc_auto_t *_ca = &tr->clip_cc_auto[cidx];
+                for (_kb = 0; _kb < 8; _kb++)
+                    if (_ca->count[_kb] > 0) _bits |= (1 << _kb);
+                return snprintf(out, out_len, "%d", _bits);
+            }
             if (!strncmp(p, "_pfx_snapshot", 13)) {
                 clip_pfx_params_t *cp = &cl->pfx_params;
                 return snprintf(out, out_len,
@@ -4225,6 +4333,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                         cl = &tr->clips[tr->active_clip];
                     }
                     if (tr->record_armed) {
+                        memset(tr->cc_auto_touch_frame, 0, sizeof(tr->cc_auto_touch_frame));
                         tr->recording    = 1;
                         tr->record_armed = 0;
                     }
@@ -4249,6 +4358,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                             cl = &tr->clips[tr->active_clip];
                         }
                         if (tr->record_armed) {
+                            memset(tr->cc_auto_touch_frame, 0, sizeof(tr->cc_auto_touch_frame));
                             tr->recording    = 1;
                             tr->record_armed = 0;
                         }
@@ -4333,6 +4443,53 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
              * SEQ ARP held buffer), then SEQ ARP fires from combined buffer. */
             tarp_tick(inst, tr);
             arp_tick(inst, tr);
+
+            /* CC automation playback (melodic clips only; per-knob touch-suppression
+             * during recording so untouched knobs still play their automation) */
+            if (tr->pad_mode == PAD_MODE_MELODIC_SCALE && tr->clip_playing) {
+                clip_t    *_acl = &tr->clips[tr->active_clip];
+                cc_auto_t *_ca  = &tr->clip_cc_auto[tr->active_clip];
+                uint32_t   _ct  = (uint32_t)tr->current_step * _acl->ticks_per_step
+                                  + tr->tick_in_step;
+                int _kp;
+                for (_kp = 0; _kp < 8; _kp++) {
+                    uint8_t _np = _ca->count[_kp];
+                    if (_np == 0) continue;
+                    /* Suppress this knob if it was live-turned recently during recording */
+                    if (tr->recording && tr->cc_auto_touch_frame[_kp] != 0 &&
+                        inst->block_count - tr->cc_auto_touch_frame[_kp] < CC_TOUCH_GRACE_BLOCKS)
+                        continue;
+                    uint8_t _sv;
+                    int _lo = -1, _hi = -1, _ip;
+                    for (_ip = 0; _ip < (int)_np; _ip++) {
+                        if (_ca->ticks[_kp][_ip] <= (uint16_t)_ct) _lo = _ip;
+                        else if (_hi == -1) { _hi = _ip; break; }
+                    }
+                    if (_lo == -1) {
+                        _sv = _ca->vals[_kp][0];
+                    } else if (_hi == -1) {
+                        _sv = _ca->vals[_kp][_lo];
+                    } else {
+                        int _t0 = (int)_ca->ticks[_kp][_lo];
+                        int _t1 = (int)_ca->ticks[_kp][_hi];
+                        int _v0 = (int)_ca->vals[_kp][_lo];
+                        int _v1 = (int)_ca->vals[_kp][_hi];
+                        int _sp = _t1 - _t0;
+                        if (_sp <= 0) {
+                            _sv = (uint8_t)_v1;
+                        } else {
+                            int _fr = (int)(_ct - (uint32_t)_t0) * 127 / _sp;
+                            _sv = (uint8_t)clamp_i(_v0 + (_v1 - _v0) * _fr / 127, 0, 127);
+                        }
+                    }
+                    if (_sv != tr->cc_auto_last_sent[_kp]) {
+                        tr->cc_auto_last_sent[_kp] = _sv;
+                        pfx_send(&tr->pfx,
+                                 (uint8_t)(0xB0 | (tr->channel & 0x0F)),
+                                 tr->cc_assign[_kp], _sv);
+                    }
+                }
+            }
         }
 
         /* Per-track tick advance and step advance */

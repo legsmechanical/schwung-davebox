@@ -698,6 +698,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
             dst->active = src->active;
             clip_migrate_to_notes(dst);
+            inst->tracks[dstT].clip_cc_auto[dstC] = inst->tracks[srcT].clip_cc_auto[srcC];
             if ((int)inst->tracks[dstT].active_clip == dstC)
                 pfx_sync_from_clip(&inst->tracks[dstT]);
         }
@@ -729,6 +730,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
             dst->active = src->active;
             clip_migrate_to_notes(dst);
+            inst->tracks[t].clip_cc_auto[dstRow] = inst->tracks[t].clip_cc_auto[srcRow];
             if ((int)inst->tracks[t].active_clip == dstRow)
                 pfx_sync_from_clip(&inst->tracks[t]);
         }
@@ -766,9 +768,11 @@ static void set_param(void *instance, const char *key, const char *val) {
             memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
             dst->active = src->active;
             clip_migrate_to_notes(dst);
+            dstTr->clip_cc_auto[dstC] = srcTr->clip_cc_auto[srcC];
             if ((int)dstTr->active_clip == dstC) pfx_sync_from_clip(dstTr);
             silence_track_notes_v2(inst, srcTr);
             clip_init(src);
+            memset(&srcTr->clip_cc_auto[srcC], 0, sizeof(cc_auto_t));
             if ((int)srcTr->active_clip == srcC) pfx_sync_from_clip(srcTr);
             srcTr->rec_pending_count = 0;
             srcTr->recording = 0;
@@ -805,9 +809,11 @@ static void set_param(void *instance, const char *key, const char *val) {
             memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
             dst->active = src->active;
             clip_migrate_to_notes(dst);
+            tr->clip_cc_auto[dstRow] = tr->clip_cc_auto[srcRow];
             if ((int)tr->active_clip == dstRow) pfx_sync_from_clip(tr);
             silence_track_notes_v2(inst, tr);
             clip_init(src);
+            memset(&tr->clip_cc_auto[srcRow], 0, sizeof(cc_auto_t));
             if ((int)tr->active_clip == srcRow) pfx_sync_from_clip(tr);
             tr->rec_pending_count = 0;
             tr->recording = 0;
@@ -1527,6 +1533,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 undo_begin_single(inst, tidx, cidx);
                 silence_track_notes_v2(inst, tr);
                 clip_init(cl);
+                memset(&tr->clip_cc_auto[cidx], 0, sizeof(cc_auto_t));
                 if ((int)tr->active_clip == cidx)
                     pfx_sync_from_clip(tr);
                 tr->rec_pending_count = 0;
@@ -1750,11 +1757,64 @@ static void set_param(void *instance, const char *key, const char *val) {
             while (*_p >= '0' && *_p <= '9') { _v = _v * 10 + (*_p - '0'); _p++; }
             if (_k < 0 || _k > 7) return;
             _v = clamp_i(_v, 0, 127);
-            {
-                uint8_t _cc_num = tr->cc_assign[_k];
-                uint8_t _status = (uint8_t)(0xB0 | (tr->channel & 0x0F));
-                pfx_send(&tr->pfx, _status, _cc_num, (uint8_t)_v);
+            pfx_send(&tr->pfx,
+                     (uint8_t)(0xB0 | (tr->channel & 0x0F)),
+                     tr->cc_assign[_k], (uint8_t)_v);
+            /* Record automation point when actively recording a melodic clip */
+            if (tr->recording && tr->pad_mode == PAD_MODE_MELODIC_SCALE) {
+                uint32_t _ct = tr->current_clip_tick;
+                uint16_t _snap = (uint16_t)((_ct / 12) * 12);
+                cc_auto_set_point(&tr->clip_cc_auto[tr->active_clip],
+                                  _k, _snap, (uint8_t)_v);
+                /* Stamp touch frame so render path suppresses playback on this knob briefly */
+                tr->cc_auto_touch_frame[_k] = inst->block_count | 1u;
             }
+            return;
+        }
+        if (!strcmp(sub, "cc_auto_set")) {
+            /* Format: "C K T V" — clip, knob, tick, value. Writes step-edit automation. */
+            const char *_p = val;
+            int _c = 0, _k = 0, _tv = 0, _vv = 0;
+            while (*_p == ' ') _p++;
+            while (*_p >= '0' && *_p <= '9') { _c = _c * 10 + (*_p - '0'); _p++; }
+            while (*_p == ' ') _p++;
+            while (*_p >= '0' && *_p <= '9') { _k = _k * 10 + (*_p - '0'); _p++; }
+            while (*_p == ' ') _p++;
+            while (*_p >= '0' && *_p <= '9') { _tv = _tv * 10 + (*_p - '0'); _p++; }
+            while (*_p == ' ') _p++;
+            while (*_p >= '0' && *_p <= '9') { _vv = _vv * 10 + (*_p - '0'); _p++; }
+            if (_c < 0 || _c >= NUM_CLIPS || _k < 0 || _k > 7) return;
+            cc_auto_set_point(&tr->clip_cc_auto[_c], _k,
+                              (uint16_t)clamp_i(_tv, 0, 65535),
+                              (uint8_t)clamp_i(_vv, 0, 127));
+            seq8_save_state(inst);
+            return;
+        }
+        if (!strcmp(sub, "cc_auto_clear_k")) {
+            /* Format: "C K" — clear all automation points for knob K in clip C. */
+            const char *_p = val;
+            int _c = 0, _k = 0;
+            while (*_p == ' ') _p++;
+            while (*_p >= '0' && *_p <= '9') { _c = _c * 10 + (*_p - '0'); _p++; }
+            while (*_p == ' ') _p++;
+            while (*_p >= '0' && *_p <= '9') { _k = _k * 10 + (*_p - '0'); _p++; }
+            if (_c < 0 || _c >= NUM_CLIPS || _k < 0 || _k > 7) return;
+            tr->clip_cc_auto[_c].count[_k] = 0;
+            memset(tr->clip_cc_auto[_c].ticks[_k], 0,
+                   CC_AUTO_MAX_POINTS * sizeof(uint16_t));
+            memset(tr->clip_cc_auto[_c].vals[_k], 0, CC_AUTO_MAX_POINTS);
+            seq8_save_state(inst);
+            return;
+        }
+        if (!strcmp(sub, "cc_auto_clear")) {
+            /* Format: "C" — clear all CC automation for clip C. */
+            const char *_p = val;
+            int _c = 0;
+            while (*_p == ' ') _p++;
+            while (*_p >= '0' && *_p <= '9') { _c = _c * 10 + (*_p - '0'); _p++; }
+            if (_c < 0 || _c >= NUM_CLIPS) return;
+            memset(&tr->clip_cc_auto[_c], 0, sizeof(cc_auto_t));
+            seq8_save_state(inst);
             return;
         }
 
@@ -2466,6 +2526,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                     undo_begin_single(inst, tidx, snap_clip);
                 /* Fresh recording session: clear pass mask so existing notes play back */
                 memset(tr->live_recorded_steps, 0, 32);
+                memset(tr->cc_auto_touch_frame, 0, sizeof(tr->cc_auto_touch_frame));
                 /* Clear any tarp notes held before recording started — their note-offs
                  * can't reach live_note_off once activelyRecording=true in JS. */
                 tarp_silence(inst, tr);
