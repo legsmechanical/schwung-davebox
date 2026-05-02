@@ -41,7 +41,7 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 
 **Global menu** (Shift+CC 50): BPM·Tap Tempo·Key·Scale·Scale Aware·Launch·Swing Amt/Res·Inp Quant·MIDI In·Metro(Off/Count/On/Rec+Ply; Mute+Play shortcut)·Quit·Clear Sess (writes `{"v":0}`, wipes UI sidecar, triggers DSP fresh-init). Close: Shift+CC50 toggles; NoteSession (CC50 tap) closes menu/tap-tempo/confirm dialogs (Back no longer reaches module).
 
-**External MIDI**: →`activeTrack`. **ROUTE_MOVE**: `liveSendNote` NOT called — injecting causes echo cascade→crash. Pads unaffected (cable-0). Recording echo filter: `seqActiveNotes.has(d1)` guards ROUTE_MOVE `recordNoteOn`. External MIDI monitoring on rechannelized ROUTE_MOVE tracks not yet implemented (channel remap API exists in Schwung v0.9.8+ but causes crashes — reverted; see `ADDRESSING_MOVE_SYNTHS.md` in Schwung docs for DSP inject approach).
+**External MIDI**: →`activeTrack`. **ROUTE_MOVE**: `liveSendNote` NOT called — injecting causes echo cascade→crash. Pads unaffected (cable-0). Recording echo filter: `seqActiveNotes.has(d1)` guards ROUTE_MOVE `recordNoteOn`. External MIDI monitoring on rechannelized ROUTE_MOVE tracks not yet implemented (channel remap API exists in Schwung v0.9.8+ but causes crashes — reverted; see `ADDRESSING_MOVE_SYNTHS.md` in Schwung docs for DSP inject approach). **ROUTE_EXTERNAL** (K2=Ext): sequenced notes go DSP `pfx_send`→`ext_queue` ring buffer→JS tick() drains via `get_param('ext_queue')`→`move_midi_external_send` (USB-A). Live pad/MIDI input sent directly from JS via `move_midi_external_send` (no DSP round-trip). VelIn override applies. **NOT YET VERIFIED ON DEVICE** — see test checklist below.
 
 **Global MIDI Looper** (Session View): Loop+step arms. Steps 1–6=length(1/32..1bar; triplets with step 16 held). DSP: IDLE→ARMED→CAPTURING→LOOPING. Hook runs after SEQ ARP gate. Mid-loop rate: `looper_pending_rate_ticks` consumed at next boundary. JS: `looperStack {idx,ticks}`, `loopHeld`, `looperTriplet`, `dspLooperState`.
 
@@ -49,7 +49,7 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 
 **Play effects chain**: TRACK ARP→NOTE FX→HARMZ→MIDI DLY→SEQ ARP. TRACK ARP intercepts live input (pads + external MIDI) only; sequenced notes enter at NOTE FX. Per-clip params (`clip_pfx_params_t`); clip switch→`pfx_sync_from_clip`. See `SEQ8_API.md` for arp algorithm details. TRACK ARP bypassed on drum tracks.
 
-**TRACK bank** (bank 0): Ch(K1)·Rte(K2)·Mode(K3)·VelIn(K5)·Lpr(K8). **VelIn** (per-track, `t%d_tvo`): 0=Live (raw velocity, default), 1–127=absolute fixed. Applies pre-pfx-chain to all note input (pads, ext MIDI, recording). DSP `effective_vel(tr, raw)` replaces old global `input_vel`. Global Input Velocity removed.
+**TRACK bank** (bank 0): Ch(K1)·Rte(K2, 0=Swng/1=Move/2=Ext)·Mode(K3)·VelIn(K5)·Lpr(K8). **VelIn** (per-track, `t%d_tvo`): 0=Live (raw velocity, default), 1–127=absolute fixed. Applies pre-pfx-chain to all note input (pads, ext MIDI, recording). DSP `effective_vel(tr, raw)` replaces old global `input_vel`. Global Input Velocity removed.
 
 **Note Repeat** (drum tracks, jog click or DRUM SEQ K7 to cycle modes): Rpt1=single-lane hold-to-repeat; Rpt2=multi-lane simultaneous. Right pads: bottom 2 rows=rate (1/32,1/16,1/8,1/4 straight+triplet), top 2 rows=8-step gate mask. RPT GROOVE (bank 6): K1-K8 = vel scale (0-200%, unshifted) or nudge (-50..+50%, Shift) per step. Latch: Loop+rate(Rpt1) or Loop+lane(Rpt2). Gate/vel_scale/nudge per-lane (`drum_repeat_gate[DRUM_LANES]`). Aftertouch updates velocity live. Delete+jog=groove reset. State keys: `t%dl%drg` (gate, sparse, default 0xFF), `t%dl%dvs%d` (vel_scale), `t%dl%dnd%d` (nudge). JS sync: render-path `syncDrumRepeatState` (get_param fails from onMidiMessage; see constraints).
 
@@ -78,6 +78,14 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 10. **Track conversion** (`tN_convert_to_drum`/`tN_convert_to_melodic`): TRACK bank K3 dialog.
 11. ~~**VelIn**~~ **done** (TRACK bank K5, per-track input velocity override).
 12. ~~**Note Repeat**~~ **done** (Rpt1/Rpt2, RPT GROOVE, gate/vel_scale/nudge per lane).
+13. **ROUTE_EXTERNAL — awaiting device verification** (built+deployed, branch `external-midi`). Test checklist:
+    - Set track Route to Ext (TRACK bank K2), connect MIDI device via USB-A
+    - Play pads → notes arrive on external device on correct MIDI channel
+    - Start sequencer → sequenced notes arrive on external device
+    - Stop transport mid-playback → no stuck notes on external device (panic test)
+    - VelIn override (K5) → fixed velocity reaches external device
+    - Switch route back to Swng/Move → external output stops, chain/Move output resumes
+    - State persistence: save (suspend or Shift+Back), reload → route=Ext restored
 
 ## Per-set state
 
