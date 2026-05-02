@@ -271,7 +271,6 @@ function buildGlobalMenuItems() {
                 midiInChannel = v;
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('midi_in_channel', String(v));
-                applyExtMidiRemap();
             },
             options: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16],
             format: function(v) { return v === 0 ? 'All' : String(v); }
@@ -1858,8 +1857,6 @@ function applyBankParam(t, bankIdx, knobIdx, val) {
             return;
         }
         host_module_set_param('t' + t + '_' + pm.dspKey, strVal);
-        if (t === activeTrack && (pm.dspKey === 'ch' || pm.dspKey === 'route'))
-            applyExtMidiRemap();
         /* Switching into drum mode: sync lane metadata */
         if (pm.dspKey === 'pad_mode' && val === PAD_MODE_DRUM) {
             syncDrumLanesMeta(t);
@@ -1883,19 +1880,6 @@ function applyBankParam(t, bankIdx, knobIdx, val) {
     }
 }
 
-function applyExtMidiRemap() {
-    if (typeof host_ext_midi_remap_clear !== 'function') return;
-    const route = bankParams[activeTrack][0][1];
-    if (route !== 1 || midiInChannel !== 0) {
-        host_ext_midi_remap_clear();
-        host_ext_midi_remap_enable(false);
-        return;
-    }
-    const outCh = (bankParams[activeTrack][0][0] - 1) & 0x0F;
-    host_ext_midi_remap_clear();
-    for (let c = 0; c < 16; c++) host_ext_midi_remap_set(c, outCh);
-    host_ext_midi_remap_enable(true);
-}
 
 /* Send a live note (note-on or note-off) for track t, applying per-track
  * channel and route from the TRACK bank params (bank 0, knobs 0 and 1). */
@@ -3294,7 +3278,6 @@ globalThis.init = function () {
     })();
 
     computePadNoteMap();
-    applyExtMidiRemap();
 
     ledInitComplete = false;
     invalidateLEDCache();
@@ -3878,7 +3861,6 @@ globalThis.onMidiMessageInternal = function (data) {
                             activeTrack = next;
                             refreshPerClipBankParams(next);
                             computePadNoteMap();
-                            applyExtMidiRemap();
                             seqActiveNotes.clear();
                             seqLastStep = -1;
                             seqLastClip = -1;
@@ -5465,7 +5447,6 @@ globalThis.onMidiMessageInternal = function (data) {
                             if (typeof host_module_set_param === 'function')
                                 host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
                         }
-                        applyExtMidiRemap();
                     }
                     break;
                 }
@@ -5777,7 +5758,6 @@ globalThis.onMidiMessageInternal = function (data) {
                     activeTrack = padIdx;
                     refreshPerClipBankParams(padIdx);
                     computePadNoteMap();
-                    applyExtMidiRemap();
                     seqActiveNotes.clear();
                     seqLastStep = -1;
                     seqLastClip = -1;
