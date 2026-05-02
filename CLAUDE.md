@@ -8,7 +8,7 @@
 - **Validate before acting** — read or grep actual code first. Never act on assumptions.
 - **Commit after each logical change** — work directly on master, one commit per change.
 - **Deploy and verify on device before reporting done** — always build+install and confirm on Move.
-- **Reboot after every deploy** — Shift+Back does NOT reload JS from disk.
+- **Reboot after every deploy** — Back suspends (JS stays in memory); Shift+Back fully exits but does NOT reload JS from disk. Full reboot required for JS changes.
 - **JS-only deploy**: `cp ui.js dist/seq8/ui.js && cp ui_constants.mjs dist/seq8/ && ./scripts/install.sh` then restart. `build.sh` required for DSP changes (also copies all JS).
 - **Restart Move**: `ssh root@move.local "for name in MoveOriginal Move MoveLauncher MoveMessageDisplay shadow_ui schwung link-subscriber display-server schwung-manager; do pids=\$(pidof \$name 2>/dev/null || true); [ -n \"\$pids\" ] && kill -9 \$pids 2>/dev/null || true; done && /etc/init.d/move start >/dev/null 2>&1"`
 - **CLAUDE.md**: update at session end or after a major phase — not after routine task work.
@@ -37,7 +37,9 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 
 **CLIP bank**: Stretch(K1,lock), Clock Shift(K2), Nudge(K3,crosses ±tps/2), Resolution(K4,proportional; Shift+K4=zoom,blocked>256→"NOTES OUT OF RANGE"), Length(K5), Seq Follow(K8,JS-only,default ON,not persisted). NOTE FX K5 Quantize: `effective_tick_offset = raw*(100-q)/100`.
 
-**Global menu** (Shift+CC 50): BPM·Tap Tempo·Key·Scale·Scale Aware·Launch·Swing Amt/Res·Inp Quant·MIDI In·Metro(Off/Count/On/Rec+Ply; Mute+Play shortcut)·Quit·Clear Sess (writes `{"v":0}`, wipes UI sidecar, triggers DSP fresh-init).
+**Suspend/Resume**: Back=suspend (sequencer keeps playing in background); Shift+Step13=resume (double-tap/long-press=direct, single-tap=Tools menu); Shift+Back=full exit. State auto-saved on suspend. `saveState()` helper used by suspend, Quit, and Shift+Back paths.
+
+**Global menu** (Shift+CC 50): BPM·Tap Tempo·Key·Scale·Scale Aware·Launch·Swing Amt/Res·Inp Quant·MIDI In·Metro(Off/Count/On/Rec+Ply; Mute+Play shortcut)·Quit·Clear Sess (writes `{"v":0}`, wipes UI sidecar, triggers DSP fresh-init). Close: Shift+CC50 toggles; NoteSession (CC50 tap) closes menu/tap-tempo/confirm dialogs (Back no longer reaches module).
 
 **External MIDI**: →`activeTrack`. **ROUTE_MOVE**: `liveSendNote` NOT called — injecting causes echo cascade→crash. Pads unaffected (cable-0). Recording echo filter: `seqActiveNotes.has(d1)` guards ROUTE_MOVE `recordNoteOn`. **Channel remap** (Schwung v0.9.8+): `applyExtMidiRemap()` uses `host_ext_midi_remap_set/clear/enable` to rewrite cable-2 channels in the shim before Move processes them. Active when MIDI In=All + route=Move; maps all 16 input channels to the active track's Ch knob. Disabled when MIDI In targets a specific channel. **Caveat**: shim bypasses remap if any chain slot uses `forward_channel=THRU(-2)` (MPE safety); ensure slots use AUTO(-1) or a specific channel.
 
@@ -88,6 +90,7 @@ JS `init()` reads UUID, compares with `state_uuid` get_param. Mismatch → `stat
 - **get_param from onMidiMessage**: `host_module_get_param` silently returns null when called from `onMidiMessage` context. Only works from tick/render callbacks. Sync functions called from pad handlers (e.g., `refreshDrumLaneBankParams` on lane switch) cannot rely on get_param. Workaround: sync JS state from DSP in the render/tick path instead.
 - **No MIDI panic before state_load** — floods MIDI buffer, drops the load param.
 - **Shift+Back does not reload JS** — `init()` re-runs in same runtime. Full reboot required for JS changes.
+- **Suspend/resume** (`suspend_keeps_js`): Back=suspend (JS+DSP keep running in background), Shift+Step13=resume (double-tap or long-press for direct resume, single-tap for Tools menu). Shift+Back=full exit. State saved on suspend transition; LEDs re-initialized on resume. `installFlagsWrap` must be removed on suspend so `JUMP_TO_TOOLS` flag reaches shadow_ui for resume.
 
 ## Known limitations
 
