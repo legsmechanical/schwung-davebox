@@ -3951,6 +3951,16 @@ globalThis.onMidiMessageInternal = function (data) {
                 if (shiftHeld) {
                     if (globalMenuOpen) { globalMenuOpen = false; forceRedraw(); }
                     else { openGlobalMenu(); }
+                } else if (globalMenuOpen && tapTempoOpen) {
+                    closeTapTempo();
+                    forceRedraw();
+                } else if (globalMenuOpen && confirmClearSession) {
+                    confirmClearSession = false;
+                    forceRedraw();
+                } else if (globalMenuOpen) {
+                    globalMenuOpen = false;
+                    lastSentMenuEditValue = null;
+                    forceRedraw();
                 } else {
                     noteSessionPressedTick = tickCount;
                 }
