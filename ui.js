@@ -138,8 +138,8 @@ const BANKS = [
         p('Clk',  'Clock Feedback', 'delay_clock_fb',     'track', -100, 100, 0, fmtSign ),
         p('Rnd',  'Pitch Random',   'delay_pitch_random', 'track', 0,    1,   0, fmtBool ),
     ]},
-    /* 4 — SEQ ARP (pad 96) */
-    { name: 'SEQ ARP', knobs: [
+    /* 4 — ARP OUT (pad 96) */
+    { name: 'ARP OUT', knobs: [
         p('Styl', 'Arp Style',    'seq_arp_style',      'track', 0,    9,   0, fmtArpStyle, 16),
         p('Rate', 'Arp Rate',     'seq_arp_rate',       'track', 0,    9,   1, fmtArpRate,  16),
         p('Oct',  'Octave Range', 'seq_arp_octaves',    'track', -4,   4,   1, fmtArpOct,   16),
@@ -149,8 +149,8 @@ const BANKS = [
         _X,
         _X,
     ]},
-    /* 5 — TRACK ARP (pad 97) */
-    { name: 'TRACK ARP', knobs: [
+    /* 5 — ARP IN (pad 97) */
+    { name: 'ARP IN', knobs: [
         p('On',   'Track ARP On',  'tarp_on',         'track', 0,   1,   0,  fmtBool,     16),
         p('Styl', 'Arp Style',     'tarp_style',      'track', 1,   9,   1,  fmtArpStyle, 16),
         p('Rate', 'Arp Rate',      'tarp_rate',       'track', 0,   9,   1,  fmtArpRate,  16),
