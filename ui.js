@@ -3872,7 +3872,7 @@ globalThis.onMidiMessageInternal = function (data) {
         }
 
         if (d1 === MoveMainKnob) {
-            if (globalMenuOpen) {
+            if (globalMenuOpen && !shiftHeld) {
                 if (tapTempoOpen) {
                     const delta = decodeDelta(d2);
                     if (delta !== 0) {
@@ -3883,7 +3883,6 @@ globalThis.onMidiMessageInternal = function (data) {
                     const delta = decodeDelta(d2);
                     if (delta !== 0) { confirmClearSel = confirmClearSel === 0 ? 1 : 0; screenDirty = true; }
                 } else if (globalMenuState.editing) {
-                    /* Edit mode: linear jog for all item types, no acceleration. */
                     const delta = decodeDelta(d2);
                     if (delta !== 0) {
                         const item = globalMenuItems[globalMenuState.selectedIndex];
@@ -3903,7 +3902,7 @@ globalThis.onMidiMessageInternal = function (data) {
                         cc: MoveMainKnob, value: d2,
                         items: globalMenuItems, state: globalMenuState, stack: globalMenuStack,
                         onBack: function() { globalMenuOpen = false; },
-                        shiftHeld: shiftHeld
+                        shiftHeld: false
                     });
                     screenDirty = true;
                 }
