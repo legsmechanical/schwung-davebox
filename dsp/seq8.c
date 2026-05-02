@@ -4455,7 +4455,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 for (_kp = 0; _kp < 8; _kp++) {
                     uint8_t _np = _ca->count[_kp];
                     if (_np == 0) continue;
-                    /* Suppress this knob if it was live-turned recently during recording */
+                    /* Suppress this knob if live-turned recently during recording */
                     if (tr->recording && tr->cc_auto_touch_frame[_kp] != 0 &&
                         inst->block_count - tr->cc_auto_touch_frame[_kp] < CC_TOUCH_GRACE_BLOCKS)
                         continue;

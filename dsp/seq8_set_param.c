@@ -1790,6 +1790,30 @@ static void set_param(void *instance, const char *key, const char *val) {
             seq8_save_state(inst);
             return;
         }
+        if (!strcmp(sub, "cc_auto_set2")) {
+            /* Format: "C K T1 T2 V" — writes V at both T1 and T2; used for step-hold automation. */
+            const char *_p = val;
+            int _c = 0, _k = 0, _t1 = 0, _t2 = 0, _vv = 0;
+            while (*_p == ' ') _p++;
+            while (*_p >= '0' && *_p <= '9') { _c = _c * 10 + (*_p - '0'); _p++; }
+            while (*_p == ' ') _p++;
+            while (*_p >= '0' && *_p <= '9') { _k = _k * 10 + (*_p - '0'); _p++; }
+            while (*_p == ' ') _p++;
+            while (*_p >= '0' && *_p <= '9') { _t1 = _t1 * 10 + (*_p - '0'); _p++; }
+            while (*_p == ' ') _p++;
+            while (*_p >= '0' && *_p <= '9') { _t2 = _t2 * 10 + (*_p - '0'); _p++; }
+            while (*_p == ' ') _p++;
+            while (*_p >= '0' && *_p <= '9') { _vv = _vv * 10 + (*_p - '0'); _p++; }
+            if (_c < 0 || _c >= NUM_CLIPS || _k < 0 || _k > 7) return;
+            _vv = clamp_i(_vv, 0, 127);
+            cc_auto_set_point(&tr->clip_cc_auto[_c], _k,
+                              (uint16_t)clamp_i(_t1, 0, 65535), (uint8_t)_vv);
+            if (_t2 != _t1)
+                cc_auto_set_point(&tr->clip_cc_auto[_c], _k,
+                                  (uint16_t)clamp_i(_t2, 0, 65535), (uint8_t)_vv);
+            seq8_save_state(inst);
+            return;
+        }
         if (!strcmp(sub, "cc_auto_clear_k")) {
             /* Format: "C K" — clear all automation points for knob K in clip C. */
             const char *_p = val;
