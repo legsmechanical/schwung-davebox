@@ -4,7 +4,7 @@
 
 ## Session workflow
 
-- **Start of session**: run `~/schwung-docs/update.sh` and report the result. If unsure about a platform API, grep `~/schwung-docs/` rather than assuming.
+- **Start of session**: run `~/schwung-docs/update.sh` and report the result. Then read `graphify-out/GRAPH_REPORT.md` to orient on god nodes and community structure. If unsure about a platform API, grep `~/schwung-docs/` rather than assuming.
 - **Validate before acting** — read or grep actual code first. Never act on assumptions.
 - **Commit after each logical change** — work directly on master, one commit per change.
 - **Deploy and verify on device before reporting done** — always build+install and confirm on Move.
@@ -143,7 +143,8 @@ Schwung core: v0.9.9. GLIBC ≤ 2.35. `~/schwung-notetwist` — NoteTwist refere
 This project has a graphify knowledge graph at graphify-out/.
 
 Rules:
-- Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md for god nodes and community structure
-- If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
-- For cross-module "how does X relate to Y" questions, prefer `graphify query "<question>"`, `graphify path "<A>" "<B>"`, or `graphify explain "<concept>"` over grep — these traverse the graph's EXTRACTED + INFERRED edges instead of scanning files
-- After modifying code files in this session, run `graphify update .` to keep the graph current (AST-only, no API cost)
+- **Session start**: read `graphify-out/GRAPH_REPORT.md` immediately after the docs update — required, not optional.
+- **Code navigation**: use `graphify query "<question>"`, `graphify path "<A>" "<B>"`, or `graphify explain "<concept>"` BEFORE reaching for grep or raw file reads when looking up symbols, relationships, or call chains. The graph traverses EXTRACTED + INFERRED edges and is faster than scanning.
+- **Architecture questions**: always consult the graph first. God nodes (`set_param`, `drawUI`, `pfx_send`, `render_block`) are cross-community bridges — tracing them via graph beats manual grep.
+- **Wiki**: if `graphify-out/wiki/index.md` exists, navigate it instead of reading raw files.
+- **After code changes**: run `graphify update .` to keep the graph current (AST-only, no API cost).
