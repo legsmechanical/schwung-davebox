@@ -2909,7 +2909,8 @@ function drawUI() {
     }
 
     if (bank >= 0 && (knobTouched >= 0 || inTimeout ||
-            (shiftHeld && bank === 5 && trackPadMode[activeTrack] === PAD_MODE_DRUM))) {
+            (shiftHeld && bank === 5 && trackPadMode[activeTrack] === PAD_MODE_DRUM) ||
+            (shiftHeld && bank === 6 && !sessionView))) {
         const isDrumSeqBank = (trackPadMode[activeTrack] === PAD_MODE_DRUM && bank === 0);
         if (isDrumSeqBank) {
             /* DRUM SEQ bank overview: mirrors CLIP bank at lane level */
@@ -4932,8 +4933,8 @@ globalThis.onMidiMessageInternal = function (data) {
                 if (dir !== knobLastDir[knobIdx]) { knobAccum[knobIdx] = 0; knobLastDir[knobIdx] = dir; }
                 knobAccum[knobIdx]++;
                 if (shiftHeld) {
-                    /* Shift+turn: reassign CC number 0-127, sens=16 */
-                    if (knobAccum[knobIdx] >= 16) {
+                    /* Shift+turn: reassign CC number 0-127, sens=4 */
+                    if (knobAccum[knobIdx] >= 4) {
                         knobAccum[knobIdx] = 0;
                         const nv = Math.max(0, Math.min(127, trackCCAssign[t][knobIdx] + dir));
                         if (nv !== trackCCAssign[t][knobIdx]) {
@@ -4944,8 +4945,8 @@ globalThis.onMidiMessageInternal = function (data) {
                         }
                     }
                 } else {
-                    /* Normal turn: send CC value 0-127, sens=1 */
-                    if (knobAccum[knobIdx] >= 1) {
+                    /* Normal turn: send CC value 0-127, sens=2 */
+                    if (knobAccum[knobIdx] >= 2) {
                         knobAccum[knobIdx] = 0;
                         const nv = Math.max(0, Math.min(127, trackCCVal[t][knobIdx] + dir));
                         if (nv !== trackCCVal[t][knobIdx]) {
