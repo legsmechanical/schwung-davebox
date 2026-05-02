@@ -367,6 +367,7 @@ function doClearSession() {
             }
         }
     }
+    ccPaletteCache.fill(-1);
     pendingSetLoad  = true;
     globalMenuOpen  = false;
     confirmClearSession = false;
@@ -695,6 +696,9 @@ let stepEditGate  = 12;   /* step edit overlay: current step gate ticks */
 let stepEditNudge = 0;    /* step edit overlay: current step tick offset */
 let ccStepEditVal    = new Array(8).fill(0); /* CC step-edit: per-knob value when holding step in bank 6 */
 let ccStepEditActive = false;                /* true while step is held in bank 6 */
+let ccPaletteCache      = new Array(8).fill(-1); /* last brightness sent per scratch slot; -1 = unset */
+let ccPaletteCacheArmed = false;                 /* armed state when ccPaletteCache was filled */
+let ccPaletteCacheTrack = -1;                    /* track when ccPaletteCache was filled */
 
 const STEP_HOLD_TICKS  = 40;   /* ~200ms at 196Hz: below = tap, at/above = hold */
 let stepBtnPressedTick = new Array(16).fill(-1); /* tickCount per button when press is pending; -1 = none */
@@ -3516,24 +3520,40 @@ globalThis.tick = function () {
         }
     }
 
-    /* Update scratch palette entries for CC bank LED brightness */
+    /* Update scratch palette entries for CC bank LED brightness (cached: only send SysEx on change) */
     if (activeBank === 6 && !sessionView && !ccStepEditActive && (recordArmed || playing)) {
+        if (recordArmed !== ccPaletteCacheArmed || activeTrack !== ccPaletteCacheTrack) {
+            ccPaletteCache.fill(-1);
+            ccPaletteCacheArmed = recordArmed;
+            ccPaletteCacheTrack = activeTrack;
+        }
         let _paletteChanged = false;
         for (let _k = 0; _k < 8; _k++) {
+            let _newVal;
             if (recordArmed) {
-                const _rv = Math.round(trackCCVal[activeTrack][_k] / 127 * 255);
-                setPaletteEntryRGB(CC_SCRATCH_PALETTE_BASE + _k, _rv, 0, 0);
-                _paletteChanged = true;
+                _newVal = Math.round(trackCCVal[activeTrack][_k] / 127 * 255);
             } else {
                 const _lv2 = trackCCLiveVal[activeTrack][_k];
-                if (_lv2 >= 0) {
-                    const _gv = Math.round(_lv2 / 127 * 255);
-                    setPaletteEntryRGB(CC_SCRATCH_PALETTE_BASE + _k, 0, _gv, 0);
+                _newVal = _lv2 >= 0 ? Math.round(_lv2 / 127 * 255) : -1;
+            }
+            if (_newVal !== ccPaletteCache[_k]) {
+                ccPaletteCache[_k] = _newVal;
+                if (_newVal >= 0) {
+                    if (recordArmed)
+                        setPaletteEntryRGB(CC_SCRATCH_PALETTE_BASE + _k, _newVal, 0, 0);
+                    else
+                        setPaletteEntryRGB(CC_SCRATCH_PALETTE_BASE + _k, 0, _newVal, 0);
                     _paletteChanged = true;
                 }
             }
         }
-        if (_paletteChanged) reapplyPalette();
+        if (_paletteChanged) {
+            reapplyPalette();
+            /* reapplyPalette resets CC LED hardware states; force-resend transport LEDs
+             * so input_filter.mjs buttonCache doesn't silently suppress them. */
+            setButtonLED(MovePlay, playing ? Green : LED_OFF, true);
+            setButtonLED(MoveRec,  recordArmed ? Red : LED_OFF, true);
+        }
     }
 
     /* Deferred Rpt1 lane switch (coalescing workaround: must be sole set_param in its tick) */
