@@ -987,7 +987,6 @@ static void set_param(void *instance, const char *key, const char *val) {
                 clip_migrate_to_notes(dst);
             }
             inst->drum_undo_valid = 0;
-            seq8_save_state(inst);
             return;
         }
         if (!inst->undo_valid) return;
@@ -1003,7 +1002,6 @@ static void set_param(void *instance, const char *key, const char *val) {
                            inst->undo_clip_tracks, inst->undo_clip_indices,
                            inst->undo_clip_count);
         inst->undo_valid = 0;
-        seq8_save_state(inst);
         return;
     }
 
@@ -1044,7 +1042,6 @@ static void set_param(void *instance, const char *key, const char *val) {
                 clip_migrate_to_notes(dst);
             }
             inst->drum_redo_valid = 0;
-            seq8_save_state(inst);
             return;
         }
         if (!inst->redo_valid) return;
@@ -1060,7 +1057,6 @@ static void set_param(void *instance, const char *key, const char *val) {
                            inst->redo_clip_tracks, inst->redo_clip_indices,
                            inst->redo_clip_count);
         inst->redo_valid = 0;
-        seq8_save_state(inst);
         return;
     }
 
