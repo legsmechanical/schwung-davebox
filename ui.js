@@ -3313,7 +3313,8 @@ globalThis.tick = function () {
     /* Suspend detection: host swaps clear_screen to a no-op while we're parked.
      * Save state on the transition edge; let tick run normally (display is no-oped by host). */
     const isSuspended = _origClearScreen && (clear_screen !== _origClearScreen);
-    if (isSuspended && !_wasSuspended) saveState();
+    if (isSuspended && !_wasSuspended) { saveState(); removeFlagsWrap(); }
+    if (!isSuspended && _wasSuspended) installFlagsWrap();
     _wasSuspended = isSuspended;
 
     /* Metro note-off */
