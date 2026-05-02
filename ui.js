@@ -580,6 +580,7 @@ let masterPos            = 0;        /* DSP arp_master_tick (free-running 96-PPQ
 let dspLooperState       = 0;        /* 0=idle, 1=armed, 2=capturing, 3=looping */
 let dspMergeState        = 0;        /* 0=idle, 1=armed, 2=capturing */
 let dspMergeDstClip      = 0;        /* destination clip index of active merge */
+let pendingBankRefresh   = -1;       /* track index: refresh per-clip bank params next poll (-1=none) */
 let tickCount            = 0;
 const POLL_INTERVAL  = 4;
 
@@ -749,6 +750,10 @@ let globalMenuStack       = null;
 let bpmWasEditing         = false;
 let lastSentMenuEditValue = null;  /* dedup: only send set_param when edit value changes */
 let confirmClearSession   = false; /* showing Clear Session confirmation dialog */
+let confirmBake           = false; /* showing Bake confirmation dialog */
+let confirmBakeSel        = 1;     /* 0=Yes, 1=No; default No */
+let confirmBakeTrack      = 0;
+let confirmBakeClip       = 0;
 
 /* Tap Tempo screen state */
 let tapTempoOpen      = false;
@@ -1322,6 +1327,35 @@ function drawClearSessionConfirm() {
     }
 }
 
+function drawBakeConfirm() {
+    clear_screen();
+    drawMenuHeader('BAKE FX?');
+    print(4, 16, 'Apply effects chain', 1);
+    print(4, 25, 'to clip notes and', 1);
+    print(4, 34, 'clear the settings.', 1);
+    const noX = 6, yesX = 74, btnY = 46, btnW = 46, btnH = 13;
+    if (confirmBakeSel === 1) {
+        fill_rect(noX, btnY, btnW, btnH, 1);
+        print(noX + 17, btnY + 3, 'No', 0);
+    } else {
+        fill_rect(noX, btnY, btnW, 1, 1);
+        fill_rect(noX, btnY + btnH - 1, btnW, 1, 1);
+        fill_rect(noX, btnY, 1, btnH, 1);
+        fill_rect(noX + btnW - 1, btnY, 1, btnH, 1);
+        print(noX + 17, btnY + 3, 'No', 1);
+    }
+    if (confirmBakeSel === 0) {
+        fill_rect(yesX, btnY, btnW, btnH, 1);
+        print(yesX + 14, btnY + 3, 'Yes', 0);
+    } else {
+        fill_rect(yesX, btnY, btnW, 1, 1);
+        fill_rect(yesX, btnY + btnH - 1, btnW, 1, 1);
+        fill_rect(yesX, btnY, 1, btnH, 1);
+        fill_rect(yesX + btnW - 1, btnY, 1, btnH, 1);
+        print(yesX + 14, btnY + 3, 'Yes', 1);
+    }
+}
+
 function drawGlobalMenu() {
     if (tapTempoOpen)       { drawTapTempoScreen();       return; }
     if (confirmClearSession) { drawClearSessionConfirm(); return; }
@@ -1689,6 +1723,13 @@ function pollDSP() {
     if (v.length >= 55) dspLooperState  = parseInt(v[54], 10) | 0;
     if (v.length >= 56) dspMergeState   = parseInt(v[55], 10) | 0;
     if (v.length >= 57) dspMergeDstClip = parseInt(v[56], 10) | 0;
+
+    /* Deferred bank refresh after bake */
+    if (pendingBankRefresh >= 0) {
+        refreshPerClipBankParams(pendingBankRefresh);
+        pendingBankRefresh = -1;
+        screenDirty = true;
+    }
 
     /* Drum playhead: poll active lane's current step for active drum track */
     if (trackPadMode[activeTrack] === PAD_MODE_DRUM) {
@@ -2812,6 +2853,7 @@ function drawPerfModeOled() {
 
 function drawUI() {
     if (sessionOverlayHeld) { drawSessionOverview(); return; }
+    if (confirmBake) { drawBakeConfirm(); return; }
     if (globalMenuOpen) { drawGlobalMenu(); return; }
     /* Perf Mode OLED takeover (Session View + Loop held or locked) */
     if (sessionView && (loopHeld || perfViewLocked)) { drawPerfModeOled(); return; }
@@ -4033,6 +4075,20 @@ globalThis.onMidiMessageInternal = function (data) {
     }
 
     if (status === 0xB0) {
+        /* Bake confirm: jog click confirms/cancels when dialog is open */
+        if (d1 === 3 && d2 === 127 && confirmBake) {
+            if (confirmBakeSel === 0) {
+                host_module_set_param('bake', confirmBakeTrack + ' ' + confirmBakeClip);
+                undoAvailable = true; redoAvailable = false; undoSeqArpSnapshot = null;
+                showActionPopup('BAKED');
+                /* Force a pfx bank refresh on the next poll so knobs show updated params */
+                pendingBankRefresh = confirmBakeTrack;
+            }
+            confirmBake = false;
+            screenDirty = true;
+            return;
+        }
+
         /* CC 3 = jog wheel physical click */
         if (d1 === 3 && d2 === 127 && globalMenuOpen) {
             if (tapTempoOpen) {
@@ -4138,6 +4194,11 @@ globalThis.onMidiMessageInternal = function (data) {
         }
 
         if (d1 === MoveMainKnob) {
+            if (confirmBake) {
+                const delta = decodeDelta(d2);
+                if (delta !== 0) { confirmBakeSel = confirmBakeSel === 0 ? 1 : 0; screenDirty = true; }
+                return;
+            }
             if (globalMenuOpen && !shiftHeld) {
                 if (tapTempoOpen) {
                     const delta = decodeDelta(d2);
@@ -4271,6 +4332,9 @@ globalThis.onMidiMessageInternal = function (data) {
                     else { openGlobalMenu(); }
                 } else if (globalMenuOpen && tapTempoOpen) {
                     closeTapTempo();
+                    forceRedraw();
+                } else if (confirmBake) {
+                    confirmBake = false;
                     forceRedraw();
                 } else if (globalMenuOpen && confirmClearSession) {
                     confirmClearSession = false;
@@ -4473,6 +4537,9 @@ globalThis.onMidiMessageInternal = function (data) {
             if (globalMenuOpen && tapTempoOpen) {
                 closeTapTempo();
                 forceRedraw();
+            } else if (confirmBake) {
+                confirmBake = false;
+                forceRedraw();
             } else if (globalMenuOpen && confirmClearSession) {
                 confirmClearSession = false;
                 forceRedraw();
@@ -4611,6 +4678,15 @@ globalThis.onMidiMessageInternal = function (data) {
                     host_module_set_param('t' + activeTrack + '_recording', '1');
                 undoAvailable = true; redoAvailable = false; undoSeqArpSnapshot = null;
             }
+        }
+
+        /* Shift+Capture (CC 52): open Bake FX confirmation dialog */
+        if (d1 === MoveCapture && d2 === 127 && shiftHeld) {
+            confirmBake      = true;
+            confirmBakeSel   = 1;
+            confirmBakeTrack = activeTrack;
+            confirmBakeClip  = trackActiveClip[activeTrack];
+            screenDirty      = true;
         }
 
         /* Shift+Sample (CC 118): arm / disarm Live Merge for activeTrack */

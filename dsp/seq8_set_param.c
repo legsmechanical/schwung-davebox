@@ -620,6 +620,14 @@ static void set_param(void *instance, const char *key, const char *val) {
         merge_finalize(inst);
         return;
     }
+    if (!strcmp(key, "bake")) {
+        /* val = "T C" — apply pfx chain offline and clear params */
+        int bt = 0, bc = 0;
+        sscanf(val, "%d %d", &bt, &bc);
+        if (bt >= 0 && bt < NUM_TRACKS && bc >= 0 && bc < NUM_CLIPS)
+            bake_clip(inst, bt, bc);
+        return;
+    }
     if (!strcmp(key, "perf_mods")) {
         inst->perf_mods_active = (uint32_t)(unsigned int)my_atoi(val);
         return;

@@ -3688,6 +3688,232 @@ static void cc_auto_set_point(cc_auto_t *a, int k, uint16_t tick, uint8_t val) {
     a->count[k]++;
 }
 
+/* ------------------------------------------------------------------ */
+/* Print/Bake: offline apply pfx chain (NOTEFX+HARMZ → MIDI_DLY →    */
+/* ARP_OUT) to a clip's notes and clear the pfx params.               */
+/* Stage order is defined by BAKE_STAGES[]; swap the two entries to   */
+/* reorder MIDI_DLY and ARP_OUT when chain-position switching arrives. */
+/* ------------------------------------------------------------------ */
+
+#define BAKE_STAGE_MIDI_DLY  0
+#define BAKE_STAGE_ARP_OUT   1
+static const int BAKE_STAGES[2] = { BAKE_STAGE_MIDI_DLY, BAKE_STAGE_ARP_OUT };
+
+typedef struct {
+    uint32_t tick; uint16_t gate; uint8_t pitch; uint8_t vel;
+} bake_note_t;
+
+#define BAKE_BUF  MAX_NOTES_PER_CLIP
+
+static int bake_stage_midi_dly(seq8_instance_t *inst, int scale_aware,
+                                play_fx_t *fx, uint32_t clip_ticks,
+                                const bake_note_t *in, int in_count,
+                                bake_note_t *out, int out_max) {
+    int oc = 0, ni;
+    for (ni = 0; ni < in_count && oc < out_max; ni++)
+        out[oc++] = in[ni];
+    if (fx->repeat_times <= 0 || fx->delay_level <= 0 || fx->delay_time_idx <= 0)
+        return oc;
+    int dclk_master = CLOCK_VALUES[fx->delay_time_idx] / 5; /* 480→96 PPQN */
+    if (dclk_master <= 0) return oc;
+    for (ni = 0; ni < in_count && oc < out_max; ni++) {
+        int rep_vel     = (int)in[ni].vel * fx->delay_level / 127;
+        int cumul_pitch = 0, cumul_deg = 0;
+        double cur_delay = (double)dclk_master, cumul = 0.0;
+        int rep;
+        for (rep = 0; rep < fx->repeat_times && oc < out_max; rep++) {
+            cumul += cur_delay;
+            uint32_t echo_tick = in[ni].tick + (uint32_t)(cumul + 0.5);
+            if (echo_tick >= clip_ticks) break;
+            if (fx->fb_note_random) {
+                if (scale_aware) {
+                    int lim = (int)SCALE_SIZES[inst->pad_scale < 14 ? inst->pad_scale : 0];
+                    cumul_deg = pfx_rand(fx, -lim, lim);
+                } else {
+                    cumul_pitch = pfx_rand(fx, -12, 12);
+                }
+            } else {
+                if (scale_aware) cumul_deg   += fx->fb_note;
+                else             cumul_pitch += fx->fb_note;
+            }
+            int echo_pitch = scale_aware
+                ? scale_transpose(inst, (int)in[ni].pitch, cumul_deg)
+                : clamp_i((int)in[ni].pitch + cumul_pitch, 0, 127);
+            if (rep > 0) rep_vel += fx->fb_velocity;
+            rep_vel = clamp_i(rep_vel, 1, 127);
+            double gf = 1.0;
+            int k;
+            for (k = 0; k <= rep; k++) gf *= (1.0 + fx->fb_gate_time / 100.0);
+            uint32_t eg = (uint32_t)((double)in[ni].gate * gf + 0.5);
+            if (eg < 1) eg = 1; if (eg > 65535u) eg = 65535u;
+            out[oc++] = (bake_note_t){ echo_tick, (uint16_t)eg,
+                                       (uint8_t)echo_pitch, (uint8_t)rep_vel };
+            cur_delay *= (1.0 + fx->fb_clock / 100.0);
+            if (cur_delay < 1.0) cur_delay = 1.0;
+        }
+    }
+    return oc;
+}
+
+static int bake_stage_arp_out(play_fx_t *fx, uint32_t clip_ticks,
+                               const bake_note_t *in, int in_count,
+                               bake_note_t *out, int out_max) {
+    int n, i;
+    if (fx->arp.style == 0) {
+        n = in_count < out_max ? in_count : out_max;
+        for (i = 0; i < n; i++) out[i] = in[i];
+        return n;
+    }
+    /* Tick-by-tick ARP simulation. Retrigger always ON for bake. */
+    arp_engine_t a;
+    memset(&a, 0, sizeof(a));
+    a.style      = fx->arp.style;
+    a.rate_idx   = fx->arp.rate_idx;
+    a.octaves    = fx->arp.octaves;
+    a.gate_pct   = fx->arp.gate_pct;
+    a.steps_mode = fx->arp.steps_mode;
+    a.retrigger  = 1;
+    memcpy(a.step_vel, fx->arp.step_vel, sizeof(a.step_vel));
+
+    uint16_t rate = ARP_RATE_TICKS[a.rate_idx];
+    if (rate == 0) rate = 24;
+
+    int oc = 0;
+    uint32_t master_tick = 0, tick;
+    for (tick = 0; tick < clip_ticks; tick++, master_tick++) {
+        /* Note-ons */
+        int ni;
+        for (ni = 0; ni < in_count; ni++) {
+            if (in[ni].tick != tick) continue;
+            int was_empty = (a.held_count == 0);
+            arp_add_note(&a, in[ni].pitch, in[ni].vel);
+            if (was_empty || a.retrigger)
+                arp_retrigger(&a, master_tick);
+        }
+        /* Note-offs */
+        for (ni = 0; ni < in_count; ni++) {
+            if ((uint32_t)(in[ni].tick + in[ni].gate) == tick)
+                arp_remove_note(&a, in[ni].pitch);
+        }
+        if (a.held_count == 0) continue;
+
+        if (a.pending_first_note) {
+            uint32_t total = master_tick - a.master_anchor;
+            if ((total % rate) != 0) continue;
+            a.pending_first_note = 0;
+            /* fall through to fire */
+        } else {
+            a.ticks_until_next--;
+            if (a.ticks_until_next > 0) continue;
+        }
+
+        /* Compute step_pos from master position */
+        uint32_t mp = master_tick - a.master_anchor;
+        a.step_pos  = (uint8_t)((mp / rate) & 7u);
+        uint8_t slevel = a.step_vel[a.step_pos];
+        int step_off   = (a.steps_mode != 0) && (slevel == 0);
+
+        if (step_off && a.steps_mode == 2) {
+            a.ticks_until_next = (int32_t)rate;
+            continue;
+        }
+        uint8_t pitch, vel;
+        if (!step_off && arp_compute_step(&a, fx, &pitch, &vel)) {
+            int v = (int)vel;
+            if (a.steps_mode != 0 && slevel >= 1 && slevel < 4) {
+                int span = v - 10;
+                v = 10 + (span * (slevel - 1)) / 3;
+            }
+            if (v < 1) v = 1; if (v > 127) v = 127;
+            uint32_t gate = ((uint32_t)rate * a.gate_pct) / 100u;
+            if (gate < 1) gate = 1;
+            if (gate >= rate) gate = rate - 1;
+            if (oc < out_max)
+                out[oc++] = (bake_note_t){ tick, (uint16_t)gate, pitch, (uint8_t)v };
+        } else if (step_off) {
+            /* Mute mode: advance cycle */
+            uint8_t dp, dv;
+            arp_compute_step(&a, fx, &dp, &dv);
+        }
+        a.cycle_step_count++;
+        a.ticks_until_next = (int32_t)rate;
+    }
+    return oc;
+}
+
+static void bake_clip(seq8_instance_t *inst, int t, int c) {
+    seq8_track_t *tr = &inst->tracks[t];
+    clip_t *cl;
+    int ni;
+    if (tr->pad_mode == PAD_MODE_DRUM) return; /* per-lane bake not yet supported */
+    cl = &tr->clips[c];
+    if (cl->note_count == 0) return;
+
+    undo_begin_single(inst, t, c);
+
+    play_fx_t fx;
+    pfx_init_defaults(&fx);
+    pfx_apply_params(&fx, &cl->pfx_params);
+    fx.track_idx = (uint8_t)t;
+    fx.route     = ROUTE_SCHWUNG;
+    fx.rng       = 0xDEADBEEFu;
+
+    int scale_aware = (int)inst->scale_aware;
+    uint16_t tps    = cl->ticks_per_step ? cl->ticks_per_step : (uint16_t)TICKS_PER_STEP;
+    uint16_t length = cl->length;
+    uint32_t clip_ticks = (uint32_t)length * tps;
+
+    static bake_note_t bake_a[BAKE_BUF];
+    static bake_note_t bake_b[BAKE_BUF];
+    int a_count = 0;
+
+    /* Stage 0: NOTEFX + HARMZ */
+    for (ni = 0; ni < cl->note_count && a_count < BAKE_BUF; ni++) {
+        note_t *nn = &cl->notes[ni];
+        if (nn->suppress_until_wrap) continue;
+        uint32_t gate = (uint32_t)nn->gate;
+        if (fx.gate_time != 100 && fx.gate_time > 0)
+            gate = gate * (uint32_t)fx.gate_time / 100u;
+        if (gate < 1) gate = 1; if (gate > 65535u) gate = 65535u;
+        int vel = (int)nn->vel + fx.velocity_offset;
+        if (vel < 1) vel = 1; if (vel > 127) vel = 127;
+        uint8_t gen[MAX_GEN_NOTES];
+        int gc = pfx_build_gen_notes(inst, scale_aware, &fx, (int)nn->pitch, gen);
+        int gi;
+        for (gi = 0; gi < gc && a_count < BAKE_BUF; gi++)
+            bake_a[a_count++] = (bake_note_t){ nn->tick, (uint16_t)gate,
+                                               gen[gi], (uint8_t)vel };
+    }
+
+    /* Process BAKE_STAGES in order */
+    bake_note_t *in_buf = bake_a, *out_buf = bake_b;
+    int in_count = a_count;
+    int si;
+    for (si = 0; si < 2; si++) {
+        int out_count;
+        if (BAKE_STAGES[si] == BAKE_STAGE_MIDI_DLY)
+            out_count = bake_stage_midi_dly(inst, scale_aware, &fx, clip_ticks,
+                                            in_buf, in_count, out_buf, BAKE_BUF);
+        else
+            out_count = bake_stage_arp_out(&fx, clip_ticks,
+                                           in_buf, in_count, out_buf, BAKE_BUF);
+        bake_note_t *tmp = in_buf; in_buf = out_buf; out_buf = tmp;
+        in_count = out_count;
+    }
+
+    /* Write results back; clip_init also clears pfx_params */
+    clip_init(cl);
+    cl->ticks_per_step = tps;
+    cl->length         = length;
+    int ri;
+    for (ri = 0; ri < in_count; ri++) {
+        bake_note_t *bn = &in_buf[ri];
+        if (bn->tick < clip_ticks)
+            clip_insert_note(cl, bn->tick, bn->gate, bn->pitch, bn->vel);
+    }
+    inst->state_dirty = 1;
+}
+
 #include "seq8_set_param.c"
 
 /* ------------------------------------------------------------------ */
