@@ -4680,8 +4680,8 @@ globalThis.onMidiMessageInternal = function (data) {
             }
         }
 
-        /* Shift+Capture (CC 52): open Bake FX confirmation dialog */
-        if (d1 === MoveCapture && d2 === 127 && shiftHeld) {
+        /* Sample (CC 118, no modifier): open Bake FX confirmation dialog */
+        if (d1 === MoveSample && d2 === 127 && !shiftHeld) {
             confirmBake      = true;
             confirmBakeSel   = 1;
             confirmBakeTrack = activeTrack;
