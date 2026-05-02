@@ -33,9 +33,11 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 
 **Delete** (CC 119 held): step·clip·scene. Delete+jog=`tN_pfx_reset`; Shift+Delete+jog=full reset+SEQ ARP; Shift+Delete+clip=`tN_cC_hard_reset` (length=16,tps=24,all cleared). Delete+Play(playing)=`deactivate_all`; Delete+Play(stopped)=panic.
 
-**Active bank**: Shift+top-row pad (92–97), 6 banks: CLIP(0)·NOTE FX(1)·HARMZ(2)·MIDI DLY(3)·SEQ ARP(4)·TRACK ARP(5). Jog cycles 0–5. OLED priority: count-in→COMPRESS LIMIT→pop-ups(~500ms)→step edit→bank overview→header. Conditional overlays: DRUM SEQ replaces CLIP(0) on drum tracks; NOTE/NOTEFX replaces NOTE FX(1) on drum tracks; RPT GROOVE replaces TRACK ARP(5) in repeat mode.
+**Active bank**: Shift+top-row pad (92–97), 7 banks: CLIP(0)·NOTE FX(1)·HARMZ(2)·MIDI DLY(3)·SEQ ARP(4)·TRACK ARP(5)·CC PARAM(6). Jog cycles 0–6. OLED priority: count-in→COMPRESS LIMIT→pop-ups(~500ms)→step edit→bank overview→header. Conditional overlays: DRUM SEQ replaces CLIP(0) on drum tracks; NOTE/NOTEFX replaces NOTE FX(1) on drum tracks; RPT GROOVE replaces TRACK ARP(5) in repeat mode.
 
 **CLIP bank**: Stretch(K1,lock), Clock Shift(K2), Nudge(K3,crosses ±tps/2), Resolution(K4,proportional; Shift+K4=zoom,blocked>256→"NOTES OUT OF RANGE"), Length(K5), Seq Follow(K8,JS-only,default ON,not persisted). NOTE FX K5 Quantize: `effective_tick_offset = raw*(100-q)/100`.
+
+**CC PARAM bank (bank 6)**: Per-track, per-clip CC automation on melodic tracks. 8 knob slots (K1-K8); Shift+K=assign CC number (turn jog). `cc_send` set_param records point into `clip_cc_auto[clip]` snapped to nearest 1/32 when `recording`. **Touch-record**: while recording, holding a knob (note 0-7 press) sets `cc_touch_held` bit, writes the current CC value (`cc_live_val[k]`) to the automation lane at every 1/32 boundary in the DSP render path, and suppresses automation playback for that knob indefinitely (not just `CC_TOUCH_GRACE_BLOCKS`). `cc_touch` set_param format: "K 1 V" (touch-on with initial value) / "K 0 0" (touch-off). **Step-edit**: hold step in bank 6 → OLED shows "CC S1-S16" with 4×2 knob grid; knobs write staircase hold via `cc_auto_set2` set_param ("C K T1 T2 V"), which atomically inserts two points at step start tick and `start + tps - 1`. No-note dialog suppressed in bank 6. **Delete**: Delete+jog=clear all CC automation for active clip (`cc_auto_clear`); Delete+knob turn OR Delete+knob touch=per-knob clear (`cc_auto_clear_k`). Both reset `trackCCLiveVal` and `cc_auto_last_sent[k]=0xFF`. **LED brightness**: scratch palette indices 51-58, updated at `POLL_INTERVAL` cadence (not every tick) via `ccPaletteCache` — only sends `setPaletteEntryRGB` SysEx when value changes. Armed=red, playback=green. After every `reapplyPalette`, force-resend `MovePlay` and `MoveRec` with `force=true` to bypass `input_filter.mjs` `buttonCache` (see Critical constraints). Static: VividYellow=has-automation, White=assigned-no-auto, Off=unassigned. `send_panic` fix: ROUTE_EXTERNAL uses CC120+CC123 instead of 128 note-offs (ext_queue is only 64 slots).
 
 **Suspend/Resume**: Back=suspend (sequencer keeps playing in background); Shift+Step13=resume (double-tap/long-press=direct, single-tap=Tools menu); Shift+Back=full exit. State auto-saved on suspend. `saveState()` helper used by suspend, Quit, and Shift+Back paths.
 
@@ -80,6 +82,7 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 12. ~~**Note Repeat**~~ **done** (Rpt1/Rpt2, RPT GROOVE, gate/vel_scale/nudge per lane).
 13. ~~**ROUTE_EXTERNAL**~~ **done** (Global Menu Route=Ext, USB-A output, verified on device).
 14. ~~**Bank reindex**~~ **done** — TRACK bank removed; config moved to Global Menu Track Config section. Banks: CLIP(0)·NOTE FX(1)·HARMZ(2)·MIDI DLY(3)·SEQ ARP(4)·TRACK ARP(5).
+15. ~~**CC automation**~~ **done** — CC PARAM bank (6), per-clip recording/playback, step-edit, touch-record (overwrite while held), staircase hold, delete (all/per-knob), full-res SysEx palette LED brightness (rate-limited), ROUTE_EXTERNAL panic fix.
 
 ## Per-set state
 
@@ -93,6 +96,8 @@ JS `init()` reads UUID, compares with `state_uuid` get_param. Mismatch → `stat
 - **No MIDI panic before state_load** — floods MIDI buffer, drops the load param.
 - **Shift+Back does not reload JS** — `init()` re-runs in same runtime. Full reboot required for JS changes.
 - **Suspend/resume** (`suspend_keeps_js`): Back=suspend (JS+DSP keep running in background), Shift+Step13=resume (double-tap or long-press for direct resume, single-tap for Tools menu). Shift+Back=full exit. State saved on suspend transition; LEDs re-initialized on resume. `installFlagsWrap` must be removed on suspend so `JUMP_TO_TOOLS` flag reaches shadow_ui for resume.
+- **`reapplyPalette` resets CC LED hardware states**: `input_filter.mjs` `setButtonLED` has its own `buttonCache` — it skips `move_midi_internal_send` if the color hasn't changed. When `reapplyPalette` fires, the Move hardware resets all CC-based button LEDs (Play, Rec, etc.) to off, but the JS-side `buttonCache` still holds the old color, so subsequent `setButtonLED` calls are silently dropped. Fix: call `setButtonLED(cc, color, true)` (force=true) immediately after `reapplyPalette` for any button LEDs that must stay on.
+- **Palette SysEx rate-limit**: rapid knob turns can trigger `setPaletteEntryRGB` + `reapplyPalette` every tick, filling `move_midi_internal_send` queue and delaying button LED CC updates. Rate-limit palette updates to `POLL_INTERVAL` cadence. Also use `ccPaletteCache` to skip SysEx when values haven't changed.
 
 ## Known limitations
 
@@ -111,7 +116,7 @@ JS `init()` reads UUID, compares with `state_uuid` get_param. Mismatch → `stat
 **Pad rows** (bottom-to-top): 68–75 · 76–83 · 84–91 · 92–99
 **Encoders**: `MoveMainKnob=14` (CC) · `MoveMainButton=3` (CC, jog click) · `MoveMainTouch=9` (note)
 **Step buttons**: notes 16–31, `0x90` (d2>0=press, d2=0=release).
-**LED palette**: Fixed 128-entry. Dim pairs: Red(127)→DeepRed(65) · Blue(125)→DarkBlue(95) · VividYellow(7)→Mustard(29) · Green(126)→DeepGreen(32).
+**LED palette**: Fixed 128-entry. Dim pairs: Red(127)→DeepRed(65) · Blue(125)→DarkBlue(95) · VividYellow(7)→Mustard(29) · Green(126)→DeepGreen(32). **Dynamic palette**: entries can be overwritten at runtime via SysEx `F0 00 21 1D 01 01 03 [idx rL rH gL gH bL bH wL wH] F7` then reapplied with `F0 00 21 1D 01 01 05 F7`. Color components are 14-bit split into 7-bit pairs (low, high); 0-255 maps as `rL=r&0x7F, rH=r>>7`. Scratch indices 51-58 reserved for CC knob LEDs.
 
 ## MIDI routing
 
@@ -129,8 +134,8 @@ ssh ableton@move.local "tail -f /data/UserData/schwung/seq8.log"
 
 **DSP logging**: Use `seq8_ilog(inst, msg)` — writes to seq8.log via `inst->log_fp`. `fprintf(stderr, ...)` goes to MoveOriginal's uncaptured stderr and will NOT appear in any log file.
 
-**JS**: `ui.js` (~6200 lines) + `ui_constants.mjs` (217 lines). Both must deploy together.
-**DSP**: `dsp/seq8.c` (~4119 lines) `#include`s `dsp/seq8_set_param.c` (~2986 lines). Single translation unit — no extern declarations.
+**JS**: `ui.js` (~6483 lines) + `ui_constants.mjs` (217 lines). Both must deploy together.
+**DSP**: `dsp/seq8.c` (~4589 lines) `#include`s `dsp/seq8_set_param.c` (~3316 lines). Single translation unit — no extern declarations.
 Schwung core: v0.9.9. GLIBC ≤ 2.35. `~/schwung-notetwist` — NoteTwist reference.
 
 ## graphify
