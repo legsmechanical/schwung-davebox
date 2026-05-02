@@ -1154,6 +1154,8 @@ static void set_param(void *instance, const char *key, const char *val) {
                 tr->pfx.route = ROUTE_SCHWUNG;
             else if (!strcmp(val, "move"))
                 tr->pfx.route = ROUTE_MOVE;
+            else if (!strcmp(val, "external"))
+                tr->pfx.route = ROUTE_EXTERNAL;
             return;
         }
 

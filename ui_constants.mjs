@@ -86,7 +86,7 @@ export function fmtPages(v)  { return v + 'pg'; }
 export function fmtUnis(v)   { return ['OFF','x2','x3'][v] || 'OFF'; }
 export function fmtDly(v)    { return DELAY_LABELS[v] || '---'; }
 export function fmtBool(v)   { return v ? 'ON' : 'OFF'; }
-export function fmtRoute(v)  { return v ? 'Move' : 'Swng'; }
+export function fmtRoute(v)  { return v === 2 ? 'Ext' : v === 1 ? 'Move' : 'Swng'; }
 export function fmtPlain(v)  { return String(v); }
 export function fmtNA()      { return '-'; }
 export function fmtArpStyle(v) { return ['Off','Up','Dn','U/D','D/U','Cnv','Div','Ord','Rnd','RnO'][v] || 'Off'; }

@@ -102,7 +102,7 @@ const BANKS = [
     /* 0 — TRACK (pad 92) */
     { name: 'TRACK', knobs: [
         p('Ch',   'MIDI Channel', 'channel',  'track', 1, 16, 1, fmtPlain, 6),
-        p('Rte',  'Route',        'route',    'track', 0, 1,  0, fmtRoute),
+        p('Rte',  'Route',        'route',    'track', 0, 2,  0, fmtRoute),
         p('Mode', 'Track Mode',   'pad_mode', 'track', 0, 1,  0, function(v) { return v ? 'Drums' : 'Keys'; }, 32),
         _X,
         p('VelIn', 'Input Velocity', 'track_vel_override', 'track', 0, 127, 0, fmtVelOverride, 1),
@@ -1821,7 +1821,7 @@ function readBankParams(t, bankIdx) {
         if (pm.dspKey === 'harm_unison') {
             bankParams[t][bankIdx][k] = raw === 'x2' ? 1 : raw === 'x3' ? 2 : 0;
         } else if (pm.dspKey === 'route') {
-            bankParams[t][bankIdx][k] = raw === 'move' ? 1 : 0;
+            bankParams[t][bankIdx][k] = raw === 'external' ? 2 : raw === 'move' ? 1 : 0;
         } else if (pm.dspKey === 'delay_pitch_random') {
             bankParams[t][bankIdx][k] = (raw === 'on' || raw === '1') ? 1 : 0;
         } else {
@@ -1847,7 +1847,7 @@ function applyBankParam(t, bankIdx, knobIdx, val) {
     } else if (pm.scope === 'track') {
         let strVal;
         if      (pm.dspKey === 'harm_unison')       strVal = ['OFF','x2','x3'][val] || 'OFF';
-        else if (pm.dspKey === 'route')              strVal = val ? 'move' : 'schwung';
+        else if (pm.dspKey === 'route')              strVal = val === 2 ? 'external' : val === 1 ? 'move' : 'schwung';
         else if (pm.dspKey === 'delay_pitch_random') strVal = val ? 'on' : 'off';
         else                                         strVal = String(val);
         /* Drum mode: pfx banks (2=NOTE FX, 3=HARMZ, 5=MIDI DLY) route to the active lane */
@@ -1885,15 +1885,19 @@ function applyBankParam(t, bankIdx, knobIdx, val) {
  * channel and route from the TRACK bank params (bank 0, knobs 0 and 1). */
 function liveSendNote(t, type, pitch, vel) {
     const ch    = (bankParams[t][0][0] - 1) & 0x0F;  /* Ch knob: 1-indexed → 0-indexed */
-    const route = bankParams[t][0][1];                /* Rte knob: 0=Schwung, 1=Move */
+    const route = bankParams[t][0][1];                /* Rte knob: 0=Schwung, 1=Move, 2=External */
     const status = type | ch;
-    /* Per-track InVel override (K5, ROUTE_SCHWUNG only): absolute (1-127) overrides raw vel.
+    /* Per-track InVel override (K5): absolute (1-127) overrides raw vel.
      * ROUTE_MOVE handled by DSP effective_vel() in the live_notes/record_note_on path. */
     if (type === 0x90 && vel > 0 && route !== 1) {
         const tvo = bankParams[t][0][4];
         if (tvo > 0) vel = tvo;
     }
-    if (route === 1) {
+    if (route === 2) {
+        const cin = (status >> 4) & 0x0F;
+        if (typeof move_midi_external_send === 'function')
+            move_midi_external_send([cin, status, pitch, vel]);
+    } else if (route === 1) {
         /* When recording is active, record_note_on/off DSP handlers do live monitoring
          * inline — skip buffering here to avoid coalescing with those set_params. */
         const activelyRecording = recordArmed && !recordCountingIn && recordArmedTrack === t;
@@ -3326,6 +3330,22 @@ globalThis.tick = function () {
             for (const e of evts) if (e.isOff)  parts.push('off ' + e.pitch);
             for (const e of evts) if (!e.isOff) parts.push('on '  + e.pitch + ' ' + e.vel);
             host_module_set_param('t' + _t + '_live_notes', parts.join(' '));
+        }
+    }
+
+    /* Drain ROUTE_EXTERNAL queue: DSP enqueues sequenced notes; JS sends via USB-A */
+    if (typeof host_module_get_param === 'function') {
+        const eq = host_module_get_param('ext_queue');
+        if (eq && eq.length > 0) {
+            const msgs = eq.split(';');
+            for (let mi = 0; mi < msgs.length; mi++) {
+                const p = msgs[mi].split(' ');
+                if (p.length < 3) continue;
+                const s = parseInt(p[0], 10), d1 = parseInt(p[1], 10), d2 = parseInt(p[2], 10);
+                const cin = (s >> 4) & 0x0F;
+                if (typeof move_midi_external_send === 'function')
+                    move_midi_external_send([cin, s, d1, d2]);
+            }
         }
     }
 

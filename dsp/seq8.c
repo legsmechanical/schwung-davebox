@@ -38,8 +38,9 @@
 /* MIDI routing: where track output is delivered */
 #define ROUTE_SCHWUNG  0   /* host->midi_send_internal → Schwung active chain */
 #define ROUTE_MOVE     1   /* host->midi_inject_to_move → Move native tracks */
+#define ROUTE_EXTERNAL 2   /* USB-A out: DSP enqueues → JS drains via get_param("ext_queue") */
 
-/* External MIDI queue: DSP buffers ROUTE_MOVE events; JS drains via get_param("ext_queue") */
+/* External MIDI queue: DSP buffers ROUTE_EXTERNAL events; JS drains and sends via move_midi_external_send */
 #define EXT_QUEUE_SIZE 64
 typedef struct { uint8_t s; uint8_t d1; uint8_t d2; } ext_msg_t;
 
@@ -970,7 +971,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
 
         snprintf(key, sizeof(key), "t%d_rt", t);
         inst->tracks[t].pfx.route = (uint8_t)clamp_i(
-            json_get_int(buf, key, ROUTE_SCHWUNG), ROUTE_SCHWUNG, ROUTE_MOVE);
+            json_get_int(buf, key, ROUTE_SCHWUNG), ROUTE_SCHWUNG, ROUTE_EXTERNAL);
 
         snprintf(key, sizeof(key), "t%d_lp", t);
         inst->tracks[t].pfx.looper_on = (uint8_t)(json_get_int(buf, key, 1) ? 1 : 0);
@@ -1300,13 +1301,21 @@ static void seq8_load_state(seq8_instance_t *inst) {
 /* ------------------------------------------------------------------ */
 
 /* Send 3-byte MIDI message. Routes on fx->route:
- *   ROUTE_SCHWUNG → midi_send_internal (Schwung chain, immediate)
- *   ROUTE_MOVE    → midi_inject_to_move (cable 2, CIN from status; NULL-safe) */
+ *   ROUTE_SCHWUNG  → midi_send_internal (Schwung chain, immediate)
+ *   ROUTE_MOVE     → midi_inject_to_move (cable 2, CIN from status; NULL-safe)
+ *   ROUTE_EXTERNAL → ext_queue ring buffer (JS drains via get_param) */
 /* Forward decls — arp engine and scale_transpose defined further down. */
 static void arp_add_note     (arp_engine_t *a, uint8_t pitch, uint8_t vel);
 static void arp_remove_note  (arp_engine_t *a, uint8_t pitch);
 static void arp_silence      (seq8_instance_t *inst, seq8_track_t *tr);
 static int  scale_transpose  (seq8_instance_t *inst, int note, int deg_offset);
+
+static void ext_queue_push(seq8_instance_t *inst, uint8_t s, uint8_t d1, uint8_t d2) {
+    int next = (inst->ext_head + 1) % EXT_QUEUE_SIZE;
+    if (next == inst->ext_tail) return;   /* full — drop newest */
+    inst->ext_queue[inst->ext_head] = (ext_msg_t){ s, d1, d2 };
+    inst->ext_head = next;
+}
 
 static void pfx_send(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
     /* SEQ ARP is the last chain stage. Any note-on/off coming out of the
@@ -1350,6 +1359,10 @@ static void pfx_send(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
         if (!g_host->midi_inject_to_move) return;
         uint8_t pkt[4] = { (uint8_t)(0x20 | (status >> 4)), status, d1, d2 };
         g_host->midi_inject_to_move(pkt, 4);
+        return;
+    }
+    if (fx->route == ROUTE_EXTERNAL) {
+        if (g_inst) ext_queue_push(g_inst, status, d1, d2);
         return;
     }
     const uint8_t msg[4] = { (uint8_t)(status >> 4), status, d1, d2 };
@@ -3475,7 +3488,8 @@ static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
 
     if (!strcmp(key, "route"))
         return snprintf(out, out_len, "%s",
-                        fx->route == ROUTE_MOVE ? "move" : "schwung");
+                        fx->route == ROUTE_EXTERNAL ? "external" :
+                        fx->route == ROUTE_MOVE     ? "move"     : "schwung");
 
     if (!strcmp(key, "track_looper"))
         return snprintf(out, out_len, "%d", (int)fx->looper_on);
@@ -3596,7 +3610,7 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         return snprintf(out, out_len, "%.0f", b);
     }
 
-    /* ext_queue: drain ROUTE_MOVE events buffered by DSP render path.
+    /* ext_queue: drain ROUTE_EXTERNAL events buffered by DSP render path.
      * Returns "S D1 D2;S D1 D2;..." or "" if empty. Clears queue on read. */
     if (!strcmp(key, "ext_queue")) {
         if (!inst || inst->ext_head == inst->ext_tail)
