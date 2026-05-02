@@ -299,6 +299,7 @@ function buildGlobalMenuItems() {
             format: function(v) { return String(v | 0) + '%'; }
         }),
         createAction('Quit', function() {
+            saveState();
             removeFlagsWrap();
             ledInitComplete = false;
             invalidateLEDCache();
@@ -653,6 +654,10 @@ let redoSeqArpSnapshot = null;
 let trackMuted         = new Array(NUM_TRACKS).fill(false);
 let trackSoloed        = new Array(NUM_TRACKS).fill(false);
 let snapshots          = new Array(16).fill(null); /* null=empty, else {mute:[8], solo:[8]} */
+
+/* Suspend detection (suspend_keeps_js) */
+let _origClearScreen = null;
+let _wasSuspended    = false;
 
 /* Global menu state (Phase 5q) */
 let globalMenuOpen  = false;
@@ -1381,6 +1386,17 @@ function defaultStepNote() {
         if (d < bestDist) { bestDist = d; best = p; }
     }
     return best >= 0 ? best : Math.max(0, Math.min(127, padNoteMap[0] + trackOctave[activeTrack] * 12));
+}
+
+function saveState() {
+    if (typeof host_module_set_param === 'function') host_module_set_param('save', '1');
+    if (typeof host_write_file === 'function')
+        host_write_file(uuidToUiStatePath(currentSetUuid), JSON.stringify({
+            v: 2, at: activeTrack, ac: trackActiveClip.slice(), sv: sessionView ? 1 : 0,
+            dl: activeDrumLane.slice(),
+            pm: perfModsToggled, lm: perfLatchMode ? 1 : 0,
+            rs: perfRecalledSlot, us: perfSnapshots.slice(8)
+        }));
 }
 
 /* Synchronously zero every LED that SEQ8 owns — call before host_hide_module(). */
@@ -3286,10 +3302,19 @@ globalThis.init = function () {
     ledInitIndex    = 0;
 
     installFlagsWrap();
+
+    _origClearScreen = clear_screen;
+    _wasSuspended    = false;
 };
 
 globalThis.tick = function () {
     tickCount++;
+
+    /* Suspend detection: host swaps clear_screen to a no-op while we're parked.
+     * Save state on the transition edge; let tick run normally (display is no-oped by host). */
+    const isSuspended = _origClearScreen && (clear_screen !== _origClearScreen);
+    if (isSuspended && !_wasSuspended) saveState();
+    _wasSuspended = isSuspended;
 
     /* Metro note-off */
     if (metroNoteOffTick >= 0 && tickCount >= metroNoteOffTick) {
@@ -4128,19 +4153,12 @@ globalThis.onMidiMessageInternal = function (data) {
                 lastSentMenuEditValue = null;
                 forceRedraw();
             } else if (shiftHeld) {
+                saveState();
                 removeFlagsWrap();
                 ledInitComplete = false;
                 invalidateLEDCache();
                 clearAllLEDs();
                 for (let _i = 0; _i < 4; _i++) setButtonLED(40 + _i, LED_OFF);
-                if (typeof host_module_set_param === 'function') host_module_set_param('save', '1');
-                if (typeof host_write_file === 'function')
-                    host_write_file(uuidToUiStatePath(currentSetUuid), JSON.stringify({
-                        v: 2, at: activeTrack, ac: trackActiveClip.slice(), sv: sessionView ? 1 : 0,
-                        dl: activeDrumLane.slice(),
-                        pm: perfModsToggled, lm: perfLatchMode ? 1 : 0,
-                        rs: perfRecalledSlot, us: perfSnapshots.slice(8)
-                    }));
                 if (typeof host_hide_module === 'function') host_hide_module();
             }
         }
