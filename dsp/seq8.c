@@ -621,6 +621,9 @@ typedef struct {
     uint16_t perf_note_on_count;         /* total note-ons in loop (for ramp gate divisor) */
     uint16_t perf_current_event_idx;     /* set before each perf_apply() call (shuffle lookup) */
     uint8_t  perf_shuffle_pitches[LOOPER_MAX_EVENTS]; /* pitch permutation built at cycle start */
+    /* Deferred save: JS polls state_full get_param; audio thread only sets state_dirty */
+    char    state_buf[65536];
+    uint8_t state_dirty;
 } seq8_instance_t;
 
 static const host_api_v1_t *g_host = NULL;
@@ -758,10 +761,7 @@ static void ensure_parent_dir(const char *path) {
     }
 }
 
-static void seq8_save_state(seq8_instance_t *inst) {
-    ensure_parent_dir(inst->state_path);
-    FILE *fp = fopen(inst->state_path, "w");
-    if (!fp) return;
+static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
     int t, c;
     fprintf(fp, "{\"v\":18,\"playing\":%d", inst->playing);
     for (t = 0; t < NUM_TRACKS; t++)
@@ -976,6 +976,13 @@ static void seq8_save_state(seq8_instance_t *inst) {
     if (inst->metro_on != 1)   fprintf(fp, ",\"metro_on\":%d", (int)inst->metro_on);
     if (inst->metro_vol != 80) fprintf(fp, ",\"metro_vol\":%d", (int)inst->metro_vol);
     fprintf(fp, "}");
+}
+
+static void seq8_save_state(seq8_instance_t *inst) {
+    ensure_parent_dir(inst->state_path);
+    FILE *fp = fopen(inst->state_path, "w");
+    if (!fp) return;
+    seq8_do_serialize(inst, fp);
     fclose(fp);
 }
 
@@ -3685,6 +3692,33 @@ static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
 static int get_param(void *instance, const char *key, char *out, int out_len) {
     seq8_instance_t *inst = (seq8_instance_t *)instance;
     if (!key || !out || out_len <= 0) return -1;
+
+    if (!strcmp(key, "state_full")) {
+        if (inst->state_dirty) {
+            FILE *_fp = fmemopen(inst->state_buf, sizeof(inst->state_buf) - 1, "w");
+            if (_fp) {
+                seq8_do_serialize(inst, _fp);
+                long _pos = ftell(_fp);
+                fclose(_fp);
+                if (_pos >= 0 && _pos < (long)(sizeof(inst->state_buf) - 1)) {
+                    inst->state_buf[_pos] = '\0';
+                } else {
+                    /* overflow — fall back to synchronous file write */
+                    seq8_ilog(inst, "state_full: overflow, falling back to file write");
+                    seq8_save_state(inst);
+                    inst->state_buf[0] = '\0';
+                }
+            }
+            inst->state_dirty = 0;
+        }
+        size_t _len = strlen(inst->state_buf);
+        if (_len >= (size_t)out_len) _len = (size_t)(out_len - 1);
+        memcpy(out, inst->state_buf, _len);
+        out[_len] = '\0';
+        return (int)_len;
+    }
+    if (!strcmp(key, "state_dirty"))
+        return snprintf(out, out_len, "%d", (int)inst->state_dirty);
 
     if (!strcmp(key, "playing"))
         return snprintf(out, out_len, "%d", inst ? (int)inst->playing : 0);

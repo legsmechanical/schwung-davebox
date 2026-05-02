@@ -1810,6 +1810,13 @@ function pollDSP() {
         }
     }
 
+    /* Deferred DSP state save: fetch state_full (DSP serializes only when dirty) */
+    if (typeof host_write_file === 'function' && currentSetUuid) {
+        const _st = host_module_get_param('state_full');
+        if (_st && _st.length > 2)
+            host_write_file(uuidToStatePath(currentSetUuid), _st);
+    }
+
 }
 
 /* Reset NOTE FX, HARMZ, and MIDI DLY banks to DSP defaults for track t.
@@ -3856,6 +3863,7 @@ globalThis.tick = function () {
     }
 
     if (screenDirty) { screenDirty = false; drawUI(); }
+
 };
 
 /* ------------------------------------------------------------------ */

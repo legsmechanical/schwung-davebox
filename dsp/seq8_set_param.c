@@ -447,7 +447,7 @@ static void set_param(void *instance, const char *key, const char *val) {
     }
     if (!strcmp(key, "midi_in_channel")) {
         inst->midi_in_channel = (uint8_t)clamp_i(my_atoi(val), 0, 16);
-        seq8_save_state(inst);
+        inst->state_dirty = 1;
         return;
     }
     if (!strcmp(key, "launch_quant")) {
@@ -777,7 +777,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             srcTr->rec_pending_count = 0;
             srcTr->recording = 0;
             if (srcTr->queued_clip == srcC) srcTr->queued_clip = -1;
-            seq8_save_state(inst);
+            inst->state_dirty = 1;
         }
         return;
     }
@@ -819,7 +819,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             tr->recording = 0;
             if (tr->queued_clip == srcRow) tr->queued_clip = -1;
         }
-        seq8_save_state(inst);
+        inst->state_dirty = 1;
         return;
     }
 
@@ -858,7 +858,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 dst->lanes[l].midi_note = dst_midi_note;
                 clip_migrate_to_notes(dc);
             }
-            seq8_save_state(inst);
+            inst->state_dirty = 1;
         }
         return;
     }
@@ -904,7 +904,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 clip_init(sc);
                 src->lanes[l].midi_note = src_midi_note;
             }
-            seq8_save_state(inst);
+            inst->state_dirty = 1;
         }
         return;
     }
@@ -946,7 +946,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 tr->queued_clip = -1;
             }
         }
-        seq8_save_state(inst);
+        inst->state_dirty = 1;
         return;
     }
 
@@ -1313,7 +1313,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                     if (cl->step_note_count[sidx] == 0) return;
                     cl->step_vel[sidx] = (uint8_t)clamp_i(my_atoi(val), 0, 127);
                     clip_migrate_to_notes(cl);
-                    if (!tr->recording) seq8_save_state(inst);
+                    if (!tr->recording) inst->state_dirty = 1;
                     return;
                 }
                 if (!strcmp(q, "_gate")) {
@@ -1321,7 +1321,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                     { int gmax = SEQ_STEPS * cl->ticks_per_step; if (gmax > 65535) gmax = 65535;
                     cl->step_gate[sidx] = (uint16_t)clamp_i(my_atoi(val), 1, gmax); }
                     clip_migrate_to_notes(cl);
-                    if (!tr->recording) seq8_save_state(inst);
+                    if (!tr->recording) inst->state_dirty = 1;
                     return;
                 }
                 if (!strcmp(q, "_nudge")) {
@@ -1335,7 +1335,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                         cl->note_tick_offset[sidx][ni] = (int16_t)clamp_i(o, -tps_m1, tps_m1);
                     } }
                     clip_migrate_to_notes(cl);
-                    if (!tr->recording) seq8_save_state(inst);
+                    if (!tr->recording) inst->state_dirty = 1;
                     return;
                 }
                 if (!strcmp(q, "_reassign")) {
@@ -1393,7 +1393,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                         cl->active = (uint8_t)any;
                     }
                     clip_migrate_to_notes(cl);
-                    if (!tr->recording) seq8_save_state(inst);
+                    if (!tr->recording) inst->state_dirty = 1;
                     return;
                 }
                 if (!strcmp(q, "_copy_to")) {
@@ -1414,7 +1414,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                         cl->active = (uint8_t)any;
                     }
                     clip_migrate_to_notes(cl);
-                    seq8_save_state(inst);
+                    inst->state_dirty = 1;
                     return;
                 }
                 if (!strcmp(q, "_pitch")) {
@@ -1424,7 +1424,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                         cl->step_notes[sidx][n] = (uint8_t)clamp_i(
                             (int)cl->step_notes[sidx][n] + delta, 0, 127);
                     clip_migrate_to_notes(cl);
-                    if (!tr->recording) seq8_save_state(inst);
+                    if (!tr->recording) inst->state_dirty = 1;
                     return;
                 }
                 if (!strcmp(q, "_set_notes")) {
@@ -1447,7 +1447,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                             cl->note_tick_offset[sidx][i] = 0;
                         }
                         clip_migrate_to_notes(cl);
-                        if (!tr->recording) seq8_save_state(inst);
+                        if (!tr->recording) inst->state_dirty = 1;
                     }
                     return;
                 }
@@ -1492,7 +1492,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 } else if (tr->queued_clip == cidx) {
                     tr->queued_clip = -1;
                 }
-                seq8_save_state(inst);
+                inst->state_dirty = 1;
                 return;
             }
             if (!strncmp(p, "_clear_keep", 11) && p[11] == '\0') {
@@ -1521,7 +1521,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 tr->rec_pending_count = 0;
                 tr->recording = 0;
                 if (tr->queued_clip == cidx) tr->queued_clip = -1;
-                seq8_save_state(inst);
+                inst->state_dirty = 1;
                 return;
             }
             if (!strncmp(p, "_hard_reset", 11) && p[11] == '\0') {
@@ -1535,7 +1535,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 tr->rec_pending_count = 0;
                 tr->recording = 0;
                 if (tr->queued_clip == cidx) tr->queued_clip = -1;
-                seq8_save_state(inst);
+                inst->state_dirty = 1;
                 return;
             }
             if (!strncmp(p, "_drum_clear", 11) && p[11] == '\0') {
@@ -1569,7 +1569,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                     tr->recording = 0;
                     tr->rec_pending_count = 0;
                 }
-                seq8_save_state(inst);
+                inst->state_dirty = 1;
                 return;
             }
             if (!strncmp(p, "_drum_reset", 11) && p[11] == '\0') {
@@ -1590,7 +1590,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                     tr->rec_pending_count = 0;
                 }
                 if (tr->queued_clip == cidx) tr->queued_clip = -1;
-                seq8_save_state(inst);
+                inst->state_dirty = 1;
                 return;
             }
             return;
@@ -1624,7 +1624,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             if (tr->tick_in_step >= new_tps) tr->tick_in_step = 0;
             /* Rebuild step arrays from rescaled notes */
             clip_build_steps_from_notes(cl);
-            seq8_save_state(inst);
+            inst->state_dirty = 1;
             return;
         }
 
@@ -1648,7 +1648,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 tr->tick_in_step = 0;
             }
             clip_build_steps_from_notes(cl);
-            seq8_save_state(inst);
+            inst->state_dirty = 1;
             return;
         }
 
@@ -1668,43 +1668,43 @@ static void set_param(void *instance, const char *key, const char *val) {
             int _v = my_atoi(val) ? 1 : 0;
             if (tr->tarp_on && !_v) tarp_silence(inst, tr);
             tr->tarp_on = (uint8_t)_v;
-            seq8_save_state(inst);
+            inst->state_dirty = 1;
             return;
         }
         if (!strcmp(sub, "tarp_style")) {
             int _v = clamp_i(my_atoi(val), 1, 9);
             tr->tarp.style = (uint8_t)_v;
-            seq8_save_state(inst);
+            inst->state_dirty = 1;
             return;
         }
         if (!strcmp(sub, "tarp_rate")) {
             int _v = clamp_i(my_atoi(val), 0, 9);
             tr->tarp.rate_idx = (uint8_t)_v;
-            seq8_save_state(inst);
+            inst->state_dirty = 1;
             return;
         }
         if (!strcmp(sub, "tarp_octaves")) {
             int _v = clamp_i(my_atoi(val), -4, 4);
             if (_v == 0) _v = 1;
             tr->tarp.octaves = (int8_t)_v;
-            seq8_save_state(inst);
+            inst->state_dirty = 1;
             return;
         }
         if (!strcmp(sub, "tarp_gate")) {
             int _v = clamp_i(my_atoi(val), 1, 200);
             tr->tarp.gate_pct = (uint16_t)_v;
-            seq8_save_state(inst);
+            inst->state_dirty = 1;
             return;
         }
         if (!strcmp(sub, "tarp_steps_mode")) {
             int _v = clamp_i(my_atoi(val), 0, 2);
             tr->tarp.steps_mode = (uint8_t)_v;
-            seq8_save_state(inst);
+            inst->state_dirty = 1;
             return;
         }
         if (!strcmp(sub, "track_vel_override")) {
             tr->track_vel_override = (uint8_t)clamp_i(my_atoi(val), 0, 127);
-            seq8_save_state(inst);
+            inst->state_dirty = 1;
             return;
         }
         if (!strcmp(sub, "tarp_step_vel")) {
@@ -1718,14 +1718,14 @@ static void set_param(void *instance, const char *key, const char *val) {
             if (s < 0 || s > 7) return;
             lv = clamp_i(lv, 0, 4);
             tr->tarp.step_vel[s] = (uint8_t)lv;
-            seq8_save_state(inst);
+            inst->state_dirty = 1;
             return;
         }
         if (!strcmp(sub, "tarp_latch")) {
             int _v = my_atoi(val) ? 1 : 0;
             if (tr->tarp_latch && !_v) tarp_silence(inst, tr);
             tr->tarp_latch = (uint8_t)_v;
-            seq8_save_state(inst);
+            inst->state_dirty = 1;
             return;
         }
 
@@ -1740,7 +1740,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             while (*_p >= '0' && *_p <= '9') { _cc = _cc * 10 + (*_p - '0'); _p++; }
             if (_k < 0 || _k > 7) return;
             tr->cc_assign[_k] = (uint8_t)clamp_i(_cc, 0, 127);
-            seq8_save_state(inst);
+            inst->state_dirty = 1;
             return;
         }
         if (!strcmp(sub, "cc_send")) {
@@ -1804,7 +1804,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             cc_auto_set_point(&tr->clip_cc_auto[_c], _k,
                               (uint16_t)clamp_i(_tv, 0, 65535),
                               (uint8_t)clamp_i(_vv, 0, 127));
-            seq8_save_state(inst);
+            inst->state_dirty = 1;
             return;
         }
         if (!strcmp(sub, "cc_auto_set2")) {
@@ -1828,7 +1828,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             if (_t2 != _t1)
                 cc_auto_set_point(&tr->clip_cc_auto[_c], _k,
                                   (uint16_t)clamp_i(_t2, 0, 65535), (uint8_t)_vv);
-            seq8_save_state(inst);
+            inst->state_dirty = 1;
             return;
         }
         if (!strcmp(sub, "cc_auto_clear_k")) {
@@ -1846,7 +1846,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             memset(tr->clip_cc_auto[_c].vals[_k], 0, CC_AUTO_MAX_POINTS);
             if (_c == (int)tr->active_clip)
                 tr->cc_auto_last_sent[_k] = 0xFF;
-            seq8_save_state(inst);
+            inst->state_dirty = 1;
             return;
         }
         if (!strcmp(sub, "cc_auto_clear")) {
@@ -1859,7 +1859,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             memset(&tr->clip_cc_auto[_c], 0, sizeof(cc_auto_t));
             if (_c == (int)tr->active_clip)
                 memset(tr->cc_auto_last_sent, 0xFF, 8);
-            seq8_save_state(inst);
+            inst->state_dirty = 1;
             return;
         }
 
@@ -1874,7 +1874,7 @@ static void set_param(void *instance, const char *key, const char *val) {
 
             if (!strcmp(p2, "_lane_note")) {
                 dlane->midi_note = (uint8_t)clamp_i(my_atoi(val), 0, 127);
-                seq8_save_state(inst);
+                inst->state_dirty = 1;
                 return;
             }
             if (!strcmp(p2, "_mute")) {
@@ -1885,7 +1885,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 } else {
                     tr->drum_lane_mute &= ~bit;
                 }
-                seq8_save_state(inst);
+                inst->state_dirty = 1;
                 return;
             }
             if (!strcmp(p2, "_solo")) {
@@ -1902,7 +1902,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 } else {
                     tr->drum_lane_solo &= ~bit;
                 }
-                seq8_save_state(inst);
+                inst->state_dirty = 1;
                 return;
             }
             if (!strcmp(p2, "_clip_length")) {
@@ -1910,7 +1910,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 dlc->length = (uint16_t)newlen;
                 if (tr->drum_current_step[lane_idx] >= (uint16_t)newlen)
                     tr->drum_current_step[lane_idx] = 0;
-                seq8_save_state(inst);
+                inst->state_dirty = 1;
                 return;
             }
             if (!strcmp(p2, "_clear")) {
@@ -1928,7 +1928,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 dlc->note_count = 0;
                 memset(dlc->notes, 0, sizeof(dlc->notes));
                 dlc->occ_dirty = 1;
-                seq8_save_state(inst);
+                inst->state_dirty = 1;
                 return;
             }
 
@@ -1937,7 +1937,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 clip_init(dlc);
                 tr->drum_current_step[lane_idx]   = 0;
                 tr->drum_tick_in_step[lane_idx]   = 0;
-                seq8_save_state(inst);
+                inst->state_dirty = 1;
                 return;
             }
 
@@ -1957,7 +1957,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 if (tr->drum_current_step[lane_idx] >= dlc->length)
                     tr->drum_current_step[lane_idx] = (uint16_t)(dlc->length - 1);
                 clip_migrate_to_notes(dlc);
-                seq8_save_state(inst);
+                inst->state_dirty = 1;
                 return;
             }
 
@@ -1985,7 +1985,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 if (tr->drum_tick_in_step[lane_idx] >= new_tps)
                     tr->drum_tick_in_step[lane_idx] = 0;
                 clip_build_steps_from_notes(dlc);
-                seq8_save_state(inst);
+                inst->state_dirty = 1;
                 return;
             }
 
@@ -2113,7 +2113,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                     if (dlc->steps[i]) { any = 1; break; }
                 dlc->active = (uint8_t)any;
                 clip_migrate_to_notes(dlc);
-                seq8_save_state(inst);
+                inst->state_dirty = 1;
                 return;
             }
 
@@ -2170,13 +2170,13 @@ static void set_param(void *instance, const char *key, const char *val) {
                   dlc->active = (uint8_t)any;
                 }
                 clip_migrate_to_notes(dlc);
-                seq8_save_state(inst);
+                inst->state_dirty = 1;
                 return;
             }
 
             if (!strcmp(p2, "_nudge")) {
                 int dir = my_atoi(val);
-                if (dir == 0) { dlc->nudge_pos = 0; seq8_save_state(inst); return; }
+                if (dir == 0) { dlc->nudge_pos = 0; inst->state_dirty = 1; return; }
                 if (dir != 1 && dir != -1) return;
                 int len = (int)dlc->length;
                 if (len < 1) return;
@@ -2271,7 +2271,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                     tr->drum_tick_in_step[lane_idx] = 0;
                 }
                 clip_build_steps_from_notes(dlc);
-                seq8_save_state(inst);
+                inst->state_dirty = 1;
                 return;
             }
 
@@ -2288,13 +2288,13 @@ static void set_param(void *instance, const char *key, const char *val) {
                     !strcmp(pfx_key, "pfx_harm_reset") || !strcmp(pfx_key, "pfx_delay_reset"))
                     undo_begin_single(inst, tidx, (int)tr->active_clip);
                 pfx_set(inst, tr, &dlane->clip.pfx_params, pfx_key, sp);
-                seq8_save_state(inst);
+                inst->state_dirty = 1;
                 return;
             }
             if (!strcmp(p2, "_pfx_reset")) {
                 undo_begin_single(inst, tidx, (int)tr->active_clip);
                 pfx_set(inst, tr, &dlane->clip.pfx_params, "pfx_reset", "1");
-                seq8_save_state(inst);
+                inst->state_dirty = 1;
                 return;
             }
 
@@ -2321,7 +2321,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                     tr->drum_repeat_gate[dstLane] = tr->drum_repeat_gate[lane_idx];
                     memcpy(tr->drum_repeat_vel_scale[dstLane], tr->drum_repeat_vel_scale[lane_idx], 8);
                     memcpy(tr->drum_repeat_nudge[dstLane],     tr->drum_repeat_nudge[lane_idx],     8);
-                    seq8_save_state(inst);
+                    inst->state_dirty = 1;
                 }
                 return;
             }
@@ -2356,7 +2356,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                     pfx_note_off_imm(inst, tr, src_midi_note);
                     clip_init(dlc);
                     dlane->midi_note = src_midi_note;
-                    seq8_save_state(inst);
+                    inst->state_dirty = 1;
                 }
                 return;
             }
@@ -2388,7 +2388,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                       for (i = 0; i < SEQ_STEPS; i++) if (dlc->steps[i]) { any = 1; break; }
                       dlc->active = (uint8_t)any; }
                     clip_migrate_to_notes(dlc);
-                    seq8_save_state(inst);
+                    inst->state_dirty = 1;
                     return;
                 }
                 if (!strcmp(q, "_clear")) {
@@ -2402,21 +2402,21 @@ static void set_param(void *instance, const char *key, const char *val) {
                       dlc->active = (uint8_t)any; }
                     clip_migrate_to_notes(dlc);
                     pfx_note_off_imm(inst, tr, dlane->midi_note);
-                    seq8_save_state(inst);
+                    inst->state_dirty = 1;
                     return;
                 }
                 if (!strcmp(q, "_vel")) {
                     if (dlc->step_note_count[sidx] == 0) return;
                     dlc->step_vel[sidx] = (uint8_t)clamp_i(my_atoi(val), 0, 127);
                     clip_migrate_to_notes(dlc);
-                    seq8_save_state(inst);
+                    inst->state_dirty = 1;
                     return;
                 }
                 if (!strcmp(q, "_gate")) {
                     if (dlc->step_note_count[sidx] == 0) return;
                     dlc->step_gate[sidx] = (uint16_t)clamp_i(my_atoi(val), 1, 65535);
                     clip_migrate_to_notes(dlc);
-                    seq8_save_state(inst);
+                    inst->state_dirty = 1;
                     return;
                 }
                 if (!strcmp(q, "_nudge")) {
@@ -2430,7 +2430,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                         dlc->note_tick_offset[sidx][ni] = (int16_t)clamp_i(o, -tps_m1, tps_m1);
                     } }
                     clip_migrate_to_notes(dlc);
-                    seq8_save_state(inst);
+                    inst->state_dirty = 1;
                     return;
                 }
                 if (!strcmp(q, "_reassign")) {
@@ -2482,7 +2482,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                         dlc->active = (uint8_t)any;
                     }
                     clip_migrate_to_notes(dlc);
-                    seq8_save_state(inst);
+                    inst->state_dirty = 1;
                     return;
                 }
                 if (!strcmp(q, "_copy_to")) {
@@ -2502,7 +2502,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                         dlc->active = (uint8_t)any;
                     }
                     clip_migrate_to_notes(dlc);
-                    seq8_save_state(inst);
+                    inst->state_dirty = 1;
                     return;
                 }
             }
@@ -2511,7 +2511,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             if (!strcmp(p2, "_repeat_gate_toggle")) {
                 int step_r = clamp_i(my_atoi(val), 0, 7);
                 tr->drum_repeat_gate[lane_idx] ^= (uint8_t)(1u << step_r);
-                seq8_save_state(inst);
+                inst->state_dirty = 1;
                 return;
             }
             /* tN_lL_repeat_vel_scale "step pct" — set velocity scaling 0-200 for step */
@@ -2524,7 +2524,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 while (*sp_r == ' ') sp_r++;
                 int pct_r = clamp_i(my_atoi(sp_r), 0, 200);
                 tr->drum_repeat_vel_scale[lane_idx][step_r] = (uint8_t)pct_r;
-                seq8_save_state(inst);
+                inst->state_dirty = 1;
                 return;
             }
             /* tN_lL_repeat_nudge "step pct" — set nudge -50..50 for step */
@@ -2537,7 +2537,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 while (*sp_r == ' ') sp_r++;
                 int pct_r = clamp_i(my_atoi(sp_r), -50, 50);
                 tr->drum_repeat_nudge[lane_idx][step_r] = (int8_t)pct_r;
-                seq8_save_state(inst);
+                inst->state_dirty = 1;
                 return;
             }
             /* tN_lL_repeat_defaults "step" — reset vel_scale and nudge to defaults (not gate) */
@@ -2545,7 +2545,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 int step_r = clamp_i(my_atoi(val), 0, 7);
                 tr->drum_repeat_vel_scale[lane_idx][step_r] = 100;
                 tr->drum_repeat_nudge[lane_idx][step_r]     = 0;
-                seq8_save_state(inst);
+                inst->state_dirty = 1;
                 return;
             }
             /* tN_lL_repeat_groove_reset — reset all groove params for this lane */
@@ -2555,7 +2555,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                     tr->drum_repeat_vel_scale[lane_idx][s] = 100;
                     tr->drum_repeat_nudge[lane_idx][s]     = 0;
                 }}
-                seq8_save_state(inst);
+                inst->state_dirty = 1;
                 return;
             }
             return;
@@ -2769,7 +2769,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             /* tN_drum_mute_all_clear: unmute and unsolo all drum lanes. */
             tr->drum_lane_mute = 0;
             tr->drum_lane_solo = 0;
-            seq8_save_state(inst);
+            inst->state_dirty = 1;
             return;
         }
 
@@ -2780,7 +2780,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             int l;
             for (l = 0; l < DRUM_LANES; l++)
                 dc->lanes[l].clip.pfx_params.quantize = (uint8_t)v;
-            seq8_save_state(inst);
+            inst->state_dirty = 1;
             return;
         }
 
@@ -3296,7 +3296,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             if (tr->current_step >= cl->length)
                 tr->current_step = (uint16_t)(cl->length - 1);
             clip_migrate_to_notes(cl);
-            seq8_save_state(inst);
+            inst->state_dirty = 1;
             return;
         }
 
