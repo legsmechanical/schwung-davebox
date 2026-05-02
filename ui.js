@@ -783,6 +783,7 @@ let stepOpTick = -99;  /* tickCount of last step button event; live_notes flush 
 
 let pendingSetLoad   = false;     /* true when set changed during init() but same DSP instance: save old, load new */
 let pendingDspSync   = 0;         /* ticks remaining before deferred syncClipsFromDsp() after set change */
+let pendingUndoSync  = 0;         /* ticks remaining before targeted clip re-sync after undo/redo */
 let pendingDefaultSetParams  = [];    /* [{key,val}] — drain one per tick after state fully settled */
 let uiDefaultsApplyAfterSync = false; /* apply first-run defaults after pendingDspSync completes */
 let pendingStepsReread      = 0;  /* ticks remaining before _steps re-read after _reassign */
@@ -3314,6 +3315,42 @@ function syncClipsFromDsp() {
     if (mvolRaw !== null && mvolRaw !== undefined) metronomeVol = parseInt(mvolRaw, 10) | 0;
 }
 
+/* Targeted re-sync after undo/redo: re-read only the affected clips rather than all 64.
+ * infoStr format: "d t c" (drum) or "m t0 c0 t1 c1 ..." (melodic, 1-16 pairs).
+ * Falls back to full syncClipsFromDsp() if infoStr is missing or unparseable. */
+function syncClipsTargeted(infoStr) {
+    if (!infoStr || typeof host_module_get_param !== 'function') { syncClipsFromDsp(); return; }
+    const parts = infoStr.split(' ');
+    if (parts.length < 3) { syncClipsFromDsp(); return; }
+    const isDrum = parts[0] === 'd';
+    for (let i = 1; i + 1 < parts.length; i += 2) {
+        const t = parseInt(parts[i], 10), c = parseInt(parts[i + 1], 10);
+        if (t < 0 || t >= NUM_TRACKS || c < 0 || c >= NUM_CLIPS) continue;
+        if (isDrum) {
+            syncDrumClipContent(t);
+            syncDrumLanesMeta(t);
+            syncDrumLaneSteps(t, activeDrumLane[t]);
+            refreshDrumLaneBankParams(t, activeDrumLane[t]);
+        } else {
+            const bulk = host_module_get_param('t' + t + '_c' + c + '_steps');
+            if (bulk && bulk.length >= NUM_STEPS) {
+                for (let s = 0; s < NUM_STEPS; s++)
+                    clipSteps[t][c][s] = bulk[s] === '1' ? 1 : (bulk[s] === '2' ? 2 : 0);
+                clipNonEmpty[t][c] = clipHasContent(t, c);
+            }
+            const len = host_module_get_param('t' + t + '_c' + c + '_length');
+            if (len !== null && len !== undefined) clipLength[t][c] = parseInt(len, 10) || 16;
+            const tpsRaw = host_module_get_param('t' + t + '_c' + c + '_tps');
+            if (tpsRaw !== null && tpsRaw !== undefined) {
+                const tpsVal = parseInt(tpsRaw, 10);
+                clipTPS[t][c] = TPS_VALUES.indexOf(tpsVal) >= 0 ? tpsVal : 24;
+            }
+            if (c === trackActiveClip[t]) refreshPerClipBankParams(t);
+        }
+    }
+    screenDirty = true;
+}
+
 function syncMuteSoloFromDsp() {
     if (typeof host_module_get_param !== 'function') return;
     const muteStr = host_module_get_param('mute_state');
@@ -3623,6 +3660,17 @@ globalThis.tick = function () {
                 ];
             }
             computePadNoteMap();
+            invalidateLEDCache();
+            forceRedraw();
+        }
+    }
+
+    /* Deferred targeted re-sync after undo/redo: re-read only the affected clip(s). */
+    if (pendingUndoSync > 0) {
+        pendingUndoSync--;
+        if (pendingUndoSync === 0) {
+            const _info = host_module_get_param('last_restore');
+            syncClipsTargeted(_info);
             invalidateLEDCache();
             forceRedraw();
         }
@@ -4458,8 +4506,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     }
                     undoAvailable = true;
                     redoAvailable = false;
-                    pendingDspSync = 5;
-                    for (let _t = 0; _t < NUM_TRACKS; _t++) refreshPerClipBankParams(_t);
+                    pendingUndoSync = 5;
                     showActionPopup('REDO');
                 } else {
                     showActionPopup('NOTHING TO', 'REDO');
@@ -4483,8 +4530,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     }
                     redoAvailable = true;
                     undoAvailable = false;
-                    pendingDspSync = 5;
-                    for (let _t = 0; _t < NUM_TRACKS; _t++) refreshPerClipBankParams(_t);
+                    pendingUndoSync = 5;
                     showActionPopup('UNDO');
                 } else {
                     showActionPopup('NOTHING TO', 'UNDO');

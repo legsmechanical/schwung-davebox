@@ -987,6 +987,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 clip_migrate_to_notes(dst);
             }
             inst->drum_undo_valid = 0;
+            snprintf(inst->last_restore_info, sizeof(inst->last_restore_info), "d %d %d", t, c);
             return;
         }
         if (!inst->undo_valid) return;
@@ -1002,6 +1003,12 @@ static void set_param(void *instance, const char *key, const char *val) {
                            inst->undo_clip_tracks, inst->undo_clip_indices,
                            inst->undo_clip_count);
         inst->undo_valid = 0;
+        {
+            int _i, _off = snprintf(inst->last_restore_info, sizeof(inst->last_restore_info), "m");
+            for (_i = 0; _i < (int)inst->redo_clip_count; _i++)
+                _off += snprintf(inst->last_restore_info + _off, sizeof(inst->last_restore_info) - (size_t)_off,
+                                 " %d %d", (int)inst->redo_clip_tracks[_i], (int)inst->redo_clip_indices[_i]);
+        }
         return;
     }
 
@@ -1042,6 +1049,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 clip_migrate_to_notes(dst);
             }
             inst->drum_redo_valid = 0;
+            snprintf(inst->last_restore_info, sizeof(inst->last_restore_info), "d %d %d", t, c);
             return;
         }
         if (!inst->redo_valid) return;
@@ -1057,6 +1065,12 @@ static void set_param(void *instance, const char *key, const char *val) {
                            inst->redo_clip_tracks, inst->redo_clip_indices,
                            inst->redo_clip_count);
         inst->redo_valid = 0;
+        {
+            int _i, _off = snprintf(inst->last_restore_info, sizeof(inst->last_restore_info), "m");
+            for (_i = 0; _i < (int)inst->undo_clip_count; _i++)
+                _off += snprintf(inst->last_restore_info + _off, sizeof(inst->last_restore_info) - (size_t)_off,
+                                 " %d %d", (int)inst->undo_clip_tracks[_i], (int)inst->undo_clip_indices[_i]);
+        }
         return;
     }
 

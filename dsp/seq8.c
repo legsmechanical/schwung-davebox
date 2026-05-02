@@ -538,6 +538,7 @@ typedef struct {
     uint8_t  drum_redo_valid;
     uint8_t  drum_redo_track;
     uint8_t  drum_redo_clip;
+    char     last_restore_info[64]; /* "d t c" or "m t0 c0 t1 c1 ..." — set by undo/redo restore */
 
     /* Drum effective-mute bitmask per snapshot slot per track (bit L = lane L muted). */
     uint32_t snap_drum_eff_mute[16][NUM_TRACKS];
@@ -3719,6 +3720,8 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
     }
     if (!strcmp(key, "state_dirty"))
         return snprintf(out, out_len, "%d", (int)inst->state_dirty);
+    if (!strcmp(key, "last_restore"))
+        return snprintf(out, out_len, "%s", inst->last_restore_info);
 
     if (!strcmp(key, "playing"))
         return snprintf(out, out_len, "%d", inst ? (int)inst->playing : 0);
