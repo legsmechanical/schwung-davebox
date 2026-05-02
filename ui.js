@@ -3521,7 +3521,8 @@ globalThis.tick = function () {
     }
 
     /* Update scratch palette entries for CC bank LED brightness (cached: only send SysEx on change) */
-    if (activeBank === 6 && !sessionView && !ccStepEditActive && (recordArmed || playing)) {
+    if (activeBank === 6 && !sessionView && !ccStepEditActive && (recordArmed || playing) &&
+            (tickCount % POLL_INTERVAL) === 0) {
         if (recordArmed !== ccPaletteCacheArmed || activeTrack !== ccPaletteCacheTrack) {
             ccPaletteCache.fill(-1);
             ccPaletteCacheArmed = recordArmed;
@@ -3894,6 +3895,15 @@ globalThis.onMidiMessageInternal = function (data) {
                         showActionPopup('CC AUTO', 'CLEAR');
                         invalidateLEDCache();
                     }
+                    /* CC bank: touch-record — start overwriting automation while held */
+                    if (activeBank === 6 && !deleteHeld && !sessionView &&
+                            recordArmed && !recordCountingIn &&
+                            trackPadMode[activeTrack] !== PAD_MODE_DRUM) {
+                        const _tv = trackCCVal[activeTrack][d1];
+                        host_module_set_param('t' + activeTrack + '_cc_touch',
+                            d1 + ' 1 ' + _tv);
+                        trackCCAutoBits[activeTrack][trackActiveClip[activeTrack]] |= (1 << d1);
+                    }
                     /* SEQ ARP K5 / TRACK ARP K6 touch: switch pads to vel-slider editor immediately. */
                     if ((activeBank === 4 && d1 === 4) || (activeBank === 5 && d1 === 5)) forceRedraw();
                 }
@@ -3916,6 +3926,10 @@ globalThis.onMidiMessageInternal = function (data) {
                             bankParams[activeTrack][activeBank][d1] = 0;
                         }
                     }
+                    /* CC bank: touch-record — stop overwriting automation on release */
+                    if (activeBank === 6 && recordArmed && !recordCountingIn &&
+                            trackPadMode[activeTrack] !== PAD_MODE_DRUM)
+                        host_module_set_param('t' + activeTrack + '_cc_touch', d1 + ' 0 0');
                     /* SEQ ARP K5 / TRACK ARP K6 release: refresh pads (vel-slider editor → normal pads). */
                     if ((activeBank === 4 && d1 === 4) || (activeBank === 5 && d1 === 5)) forceRedraw();
                     knobTouched = -1;

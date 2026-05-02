@@ -1760,6 +1760,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             pfx_send(&tr->pfx,
                      (uint8_t)(0xB0 | (tr->channel & 0x0F)),
                      tr->cc_assign[_k], (uint8_t)_v);
+            tr->cc_live_val[_k] = (uint8_t)_v;
             /* Record automation point when actively recording a melodic clip */
             if (tr->recording && tr->pad_mode == PAD_MODE_MELODIC_SCALE) {
                 uint32_t _ct = tr->current_clip_tick;
@@ -1768,6 +1769,26 @@ static void set_param(void *instance, const char *key, const char *val) {
                                   _k, _snap, (uint8_t)_v);
                 /* Stamp touch frame so render path suppresses playback on this knob briefly */
                 tr->cc_auto_touch_frame[_k] = inst->block_count | 1u;
+            }
+            return;
+        }
+        if (!strcmp(sub, "cc_touch")) {
+            /* Format: "K 1 V" (touch on, initial value V) or "K 0 0" (touch off) */
+            const char *_p = val;
+            int _k = 0, _on = 0, _v = 0;
+            while (*_p == ' ') _p++;
+            while (*_p >= '0' && *_p <= '9') { _k = _k * 10 + (*_p++ - '0'); }
+            while (*_p == ' ') _p++;
+            while (*_p >= '0' && *_p <= '9') { _on = _on * 10 + (*_p++ - '0'); }
+            while (*_p == ' ') _p++;
+            while (*_p >= '0' && *_p <= '9') { _v = _v * 10 + (*_p++ - '0'); }
+            if (_k < 0 || _k > 7) return;
+            if (_on) {
+                tr->cc_live_val[_k]        = (uint8_t)clamp_i(_v, 0, 127);
+                tr->cc_touch_held         |= (uint8_t)(1u << _k);
+                tr->cc_touch_last_snap[_k] = 0xFFFFFFFFu; /* force write on first tick */
+            } else {
+                tr->cc_touch_held &= (uint8_t)~(1u << _k);
             }
             return;
         }
@@ -2570,6 +2591,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 clip_clear_suppress(&tr->clips[tr->active_clip]);
                 tr->recording    = 0;
                 tr->record_armed = 0;
+                tr->cc_touch_held = 0;
             }
             return;
         }

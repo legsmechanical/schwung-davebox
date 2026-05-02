@@ -446,6 +446,12 @@ typedef struct {
     uint8_t   cc_auto_last_sent[8];
     /* block_count when each knob was last live-turned during recording (0 = never) */
     uint32_t  cc_auto_touch_frame[8];
+    /* Touch-record: last live CC value per knob; bitmask of currently held knobs;
+     * last 1/32 snap tick written per knob (0xFFFFFFFF = force write on next tick) */
+    uint8_t   cc_live_val[8];
+    uint8_t   cc_touch_held;
+    uint8_t   _cc_touch_pad[3];
+    uint32_t  cc_touch_last_snap[8];
 } seq8_track_t;
 #define LRS_SET(tr, s)  ((tr)->live_recorded_steps[(s)>>3] |=  (uint8_t)(1u<<((s)&7)))
 #define LRS_TEST(tr, s) ((tr)->live_recorded_steps[(s)>>3] &   (1u<<((s)&7)))
@@ -4455,9 +4461,11 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 for (_kp = 0; _kp < 8; _kp++) {
                     uint8_t _np = _ca->count[_kp];
                     if (_np == 0) continue;
-                    /* Suppress this knob if live-turned recently during recording */
-                    if (tr->recording && tr->cc_auto_touch_frame[_kp] != 0 &&
-                        inst->block_count - tr->cc_auto_touch_frame[_kp] < CC_TOUCH_GRACE_BLOCKS)
+                    /* Suppress this knob if touch-held OR live-turned recently during recording */
+                    if (tr->recording && (
+                            ((tr->cc_touch_held >> _kp) & 1) ||
+                            (tr->cc_auto_touch_frame[_kp] != 0 &&
+                             inst->block_count - tr->cc_auto_touch_frame[_kp] < CC_TOUCH_GRACE_BLOCKS)))
                         continue;
                     uint8_t _sv;
                     int _lo = -1, _hi = -1, _ip;
@@ -4487,6 +4495,19 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                         pfx_send(&tr->pfx,
                                  (uint8_t)(0xB0 | (tr->channel & 0x0F)),
                                  tr->cc_assign[_kp], _sv);
+                    }
+                }
+                /* Touch-record: write one automation point per 1/32 boundary while knob held */
+                if (tr->recording && tr->cc_touch_held) {
+                    uint32_t _tsnap = (_ct / 12) * 12;
+                    int _kt;
+                    for (_kt = 0; _kt < 8; _kt++) {
+                        if (!((tr->cc_touch_held >> _kt) & 1)) continue;
+                        if (_tsnap == tr->cc_touch_last_snap[_kt]) continue;
+                        tr->cc_touch_last_snap[_kt] = _tsnap;
+                        cc_auto_set_point(&tr->clip_cc_auto[tr->active_clip], _kt,
+                                          (uint16_t)(_tsnap <= 65534 ? _tsnap : 65534),
+                                          tr->cc_live_val[_kt]);
                     }
                 }
             }
