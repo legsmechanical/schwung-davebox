@@ -306,6 +306,11 @@ chosen explicit routing and the JS filter handles it with the original channel.
 
 Shim auto-clears the remap table on overtake exit.
 
+**THRU bypass**: the shim skips remap entirely if any chain slot has
+`forward_channel = THRU (-2)`, which is the default for new Schwung slots.
+Slots must be set to AUTO (-1) or a specific channel for remap to function.
+This is a Schwung-level default issue — not something SEQ8 can control.
+
 ---
 
 ## 13. (Historical) Cable-2 MIDI Channel Remapping Spec
