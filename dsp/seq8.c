@@ -152,6 +152,9 @@ static const uint16_t ARP_RATE_TICKS[10] = { 12, 24, 16, 48, 32, 96, 64, 192, 12
  * Pad 4-7 (row 2):      1/32T 1/16T 1/8T 1/4T */
 static const uint16_t DRUM_REPEAT_RATE_TICKS[8] = { 12, 24, 48, 96, 8, 16, 32, 64 };
 
+/* Default CC assignments for CC PARAM bank knobs K1-K8 */
+static const uint8_t CC_ASSIGN_DEFAULT[8] = { 7, 74, 71, 73, 72, 91, 93, 10 };
+
 typedef struct {
     /* Live params mirrored from clip_pfx_params_t via pfx_apply_params */
     uint8_t  style;        /* 0=Off (bypass), 1..9=Up/Dn/U-D/D-U/Cnv/Div/Ord/Rnd/RnO */
@@ -424,6 +427,8 @@ typedef struct {
     uint8_t  drum_repeat2_step[DRUM_LANES];     /* per-lane gate mask step 0-7 */
     uint32_t drum_repeat2_phase[DRUM_LANES];    /* per-lane phase within step */
     uint8_t  drum_repeat2_vel[DRUM_LANES];      /* per-lane velocity in Rpt 2 */
+    /* CC PARAM bank (bank 6): per-track CC assignments for 8 knobs (persisted) */
+    uint8_t  cc_assign[8];
 } seq8_track_t;
 #define LRS_SET(tr, s)  ((tr)->live_recorded_steps[(s)>>3] |=  (uint8_t)(1u<<((s)&7)))
 #define LRS_TEST(tr, s) ((tr)->live_recorded_steps[(s)>>3] &   (1u<<((s)&7)))
@@ -735,7 +740,7 @@ static void seq8_save_state(seq8_instance_t *inst) {
     FILE *fp = fopen(inst->state_path, "w");
     if (!fp) return;
     int t, c;
-    fprintf(fp, "{\"v\":17,\"playing\":%d", inst->playing);
+    fprintf(fp, "{\"v\":18,\"playing\":%d", inst->playing);
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
     for (t = 0; t < NUM_TRACKS; t++)
@@ -915,6 +920,13 @@ static void seq8_save_state(seq8_instance_t *inst) {
           }
       }
     }
+    /* Per-track CC PARAM bank: CC assignments (sparse — skip if default) */
+    { int _t2, _k;
+      for (_t2 = 0; _t2 < NUM_TRACKS; _t2++)
+          for (_k = 0; _k < 8; _k++)
+              if (inst->tracks[_t2].cc_assign[_k] != CC_ASSIGN_DEFAULT[_k])
+                  fprintf(fp, ",\"t%dcca%d\":%d", _t2, _k, (int)inst->tracks[_t2].cc_assign[_k]);
+    }
     /* Global settings */
     fprintf(fp, ",\"key\":%d,\"scale\":%d,\"lq\":%d",
             (int)inst->pad_key, (int)inst->pad_scale, (int)inst->launch_quant);
@@ -943,10 +955,10 @@ static void seq8_load_state(seq8_instance_t *inst) {
     if (!n) { free(buf); remove(inst->state_path); return; }
     buf[n] = '\0';
 
-    /* Version gate: v=15, v=16, or v=17 (v=17 adds drum repeat state). */
+    /* Version gate: only v=18 accepted (dev build; wipe on version mismatch). */
     {
         int sv = json_get_int(buf, "v", -1);
-        if (sv != 15 && sv != 16 && sv != 17) {
+        if (sv != 18) {
             free(buf);
             remove(inst->state_path);
             seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
@@ -1127,6 +1139,15 @@ static void seq8_load_state(seq8_instance_t *inst) {
         snprintf(key, sizeof(key), "t%d_tvo", t);
         { int _v = clamp_i(json_get_int(buf, key, 0), 0, 128);
           inst->tracks[t].track_vel_override = (uint8_t)(_v == 128 ? 0 : _v); }
+    }
+    /* CC PARAM bank: CC assignments (sparse; missing = default) */
+    { int _k;
+      for (t = 0; t < NUM_TRACKS; t++)
+          for (_k = 0; _k < 8; _k++) {
+              snprintf(key, sizeof(key), "t%dcca%d", t, _k);
+              inst->tracks[t].cc_assign[_k] = (uint8_t)clamp_i(
+                  json_get_int(buf, key, CC_ASSIGN_DEFAULT[_k]), 0, 127);
+          }
     }
     /* Per-clip play-effect params (sparse — missing keys default to neutral) */
     for (t = 0; t < NUM_TRACKS; t++) {
@@ -3313,6 +3334,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
         pfx_init_defaults(&inst->tracks[t].pfx);
         tarp_init_defaults(&inst->tracks[t]);
         drum_repeat_init_defaults(&inst->tracks[t]);
+        { int _k; for (_k = 0; _k < 8; _k++) inst->tracks[t].cc_assign[_k] = CC_ASSIGN_DEFAULT[_k]; }
         inst->tracks[t].pfx.looper_on = 1;
         inst->tracks[t].pfx.track_idx = (uint8_t)t;
         /* Default routing: tracks 1-4 → Move (ch 1-4), tracks 5-8 → Schwung (ch 5-8) */
@@ -3671,6 +3693,12 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         const char *sub = key + 3;
         seq8_track_t *tr = &inst->tracks[tidx];
 
+        if (!strcmp(sub, "cc_assigns"))
+            return snprintf(out, out_len, "%d %d %d %d %d %d %d %d",
+                (int)tr->cc_assign[0], (int)tr->cc_assign[1],
+                (int)tr->cc_assign[2], (int)tr->cc_assign[3],
+                (int)tr->cc_assign[4], (int)tr->cc_assign[5],
+                (int)tr->cc_assign[6], (int)tr->cc_assign[7]);
         if (!strcmp(sub, "current_step"))
             return snprintf(out, out_len, "%d", (int)tr->current_step);
         if (!strcmp(sub, "active_clip"))

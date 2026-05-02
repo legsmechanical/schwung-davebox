@@ -1726,6 +1726,38 @@ static void set_param(void *instance, const char *key, const char *val) {
             return;
         }
 
+        /* CC PARAM bank set_params */
+        if (!strcmp(sub, "cc_assign")) {
+            /* Format: "K CC" — knob index 0-7, CC number 0-127 */
+            const char *_p = val;
+            int _k = 0, _cc = 0;
+            while (*_p == ' ') _p++;
+            while (*_p >= '0' && *_p <= '9') { _k = _k * 10 + (*_p - '0'); _p++; }
+            while (*_p == ' ') _p++;
+            while (*_p >= '0' && *_p <= '9') { _cc = _cc * 10 + (*_p - '0'); _p++; }
+            if (_k < 0 || _k > 7) return;
+            tr->cc_assign[_k] = (uint8_t)clamp_i(_cc, 0, 127);
+            seq8_save_state(inst);
+            return;
+        }
+        if (!strcmp(sub, "cc_send")) {
+            /* Format: "K V" — knob index 0-7, CC value 0-127. Transmits immediately. */
+            const char *_p = val;
+            int _k = 0, _v = 0;
+            while (*_p == ' ') _p++;
+            while (*_p >= '0' && *_p <= '9') { _k = _k * 10 + (*_p - '0'); _p++; }
+            while (*_p == ' ') _p++;
+            while (*_p >= '0' && *_p <= '9') { _v = _v * 10 + (*_p - '0'); _p++; }
+            if (_k < 0 || _k > 7) return;
+            _v = clamp_i(_v, 0, 127);
+            {
+                uint8_t _cc_num = tr->cc_assign[_k];
+                uint8_t _status = (uint8_t)(0xB0 | (tr->channel & 0x0F));
+                pfx_send(&tr->pfx, _status, _cc_num, (uint8_t)_v);
+            }
+            return;
+        }
+
         /* tN_lL_* — drum lane setters */
         if (sub[0] == 'l' && sub[1] >= '0' && sub[1] <= '9') {
             int lane_idx = 0;

@@ -160,8 +160,8 @@ const BANKS = [
         _X,
         p('Ltch', 'Latch',         'tarp_latch',      'track', 0,   1,   0,  fmtBool,     16),
     ]},
-    /* 6 — Reserved (pad 98) — ignore pad press */
-    { name: 'RESERVED', knobs: [_X, _X, _X, _X, _X, _X, _X, _X] },
+    /* 6 — CC PARAM (pad 98) — per-track CC assignments; custom handling, no DSP-wired knobs */
+    { name: 'CC PARAM', knobs: [_X, _X, _X, _X, _X, _X, _X, _X] },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -343,6 +343,8 @@ function doClearSession() {
         for (let _c = 0; _c < NUM_CLIPS; _c++) clipSeqFollow[_t][_c] = true;
         trackChannel[_t] = 1; trackRoute[_t] = 0; trackPadMode[_t] = 0;
         trackVelOverride[_t] = 0; trackLooper[_t] = 1;
+        trackCCAssign[_t] = CC_ASSIGN_DEFAULTS.slice();
+        trackCCVal[_t] = new Array(8).fill(0);
         for (let _b = 3; _b <= 4; _b++) {
             for (let _k = 0; _k < 8; _k++) {
                 const _pm = BANKS[_b].knobs[_k];
@@ -627,6 +629,17 @@ let lastBlinkOn = null;   /* tracks session overview blink state for dirty detec
  * Initialized from BANKS defaults; refreshed from DSP on bank select. */
 let bankParams = Array.from({length: NUM_TRACKS}, () =>
     BANKS.map(bank => bank.knobs.map(k => k.def)));
+
+/* CC PARAM bank (bank 6) — per-track state, JS-authoritative */
+const CC_ASSIGN_DEFAULTS = [7, 74, 71, 73, 72, 91, 93, 10];
+let trackCCAssign = Array.from({length: NUM_TRACKS}, () => CC_ASSIGN_DEFAULTS.slice());
+let trackCCVal    = Array.from({length: NUM_TRACKS}, () => new Array(8).fill(0));
+
+/* Format CC number as a 4-char display label: CC7→"CC7 ", CC74→"CC74", C100→"C100" */
+function fmtCCLabel(cc) {
+    const n = (cc | 0);
+    return n >= 100 ? 'C' + n : 'CC' + n;
+}
 
 /* ------------------------------------------------------------------ */
 /* Step entry state                                                     */
@@ -1806,6 +1819,16 @@ function resetSingleFxBank(t, bankIdx) {
 /* Read all wired params for bankIdx on track t from DSP into bankParams. */
 function readBankParams(t, bankIdx) {
     if (typeof host_module_get_param !== 'function') return;
+    /* CC PARAM bank: read all 8 CC assignments from DSP */
+    if (bankIdx === 6) {
+        const raw = host_module_get_param('t' + t + '_cc_assigns');
+        if (raw) {
+            const parts = raw.split(' ');
+            for (let k = 0; k < 8; k++)
+                trackCCAssign[t][k] = parseInt(parts[k], 10) || CC_ASSIGN_DEFAULTS[k];
+        }
+        return;
+    }
     const knobs = BANKS[bankIdx].knobs;
     for (let k = 0; k < 8; k++) {
         const pm = knobs[k];
@@ -2486,6 +2509,8 @@ function updateTrackLEDs() {
             const isDirty = (drumRepeatVelScale[activeTrack][lane][k] !== 100) ||
                             (drumRepeatNudge[activeTrack][lane][k] !== 0);
             ledVal = isDirty ? White : LED_OFF;
+        } else if (activeBank === 6) {
+            ledVal = (trackCCVal[activeTrack][k] !== 0) ? White : LED_OFF;
         } else if (PARAM_LED_BANKS.indexOf(activeBank) >= 0) {
             const pm = BANKS[activeBank].knobs[k];
             if (pm && pm.abbrev && pm.scope !== 'stub') {
@@ -2983,6 +3008,18 @@ function drawUI() {
                 : (vs === 100 ? 'Live' : vs + '%');
             print(colX, rowY + 12, col4(disp), hi ? 0 : 1);
         }
+        } else if (bank === 6) {
+        /* CC PARAM bank overview: label = assigned CC, value = current value */
+        const t = activeTrack;
+        print(4, 0, bankHeader(6), 1);
+        for (let k = 0; k < 8; k++) {
+            const colX = 4 + (k % 4) * 30;
+            const rowY = k < 4 ? 12 : 36;
+            const hi   = (knobTouched === k);
+            if (hi) fill_rect(colX, rowY, 24, 24, 1);
+            print(colX, rowY,      col4(fmtCCLabel(trackCCAssign[t][k])), hi ? 0 : 1);
+            print(colX, rowY + 12, col4(String(trackCCVal[t][k])),        hi ? 0 : 1);
+        }
         } else {
         /* Bank overview — 5 rows; touched knob column inverted */
         const knobs = BANKS[bank].knobs;
@@ -3007,7 +3044,7 @@ function drawUI() {
         const oct       = Math.floor(note / 12) - 2;
         const name      = NOTE_KEYS[note % 12];
         const bankGroup = pg === 0 ? 'Bank: A' : 'Bank: B';
-        const bankName  = activeBank === 0 ? 'DRUM SEQ' : activeBank === 1 ? 'NOTE/NOTEFX' : activeBank === 5 ? 'RPT GROOVE' : BANKS[activeBank].name;
+        const bankName  = activeBank === 0 ? 'DRUM SEQ' : activeBank === 1 ? 'NOTE/NOTEFX' : activeBank === 5 ? 'RPT GROOVE' : BANKS[activeBank] ? BANKS[activeBank].name : '?';
         print(4, 0,  'Knob: [ ' + bankName + ' ]', 1);
         print(4, 10, bankGroup + '  Pad: ' + name + oct + ' (' + note + ')', 1);
         const laneBit = 1 << lane;
@@ -3960,7 +3997,7 @@ globalThis.onMidiMessageInternal = function (data) {
                         }
                     } else {
                         const cur  = activeBank;
-                        const next = Math.min(5, Math.max(0, cur + delta));
+                        const next = Math.min(6, Math.max(0, cur + delta));
                         if (next !== cur) {
                             activeBank = next;
                             readBankParams(activeTrack, next);
@@ -4888,6 +4925,39 @@ globalThis.onMidiMessageInternal = function (data) {
                 }
                 return;
             }
+            /* CC PARAM bank (bank 6): normal turn = transmit CC, Shift+turn = reassign CC number */
+            if (bank === 6) {
+                const t   = activeTrack;
+                const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
+                if (dir !== knobLastDir[knobIdx]) { knobAccum[knobIdx] = 0; knobLastDir[knobIdx] = dir; }
+                knobAccum[knobIdx]++;
+                if (shiftHeld) {
+                    /* Shift+turn: reassign CC number 0-127, sens=16 */
+                    if (knobAccum[knobIdx] >= 16) {
+                        knobAccum[knobIdx] = 0;
+                        const nv = Math.max(0, Math.min(127, trackCCAssign[t][knobIdx] + dir));
+                        if (nv !== trackCCAssign[t][knobIdx]) {
+                            trackCCAssign[t][knobIdx] = nv;
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_cc_assign', knobIdx + ' ' + nv);
+                            screenDirty = true;
+                        }
+                    }
+                } else {
+                    /* Normal turn: send CC value 0-127, sens=1 */
+                    if (knobAccum[knobIdx] >= 1) {
+                        knobAccum[knobIdx] = 0;
+                        const nv = Math.max(0, Math.min(127, trackCCVal[t][knobIdx] + dir));
+                        if (nv !== trackCCVal[t][knobIdx]) {
+                            trackCCVal[t][knobIdx] = nv;
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_cc_send', knobIdx + ' ' + nv);
+                            screenDirty = true;
+                        }
+                    }
+                }
+                return;
+            }
             const pm      = BANKS[bank].knobs[knobIdx];
             if (pm && pm.abbrev && pm.scope !== 'stub' && !knobLocked[knobIdx]) {
                 const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
@@ -5798,7 +5868,7 @@ globalThis.onMidiMessageInternal = function (data) {
                     forceRedraw();
                 } else if (shiftHeld && padIdx >= 24 && padIdx <= 31) {
                     const bankIdx = padIdx - 24;
-                    if (bankIdx < 6) {
+                    if (bankIdx <= 6) {
                         if (activeBank === bankIdx) {
                             bankSelectTick = -1;
                         } else {
