@@ -140,12 +140,12 @@ JS `init()` reads UUID, compares with `state_uuid` get_param. Mismatch → `stat
 
 ```sh
 ./scripts/build.sh && ./scripts/install.sh      # DSP change (also copies all JS)
-cp ui.js dist/seq8/ui.js && cp ui_constants.mjs dist/seq8/ && ./scripts/install.sh  # JS-only
+python3 scripts/bundle_ui.py && ./scripts/install.sh  # JS-only
 nm -D dist/seq8/dsp.so | grep GLIBC             # verify ≤ 2.35
 ssh ableton@move.local "tail -f /data/UserData/schwung/seq8.log"
 ```
 
-**JS**: `ui.js` (~6700 lines) + `ui_constants.mjs` (217 lines). Both must deploy together.
+**JS**: source modules (`ui.js`, `ui_constants.mjs`, `ui_state.mjs`, `ui_persistence.mjs`, `ui_dialogs.mjs`, `ui_scene.mjs`, `ui_leds.mjs`) — bundled into `dist/seq8/ui.js` by `scripts/bundle_ui.py`. Always run the bundler before deploying JS changes.
 **DSP**: see `dsp/CLAUDE.md` for file structure, logging, and GLIBC constraint.
 
 ## graphify
