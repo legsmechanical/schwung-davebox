@@ -1,5 +1,5 @@
-import { S } from './ui_state.mjs';
-import { NUM_TRACKS, LED_OFF, LED_STEP_CURSOR, PAD_MODE_DRUM } from './ui_constants.mjs';
+import { S } from '/data/UserData/schwung/modules/tools/seq8/ui_state.mjs';
+import { NUM_TRACKS, LED_OFF, LED_STEP_CURSOR, PAD_MODE_DRUM } from '/data/UserData/schwung/modules/tools/seq8/ui_constants.mjs';
 import { White, VividYellow, DarkGrey } from '/data/UserData/schwung/shared/constants.mjs';
 import { setLED } from '/data/UserData/schwung/shared/input_filter.mjs';
 

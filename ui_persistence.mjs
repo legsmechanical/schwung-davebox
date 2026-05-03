@@ -1,5 +1,5 @@
-import { S, CC_ASSIGN_DEFAULTS } from './ui_state.mjs';
-import { NUM_TRACKS, NUM_CLIPS, DRUM_LANES, BANKS, ACTION_POPUP_TICKS } from './ui_constants.mjs';
+import { S, CC_ASSIGN_DEFAULTS } from '/data/UserData/schwung/modules/tools/seq8/ui_state.mjs';
+import { NUM_TRACKS, NUM_CLIPS, DRUM_LANES, BANKS, ACTION_POPUP_TICKS } from '/data/UserData/schwung/modules/tools/seq8/ui_constants.mjs';
 
 export function uuidToStatePath(uuid) {
     return uuid
