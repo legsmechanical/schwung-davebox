@@ -20,6 +20,11 @@ Bake permanently applies a clip's effects chain to its note data, then resets al
 
 The full effects chain is applied offline in order: NOTE FX + HARMZ → MIDI Delay → SEQ ARP output. The resulting notes are written back into the clip. All effect parameters (delay time, harmonize intervals, arp settings, etc.) are then reset to defaults.
 
+**Limitations:**
+
+- If the clip is empty, nothing happens.
+- Bake is undoable. Notes, steps, and effect parameter values are all restored on undo.
+
 ### Drum tracks
 
 Drum tracks offer two bake modes. Press **Sample** to open the **BAKE DRUMS?** dialog — default is **CANCEL**.
