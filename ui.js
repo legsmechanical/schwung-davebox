@@ -76,13 +76,13 @@ import {
     BANKS, ACTION_POPUP_TICKS, PAD_MODE_DRUM,
     POLL_INTERVAL, CC_SCRATCH_PALETTE_BASE, TAP_TEMPO_FLASH_TICKS, TAP_TEMPO_RESET_TICKS,
     PARAM_LED_BANKS
-} from './ui_constants.mjs';
+} from '/data/UserData/schwung/modules/tools/seq8/ui_constants.mjs';
 
-import { S, CC_ASSIGN_DEFAULTS, PERF_FACTORY_PRESETS } from './ui_state.mjs';
-import { saveState, doClearSession, showActionPopup, uuidToStatePath, uuidToUiStatePath } from './ui_persistence.mjs';
-import { drawGlobalMenu } from './ui_dialogs.mjs';
-import { trackClipHasContent, sceneAllQueued, updateSceneMapLEDs } from './ui_scene.mjs';
-import { effectiveClip, updateStepLEDs, updateSessionLEDs, updateTrackLEDs, flashAtRate, drawPositionBar, invalidateLEDCache } from './ui_leds.mjs';
+import { S, CC_ASSIGN_DEFAULTS, PERF_FACTORY_PRESETS } from '/data/UserData/schwung/modules/tools/seq8/ui_state.mjs';
+import { saveState, doClearSession, showActionPopup, uuidToStatePath, uuidToUiStatePath } from '/data/UserData/schwung/modules/tools/seq8/ui_persistence.mjs';
+import { drawGlobalMenu } from '/data/UserData/schwung/modules/tools/seq8/ui_dialogs.mjs';
+import { trackClipHasContent, sceneAllQueued, updateSceneMapLEDs } from '/data/UserData/schwung/modules/tools/seq8/ui_scene.mjs';
+import { effectiveClip, updateStepLEDs, updateSessionLEDs, updateTrackLEDs, flashAtRate, drawPositionBar, invalidateLEDCache } from '/data/UserData/schwung/modules/tools/seq8/ui_leds.mjs';
 
 /* ------------------------------------------------------------------ */
 /* Parameter bank definitions                                           */
@@ -3047,7 +3047,7 @@ function _onCC_jog(d1, d2) {
             cc: 3, value: d2,
             items: S.globalMenuItems, state: S.globalMenuState, stack: S.globalMenuStack,
             onBack: function() { S.globalMenuOpen = false; },
-            S.shiftHeld: S.shiftHeld
+            shiftHeld: S.shiftHeld
         });
         S.screenDirty = true;
         return;
@@ -3177,7 +3177,7 @@ function _onCC_jog(d1, d2) {
                     cc: MoveMainKnob, value: d2,
                     items: S.globalMenuItems, state: S.globalMenuState, stack: S.globalMenuStack,
                     onBack: function() { S.globalMenuOpen = false; },
-                    S.shiftHeld: false
+                    shiftHeld: false
                 });
                 S.screenDirty = true;
             }
