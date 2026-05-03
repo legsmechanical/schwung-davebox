@@ -90,6 +90,7 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 16. ~~**Bake**~~ **done (melodic + drum)** — melodic: offline pfx chain, confirm dialog, pfx params reset, step arrays rebuilt. Drum: CLIP mode (full chain, HARMZ routes hits across lanes by pitch) + LANE mode (vel/gate/timing only, no pitch/HARMZ); 3-button dialog with "No Pitch / HARMZ FX" notice.
 17. ~~**Live Merge**~~ **done (melodic + drum)** — Shift+Sample arm/stop; page-quantized stop (STOPPING state); drum routes notes to lanes by midi_note pitch match; popups for no-slot and max-length.
 18. ~~**JS module split**~~ **done** — `ui_constants.mjs`, `ui_state.mjs`, `ui_persistence.mjs`, `ui_dialogs.mjs`, `ui_scene.mjs`, `ui_leds.mjs` all extracted; `scripts/bundle_ui.py` concatenates into `dist/seq8/ui.js` for deployment. See memory `project_module_split.md`.
+19. ~~**ROUTE_MOVE external MIDI monitoring**~~ **done** — rechannelized via `host_ext_midi_remap_*`; `applyExtMidiRemap()` driven from `tick()` change-detect + `init()`. Requires Schwung shim fix (cable-2 inject defer, commit 5275ec10).
 
 ## Per-set state
 
