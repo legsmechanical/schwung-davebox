@@ -9,7 +9,7 @@
 - **Commit after each logical change** — work directly on master, one commit per change.
 - **Deploy and verify on device before reporting done** — always build+install and confirm on Move.
 - **Reboot after every deploy** — Back suspends (JS stays in memory); Shift+Back fully exits but does NOT reload JS from disk. Full reboot required for JS changes.
-- **JS-only deploy**: `cp ui.js dist/seq8/ui.js && cp ui_constants.mjs dist/seq8/ && ./scripts/install.sh` then restart. `build.sh` required for DSP changes (also copies all JS).
+- **JS-only deploy**: `python3 scripts/bundle_ui.py && ./scripts/install.sh` then restart. `build.sh` required for DSP changes (also copies all JS).
 - **Restart Move**: `ssh root@move.local "for name in MoveOriginal Move MoveLauncher MoveMessageDisplay shadow_ui schwung link-subscriber display-server schwung-manager; do pids=\$(pidof \$name 2>/dev/null || true); [ -n \"\$pids\" ] && kill -9 \$pids 2>/dev/null || true; done && /etc/init.d/move start >/dev/null 2>&1"`
 - **CLAUDE.md**: update at session end or after a major phase — not after routine task work.
 - **State version bump**: Any time DSP struct layout changes or state format changes, delete ALL state files on device before deploying: `ssh root@move.local "find /data/UserData/schwung/set_state -name 'seq8-state.json' -exec rm {} \; && find /data/UserData/schwung/set_state -name 'seq8-ui-state.json' -exec rm {} \;"`. This is a dev build — backward compatibility is not important; always prefer a clean slate over migration.
@@ -89,7 +89,7 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 15. ~~**CC automation**~~ **done** — CC PARAM bank (6), per-clip recording/playback, step-edit, touch-record (overwrite while held), staircase hold, delete (all/per-knob), full-res SysEx palette LED brightness (rate-limited), ROUTE_EXTERNAL panic fix.
 16. ~~**Bake**~~ **done (melodic + drum)** — melodic: offline pfx chain, confirm dialog, pfx params reset, step arrays rebuilt. Drum: CLIP mode (full chain, HARMZ routes hits across lanes by pitch) + LANE mode (vel/gate/timing only, no pitch/HARMZ); 3-button dialog with "No Pitch / HARMZ FX" notice.
 17. ~~**Live Merge**~~ **done (melodic + drum)** — Shift+Sample arm/stop; page-quantized stop (STOPPING state); drum routes notes to lanes by midi_note pitch match; popups for no-slot and max-length.
-18. **JS module split** — split `ui.js` into ES modules following graphify community boundaries. Phase 1: `ui_state.mjs` (all shared mutable globals). Phase 2: `ui_persistence.mjs` (C14) → `ui_dialogs.mjs` (C16) → `ui_scene.mjs` (C15) → `ui_leds.mjs` (C5). See memory `project_module_split.md`.
+18. ~~**JS module split**~~ **done** — `ui_constants.mjs`, `ui_state.mjs`, `ui_persistence.mjs`, `ui_dialogs.mjs`, `ui_scene.mjs`, `ui_leds.mjs` all extracted; `scripts/bundle_ui.py` concatenates into `dist/seq8/ui.js` for deployment. See memory `project_module_split.md`.
 
 ## Per-set state
 
@@ -98,6 +98,10 @@ File: `/data/UserData/schwung/set_state/<UUID>/seq8-state.json`.
 JS `init()` reads UUID, compares with `state_uuid` get_param. Mismatch → `state_load=UUID` next tick → `pendingDspSync=5` → `syncClipsFromDsp()`.
 
 **Deferred save**: handlers set `inst->state_dirty = 1`; JS `pollDSP()` writes via `host_write_file` when dirty. Suspend path saves synchronously. Full details in `dsp/CLAUDE.md`.
+
+**QuickJS compatibility** (shadow_ui runs QuickJS, not V8 — Node.js `--check` is NOT a reliable validator):
+- **Member expressions as object keys are a syntax error**: `{ S.shiftHeld: val }` is rejected by QuickJS at compile time but silently accepted by Node. Always use plain identifiers: `{ shiftHeld: val }`. This caused a multi-hour debug session during the Phase 2 module split.
+- **Confirmed supported**: `??` nullish coalescing, `...` spread/rest, `for...of`, `Array.from`, `globalThis`, `Set`, `Map`.
 
 **Critical constraints**:
 - **Coalescing**: only the LAST `set_param` per audio buffer reaches DSP. `shadow_send_midi_to_dsp` shares the same delivery channel and also coalesces with `set_param`. In `onMidiMessage`, if both a `set_param` and `shadow_send_midi_to_dsp` fire, the set_param is lost. Workaround: defer set_params to the tick function via a pending variable (see `pendingRepeatLane` pattern). Multi-field operations require a single atomic DSP command.

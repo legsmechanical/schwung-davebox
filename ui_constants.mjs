@@ -35,6 +35,8 @@ export const SCENE_BTN_FLASH_TICKS = 40;
 export const LEDS_PER_FRAME      = 8;
 export const NUM_TRACKS          = 8;
 export const NUM_CLIPS           = 16;
+export const DRUM_LANES          = 32;
+export const DRUM_BASE_NOTE      = 36;
 
 /* shim ui_flags bits that must be masked while SEQ8 owns the display. */
 export const FLAG_JUMP_TO_OVERTAKE = 0x04;
@@ -217,3 +219,90 @@ export function pixelPrint(x, y, text, color) {
 export function pixelPrintC(cx, y, text, color) {
     pixelPrint(cx - Math.floor((text.length * 6 - 1) / 2), y, text, color);
 }
+
+/* ------------------------------------------------------------------ */
+/* Bank parameter factory & definitions                                 */
+/* ------------------------------------------------------------------ */
+
+function p(abbrev, full, dspKey, scope, min, max, def, fmt, sens, actionSuffix, lock) {
+    return { abbrev, full, dspKey, scope, min, max, def, fmt,
+             sens: sens || 1,
+             actionSuffix: actionSuffix || '_pos',
+             lock: lock || false };
+}
+const _X = p(null, null, null, 'stub', 0, 0, 0, fmtNA);
+
+export const BANKS = [
+    /* 0 — CLIP (pad 92) — Beat Stretch, Clock Shift, Nudge, Resolution, Length, (stubs) */
+    { name: 'CLIP', knobs: [
+        p('Stch', 'Beat Stretch',    'beat_stretch',    'action', 0, 0,   0,   fmtStretch, 16, '_factor', true),
+        p('Shft', 'Clock Shift',     'clock_shift',     'action', 0, 0,   0,   fmtSign,    8),
+        p('Ndg',  'Nudge',           'nudge',           'action', 0, 0,   0,   fmtSign,    8),
+        p('Res',  'Resolution',      'clip_resolution', 'clip',   0, 5,   1,   fmtRes, 16),
+        p('Len',  'Clip Length',     'clip_length',     'track',  1, 256, 16,  fmtLen, 8),
+        _X,
+        _X,
+        p('SqFl', 'Seq Follow',      null,              'seqfollow', 0, 1, 1,  fmtBool, 16),
+    ]},
+    /* 1 — NOTE FX (pad 93) */
+    { name: 'NOTE FX', knobs: [
+        p('Oct',  'Octave Shift',    'noteFX_octave',   'track', -4,   4,   0,   fmtSign, 16),
+        p('Ofs',  'Note Offset',     'noteFX_offset',   'track', -24,  24,  0,   fmtSign, 8),
+        p('Gate', 'Gate Time',       'noteFX_gate',     'track',  0,   400, 100, fmtPct,  2 ),
+        p('Vel',  'Velocity Offset', 'noteFX_velocity', 'track', -127, 127, 0,   fmtSign    ),
+        p('Qnt',  'Quantize',        'quantize',        'track',  0,   100, 0,   fmtPct),
+        _X, _X, _X,
+    ]},
+    /* 2 — HARMZ (pad 94) */
+    { name: 'HARMZ', knobs: [
+        p('Unis', 'Unison',     'harm_unison',    'track', 0,   2,  0, fmtUnis, 4),
+        p('Oct',  'Octaver',    'harm_octaver',   'track', -4,  4,  0, fmtSign, 16),
+        p('Hrm1', 'Harmony 1',  'harm_interval1', 'track', -24, 24, 0, fmtSign, 8),
+        p('Hrm2', 'Harmony 2',  'harm_interval2', 'track', -24, 24, 0, fmtSign, 8),
+        _X, _X, _X, _X,
+    ]},
+    /* 3 — MIDI DLY (pad 95) */
+    { name: 'MIDI DLY', knobs: [
+        p('Dly',  'Delay Time',     'delay_time',         'track', 0,    10,  0, fmtDly,   16),
+        p('Lvl',  'Delay Level',    'delay_level',        'track', 0,    127, 0, fmtPlain),
+        p('Rep',  'Repeats',        'delay_repeats',      'track', 0,    16,  0, fmtPlain, 16),
+        p('Vfb',  'Vel Feedback',   'delay_vel_fb',       'track', -127, 127, 0, fmtSign ),
+        p('Pfb',  'Pitch Feedback', 'delay_pitch_fb',     'track', -24,  24,  0, fmtSign,  16),
+        p('Gfb',  'Gate Feedback',  'delay_gate_fb',      'track', -100, 100, 0, fmtSign ),
+        p('Clk',  'Clock Feedback', 'delay_clock_fb',     'track', -100, 100, 0, fmtSign ),
+        p('Rnd',  'Pitch Random',   'delay_pitch_random', 'track', 0,    1,   0, fmtBool ),
+    ]},
+    /* 4 — ARP OUT (pad 96) */
+    { name: 'ARP OUT', knobs: [
+        p('Styl', 'Arp Style',    'seq_arp_style',      'track', 0,    9,   0, fmtArpStyle, 16),
+        p('Rate', 'Arp Rate',     'seq_arp_rate',       'track', 0,    9,   1, fmtArpRate,  16),
+        p('Oct',  'Octave Range', 'seq_arp_octaves',    'track', -4,   4,   0, fmtArpOct,   16),
+        p('Gate', 'Arp Gate',     'seq_arp_gate',       'track', 1,    200, 50, fmtPct,     16),
+        p('Stps', 'Steps Mode',   'seq_arp_steps_mode', 'track', 0,    2,   0, fmtArpSteps, 16),
+        p('Rtrg', 'Retrigger',    'seq_arp_retrigger',  'track', 0,    1,   1, fmtBool,     16),
+        _X,
+        _X,
+    ]},
+    /* 5 — ARP IN (pad 97) */
+    { name: 'ARP IN', knobs: [
+        p('On',   'Track ARP On',  'tarp_on',         'track', 0,   1,   0,  fmtBool,     16),
+        p('Styl', 'Arp Style',     'tarp_style',      'track', 1,   9,   1,  fmtArpStyle, 16),
+        p('Rate', 'Arp Rate',      'tarp_rate',       'track', 0,   9,   1,  fmtArpRate,  16),
+        p('Oct',  'Octave Range',  'tarp_octaves',    'track', -4,  4,   1,  fmtArpOct,   16),
+        p('Gate', 'Arp Gate',      'tarp_gate',       'track', 1,   200, 50, fmtPct,      16),
+        p('Stps', 'Steps Mode',    'tarp_steps_mode', 'track', 0,   2,   0,  fmtArpSteps, 16),
+        _X,
+        p('Ltch', 'Latch',         'tarp_latch',      'track', 0,   1,   0,  fmtBool,     16),
+    ]},
+    /* 6 — CC PARAM (pad 98) — per-track CC assignments; custom handling, no DSP-wired knobs */
+    { name: 'CC PARAM', knobs: [_X, _X, _X, _X, _X, _X, _X, _X] },
+];
+
+export const ACTION_POPUP_TICKS = 98; /* ~500ms at 196Hz */
+export const POLL_INTERVAL = 4;
+export const CC_SCRATCH_PALETTE_BASE = 51;
+export const TAP_TEMPO_FLASH_TICKS = 20;   /* ~100ms at 196Hz */
+export const TAP_TEMPO_RESET_TICKS = 392;  /* ~2s at 196Hz */
+export const PARAM_LED_BANKS = [1, 2, 3, 4, 5];
+
+export const PAD_MODE_DRUM = 1;
