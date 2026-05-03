@@ -578,8 +578,10 @@ let flashEighth          = false;
 let flashSixteenth       = false;
 let masterPos            = 0;        /* DSP arp_master_tick (free-running 96-PPQN); used for arbitrary-rate music-synced flash */
 let dspLooperState       = 0;        /* 0=idle, 1=armed, 2=capturing, 3=looping */
-let dspMergeState        = 0;        /* 0=idle, 1=armed, 2=capturing */
+let dspMergeState        = 0;        /* 0=idle, 1=armed, 2=capturing, 3=stopping */
 let dspMergeDstClip      = 0;        /* destination clip index of active merge */
+let dspMergeTrack        = -1;       /* track index of active/last merge */
+let pendingMergeArm      = false;    /* true between merge_arm send and next poll confirmation */
 let pendingBankRefresh   = -1;       /* track index: refresh per-clip bank params next poll (-1=none) */
 let tickCount            = 0;
 const POLL_INTERVAL  = 4;
@@ -1721,8 +1723,30 @@ function pollDSP() {
     }
     if (v.length >= 54) masterPos      = (parseInt(v[53], 10) | 0) >>> 0;
     if (v.length >= 55) dspLooperState  = parseInt(v[54], 10) | 0;
+    const _prevMergeState = dspMergeState;
     if (v.length >= 56) dspMergeState   = parseInt(v[55], 10) | 0;
     if (v.length >= 57) dspMergeDstClip = parseInt(v[56], 10) | 0;
+    /* Arm confirmation: if DSP stayed idle after merge_arm, no empty slot was available */
+    if (pendingMergeArm) {
+        pendingMergeArm = false;
+        if (dspMergeState === 0) {
+            setButtonLED(MoveSample, LED_OFF);
+            showActionPopup('NO EMPTY', 'CLIP SLOT');
+        }
+    }
+    /* Merge just finished — re-read destination clip so LEDs + session view update */
+    if (_prevMergeState !== 0 && dspMergeState === 0 && dspMergeTrack >= 0) {
+        /* Auto-finalize: DSP jumped directly from CAPTURING (2) to IDLE — max length hit */
+        if (_prevMergeState === 2) showActionPopup('MAX LENGTH', 'REACHED');
+        if (trackPadMode[dspMergeTrack] === PAD_MODE_DRUM) {
+            syncDrumClipContent(dspMergeTrack);
+            screenDirty = true;
+        } else {
+            pendingStepsReread      = 2;
+            pendingStepsRereadTrack = dspMergeTrack;
+            pendingStepsRereadClip  = dspMergeDstClip;
+        }
+    }
 
     /* Deferred bank refresh after bake */
     if (pendingBankRefresh >= 0) {
@@ -3644,7 +3668,7 @@ globalThis.tick = function () {
              * so input_filter.mjs buttonCache doesn't silently suppress them. */
             setButtonLED(MovePlay,   playing ? Green : LED_OFF, true);
             setButtonLED(MoveRec,    recordArmed ? Red : LED_OFF, true);
-            setButtonLED(MoveSample, dspMergeState === 2 ? Green : dspMergeState === 1 ? Red : LED_OFF, true);
+            setButtonLED(MoveSample, dspMergeState >= 2 ? Green : dspMergeState === 1 ? Red : LED_OFF, true);
         }
     }
 
@@ -3887,7 +3911,7 @@ globalThis.tick = function () {
         /* Transport LEDs */
         setButtonLED(MovePlay, playing ? Green : LED_OFF);
         setButtonLED(MoveRec,  recordArmed ? Red : LED_OFF);
-        setButtonLED(MoveSample, dspMergeState === 2 ? Green : dspMergeState === 1 ? Red : LED_OFF);
+        setButtonLED(MoveSample, dspMergeState >= 2 ? Green : dspMergeState === 1 ? Red : LED_OFF);
         /* Loop LED: flash White at 1/8 rate while Perf Mode view is locked (Session
          * View only) or drum repeat latched; dim DarkGrey while Loop is held; off otherwise. */
         {
@@ -4083,6 +4107,10 @@ globalThis.onMidiMessageInternal = function (data) {
                 showActionPopup('BAKED');
                 /* Force a pfx bank refresh on the next poll so knobs show updated params */
                 pendingBankRefresh = confirmBakeTrack;
+                /* Re-read steps from DSP so LEDs reflect baked notes */
+                pendingStepsReread      = 2;
+                pendingStepsRereadTrack = confirmBakeTrack;
+                pendingStepsRereadClip  = confirmBakeClip;
             }
             confirmBake = false;
             screenDirty = true;
@@ -4680,22 +4708,32 @@ globalThis.onMidiMessageInternal = function (data) {
             }
         }
 
-        /* Sample (CC 118, no modifier): open Bake FX confirmation dialog */
+        /* Sample (CC 118, no modifier): cancel bake dialog, stop merge, or open Bake confirm */
         if (d1 === MoveSample && d2 === 127 && !shiftHeld) {
-            confirmBake      = true;
-            confirmBakeSel   = 1;
-            confirmBakeTrack = activeTrack;
-            confirmBakeClip  = trackActiveClip[activeTrack];
-            screenDirty      = true;
+            if (confirmBake) {
+                confirmBake = false;
+                forceRedraw();
+            } else if (dspMergeState !== 0) {
+                host_module_set_param('merge_stop', '1');
+                /* LED stays green until DSP finalizes at page boundary */
+            } else {
+                confirmBake      = true;
+                confirmBakeSel   = 1;
+                confirmBakeTrack = activeTrack;
+                confirmBakeClip  = trackActiveClip[activeTrack];
+                screenDirty      = true;
+            }
         }
 
         /* Shift+Sample (CC 118): arm / disarm Live Merge for activeTrack */
         if (d1 === MoveSample && d2 === 127 && shiftHeld) {
             if (dspMergeState !== 0) {
                 host_module_set_param('merge_stop', '1');
-                setButtonLED(MoveSample, LED_OFF);
+                /* LED stays green until DSP finalizes at page boundary */
             } else {
                 host_module_set_param('merge_arm', String(activeTrack));
+                dspMergeTrack    = activeTrack;
+                pendingMergeArm  = true;
                 setButtonLED(MoveSample, Red);
             }
         }

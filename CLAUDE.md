@@ -57,6 +57,10 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 
 **Mute/Solo**: `effective_mute(t)=mute[t]||(any_solo&&!solo[t])`. **Mutually exclusive** — setting one clears the other (recall paths bypass). Snapshots: Shift+Mute+step=save; Mute+step=recall; stores `snap_drum_eff_mute[16][NUM_TRACKS]`. Per-lane: `drum_lane_mute`/`drum_lane_solo` bitmasks; Delete+Mute clears all. Persisted as `t%ddlm`/`t%ddls`.
 
+**Bake** (Sample button, **melodic tracks only**): Sample (no modifier) opens confirm dialog (default No). Jog rotates Yes/No; jog click confirms; Sample or NoteSession cancels. Bake applies pfx chain offline to clip notes (NOTE FX+HARMZ→MIDI DLY→SEQ ARP output), writes results back, clears pfx_params via `clip_init`, restores tps/length, then calls `pfx_sync_from_clip` so `pfx_snapshot` returns reset values immediately. **Drum tracks: not yet supported** — `bake_clip` returns early for `PAD_MODE_DRUM`.
+
+**Live Merge** (Shift+Sample, melodic + drum tracks): captures live playback from the pfx chain into a new empty clip slot. Shift+Sample=arm (LED Red); transport start→LED Green (CAPTURING). Sample=schedule stop at next 16-step page boundary (STOPPING state, LED stays Green until DSP finalizes). DSP states: IDLE(0)→ARMED(1)→CAPTURING(2)→STOPPING(3)→IDLE(0). **Melodic**: notes captured into `clips[dst]` via `pfx_send` hook; on finalize JS triggers `pendingStepsReread`. **Drum**: notes routed to `drum_clips[dst].lanes[l].clip` by matching captured pitch to `lane->midi_note`; all 32 lanes init'd at arm; `clip_build_steps_from_notes` called per non-empty lane on finalize; JS triggers `syncDrumClipContent`. Auto-finalize at 256 steps (max length). Popups: "NO EMPTY / CLIP SLOT" when arm fails (detected via `pendingMergeArm` flag + next-poll check); "MAX LENGTH / REACHED" when DSP jumps CAPTURING→IDLE directly (state 2→0, not via STOPPING).
+
 **Scale**: 14 scales, `SCALE_IVLS[14][8]`. `scale_transpose(inst,note,deg_offset)` for scale-aware play effects.
 
 **State persistence**: v=17 (v=15,16 also accepted). Format: `tick:pitch:vel:gate:sm;`. SEQ ARP keys: `_arst/_arrt/_aroc/_argt/_arsm/_artg`. TRACK ARP keys: `t%d_taon/tast/tart/taoc/tagt/tasm/talc/tasv%d`. VelIn key: `t%d_tvo` (sparse, missing=0=Live). Note Repeat keys: `t%dl%drg` (gate, sparse default 255), `t%dl%dvs%d`, `t%dl%dnd%d`. Drum lane data sparse. v<15 rejected+deleted. `state_load` calls `drum_track_init` + `drum_repeat_init_defaults` first.
@@ -84,6 +88,8 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 13. ~~**ROUTE_EXTERNAL**~~ **done** (Global Menu Route=Ext, USB-A output, verified on device).
 14. ~~**Bank reindex**~~ **done** — TRACK bank removed; config moved to Global Menu Track Config section. Banks: CLIP(0)·NOTE FX(1)·HARMZ(2)·MIDI DLY(3)·SEQ ARP(4)·TRACK ARP(5).
 15. ~~**CC automation**~~ **done** — CC PARAM bank (6), per-clip recording/playback, step-edit, touch-record (overwrite while held), staircase hold, delete (all/per-knob), full-res SysEx palette LED brightness (rate-limited), ROUTE_EXTERNAL panic fix.
+16. ~~**Bake**~~ **done (melodic only)** — offline pfx chain application; confirm dialog; pfx params reset; step LEDs update. Drum bake pending (apply vel/gate/MIDI DLY per lane, skip pitch/HARMZ).
+17. ~~**Live Merge**~~ **done (melodic + drum)** — Shift+Sample arm/stop; page-quantized stop (STOPPING state); drum routes notes to lanes by midi_note pitch match; popups for no-slot and max-length.
 
 ## Per-set state
 
@@ -137,8 +143,8 @@ ssh ableton@move.local "tail -f /data/UserData/schwung/seq8.log"
 
 **DSP logging**: Use `seq8_ilog(inst, msg)` — writes to seq8.log via `inst->log_fp`. `fprintf(stderr, ...)` goes to MoveOriginal's uncaptured stderr and will NOT appear in any log file.
 
-**JS**: `ui.js` (~6483 lines) + `ui_constants.mjs` (217 lines). Both must deploy together.
-**DSP**: `dsp/seq8.c` (~4589 lines) `#include`s `dsp/seq8_set_param.c` (~3316 lines). Single translation unit — no extern declarations.
+**JS**: `ui.js` (~6668 lines) + `ui_constants.mjs` (217 lines). Both must deploy together.
+**DSP**: `dsp/seq8.c` (~4998 lines) `#include`s `dsp/seq8_set_param.c` (~3390 lines). Single translation unit — no extern declarations.
 Schwung core: v0.9.9. GLIBC ≤ 2.35. `~/schwung-notetwist` — NoteTwist reference.
 
 ## graphify

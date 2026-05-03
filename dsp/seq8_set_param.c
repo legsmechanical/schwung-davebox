@@ -588,21 +588,37 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
     if (!strcmp(key, "merge_arm")) {
-        /* val = track index (0-based). Find first empty melodic clip slot. */
+        /* val = track index (0-based). Find first empty clip slot. */
         int mt = my_atoi(val);
         if (mt < 0 || mt >= NUM_TRACKS) return;
         int dst = -1, c;
-        for (c = 0; c < NUM_CLIPS; c++) {
-            if (inst->tracks[mt].clips[c].note_count == 0) { dst = c; break; }
+        if (inst->tracks[mt].pad_mode == PAD_MODE_DRUM) {
+            for (c = 0; c < NUM_CLIPS; c++) {
+                int l, empty = 1;
+                for (l = 0; l < DRUM_LANES; l++)
+                    if (inst->tracks[mt].drum_clips[c].lanes[l].clip.note_count > 0) { empty = 0; break; }
+                if (empty) { dst = c; break; }
+            }
+        } else {
+            for (c = 0; c < NUM_CLIPS; c++)
+                if (inst->tracks[mt].clips[c].note_count == 0) { dst = c; break; }
         }
-        if (dst < 0) return; /* no empty melodic clip slot */
+        if (dst < 0) return; /* no empty clip slot */
         /* Determine TPS from active clip (use TICKS_PER_STEP for drum tracks) */
         uint16_t tps = (inst->tracks[mt].pad_mode == PAD_MODE_DRUM)
                        ? (uint16_t)TICKS_PER_STEP
                        : inst->tracks[mt].clips[inst->tracks[mt].active_clip].ticks_per_step;
         if (tps == 0) tps = (uint16_t)TICKS_PER_STEP;
-        clip_init(&inst->tracks[mt].clips[dst]);
-        inst->tracks[mt].clips[dst].ticks_per_step = tps;
+        if (inst->tracks[mt].pad_mode == PAD_MODE_DRUM) {
+            int l;
+            for (l = 0; l < DRUM_LANES; l++) {
+                clip_init(&inst->tracks[mt].drum_clips[dst].lanes[l].clip);
+                inst->tracks[mt].drum_clips[dst].lanes[l].clip.ticks_per_step = tps;
+            }
+        } else {
+            clip_init(&inst->tracks[mt].clips[dst]);
+            inst->tracks[mt].clips[dst].ticks_per_step = tps;
+        }
         inst->merge_track         = (uint8_t)mt;
         inst->merge_dst_clip      = (uint8_t)dst;
         inst->merge_tps           = (uint32_t)tps;
@@ -617,7 +633,10 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
     if (!strcmp(key, "merge_stop")) {
-        merge_finalize(inst);
+        if (inst->merge_state == MERGE_STATE_CAPTURING)
+            inst->merge_state = MERGE_STATE_STOPPING;
+        else
+            merge_finalize(inst);
         return;
     }
     if (!strcmp(key, "bake")) {
