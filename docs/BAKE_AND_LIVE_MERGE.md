@@ -43,7 +43,7 @@ Rotate the jog wheel to select a mode, then press the jog wheel to confirm. Pres
 **Limitations:**
 
 - If the clip is empty (all lanes), nothing happens.
-- Bake is undoable. Notes and steps are restored on undo; effect parameter values are not (they stay reset).
+- Bake is undoable. Notes, steps, and effect parameter values are all restored on undo.
 - CLIP mode uses a per-clip output pool capped at 2048 notes. Clips with very dense content across many lanes may silently drop overflow notes.
 
 ---
