@@ -75,7 +75,7 @@ import {
     col4, parseActionRaw, MCUFONT, pixelPrint, pixelPrintC
 } from './ui_constants.mjs';
 
-import { S } from './ui_state.mjs';
+import { S, CC_ASSIGN_DEFAULTS, PERF_FACTORY_PRESETS } from './ui_state.mjs';
 
 /* ------------------------------------------------------------------ */
 /* Parameter bank definitions                                           */
@@ -3242,6 +3242,10 @@ function syncMuteSoloFromDsp() {
 
 globalThis.init = function () {
     installConsoleOverride('SEQ8');
+    if (S.bankParams === null)
+        S.bankParams = Array.from({length: NUM_TRACKS}, function() {
+            return BANKS.map(function(bank) { return bank.knobs.map(function(k) { return k.def; }); });
+        });
 
     const p = (typeof host_module_get_param === 'function')
         ? host_module_get_param('playing') : null;
@@ -3788,605 +3792,296 @@ globalThis.tick = function () {
 /* MIDI input                                                           */
 /* ------------------------------------------------------------------ */
 
-globalThis.onMidiMessageInternal = function (data) {
-    if (isNoiseMessage(data)) return;
-    const status = data[0] | 0;
-    const d1     = (data[1] ?? 0) | 0;
-    const d2     = (data[2] ?? 0) | 0;
-
-    /* While session overview is held, swallow everything except CC 50 release and Up/Down scroll. */
-    if (S.sessionOverlayHeld) {
-        const isRelease = (status === 0xB0 && d1 === MoveNoteSession && d2 === 0);
-        const isScroll  = (status === 0xB0 && (d1 === MoveUp || d1 === MoveDown) && d2 === 127);
-        if (!isRelease && !isScroll) return;
+function _onCC_jog(d1, d2) {
+    /* Bake confirm: jog click confirms/cancels when dialog is open */
+    if (d1 === 3 && d2 === 127 && S.confirmBake) {
+        if (!S.confirmBakeIsDrum) {
+            if (S.confirmBakeSel === 0) {
+                host_module_set_param('bake', S.confirmBakeTrack + ' ' + S.confirmBakeClip);
+                S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
+                showActionPopup('BAKED');
+                S.pendingBankRefresh = S.confirmBakeTrack;
+                S.pendingStepsReread      = 2;
+                S.pendingStepsRereadTrack = S.confirmBakeTrack;
+                S.pendingStepsRereadClip  = S.confirmBakeClip;
+            }
+        } else {
+            /* drum: 0=CLIP, 1=LANE, 2=CANCEL */
+            if (S.confirmBakeSel < 2) {
+                const bakeMode = S.confirmBakeSel === 0 ? 2 : 1;
+                host_module_set_param('bake',
+                    S.confirmBakeTrack + ' ' + S.confirmBakeClip + ' ' + bakeMode);
+                S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
+                showActionPopup('BAKED');
+                S.pendingBankRefresh = S.confirmBakeTrack;
+                if (S.confirmBakeClip === S.trackActiveClip[S.confirmBakeTrack]) {
+                    S.pendingDrumResync      = 2;
+                    S.pendingDrumResyncTrack = S.confirmBakeTrack;
+                }
+            }
+        }
+        S.confirmBake = false;
+        S.screenDirty = true;
+        return;
     }
 
-
-    /* Knob touch (notes 0-7). MoveKnob1-8Touch = notes 0-7.
-     * Hardware: d2=127 = touch on; d2 in 0-63 (via 0x90 or 0x80) = touch off.
-     * Note 9 (jog touch): shows bank overview while held, locked out in global menu. */
-    if (d1 >= 0 && d1 <= 9) {
-        if ((status & 0xF0) === 0x90) {
-            if (d2 === 127) {
-                if (d1 <= 7 && S.activeBank >= 0) {
-                    S.knobTouched = d1; S.knobTurnedTick[d1] = -1; S.screenDirty = true;
-                    /* CC bank: Delete+touch clears this knob's automation immediately */
-                    if (S.activeBank === 6 && S.deleteHeld && !S.shiftHeld &&
-                            S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM) {
-                        const _dt = S.activeTrack, _dac = S.trackActiveClip[_dt];
-                        S.trackCCAutoBits[_dt][_dac] &= ~(1 << d1);
-                        S.trackCCLiveVal[_dt][d1] = -1;
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + _dt + '_cc_auto_clear_k', _dac + ' ' + d1);
-                        showActionPopup('CC AUTO', 'CLEAR');
-                        invalidateLEDCache();
-                    }
-                    /* CC bank: touch-record — start overwriting automation while held */
-                    if (S.activeBank === 6 && !S.deleteHeld && !S.sessionView &&
-                            S.recordArmed && !S.recordCountingIn &&
-                            S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM) {
-                        const _tv = S.trackCCVal[S.activeTrack][d1];
-                        host_module_set_param('t' + S.activeTrack + '_cc_touch',
-                            d1 + ' 1 ' + _tv);
-                        S.trackCCAutoBits[S.activeTrack][S.trackActiveClip[S.activeTrack]] |= (1 << d1);
-                    }
-                    /* SEQ ARP K5 / TRACK ARP K6 touch: switch pads to vel-slider editor immediately. */
-                    if ((S.activeBank === 4 && d1 === 4) || (S.activeBank === 5 && d1 === 5)) forceRedraw();
-                }
-                if (d1 === MoveMainTouch && !S.globalMenuOpen && !S.shiftHeld) { S.jogTouched = true; forceRedraw(); }
-            } else if (d2 < 64) {
-                if (d1 <= 7) {
-                    if (S.activeBank >= 0 && BANKS[S.activeBank].knobs[d1]) {
-                        const relPm = BANKS[S.activeBank].knobs[d1];
-                        if (relPm.dspKey === 'nudge') {
-                            S.bankParams[S.activeTrack][S.activeBank][d1] = 0;
-                            if (typeof host_module_set_param === 'function') {
-                                const _isDrumNdg = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.activeBank === 0;
-                                if (_isDrumNdg)
-                                    host_module_set_param('t' + S.activeTrack + '_l' + S.activeDrumLane[S.activeTrack] + '_nudge', '0');
-                                else
-                                    host_module_set_param('t' + S.activeTrack + '_nudge', '0');
-                            }
-                        } else if (relPm.dspKey === 'clock_shift' || relPm.dspKey === 'beat_stretch') {
-                            S.clockShiftTouchDelta = 0;
-                            S.bankParams[S.activeTrack][S.activeBank][d1] = 0;
-                        }
-                    }
-                    /* CC bank: touch-record — stop overwriting automation on release */
-                    if (S.activeBank === 6 && S.recordArmed && !S.recordCountingIn &&
-                            S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM)
-                        host_module_set_param('t' + S.activeTrack + '_cc_touch', d1 + ' 0 0');
-                    /* SEQ ARP K5 / TRACK ARP K6 release: refresh pads (vel-slider editor → normal pads). */
-                    if ((S.activeBank === 4 && d1 === 4) || (S.activeBank === 5 && d1 === 5)) forceRedraw();
-                    S.knobTouched = -1;
-                    S.knobLocked[d1] = false;
-                    S.knobAccum[d1]  = 0;
-                    S.screenDirty = true;
-                }
-                if (d1 === MoveMainTouch && S.jogTouched) { S.jogTouched = false; forceRedraw(); }
-            }
-            return;
-        }
-        if ((status & 0xF0) === 0x80) {
-            if (d1 <= 7) {
-                if (S.activeBank >= 0 && BANKS[S.activeBank].knobs[d1]) {
-                    const relPm = BANKS[S.activeBank].knobs[d1];
-                    if (relPm.dspKey === 'nudge') {
-                        S.bankParams[S.activeTrack][S.activeBank][d1] = 0;
-                        if (typeof host_module_set_param === 'function') {
-                            const _isDrumNdg = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.activeBank === 0;
-                            if (_isDrumNdg)
-                                host_module_set_param('t' + S.activeTrack + '_l' + S.activeDrumLane[S.activeTrack] + '_nudge', '0');
-                            else
-                                host_module_set_param('t' + S.activeTrack + '_nudge', '0');
-                        }
-                    } else if (relPm.dspKey === 'clock_shift' || relPm.dspKey === 'beat_stretch') {
-                        S.clockShiftTouchDelta = 0;
-                        S.bankParams[S.activeTrack][S.activeBank][d1] = 0;
-                    }
-                }
-                if ((S.activeBank === 4 && d1 === 4) || (S.activeBank === 5 && d1 === 5)) forceRedraw();
-                S.knobTouched = -1;
-                S.knobLocked[d1] = false;
-                S.knobAccum[d1]  = 0;
-                S.screenDirty = true;
-            }
-            if (d1 === MoveMainTouch && S.jogTouched) { S.jogTouched = false; forceRedraw(); }
-            return;
-        }
-    }
-
-    if (status === 0xB0) {
-        /* Bake confirm: jog click confirms/cancels when dialog is open */
-        if (d1 === 3 && d2 === 127 && S.confirmBake) {
-            if (!S.confirmBakeIsDrum) {
-                if (S.confirmBakeSel === 0) {
-                    host_module_set_param('bake', S.confirmBakeTrack + ' ' + S.confirmBakeClip);
-                    S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
-                    showActionPopup('BAKED');
-                    S.pendingBankRefresh = S.confirmBakeTrack;
-                    S.pendingStepsReread      = 2;
-                    S.pendingStepsRereadTrack = S.confirmBakeTrack;
-                    S.pendingStepsRereadClip  = S.confirmBakeClip;
-                }
-            } else {
-                /* drum: 0=CLIP, 1=LANE, 2=CANCEL */
-                if (S.confirmBakeSel < 2) {
-                    const bakeMode = S.confirmBakeSel === 0 ? 2 : 1;
-                    host_module_set_param('bake',
-                        S.confirmBakeTrack + ' ' + S.confirmBakeClip + ' ' + bakeMode);
-                    S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
-                    showActionPopup('BAKED');
-                    S.pendingBankRefresh = S.confirmBakeTrack;
-                    if (S.confirmBakeClip === S.trackActiveClip[S.confirmBakeTrack]) {
-                        S.pendingDrumResync      = 2;
-                        S.pendingDrumResyncTrack = S.confirmBakeTrack;
-                    }
-                }
-            }
-            S.confirmBake = false;
+    /* CC 3 = jog wheel physical click */
+    if (d1 === 3 && d2 === 127 && S.globalMenuOpen) {
+        if (S.tapTempoOpen) {
+            closeTapTempo();
             S.screenDirty = true;
             return;
         }
-
-        /* CC 3 = jog wheel physical click */
-        if (d1 === 3 && d2 === 127 && S.globalMenuOpen) {
-            if (S.tapTempoOpen) {
-                closeTapTempo();
-                S.screenDirty = true;
-                return;
-            }
-            if (S.confirmClearSession) {
-                if (S.confirmClearSel === 0) doClearSession();
-                else { S.confirmClearSession = false; }
-                S.screenDirty = true;
-                return;
-            }
-            handleMenuInput({
-                cc: 3, value: d2,
-                items: S.globalMenuItems, state: S.globalMenuState, stack: S.globalMenuStack,
-                onBack: function() { S.globalMenuOpen = false; },
-                S.shiftHeld: S.shiftHeld
+        if (S.confirmClearSession) {
+            if (S.confirmClearSel === 0) doClearSession();
+            else { S.confirmClearSession = false; }
+            S.screenDirty = true;
+            return;
+        }
+        handleMenuInput({
+            cc: 3, value: d2,
+            items: S.globalMenuItems, state: S.globalMenuState, stack: S.globalMenuStack,
+            onBack: function() { S.globalMenuOpen = false; },
+            S.shiftHeld: S.shiftHeld
+        });
+        S.screenDirty = true;
+        return;
+    }
+    if (d1 === 3 && d2 === 127 && S.shiftHeld && S.deleteHeld && !S.sessionView) {
+        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
+            /* Drum: Shift+Delete+jog = reset all real-time FX banks */
+            resetFxBanks(S.activeTrack);
+            showActionPopup('CLIP PARAMS', 'RESET');
+        } else {
+            /* Melodic: full reset — NOTE FX, HARMZ, MIDI DLY, + SEQ ARP */
+            const _arpTrack = S.activeTrack;
+            const _arpParams = Array.from({length: 8}, function(_, k) {
+                const pm = BANKS[4].knobs[k]; return pm ? S.bankParams[_arpTrack][4][k] : 0;
             });
-            S.screenDirty = true;
-            return;
+            resetFxBanks(_arpTrack);
+            for (let k = 0; k < 8; k++) {
+                const pm = BANKS[4].knobs[k];
+                if (pm) S.bankParams[_arpTrack][4][k] = pm.def;
+            }
+            S.undoSeqArpSnapshot = { track: _arpTrack, params: _arpParams };
+            showActionPopup('CLIP PARAMS', 'RESET');
         }
-        if (d1 === 3 && d2 === 127 && S.shiftHeld && S.deleteHeld && !S.sessionView) {
-            if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
-                /* Drum: Shift+Delete+jog = reset all real-time FX banks */
-                resetFxBanks(S.activeTrack);
-                showActionPopup('CLIP PARAMS', 'RESET');
+        return;
+    }
+    if (d1 === 3 && d2 === 127 && S.deleteHeld && !S.sessionView) {
+        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
+            if (S.drumPerformMode[S.activeTrack] > 0) {
+                /* Rpt/Rpt2 mode: Delete+jog = reset current lane groove params */
+                const _rt = S.activeTrack;
+                const _rl = S.activeDrumLane[_rt];
+                S.drumRepeatGate[_rt][_rl] = 0xFF;
+                for (let _s = 0; _s < 8; _s++) {
+                    S.drumRepeatVelScale[_rt][_rl][_s] = 100;
+                    S.drumRepeatNudge[_rt][_rl][_s]    = 0;
+                }
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + _rt + '_l' + _rl + '_repeat_groove_reset', '1');
+                showActionPopup('RPT GROOVE', 'RESET');
             } else {
-                /* Melodic: full reset — NOTE FX, HARMZ, MIDI DLY, + SEQ ARP */
-                const _arpTrack = S.activeTrack;
-                const _arpParams = Array.from({length: 8}, function(_, k) {
-                    const pm = BANKS[4].knobs[k]; return pm ? S.bankParams[_arpTrack][4][k] : 0;
-                });
-                resetFxBanks(_arpTrack);
-                for (let k = 0; k < 8; k++) {
-                    const pm = BANKS[4].knobs[k];
-                    if (pm) S.bankParams[_arpTrack][4][k] = pm.def;
-                }
-                S.undoSeqArpSnapshot = { track: _arpTrack, params: _arpParams };
-                showActionPopup('CLIP PARAMS', 'RESET');
-            }
-            return;
-        }
-        if (d1 === 3 && d2 === 127 && S.deleteHeld && !S.sessionView) {
-            if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
-                if (S.drumPerformMode[S.activeTrack] > 0) {
-                    /* Rpt/Rpt2 mode: Delete+jog = reset current lane groove params */
-                    const _rt = S.activeTrack;
-                    const _rl = S.activeDrumLane[_rt];
-                    S.drumRepeatGate[_rt][_rl] = 0xFF;
-                    for (let _s = 0; _s < 8; _s++) {
-                        S.drumRepeatVelScale[_rt][_rl][_s] = 100;
-                        S.drumRepeatNudge[_rt][_rl][_s]    = 0;
-                    }
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + _rt + '_l' + _rl + '_repeat_groove_reset', '1');
-                    showActionPopup('RPT GROOVE', 'RESET');
-                } else {
-                    /* Drum: Delete+jog = reset only the active real-time FX bank */
-                    const REAL_TIME_BANKS = [1, 2, 3];
-                    if (REAL_TIME_BANKS.indexOf(S.activeBank) >= 0) {
-                        resetSingleFxBank(S.activeTrack, S.activeBank);
-                        showActionPopup('BANK RESET');
-                    }
-                }
-            } else {
-                /* CC PARAM bank: Delete+jog clears all CC automation for active clip */
-                if (S.activeBank === 6) {
-                    const _t = S.activeTrack, _c = S.trackActiveClip[_t];
-                    S.trackCCAutoBits[_t][_c] = 0;
-                    S.trackCCLiveVal[_t] = new Array(8).fill(-1);
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + _t + '_cc_auto_clear', String(_c));
-                    showActionPopup('CC AUTO', 'CLEAR');
-                    invalidateLEDCache();
-                    return;
-                }
-                resetFxBanks(S.activeTrack);
-                S.undoSeqArpSnapshot = null;
-                showActionPopup('BANK RESET');
-            }
-            return;
-        }
-        /* Plain jog click on drum track: toggle Velocity / Repeat pad mode */
-        if (d1 === 3 && d2 === 127 && !S.shiftHeld && !S.deleteHeld && !S.copyHeld && !S.muteHeld &&
-                !S.sessionView && S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
-            const t = S.activeTrack;
-            if (S.drumPerformMode[t] === 1) {
-                host_module_set_param('t' + t + '_drum_repeat_stop', '1');
-                S.drumRepeatHeldPad[t] = -1;
-            }
-            if (S.drumPerformMode[t] === 2) {
-                S.drumRepeat2HeldLanes[t].clear();
-                S.drumRepeat2LatchedLanes[t].clear();
-                host_module_set_param('t' + t + '_drum_repeat2_stop', '1');
-            }
-            S.drumRepeatLatched[t]  = false;
-            S.drumPerformMode[t]    = (S.drumPerformMode[t] + 1) % 3;
-            showModePopup('PERFORMANCE PADS',
-                ['Velocity', 'Repeat Play (Rpt1)', 'Repeat Set (Rpt2)'],
-                S.drumPerformMode[t]);
-            return;
-        }
-
-        if (d1 === MoveMainKnob) {
-            if (S.confirmBake) {
-                const delta = decodeDelta(d2);
-                if (delta !== 0) {
-                    if (S.confirmBakeIsDrum) {
-                        S.confirmBakeSel = (S.confirmBakeSel + (delta > 0 ? 1 : 2)) % 3;
-                    } else {
-                        S.confirmBakeSel = S.confirmBakeSel === 0 ? 1 : 0;
-                    }
-                    S.screenDirty = true;
-                }
-                return;
-            }
-            if (S.globalMenuOpen && !S.shiftHeld) {
-                if (S.tapTempoOpen) {
-                    const delta = decodeDelta(d2);
-                    if (delta !== 0) {
-                        S.tapTempoBpm = Math.max(40, Math.min(250, S.tapTempoBpm + delta));
-                        S.screenDirty = true;
-                    }
-                } else if (S.confirmClearSession) {
-                    const delta = decodeDelta(d2);
-                    if (delta !== 0) { S.confirmClearSel = S.confirmClearSel === 0 ? 1 : 0; S.screenDirty = true; }
-                } else if (S.globalMenuState.editing) {
-                    const delta = decodeDelta(d2);
-                    if (delta !== 0) {
-                        const item = S.globalMenuItems[S.globalMenuState.selectedIndex];
-                        if (item && item.type === 'value') {
-                            const cur = S.globalMenuState.editValue !== null ? S.globalMenuState.editValue : item.get();
-                            S.globalMenuState.editValue = Math.min(item.max, Math.max(item.min, cur + delta));
-                        } else if (item && item.type === 'enum') {
-                            const opts = item.options || [];
-                            const idx  = opts.indexOf(S.globalMenuState.editValue);
-                            const sign = delta > 0 ? 1 : -1;
-                            S.globalMenuState.editValue = opts[((idx + sign) % opts.length + opts.length) % opts.length];
-                        }
-                        S.screenDirty = true;
-                    }
-                } else {
-                    handleMenuInput({
-                        cc: MoveMainKnob, value: d2,
-                        items: S.globalMenuItems, state: S.globalMenuState, stack: S.globalMenuStack,
-                        onBack: function() { S.globalMenuOpen = false; },
-                        S.shiftHeld: false
-                    });
-                    S.screenDirty = true;
-                }
-            } else {
-                const delta = decodeDelta(d2);
-                if (delta !== 0) {
-                    if (S.sessionView) {
-                        if (!S.shiftHeld) {
-                            S.sceneRow = Math.min(NUM_CLIPS - 4, Math.max(0, S.sceneRow + delta));
-                            forceRedraw();
-                        }
-                        /* Shift + jog in Session View: no-op */
-                    } else if (S.shiftHeld) {
-                        /* Track View + Shift: step active track 0–7, clamp at ends */
-                        const next = Math.min(NUM_TRACKS - 1, Math.max(0, S.activeTrack + delta));
-                        if (next !== S.activeTrack) {
-                            extNoteOffAll();
-                            handoffRecordingToTrack(next);
-                            S.activeTrack = next;
-                            refreshPerClipBankParams(next);
-                            computePadNoteMap();
-                            S.seqActiveNotes.clear();
-                            S.seqLastStep = -1;
-                            S.seqLastClip = -1;
-                            forceRedraw();
-                        }
-                    } else if (S.loopHeld) {
-                        /* Track View + Loop held: adjust length ±1 step */
-                        const _t  = S.activeTrack;
-                        if (S.trackPadMode[_t] === PAD_MODE_DRUM) {
-                            /* Drum: adjust active lane length */
-                            const _lane = S.activeDrumLane[_t];
-                            const _cur  = S.drumLaneLength[_t];
-                            const _nv   = Math.max(1, Math.min(256, _cur + delta));
-                            if (_nv !== _cur) {
-                                S.drumLaneLength[_t] = _nv;
-                                const _maxPage = Math.max(0, Math.ceil(_nv / 16) - 1);
-                                if (S.drumStepPage[_t] > _maxPage) S.drumStepPage[_t] = _maxPage;
-                                if (typeof host_module_set_param === 'function')
-                                    host_module_set_param('t' + _t + '_l' + _lane + '_clip_length', String(_nv));
-                                forceRedraw();
-                            }
-                        } else {
-                        const _ac = effectiveClip(_t);
-                        const _cur = S.clipLength[_t][_ac];
-                        const _nv  = Math.max(1, Math.min(256, _cur + delta));
-                        if (_nv !== _cur) {
-                            S.clipLength[_t][_ac] = _nv;
-                            const _maxPage = Math.max(0, Math.ceil(_nv / 16) - 1);
-                            if (S.trackCurrentPage[_t] > _maxPage) S.trackCurrentPage[_t] = _maxPage;
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + _t + '_clip_length', String(_nv));
-                            forceRedraw();
-                        }
-                        }
-                    } else {
-                        const cur = S.activeBank;
-                        let next  = Math.min(6, Math.max(0, cur + delta));
-                        /* HARMZ (2) and ARP OUT (4) hidden on drum tracks */
-                        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
-                            if (next === 2) next = delta > 0 ? 3 : 1;
-                            else if (next === 4) next = delta > 0 ? 5 : 3;
-                        }
-                        if (next !== cur) {
-                            S.activeBank = next;
-                            readBankParams(S.activeTrack, next);
-                            S.bankSelectTick = S.tickCount;
-                            forceRedraw();
-                        }
-                    }
+                /* Drum: Delete+jog = reset only the active real-time FX bank */
+                const REAL_TIME_BANKS = [1, 2, 3];
+                if (REAL_TIME_BANKS.indexOf(S.activeBank) >= 0) {
+                    resetSingleFxBank(S.activeTrack, S.activeBank);
+                    showActionPopup('BANK RESET');
                 }
             }
-            return;
-        }
-
-        if (d1 === MoveShift) {
-            S.shiftHeld = d2 === 127;
-            if (!S.shiftHeld && S.jogTouched) { S.jogTouched = false; forceRedraw(); }
-        }
-
-        if (d1 === MoveDelete) {
-            S.deleteHeld = d2 === 127;
-        }
-
-        if (d1 === MoveCopy) {
-            S.copyHeld = d2 === 127;
-            if (!S.copyHeld) {
-                S.copySrc = null;
+        } else {
+            /* CC PARAM bank: Delete+jog clears all CC automation for active clip */
+            if (S.activeBank === 6) {
+                const _t = S.activeTrack, _c = S.trackActiveClip[_t];
+                S.trackCCAutoBits[_t][_c] = 0;
+                S.trackCCLiveVal[_t] = new Array(8).fill(-1);
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + _t + '_cc_auto_clear', String(_c));
+                showActionPopup('CC AUTO', 'CLEAR');
                 invalidateLEDCache();
+                return;
             }
+            resetFxBanks(S.activeTrack);
+            S.undoSeqArpSnapshot = null;
+            showActionPopup('BANK RESET');
         }
-
-        if (d1 === MoveMute) {
-            S.muteHeld = d2 === 127;
-            if (d2 === 127) S.muteUsedAsModifier = false;
-            if (S.sessionView) invalidateLEDCache();
+        return;
+    }
+    /* Plain jog click on drum track: toggle Velocity / Repeat pad mode */
+    if (d1 === 3 && d2 === 127 && !S.shiftHeld && !S.deleteHeld && !S.copyHeld && !S.muteHeld &&
+            !S.sessionView && S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
+        const t = S.activeTrack;
+        if (S.drumPerformMode[t] === 1) {
+            host_module_set_param('t' + t + '_drum_repeat_stop', '1');
+            S.drumRepeatHeldPad[t] = -1;
         }
+        if (S.drumPerformMode[t] === 2) {
+            S.drumRepeat2HeldLanes[t].clear();
+            S.drumRepeat2LatchedLanes[t].clear();
+            host_module_set_param('t' + t + '_drum_repeat2_stop', '1');
+        }
+        S.drumRepeatLatched[t]  = false;
+        S.drumPerformMode[t]    = (S.drumPerformMode[t] + 1) % 3;
+        showModePopup('PERFORMANCE PADS',
+            ['Velocity', 'Repeat Play (Rpt1)', 'Repeat Set (Rpt2)'],
+            S.drumPerformMode[t]);
+        return;
+    }
 
-        /* Note/Session view toggle: Shift+press = open global menu (Track View only);
-         * tap = switch view; hold = session overview */
-        if (d1 === MoveNoteSession) {
-            if (d2 === 127) {
-                if (S.shiftHeld) {
-                    if (S.globalMenuOpen) { S.globalMenuOpen = false; forceRedraw(); }
-                    else { openGlobalMenu(); }
-                } else if (S.globalMenuOpen && S.tapTempoOpen) {
-                    closeTapTempo();
-                    forceRedraw();
-                } else if (S.confirmBake) {
-                    S.confirmBake = false;
-                    forceRedraw();
-                } else if (S.globalMenuOpen && S.confirmClearSession) {
-                    S.confirmClearSession = false;
-                    forceRedraw();
-                } else if (S.globalMenuOpen) {
-                    S.globalMenuOpen = false;
-                    S.lastSentMenuEditValue = null;
-                    forceRedraw();
+    if (d1 === MoveMainKnob) {
+        if (S.confirmBake) {
+            const delta = decodeDelta(d2);
+            if (delta !== 0) {
+                if (S.confirmBakeIsDrum) {
+                    S.confirmBakeSel = (S.confirmBakeSel + (delta > 0 ? 1 : 2)) % 3;
                 } else {
-                    S.noteSessionPressedTick = S.tickCount;
+                    S.confirmBakeSel = S.confirmBakeSel === 0 ? 1 : 0;
                 }
-            } else if (d2 === 0) {
-                if (S.sessionOverlayHeld) {
-                    S.sessionOverlayHeld = false;
-                    S.overviewCache = null;
-                    invalidateLEDCache();
-                    forceRedraw();
-                } else if (S.noteSessionPressedTick >= 0) {
-                    /* Tap: toggle view */
-                    S.sessionView = !S.sessionView;
-                    invalidateLEDCache();
-                    S.heldStepBtn        = -1;
-                    S.heldStep           = -1;
-                    S.heldStepNotes      = [];
-                    S.stepWasEmpty       = false;
-                    S.stepWasHeld        = false;
-                    S.stepBtnPressedTick.fill(-1);
-                    /* Leaving Session View stops any active loop; mods/latch persist. */
-                    if (!S.sessionView && (S.perfViewLocked || S.perfStack.length > 0)) {
-                        const _hadLoop = S.perfStack.length > 0;
-                        S.perfStack         = [];
-                        S.perfStickyLengths = new Set();
-                        S.perfHoldPadHeld   = false;
-                        S.perfViewLocked    = false;
-                        S.loopHeld         = false;
-                        S.perfModsHeld     = 0;
-                        sendPerfMods();
-                        /* looper_stop last so set_param coalescing can't eat it */
-                        if (_hadLoop && typeof host_module_set_param === 'function')
-                            host_module_set_param('looper_stop', '1');
-                        invalidateLEDCache();
-                    }
-                    if (S.sessionView) {
-                        for (let i = 0; i < 16; i++) setLED(16 + i, LED_OFF);
-                        for (let t = 0; t < 8; t++) setLED(TRACK_PAD_BASE + t, LED_OFF);
-                    } else {
-                        for (let row = 0; row < 4; row++)
-                            for (let t = 0; t < 8; t++) setLED(92 - row * 8 + t, LED_OFF);
-                    }
-                    forceRedraw();
-                }
-                S.noteSessionPressedTick = -1;
+                S.screenDirty = true;
             }
-        }
-
-        /* Loop button (CC 58, Session View): enter/exit Performance Mode.
-         * Pad presses in Perf Mode drive rate capture + modifier engage.
-         * Double-tap locks the view after Loop is released. */
-        if (d1 === MoveLoop && S.sessionView) {
-            if (d2 === 127) {
-                S.loopPressTick = S.tickCount;
-                S.loopHeld      = true;
-                forceRedraw();
-                return;
-            }
-            const heldDuration = S.tickCount - S.loopPressTick;
-            const wasTap       = heldDuration < LOOP_TAP_TICKS;
-
-            if (S.perfViewLocked) {
-                /* Locked + tap → unlock + stop. Long press keeps lock. */
-                if (wasTap) {
-                    S.perfViewLocked     = false;
-                    S.loopHeld           = false;
-                    S.loopLastTapEndTick = -999;
-                    S.perfStack         = [];
-                    S.perfStickyLengths = new Set();
-                    S.perfHoldPadHeld   = false;
-                    S.perfModsHeld     = 0;
-                    sendPerfMods();
-                    /* looper_stop last so set_param coalescing can't eat it */
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('looper_stop', '1');
-                    invalidateLEDCache();
-                    forceRedraw();
-                }
-                return;
-            }
-
-            if (wasTap && (S.tickCount - S.loopLastTapEndTick) < LOOP_DBLTAP_GAP) {
-                /* Second tap → lock Perf Mode; preserve running loop + mods. */
-                S.perfViewLocked     = true;
-                S.loopHeld           = true;
-                S.loopLastTapEndTick = -999;
-                forceRedraw();
-                return;
-            }
-
-            if (wasTap) S.loopLastTapEndTick = S.tickCount;
-
-            /* Normal release: if sticky lengths or hold pad keep loops alive, lock perf mode.
-             * Otherwise exit Perf Mode, stop loop, clear all mods. */
-            S.loopHeld     = false;
-            S.perfModsHeld = 0;
-            if (S.perfStickyLengths.size > 0 || S.perfHoldPadHeld) {
-                S.perfViewLocked = true;
-                /* Keep all stack entries when hold pad is engaged; otherwise filter to sticky */
-                if (!S.perfHoldPadHeld)
-                    S.perfStack = S.perfStack.filter(function(e) { return S.perfStickyLengths.has(e.idx); });
-                if (S.perfStack.length > 0 && typeof host_module_set_param === 'function')
-                    host_module_set_param('looper_arm', String(S.perfStack[S.perfStack.length - 1].ticks));
-            } else {
-                if (S.perfStack.length > 0 &&
-                        typeof host_module_set_param === 'function')
-                    host_module_set_param('looper_stop', '1');
-                S.perfStack = [];
-            }
-            sendPerfMods();
-            invalidateLEDCache();
-            forceRedraw();
             return;
         }
-
-        /* Loop button (CC 58, Track View): hold + step buttons sets clip length */
-        if (d1 === MoveLoop && !S.sessionView) {
-            if (d2 === 127 && S.shiftHeld) {
-                /* Shift+Loop: double-and-fill active clip or drum lane */
-                const _t = S.activeTrack;
-                if (S.trackPadMode[_t] === PAD_MODE_DRUM) {
-                    const _l   = S.activeDrumLane[_t];
-                    const _len = S.drumLaneLength[_t];
-                    if (_len * 2 > 256) {
-                        showActionPopup('CLIP FULL');
-                    } else {
-                        host_module_set_param('t' + _t + '_l' + _l + '_loop_double_fill', '1');
-                        S.drumLaneLength[_t] = _len * 2;
-                        S.pendingDrumResync      = 2;
-                        S.pendingDrumResyncTrack = _t;
+        if (S.globalMenuOpen && !S.shiftHeld) {
+            if (S.tapTempoOpen) {
+                const delta = decodeDelta(d2);
+                if (delta !== 0) {
+                    S.tapTempoBpm = Math.max(40, Math.min(250, S.tapTempoBpm + delta));
+                    S.screenDirty = true;
+                }
+            } else if (S.confirmClearSession) {
+                const delta = decodeDelta(d2);
+                if (delta !== 0) { S.confirmClearSel = S.confirmClearSel === 0 ? 1 : 0; S.screenDirty = true; }
+            } else if (S.globalMenuState.editing) {
+                const delta = decodeDelta(d2);
+                if (delta !== 0) {
+                    const item = S.globalMenuItems[S.globalMenuState.selectedIndex];
+                    if (item && item.type === 'value') {
+                        const cur = S.globalMenuState.editValue !== null ? S.globalMenuState.editValue : item.get();
+                        S.globalMenuState.editValue = Math.min(item.max, Math.max(item.min, cur + delta));
+                    } else if (item && item.type === 'enum') {
+                        const opts = item.options || [];
+                        const idx  = opts.indexOf(S.globalMenuState.editValue);
+                        const sign = delta > 0 ? 1 : -1;
+                        S.globalMenuState.editValue = opts[((idx + sign) % opts.length + opts.length) % opts.length];
+                    }
+                    S.screenDirty = true;
+                }
+            } else {
+                handleMenuInput({
+                    cc: MoveMainKnob, value: d2,
+                    items: S.globalMenuItems, state: S.globalMenuState, stack: S.globalMenuStack,
+                    onBack: function() { S.globalMenuOpen = false; },
+                    S.shiftHeld: false
+                });
+                S.screenDirty = true;
+            }
+        } else {
+            const delta = decodeDelta(d2);
+            if (delta !== 0) {
+                if (S.sessionView) {
+                    if (!S.shiftHeld) {
+                        S.sceneRow = Math.min(NUM_CLIPS - 4, Math.max(0, S.sceneRow + delta));
                         forceRedraw();
+                    }
+                    /* Shift + jog in Session View: no-op */
+                } else if (S.shiftHeld) {
+                    /* Track View + Shift: step active track 0–7, clamp at ends */
+                    const next = Math.min(NUM_TRACKS - 1, Math.max(0, S.activeTrack + delta));
+                    if (next !== S.activeTrack) {
+                        extNoteOffAll();
+                        handoffRecordingToTrack(next);
+                        S.activeTrack = next;
+                        refreshPerClipBankParams(next);
+                        computePadNoteMap();
+                        S.seqActiveNotes.clear();
+                        S.seqLastStep = -1;
+                        S.seqLastClip = -1;
+                        forceRedraw();
+                    }
+                } else if (S.loopHeld) {
+                    /* Track View + Loop held: adjust length ±1 step */
+                    const _t  = S.activeTrack;
+                    if (S.trackPadMode[_t] === PAD_MODE_DRUM) {
+                        /* Drum: adjust active lane length */
+                        const _lane = S.activeDrumLane[_t];
+                        const _cur  = S.drumLaneLength[_t];
+                        const _nv   = Math.max(1, Math.min(256, _cur + delta));
+                        if (_nv !== _cur) {
+                            S.drumLaneLength[_t] = _nv;
+                            const _maxPage = Math.max(0, Math.ceil(_nv / 16) - 1);
+                            if (S.drumStepPage[_t] > _maxPage) S.drumStepPage[_t] = _maxPage;
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + _t + '_l' + _lane + '_clip_length', String(_nv));
+                            forceRedraw();
+                        }
+                    } else {
+                    const _ac = effectiveClip(_t);
+                    const _cur = S.clipLength[_t][_ac];
+                    const _nv  = Math.max(1, Math.min(256, _cur + delta));
+                    if (_nv !== _cur) {
+                        S.clipLength[_t][_ac] = _nv;
+                        const _maxPage = Math.max(0, Math.ceil(_nv / 16) - 1);
+                        if (S.trackCurrentPage[_t] > _maxPage) S.trackCurrentPage[_t] = _maxPage;
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + _t + '_clip_length', String(_nv));
+                        forceRedraw();
+                    }
                     }
                 } else {
-                    const _ac  = effectiveClip(_t);
-                    const _len = S.clipLength[_t][_ac];
-                    if (_len * 2 > 256) {
-                        showActionPopup('CLIP FULL');
-                    } else {
-                        S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + _t + '_loop_double_fill', '1');
-                        S.clipLength[_t][_ac] = _len * 2;
-                        S.pendingStepsReread      = 2;
-                        S.pendingStepsRereadTrack = _t;
-                        S.pendingStepsRereadClip  = _ac;
-                        refreshPerClipBankParams(_t);
+                    const cur = S.activeBank;
+                    let next  = Math.min(6, Math.max(0, cur + delta));
+                    /* HARMZ (2) and ARP OUT (4) hidden on drum tracks */
+                    if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
+                        if (next === 2) next = delta > 0 ? 3 : 1;
+                        else if (next === 4) next = delta > 0 ? 5 : 3;
+                    }
+                    if (next !== cur) {
+                        S.activeBank = next;
+                        readBankParams(S.activeTrack, next);
+                        S.bankSelectTick = S.tickCount;
                         forceRedraw();
                     }
                 }
-                return;
             }
-            S.loopHeld = d2 === 127;
-            if (S.loopHeld) {
-                /* Latch or clear drum repeat on the active track */
-                const _lrt = S.activeTrack;
-                if (S.drumPerformMode[_lrt] === 2) {
-                    S.rpt2LoopPadUsed = false;
-                    if (S.drumRepeat2HeldLanes[_lrt].size > 0) {
-                        for (const _ll of S.drumRepeat2HeldLanes[_lrt]) {
-                            S.drumRepeat2LatchedLanes[_lrt].add(_ll);
-                        }
-                        S.rpt2LoopPadUsed = true;
-                    }
-                } else if (S.drumRepeatLatched[_lrt]) {
-                    S.drumRepeatLatched[_lrt]  = false;
-                    S.drumRepeatHeldPad[_lrt]  = -1;
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + _lrt + '_drum_repeat_stop', '1');
-                } else if (S.drumRepeatHeldPad[_lrt] >= 0) {
-                    S.drumRepeatLatched[_lrt] = true;
-                }
-                S.heldStepBtn        = -1;
-                S.heldStep           = -1;
-                S.heldStepNotes      = [];
-                S.stepWasEmpty       = false;
-                S.stepWasHeld        = false;
-                S.stepBtnPressedTick.fill(-1);
-            } else {
-                /* Loop released — Rpt2: unlatch all if no pad was touched during hold */
-                const _lrt = S.activeTrack;
-                if (S.drumPerformMode[_lrt] === 2 && !S.rpt2LoopPadUsed &&
-                        S.drumRepeat2LatchedLanes[_lrt].size > 0) {
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + _lrt + '_drum_repeat2_stop', '1');
-                    S.drumRepeat2LatchedLanes[_lrt].clear();
-                }
-            }
-            forceRedraw();
         }
+        return;
+    }
 
-        /* Back: close global menu if open; otherwise (with Shift) hide module */
-        if (d1 === MoveBack && d2 === 127) {
-            if (S.globalMenuOpen && S.tapTempoOpen) {
+}
+
+function _onCC_buttons(d1, d2) {
+    if (d1 === MoveShift) {
+        S.shiftHeld = d2 === 127;
+        if (!S.shiftHeld && S.jogTouched) { S.jogTouched = false; forceRedraw(); }
+    }
+
+    if (d1 === MoveDelete) {
+        S.deleteHeld = d2 === 127;
+    }
+
+    if (d1 === MoveCopy) {
+        S.copyHeld = d2 === 127;
+        if (!S.copyHeld) {
+            S.copySrc = null;
+            invalidateLEDCache();
+        }
+    }
+
+    if (d1 === MoveMute) {
+        S.muteHeld = d2 === 127;
+        if (d2 === 127) S.muteUsedAsModifier = false;
+        if (S.sessionView) invalidateLEDCache();
+    }
+
+    /* Note/Session view toggle: Shift+press = open global menu (Track View only);
+     * tap = switch view; hold = session overview */
+    if (d1 === MoveNoteSession) {
+        if (d2 === 127) {
+            if (S.shiftHeld) {
+                if (S.globalMenuOpen) { S.globalMenuOpen = false; forceRedraw(); }
+                else { openGlobalMenu(); }
+            } else if (S.globalMenuOpen && S.tapTempoOpen) {
                 closeTapTempo();
                 forceRedraw();
             } else if (S.confirmBake) {
@@ -4399,1171 +4094,1491 @@ globalThis.onMidiMessageInternal = function (data) {
                 S.globalMenuOpen = false;
                 S.lastSentMenuEditValue = null;
                 forceRedraw();
-            } else if (S.shiftHeld) {
-                saveState();
-                removeFlagsWrap();
-                S.ledInitComplete = false;
+            } else {
+                S.noteSessionPressedTick = S.tickCount;
+            }
+        } else if (d2 === 0) {
+            if (S.sessionOverlayHeld) {
+                S.sessionOverlayHeld = false;
+                S.overviewCache = null;
                 invalidateLEDCache();
-                clearAllLEDs();
-                for (let _i = 0; _i < 4; _i++) setButtonLED(40 + _i, LED_OFF);
-                if (typeof host_hide_module === 'function') host_hide_module();
+                forceRedraw();
+            } else if (S.noteSessionPressedTick >= 0) {
+                /* Tap: toggle view */
+                S.sessionView = !S.sessionView;
+                invalidateLEDCache();
+                S.heldStepBtn        = -1;
+                S.heldStep           = -1;
+                S.heldStepNotes      = [];
+                S.stepWasEmpty       = false;
+                S.stepWasHeld        = false;
+                S.stepBtnPressedTick.fill(-1);
+                /* Leaving Session View stops any active loop; mods/latch persist. */
+                if (!S.sessionView && (S.perfViewLocked || S.perfStack.length > 0)) {
+                    const _hadLoop = S.perfStack.length > 0;
+                    S.perfStack         = [];
+                    S.perfStickyLengths = new Set();
+                    S.perfHoldPadHeld   = false;
+                    S.perfViewLocked    = false;
+                    S.loopHeld         = false;
+                    S.perfModsHeld     = 0;
+                    sendPerfMods();
+                    /* looper_stop last so set_param coalescing can't eat it */
+                    if (_hadLoop && typeof host_module_set_param === 'function')
+                        host_module_set_param('looper_stop', '1');
+                    invalidateLEDCache();
+                }
+                if (S.sessionView) {
+                    for (let i = 0; i < 16; i++) setLED(16 + i, LED_OFF);
+                    for (let t = 0; t < 8; t++) setLED(TRACK_PAD_BASE + t, LED_OFF);
+                } else {
+                    for (let row = 0; row < 4; row++)
+                        for (let t = 0; t < 8; t++) setLED(92 - row * 8 + t, LED_OFF);
+                }
+                forceRedraw();
             }
+            S.noteSessionPressedTick = -1;
+        }
+    }
+
+    /* Loop button (CC 58, Session View): enter/exit Performance Mode.
+     * Pad presses in Perf Mode drive rate capture + modifier engage.
+     * Double-tap locks the view after Loop is released. */
+    if (d1 === MoveLoop && S.sessionView) {
+        if (d2 === 127) {
+            S.loopPressTick = S.tickCount;
+            S.loopHeld      = true;
+            forceRedraw();
+            return;
+        }
+        const heldDuration = S.tickCount - S.loopPressTick;
+        const wasTap       = heldDuration < LOOP_TAP_TICKS;
+
+        if (S.perfViewLocked) {
+            /* Locked + tap → unlock + stop. Long press keeps lock. */
+            if (wasTap) {
+                S.perfViewLocked     = false;
+                S.loopHeld           = false;
+                S.loopLastTapEndTick = -999;
+                S.perfStack         = [];
+                S.perfStickyLengths = new Set();
+                S.perfHoldPadHeld   = false;
+                S.perfModsHeld     = 0;
+                sendPerfMods();
+                /* looper_stop last so set_param coalescing can't eat it */
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('looper_stop', '1');
+                invalidateLEDCache();
+                forceRedraw();
+            }
+            return;
         }
 
-        /* Undo button: press = undo; Shift+Undo = redo */
-        if (d1 === MoveUndo && d2 === 127) {
-            if (S.shiftHeld) {
-                if (S.redoAvailable) {
-                    if (S.redoSeqArpSnapshot) {
-                        const _t = S.redoSeqArpSnapshot.track;
-                        S.undoSeqArpSnapshot = { track: _t, params: S.bankParams[_t][4].slice() };
-                    } else {
-                        S.undoSeqArpSnapshot = null;
-                    }
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('redo_restore', '1');
-                    if (S.redoSeqArpSnapshot) {
-                        const { track, params } = S.redoSeqArpSnapshot;
-                        for (let k = 0; k < 8; k++) {
-                            const pm = BANKS[4].knobs[k];
-                            if (pm) S.bankParams[track][4][k] = params[k];
-                        }
-                    }
-                    S.undoAvailable = true;
-                    S.redoAvailable = false;
-                    S.pendingUndoSync = 5;
-                    showActionPopup('REDO');
+        if (wasTap && (S.tickCount - S.loopLastTapEndTick) < LOOP_DBLTAP_GAP) {
+            /* Second tap → lock Perf Mode; preserve running loop + mods. */
+            S.perfViewLocked     = true;
+            S.loopHeld           = true;
+            S.loopLastTapEndTick = -999;
+            forceRedraw();
+            return;
+        }
+
+        if (wasTap) S.loopLastTapEndTick = S.tickCount;
+
+        /* Normal release: if sticky lengths or hold pad keep loops alive, lock perf mode.
+         * Otherwise exit Perf Mode, stop loop, clear all mods. */
+        S.loopHeld     = false;
+        S.perfModsHeld = 0;
+        if (S.perfStickyLengths.size > 0 || S.perfHoldPadHeld) {
+            S.perfViewLocked = true;
+            /* Keep all stack entries when hold pad is engaged; otherwise filter to sticky */
+            if (!S.perfHoldPadHeld)
+                S.perfStack = S.perfStack.filter(function(e) { return S.perfStickyLengths.has(e.idx); });
+            if (S.perfStack.length > 0 && typeof host_module_set_param === 'function')
+                host_module_set_param('looper_arm', String(S.perfStack[S.perfStack.length - 1].ticks));
+        } else {
+            if (S.perfStack.length > 0 &&
+                    typeof host_module_set_param === 'function')
+                host_module_set_param('looper_stop', '1');
+            S.perfStack = [];
+        }
+        sendPerfMods();
+        invalidateLEDCache();
+        forceRedraw();
+        return;
+    }
+
+    /* Loop button (CC 58, Track View): hold + step buttons sets clip length */
+    if (d1 === MoveLoop && !S.sessionView) {
+        if (d2 === 127 && S.shiftHeld) {
+            /* Shift+Loop: double-and-fill active clip or drum lane */
+            const _t = S.activeTrack;
+            if (S.trackPadMode[_t] === PAD_MODE_DRUM) {
+                const _l   = S.activeDrumLane[_t];
+                const _len = S.drumLaneLength[_t];
+                if (_len * 2 > 256) {
+                    showActionPopup('CLIP FULL');
                 } else {
-                    showActionPopup('NOTHING TO', 'REDO');
+                    host_module_set_param('t' + _t + '_l' + _l + '_loop_double_fill', '1');
+                    S.drumLaneLength[_t] = _len * 2;
+                    S.pendingDrumResync      = 2;
+                    S.pendingDrumResyncTrack = _t;
+                    forceRedraw();
                 }
             } else {
-                if (S.undoAvailable) {
-                    if (S.undoSeqArpSnapshot) {
-                        const _t = S.undoSeqArpSnapshot.track;
-                        S.redoSeqArpSnapshot = { track: _t, params: S.bankParams[_t][4].slice() };
-                    } else {
-                        S.redoSeqArpSnapshot = null;
-                    }
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('undo_restore', '1');
-                    if (S.undoSeqArpSnapshot) {
-                        const { track, params } = S.undoSeqArpSnapshot;
-                        for (let k = 0; k < 8; k++) {
-                            const pm = BANKS[4].knobs[k];
-                            if (pm) S.bankParams[track][4][k] = params[k];
-                        }
-                    }
-                    S.redoAvailable = true;
-                    S.undoAvailable = false;
-                    S.pendingUndoSync = 5;
-                    showActionPopup('UNDO');
+                const _ac  = effectiveClip(_t);
+                const _len = S.clipLength[_t][_ac];
+                if (_len * 2 > 256) {
+                    showActionPopup('CLIP FULL');
                 } else {
-                    showActionPopup('NOTHING TO', 'UNDO');
+                    S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + _t + '_loop_double_fill', '1');
+                    S.clipLength[_t][_ac] = _len * 2;
+                    S.pendingStepsReread      = 2;
+                    S.pendingStepsRereadTrack = _t;
+                    S.pendingStepsRereadClip  = _ac;
+                    refreshPerClipBankParams(_t);
+                    forceRedraw();
                 }
             }
-            S.screenDirty = true;
+            return;
         }
+        S.loopHeld = d2 === 127;
+        if (S.loopHeld) {
+            /* Latch or clear drum repeat on the active track */
+            const _lrt = S.activeTrack;
+            if (S.drumPerformMode[_lrt] === 2) {
+                S.rpt2LoopPadUsed = false;
+                if (S.drumRepeat2HeldLanes[_lrt].size > 0) {
+                    for (const _ll of S.drumRepeat2HeldLanes[_lrt]) {
+                        S.drumRepeat2LatchedLanes[_lrt].add(_ll);
+                    }
+                    S.rpt2LoopPadUsed = true;
+                }
+            } else if (S.drumRepeatLatched[_lrt]) {
+                S.drumRepeatLatched[_lrt]  = false;
+                S.drumRepeatHeldPad[_lrt]  = -1;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + _lrt + '_drum_repeat_stop', '1');
+            } else if (S.drumRepeatHeldPad[_lrt] >= 0) {
+                S.drumRepeatLatched[_lrt] = true;
+            }
+            S.heldStepBtn        = -1;
+            S.heldStep           = -1;
+            S.heldStepNotes      = [];
+            S.stepWasEmpty       = false;
+            S.stepWasHeld        = false;
+            S.stepBtnPressedTick.fill(-1);
+        } else {
+            /* Loop released — Rpt2: unlatch all if no pad was touched during hold */
+            const _lrt = S.activeTrack;
+            if (S.drumPerformMode[_lrt] === 2 && !S.rpt2LoopPadUsed &&
+                    S.drumRepeat2LatchedLanes[_lrt].size > 0) {
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + _lrt + '_drum_repeat2_stop', '1');
+                S.drumRepeat2LatchedLanes[_lrt].clear();
+            }
+        }
+        forceRedraw();
+    }
 
-        /* Play: toggle transport; Shift+Play = restart transport; Delete+Play = deactivate_all; Mute+Play = toggle metro */
-        if (d1 === MovePlay && d2 === 127) {
-            if (S.deleteHeld) {
-                if (typeof host_module_set_param === 'function') {
-                    if (!S.playing) {
-                        /* Stopped: panic clears will_relaunch + all clip state atomically for all tracks. */
-                        host_module_set_param('transport', 'panic');
-                        for (let t = 0; t < NUM_TRACKS; t++) {
-                            S.trackWillRelaunch[t] = false;
-                            S.trackQueuedClip[t]   = -1;
-                        }
-                    } else {
-                        host_module_set_param('transport', 'deactivate_all');
+}
+
+function _onCC_transport(d1, d2) {
+    /* Back: close global menu if open; otherwise (with Shift) hide module */
+    if (d1 === MoveBack && d2 === 127) {
+        if (S.globalMenuOpen && S.tapTempoOpen) {
+            closeTapTempo();
+            forceRedraw();
+        } else if (S.confirmBake) {
+            S.confirmBake = false;
+            forceRedraw();
+        } else if (S.globalMenuOpen && S.confirmClearSession) {
+            S.confirmClearSession = false;
+            forceRedraw();
+        } else if (S.globalMenuOpen) {
+            S.globalMenuOpen = false;
+            S.lastSentMenuEditValue = null;
+            forceRedraw();
+        } else if (S.shiftHeld) {
+            saveState();
+            removeFlagsWrap();
+            S.ledInitComplete = false;
+            invalidateLEDCache();
+            clearAllLEDs();
+            for (let _i = 0; _i < 4; _i++) setButtonLED(40 + _i, LED_OFF);
+            if (typeof host_hide_module === 'function') host_hide_module();
+        }
+    }
+
+    /* Undo button: press = undo; Shift+Undo = redo */
+    if (d1 === MoveUndo && d2 === 127) {
+        if (S.shiftHeld) {
+            if (S.redoAvailable) {
+                if (S.redoSeqArpSnapshot) {
+                    const _t = S.redoSeqArpSnapshot.track;
+                    S.undoSeqArpSnapshot = { track: _t, params: S.bankParams[_t][4].slice() };
+                } else {
+                    S.undoSeqArpSnapshot = null;
+                }
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('redo_restore', '1');
+                if (S.redoSeqArpSnapshot) {
+                    const { track, params } = S.redoSeqArpSnapshot;
+                    for (let k = 0; k < 8; k++) {
+                        const pm = BANKS[4].knobs[k];
+                        if (pm) S.bankParams[track][4][k] = params[k];
                     }
                 }
-            } else if (S.muteHeld) {
+                S.undoAvailable = true;
+                S.redoAvailable = false;
+                S.pendingUndoSync = 5;
+                showActionPopup('REDO');
+            } else {
+                showActionPopup('NOTHING TO', 'REDO');
+            }
+        } else {
+            if (S.undoAvailable) {
+                if (S.undoSeqArpSnapshot) {
+                    const _t = S.undoSeqArpSnapshot.track;
+                    S.redoSeqArpSnapshot = { track: _t, params: S.bankParams[_t][4].slice() };
+                } else {
+                    S.redoSeqArpSnapshot = null;
+                }
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('undo_restore', '1');
+                if (S.undoSeqArpSnapshot) {
+                    const { track, params } = S.undoSeqArpSnapshot;
+                    for (let k = 0; k < 8; k++) {
+                        const pm = BANKS[4].knobs[k];
+                        if (pm) S.bankParams[track][4][k] = params[k];
+                    }
+                }
+                S.redoAvailable = true;
+                S.undoAvailable = false;
+                S.pendingUndoSync = 5;
+                showActionPopup('UNDO');
+            } else {
+                showActionPopup('NOTHING TO', 'UNDO');
+            }
+        }
+        S.screenDirty = true;
+    }
+
+    /* Play: toggle transport; Shift+Play = restart transport; Delete+Play = deactivate_all; Mute+Play = toggle metro */
+    if (d1 === MovePlay && d2 === 127) {
+        if (S.deleteHeld) {
+            if (typeof host_module_set_param === 'function') {
+                if (!S.playing) {
+                    /* Stopped: panic clears will_relaunch + all clip state atomically for all tracks. */
+                    host_module_set_param('transport', 'panic');
+                    for (let t = 0; t < NUM_TRACKS; t++) {
+                        S.trackWillRelaunch[t] = false;
+                        S.trackQueuedClip[t]   = -1;
+                    }
+                } else {
+                    host_module_set_param('transport', 'deactivate_all');
+                }
+            }
+        } else if (S.muteHeld) {
+            S.muteUsedAsModifier = true;
+            if (S.metronomeOn !== 0) S.metronomeOnLast = S.metronomeOn;
+            S.metronomeOn = S.metronomeOn === 0 ? S.metronomeOnLast : 0;
+            if (typeof host_module_set_param === 'function')
+                host_module_set_param('metro_on', String(S.metronomeOn));
+            showActionPopup('METRO ' + (S.metronomeOn === 0 ? 'OFF' : 'ON'));
+        } else if (S.shiftHeld) {
+            /* Restart: atomic DSP-side stop+play. Single set_param avoids
+             * coalescing flakiness when stop+play land in same audio block. */
+            if (typeof host_module_set_param === 'function') {
+                host_module_set_param('transport', S.playing ? 'restart' : 'play');
+            }
+        } else {
+            if (typeof host_module_set_param === 'function')
+                host_module_set_param('transport', S.playing ? 'stop' : 'play');
+        }
+    }
+
+    /* Record button (CC 86): toggle arm/disarm */
+    if (d1 === MoveRec && d2 === 127) {
+        if (S.recordArmed) {
+            disarmRecord();
+        } else if (!S.playing) {
+            /* Stopped → DSP-side 1-bar count-in; transport+recording fire from render thread */
+            const rawBpm = typeof host_module_get_param === 'function'
+                ? parseFloat(host_module_get_param('bpm')) : 120;
+            const bpm = (rawBpm > 0 && isFinite(rawBpm)) ? rawBpm : 120;
+            S.recordArmed         = true;
+            S.recordCountingIn    = true;
+            S.recordArmedTrack    = S.activeTrack;
+            S.recordBpm           = bpm;
+            S.countInStartTick    = S.tickCount;
+            S.countInQuarterTicks = Math.round(196 * 60 / bpm);
+            if (typeof host_module_set_param === 'function')
+                host_module_set_param('record_count_in', String(S.activeTrack));
+            S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
+            setButtonLED(MoveRec, Red);
+        } else {
+            /* Playing → arm immediately with no count-in */
+            const rawBpmLive = typeof host_module_get_param === 'function'
+                ? parseFloat(host_module_get_param('bpm')) : 120;
+            S.recordArmed      = true;
+            S.recordCountingIn = false;
+            S.recordArmedTrack = S.activeTrack;
+            S.recordBpm        = (rawBpmLive > 0 && isFinite(rawBpmLive)) ? rawBpmLive : 120;
+            setButtonLED(MoveRec, Red);
+            if (typeof host_module_set_param === 'function')
+                host_module_set_param('t' + S.activeTrack + '_recording', '1');
+            S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
+        }
+    }
+
+    /* Sample (CC 118, no modifier): cancel bake dialog, stop merge, or open Bake confirm */
+    if (d1 === MoveSample && d2 === 127 && !S.shiftHeld) {
+        if (S.confirmBake) {
+            S.confirmBake = false;
+            forceRedraw();
+        } else if (S.dspMergeState !== 0) {
+            host_module_set_param('merge_stop', '1');
+            /* LED stays green until DSP finalizes at page boundary */
+        } else {
+            S.confirmBake      = true;
+            S.confirmBakeIsDrum = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
+            S.confirmBakeSel   = S.confirmBakeIsDrum ? 2 : 1;
+            S.confirmBakeTrack = S.activeTrack;
+            S.confirmBakeClip  = S.trackActiveClip[S.activeTrack];
+            S.screenDirty      = true;
+        }
+    }
+
+    /* Shift+Sample (CC 118): arm / disarm Live Merge for S.activeTrack */
+    if (d1 === MoveSample && d2 === 127 && S.shiftHeld) {
+        if (S.dspMergeState !== 0) {
+            host_module_set_param('merge_stop', '1');
+            /* LED stays green until DSP finalizes at page boundary */
+        } else {
+            host_module_set_param('merge_arm', String(S.activeTrack));
+            S.dspMergeTrack    = S.activeTrack;
+            S.pendingMergeArm  = true;
+            setButtonLED(MoveSample, Red);
+        }
+    }
+
+    /* Mute button: Delete+Mute = clear all (both views); toggle mute/solo on active track (Track View only).
+     * Press: handle Delete+Mute immediately. Release: toggle mute/solo, but only if Mute was not used as
+     * a modifier key (e.g. Mute+Play = metro toggle). */
+    if (d1 === MoveMute && d2 === 127) {
+        if (S.deleteHeld) {
+            if (!S.sessionView && S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
+                /* Delete+Mute in drum track view: clear all drum lane mute/solo */
+                S.drumLaneMute[S.activeTrack] = 0;
+                S.drumLaneSolo[S.activeTrack] = 0;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + S.activeTrack + '_drum_mute_all_clear', '1');
                 S.muteUsedAsModifier = true;
-                if (S.metronomeOn !== 0) S.metronomeOnLast = S.metronomeOn;
-                S.metronomeOn = S.metronomeOn === 0 ? S.metronomeOnLast : 0;
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('metro_on', String(S.metronomeOn));
-                showActionPopup('METRO ' + (S.metronomeOn === 0 ? 'OFF' : 'ON'));
-            } else if (S.shiftHeld) {
-                /* Restart: atomic DSP-side stop+play. Single set_param avoids
-                 * coalescing flakiness when stop+play land in same audio block. */
-                if (typeof host_module_set_param === 'function') {
-                    host_module_set_param('transport', S.playing ? 'restart' : 'play');
-                }
-            } else {
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('transport', S.playing ? 'stop' : 'play');
-            }
-        }
-
-        /* Record button (CC 86): toggle arm/disarm */
-        if (d1 === MoveRec && d2 === 127) {
-            if (S.recordArmed) {
-                disarmRecord();
-            } else if (!S.playing) {
-                /* Stopped → DSP-side 1-bar count-in; transport+recording fire from render thread */
-                const rawBpm = typeof host_module_get_param === 'function'
-                    ? parseFloat(host_module_get_param('bpm')) : 120;
-                const bpm = (rawBpm > 0 && isFinite(rawBpm)) ? rawBpm : 120;
-                S.recordArmed         = true;
-                S.recordCountingIn    = true;
-                S.recordArmedTrack    = S.activeTrack;
-                S.recordBpm           = bpm;
-                S.countInStartTick    = S.tickCount;
-                S.countInQuarterTicks = Math.round(196 * 60 / bpm);
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('record_count_in', String(S.activeTrack));
-                S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
-                setButtonLED(MoveRec, Red);
-            } else {
-                /* Playing → arm immediately with no count-in */
-                const rawBpmLive = typeof host_module_get_param === 'function'
-                    ? parseFloat(host_module_get_param('bpm')) : 120;
-                S.recordArmed      = true;
-                S.recordCountingIn = false;
-                S.recordArmedTrack = S.activeTrack;
-                S.recordBpm        = (rawBpmLive > 0 && isFinite(rawBpmLive)) ? rawBpmLive : 120;
-                setButtonLED(MoveRec, Red);
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('t' + S.activeTrack + '_recording', '1');
-                S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
-            }
-        }
-
-        /* Sample (CC 118, no modifier): cancel bake dialog, stop merge, or open Bake confirm */
-        if (d1 === MoveSample && d2 === 127 && !S.shiftHeld) {
-            if (S.confirmBake) {
-                S.confirmBake = false;
-                forceRedraw();
-            } else if (S.dspMergeState !== 0) {
-                host_module_set_param('merge_stop', '1');
-                /* LED stays green until DSP finalizes at page boundary */
-            } else {
-                S.confirmBake      = true;
-                S.confirmBakeIsDrum = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
-                S.confirmBakeSel   = S.confirmBakeIsDrum ? 2 : 1;
-                S.confirmBakeTrack = S.activeTrack;
-                S.confirmBakeClip  = S.trackActiveClip[S.activeTrack];
-                S.screenDirty      = true;
-            }
-        }
-
-        /* Shift+Sample (CC 118): arm / disarm Live Merge for S.activeTrack */
-        if (d1 === MoveSample && d2 === 127 && S.shiftHeld) {
-            if (S.dspMergeState !== 0) {
-                host_module_set_param('merge_stop', '1');
-                /* LED stays green until DSP finalizes at page boundary */
-            } else {
-                host_module_set_param('merge_arm', String(S.activeTrack));
-                S.dspMergeTrack    = S.activeTrack;
-                S.pendingMergeArm  = true;
-                setButtonLED(MoveSample, Red);
-            }
-        }
-
-        /* Mute button: Delete+Mute = clear all (both views); toggle mute/solo on active track (Track View only).
-         * Press: handle Delete+Mute immediately. Release: toggle mute/solo, but only if Mute was not used as
-         * a modifier key (e.g. Mute+Play = metro toggle). */
-        if (d1 === MoveMute && d2 === 127) {
-            if (S.deleteHeld) {
-                if (!S.sessionView && S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
-                    /* Delete+Mute in drum track view: clear all drum lane mute/solo */
-                    S.drumLaneMute[S.activeTrack] = 0;
-                    S.drumLaneSolo[S.activeTrack] = 0;
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + S.activeTrack + '_drum_mute_all_clear', '1');
-                    S.muteUsedAsModifier = true;
-                    forceRedraw();
-                } else {
-                    clearAllMuteSolo();
-                }
-            }
-        }
-        if (d1 === MoveMute && d2 === 0) {
-            if (!S.muteUsedAsModifier && !S.deleteHeld && !S.sessionView) {
-                if (S.shiftHeld) setTrackSolo(S.activeTrack, !S.trackSoloed[S.activeTrack]);
-                else           setTrackMute(S.activeTrack, !S.trackMuted[S.activeTrack]);
-            }
-        }
-
-        /* Left/Right: page nav in Track View */
-        if ((d1 === MoveLeft || d1 === MoveRight) && d2 === 127 && !S.sessionView) {
-            if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
-                const totalPages = Math.max(1, Math.ceil(S.drumLaneLength[S.activeTrack] / 16));
-                if (d1 === MoveLeft)
-                    S.drumStepPage[S.activeTrack] = Math.max(0, S.drumStepPage[S.activeTrack] - 1);
-                else
-                    S.drumStepPage[S.activeTrack] = Math.min(totalPages - 1, S.drumStepPage[S.activeTrack] + 1);
-            } else {
-                const ac         = effectiveClip(S.activeTrack);
-                const totalPages = Math.max(1, Math.ceil(S.clipLength[S.activeTrack][ac] / 16));
-                if (d1 === MoveLeft)
-                    S.trackCurrentPage[S.activeTrack] = Math.max(0, S.trackCurrentPage[S.activeTrack] - 1);
-                else
-                    S.trackCurrentPage[S.activeTrack] = Math.min(totalPages - 1, S.trackCurrentPage[S.activeTrack] + 1);
-            }
-            /* Manual navigation disables SeqFollow so the view stays where the user navigated */
-            const _sfAc = effectiveClip(S.activeTrack);
-            if (S.clipSeqFollow[S.activeTrack][_sfAc]) {
-                S.clipSeqFollow[S.activeTrack][_sfAc] = false;
-                S.bankParams[S.activeTrack][0][7] = 0;
-            }
-            S.screenDirty = true;
-        }
-
-        /* Up/Down: scene group nav in Session View or while overview held; octave shift in Track View */
-        if (d1 === MoveDown && d2 === 127 && (S.sessionView || S.sessionOverlayHeld) && S.sceneRow < NUM_CLIPS - 4) { S.sceneRow = Math.min(NUM_CLIPS - 4, S.sceneRow + 4); forceRedraw(); }
-        if (d1 === MoveUp   && d2 === 127 && (S.sessionView || S.sessionOverlayHeld) && S.sceneRow > 0)              { S.sceneRow = Math.max(0, S.sceneRow - 4);              forceRedraw(); }
-        if (d1 === MoveUp   && d2 > 0 && !S.sessionView && !S.sessionOverlayHeld) {
-            if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
-                S.drumLanePage[S.activeTrack] = 1;
-                syncDrumLanesMeta(S.activeTrack);
-                syncDrumLaneSteps(S.activeTrack, S.activeDrumLane[S.activeTrack]);
                 forceRedraw();
             } else {
-            S.trackOctave[S.activeTrack] = Math.min(4, S.trackOctave[S.activeTrack] + 1);
-            S.screenDirty = true;
-            if (S.heldStep >= 0) forceRedraw();
+                clearAllMuteSolo();
             }
         }
-        if (d1 === MoveDown && d2 > 0 && !S.sessionView && !S.sessionOverlayHeld) {
-            if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
-                S.drumLanePage[S.activeTrack] = 0;
-                syncDrumLanesMeta(S.activeTrack);
-                syncDrumLaneSteps(S.activeTrack, S.activeDrumLane[S.activeTrack]);
-                forceRedraw();
-            } else {
-            S.trackOctave[S.activeTrack] = Math.max(-4, S.trackOctave[S.activeTrack] - 1);
-            S.screenDirty = true;
-            if (S.heldStep >= 0) forceRedraw();
-            }
+    }
+    if (d1 === MoveMute && d2 === 0) {
+        if (!S.muteUsedAsModifier && !S.deleteHeld && !S.sessionView) {
+            if (S.shiftHeld) setTrackSolo(S.activeTrack, !S.trackSoloed[S.activeTrack]);
+            else           setTrackMute(S.activeTrack, !S.trackMuted[S.activeTrack]);
         }
+    }
 
-        /* Track buttons CC40-43 */
-        if (d1 >= 40 && d1 <= 43 && d2 === 127) {
-            const idx     = d1 - 40;
-            const clipIdx = S.sceneRow + (3 - idx);
-            if (S.copyHeld) {
-                if (S.copySrc && S.copySrc.kind === 'step') {
-                    /* step copy in progress: swallow track/scene buttons — don't mix copy types */
-                } else if (S.sessionView) {
-                    /* Copy/Cut: row-to-row gesture */
-                    if (!S.copySrc) {
-                        S.copySrc = S.shiftHeld
-                            ? { kind: 'cut_row', row: clipIdx }
-                            : { kind: 'row', row: clipIdx };
-                        invalidateLEDCache();
-                        showActionPopup(S.shiftHeld ? 'CUT' : 'COPIED');
-                    } else if (S.copySrc.kind === 'row') {
-                        copyRow(S.copySrc.row, clipIdx);
-                        invalidateLEDCache();
-                        forceRedraw();
-                        showActionPopup('PASTED');
-                    } else if (S.copySrc.kind === 'cut_row') {
-                        cutRow(S.copySrc.row, clipIdx);
-                        S.copySrc = { kind: 'row', row: clipIdx };
-                        invalidateLEDCache();
-                        forceRedraw();
-                        showActionPopup('PASTED');
-                    }
-                    /* clip/cut_clip kinds: swallow — don't mix copy types */
-                } else if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
-                    /* Track View drum clip copy/cut via track button */
-                    if (!S.copySrc) {
-                        S.copySrc = S.shiftHeld
-                            ? { kind: 'cut_drum_clip', track: S.activeTrack, clip: clipIdx }
-                            : { kind: 'drum_clip',     track: S.activeTrack, clip: clipIdx };
-                        invalidateLEDCache();
-                        showActionPopup(S.shiftHeld ? 'CUT' : 'COPIED');
-                    } else if (S.copySrc.kind === 'drum_clip') {
-                        copyDrumClip(S.copySrc.track, S.copySrc.clip, S.activeTrack, clipIdx);
-                        invalidateLEDCache();
-                        forceRedraw();
-                        showActionPopup('PASTED');
-                    } else if (S.copySrc.kind === 'cut_drum_clip') {
-                        cutDrumClip(S.copySrc.track, S.copySrc.clip, S.activeTrack, clipIdx);
-                        S.copySrc = { kind: 'drum_clip', track: S.activeTrack, clip: clipIdx };
-                        invalidateLEDCache();
-                        forceRedraw();
-                        showActionPopup('PASTED');
-                    }
-                    /* Other kinds: swallow — don't mix copy types */
-                } else {
-                    /* Track View melodic clip copy/cut via track button */
-                    if (!S.copySrc) {
-                        S.copySrc = S.shiftHeld
-                            ? { kind: 'cut_clip', track: S.activeTrack, clip: clipIdx }
-                            : { kind: 'clip', track: S.activeTrack, clip: clipIdx };
-                        invalidateLEDCache();
-                        showActionPopup(S.shiftHeld ? 'CUT' : 'COPIED');
-                    } else if (S.copySrc.kind === 'clip') {
-                        copyClip(S.copySrc.track, S.copySrc.clip, S.activeTrack, clipIdx);
-                        invalidateLEDCache();
-                        forceRedraw();
-                        showActionPopup('PASTED');
-                    } else if (S.copySrc.kind === 'cut_clip') {
-                        cutClip(S.copySrc.track, S.copySrc.clip, S.activeTrack, clipIdx);
-                        S.copySrc = { kind: 'clip', track: S.activeTrack, clip: clipIdx };
-                        invalidateLEDCache();
-                        forceRedraw();
-                        showActionPopup('PASTED');
-                    }
-                    /* row/cut_row kinds: swallow — don't mix copy types */
-                }
-            } else if (S.shiftHeld && S.deleteHeld) {
-                if (S.sessionView) {
-                    /* Shift+Delete+scene row (Session View): hard reset all 8 clips in row */
-                    for (let t = 0; t < NUM_TRACKS; t++) hardResetClip(t, clipIdx);
-                    forceRedraw();
-                    showActionPopup('CLIPS', 'CLEARED');
-                } else {
-                    /* Shift+Delete+clip (Track View): full factory reset */
-                    hardResetClip(S.activeTrack, clipIdx);
-                    forceRedraw();
-                    showActionPopup('CLIP', 'CLEARED');
-                }
-            } else if (S.deleteHeld) {
-                if (S.sessionView) {
-                    /* Delete + scene row button (Session View): clear all 8 clips in that row */
-                    clearRow(clipIdx);
-                    forceRedraw();
-                    showActionPopup('SEQUENCES', 'CLEARED');
-                } else {
-                    /* Delete + track button (Track View): clear the clip; keep S.playing if it's currently active */
-                    clearClip(S.activeTrack, clipIdx, true);
-                    forceRedraw();
-                    showActionPopup('SEQUENCE', 'CLEARED');
-                }
+    /* Left/Right: page nav in Track View */
+    if ((d1 === MoveLeft || d1 === MoveRight) && d2 === 127 && !S.sessionView) {
+        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
+            const totalPages = Math.max(1, Math.ceil(S.drumLaneLength[S.activeTrack] / 16));
+            if (d1 === MoveLeft)
+                S.drumStepPage[S.activeTrack] = Math.max(0, S.drumStepPage[S.activeTrack] - 1);
+            else
+                S.drumStepPage[S.activeTrack] = Math.min(totalPages - 1, S.drumStepPage[S.activeTrack] + 1);
+        } else {
+            const ac         = effectiveClip(S.activeTrack);
+            const totalPages = Math.max(1, Math.ceil(S.clipLength[S.activeTrack][ac] / 16));
+            if (d1 === MoveLeft)
+                S.trackCurrentPage[S.activeTrack] = Math.max(0, S.trackCurrentPage[S.activeTrack] - 1);
+            else
+                S.trackCurrentPage[S.activeTrack] = Math.min(totalPages - 1, S.trackCurrentPage[S.activeTrack] + 1);
+        }
+        /* Manual navigation disables SeqFollow so the view stays where the user navigated */
+        const _sfAc = effectiveClip(S.activeTrack);
+        if (S.clipSeqFollow[S.activeTrack][_sfAc]) {
+            S.clipSeqFollow[S.activeTrack][_sfAc] = false;
+            S.bankParams[S.activeTrack][0][7] = 0;
+        }
+        S.screenDirty = true;
+    }
+
+    /* Up/Down: scene group nav in Session View or while overview held; octave shift in Track View */
+    if (d1 === MoveDown && d2 === 127 && (S.sessionView || S.sessionOverlayHeld) && S.sceneRow < NUM_CLIPS - 4) { S.sceneRow = Math.min(NUM_CLIPS - 4, S.sceneRow + 4); forceRedraw(); }
+    if (d1 === MoveUp   && d2 === 127 && (S.sessionView || S.sessionOverlayHeld) && S.sceneRow > 0)              { S.sceneRow = Math.max(0, S.sceneRow - 4);              forceRedraw(); }
+    if (d1 === MoveUp   && d2 > 0 && !S.sessionView && !S.sessionOverlayHeld) {
+        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
+            S.drumLanePage[S.activeTrack] = 1;
+            syncDrumLanesMeta(S.activeTrack);
+            syncDrumLaneSteps(S.activeTrack, S.activeDrumLane[S.activeTrack]);
+            forceRedraw();
+        } else {
+        S.trackOctave[S.activeTrack] = Math.min(4, S.trackOctave[S.activeTrack] + 1);
+        S.screenDirty = true;
+        if (S.heldStep >= 0) forceRedraw();
+        }
+    }
+    if (d1 === MoveDown && d2 > 0 && !S.sessionView && !S.sessionOverlayHeld) {
+        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
+            S.drumLanePage[S.activeTrack] = 0;
+            syncDrumLanesMeta(S.activeTrack);
+            syncDrumLaneSteps(S.activeTrack, S.activeDrumLane[S.activeTrack]);
+            forceRedraw();
+        } else {
+        S.trackOctave[S.activeTrack] = Math.max(-4, S.trackOctave[S.activeTrack] - 1);
+        S.screenDirty = true;
+        if (S.heldStep >= 0) forceRedraw();
+        }
+    }
+
+}
+
+function _onCC_side(d1, d2) {
+    /* Track buttons CC40-43 */
+    if (d1 >= 40 && d1 <= 43 && d2 === 127) {
+        const idx     = d1 - 40;
+        const clipIdx = S.sceneRow + (3 - idx);
+        if (S.copyHeld) {
+            if (S.copySrc && S.copySrc.kind === 'step') {
+                /* step copy in progress: swallow track/scene buttons — don't mix copy types */
             } else if (S.sessionView) {
-                S.sceneBtnFlashTick[idx] = S.tickCount;
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('launch_scene', String(clipIdx));
+                /* Copy/Cut: row-to-row gesture */
+                if (!S.copySrc) {
+                    S.copySrc = S.shiftHeld
+                        ? { kind: 'cut_row', row: clipIdx }
+                        : { kind: 'row', row: clipIdx };
+                    invalidateLEDCache();
+                    showActionPopup(S.shiftHeld ? 'CUT' : 'COPIED');
+                } else if (S.copySrc.kind === 'row') {
+                    copyRow(S.copySrc.row, clipIdx);
+                    invalidateLEDCache();
+                    forceRedraw();
+                    showActionPopup('PASTED');
+                } else if (S.copySrc.kind === 'cut_row') {
+                    cutRow(S.copySrc.row, clipIdx);
+                    S.copySrc = { kind: 'row', row: clipIdx };
+                    invalidateLEDCache();
+                    forceRedraw();
+                    showActionPopup('PASTED');
+                }
+                /* clip/cut_clip kinds: swallow — don't mix copy types */
+            } else if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
+                /* Track View drum clip copy/cut via track button */
+                if (!S.copySrc) {
+                    S.copySrc = S.shiftHeld
+                        ? { kind: 'cut_drum_clip', track: S.activeTrack, clip: clipIdx }
+                        : { kind: 'drum_clip',     track: S.activeTrack, clip: clipIdx };
+                    invalidateLEDCache();
+                    showActionPopup(S.shiftHeld ? 'CUT' : 'COPIED');
+                } else if (S.copySrc.kind === 'drum_clip') {
+                    copyDrumClip(S.copySrc.track, S.copySrc.clip, S.activeTrack, clipIdx);
+                    invalidateLEDCache();
+                    forceRedraw();
+                    showActionPopup('PASTED');
+                } else if (S.copySrc.kind === 'cut_drum_clip') {
+                    cutDrumClip(S.copySrc.track, S.copySrc.clip, S.activeTrack, clipIdx);
+                    S.copySrc = { kind: 'drum_clip', track: S.activeTrack, clip: clipIdx };
+                    invalidateLEDCache();
+                    forceRedraw();
+                    showActionPopup('PASTED');
+                }
+                /* Other kinds: swallow — don't mix copy types */
             } else {
-                const t            = S.activeTrack;
-                const isActiveClip = S.trackActiveClip[t] === clipIdx;
-                if (S.trackClipPlaying[t] && isActiveClip) {
-                    if (S.trackPendingPageStop[t]) {
-                        /* Pending stop → cancel by re-launching legato */
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
-                    } else {
-                        /* Playing → arm stop at next page boundary */
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + t + '_stop_at_end', '1');
-                    }
-                } else if (S.trackWillRelaunch[t] && isActiveClip) {
-                    /* Transport stopped, clip primed to restart → cancel */
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + t + '_deactivate', '1');
-                } else if (S.trackQueuedClip[t] === clipIdx) {
-                    /* Queued to launch → cancel */
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + t + '_deactivate', '1');
-                } else {
-                    /* Launch: legato if S.playing, queued if not */
-                    if (!S.playing) {
-                        S.trackActiveClip[t]  = clipIdx;
-                        S.trackCurrentPage[t] = 0;
-                        refreshPerClipBankParams(t);
-                        if (S.trackPadMode[t] === PAD_MODE_DRUM) {
-                            S.pendingDrumResync      = 2;
-                            S.pendingDrumResyncTrack = t;
-                        }
-                    }
+                /* Track View melodic clip copy/cut via track button */
+                if (!S.copySrc) {
+                    S.copySrc = S.shiftHeld
+                        ? { kind: 'cut_clip', track: S.activeTrack, clip: clipIdx }
+                        : { kind: 'clip', track: S.activeTrack, clip: clipIdx };
+                    invalidateLEDCache();
+                    showActionPopup(S.shiftHeld ? 'CUT' : 'COPIED');
+                } else if (S.copySrc.kind === 'clip') {
+                    copyClip(S.copySrc.track, S.copySrc.clip, S.activeTrack, clipIdx);
+                    invalidateLEDCache();
+                    forceRedraw();
+                    showActionPopup('PASTED');
+                } else if (S.copySrc.kind === 'cut_clip') {
+                    cutClip(S.copySrc.track, S.copySrc.clip, S.activeTrack, clipIdx);
+                    S.copySrc = { kind: 'clip', track: S.activeTrack, clip: clipIdx };
+                    invalidateLEDCache();
+                    forceRedraw();
+                    showActionPopup('PASTED');
+                }
+                /* row/cut_row kinds: swallow — don't mix copy types */
+            }
+        } else if (S.shiftHeld && S.deleteHeld) {
+            if (S.sessionView) {
+                /* Shift+Delete+scene row (Session View): hard reset all 8 clips in row */
+                for (let t = 0; t < NUM_TRACKS; t++) hardResetClip(t, clipIdx);
+                forceRedraw();
+                showActionPopup('CLIPS', 'CLEARED');
+            } else {
+                /* Shift+Delete+clip (Track View): full factory reset */
+                hardResetClip(S.activeTrack, clipIdx);
+                forceRedraw();
+                showActionPopup('CLIP', 'CLEARED');
+            }
+        } else if (S.deleteHeld) {
+            if (S.sessionView) {
+                /* Delete + scene row button (Session View): clear all 8 clips in that row */
+                clearRow(clipIdx);
+                forceRedraw();
+                showActionPopup('SEQUENCES', 'CLEARED');
+            } else {
+                /* Delete + track button (Track View): clear the clip; keep S.playing if it's currently active */
+                clearClip(S.activeTrack, clipIdx, true);
+                forceRedraw();
+                showActionPopup('SEQUENCE', 'CLEARED');
+            }
+        } else if (S.sessionView) {
+            S.sceneBtnFlashTick[idx] = S.tickCount;
+            if (typeof host_module_set_param === 'function')
+                host_module_set_param('launch_scene', String(clipIdx));
+        } else {
+            const t            = S.activeTrack;
+            const isActiveClip = S.trackActiveClip[t] === clipIdx;
+            if (S.trackClipPlaying[t] && isActiveClip) {
+                if (S.trackPendingPageStop[t]) {
+                    /* Pending stop → cancel by re-launching legato */
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
-                }
-            }
-        }
-
-        /* CC step-edit: bank 6 + held step — all 8 knobs write CC automation at step's tick */
-        if (S.heldStep >= 0 && S.activeBank === 6 &&
-                S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM && d1 >= 71 && d1 <= 78) {
-            const _kIdx = d1 - 71;
-            const _dir  = (d2 >= 1 && d2 <= 63) ? 1 : -1;
-            const _t    = S.activeTrack;
-            const _ac   = effectiveClip(_t);
-            S.knobTouched          = _kIdx;
-            S.knobTurnedTick[_kIdx] = S.tickCount;
-            S.screenDirty  = true;
-            S.ccStepEditVal[_kIdx] = Math.max(0, Math.min(127, S.ccStepEditVal[_kIdx] + _dir));
-            const _tps   = S.clipTPS[_t][_ac] || 24;
-            const _tick  = S.heldStep * _tps;
-            const _hold  = Math.min(65535, _tick + _tps - 1);
-            if (typeof host_module_set_param === 'function')
-                host_module_set_param('t' + _t + '_cc_auto_set2',
-                    _ac + ' ' + _kIdx + ' ' + _tick + ' ' + _hold + ' ' + S.ccStepEditVal[_kIdx]);
-            S.trackCCAutoBits[_t][_ac] |= (1 << _kIdx);
-            return;
-        }
-
-        /* Drum step edit: K1 (Dur) + K2 (Vel) + K3 (Ndg); K4/K5 swallowed */
-        if (S.heldStep >= 0 && S.heldStepNotes.length > 0 && d1 >= 71 && d1 <= 75 &&
-                S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
-            const knobIdx = d1 - 71;
-            const dir     = (d2 >= 1 && d2 <= 63) ? 1 : -1;
-            const t       = S.activeTrack;
-            const lane    = S.activeDrumLane[t];
-            S.knobTouched          = knobIdx;
-            S.knobTurnedTick[knobIdx] = S.tickCount;
-            S.screenDirty = true;
-            if (knobIdx === 0) {
-                const _gmaxD = Math.min(65535, 256 * (S.drumLaneTPS[t] || 24));
-                S.stepEditGate = Math.max(1, Math.min(_gmaxD, S.stepEditGate + dir * 6));
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_gate', String(S.stepEditGate));
-            } else if (knobIdx === 1) {
-                S.stepEditVel = Math.max(0, Math.min(127, S.stepEditVel + dir));
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_vel', String(S.stepEditVel));
-            } else if (knobIdx === 2) {
-                S.knobAccum[knobIdx] = (dir === S.knobLastDir[knobIdx]) ? S.knobAccum[knobIdx] + 1 : 1;
-                S.knobLastDir[knobIdx] = dir;
-                if (S.knobAccum[knobIdx] >= 16) {
-                    S.knobAccum[knobIdx] = 0;
-                    const _tpsN1 = (S.drumLaneTPS[t] || 24) - 1;
-                    S.stepEditNudge = Math.max(-_tpsN1, Math.min(_tpsN1, S.stepEditNudge + dir));
+                } else {
+                    /* Playing → arm stop at next page boundary */
                     if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_nudge', String(S.stepEditNudge));
+                        host_module_set_param('t' + t + '_stop_at_end', '1');
                 }
-            }
-            return;
-        }
-        /* Step edit overlay: K1-K5 intercept per-step params while a step is held and active */
-        if (S.heldStep >= 0 && S.heldStepNotes.length > 0 && d1 >= 71 && d1 <= 75) {
-            const knobIdx = d1 - 71;
-            const dir     = (d2 >= 1 && d2 <= 63) ? 1 : -1;
-            const t       = S.activeTrack;
-            const ac      = effectiveClip(t);
-            const pfx     = 't' + t + '_c' + ac + '_step_' + S.heldStep;
-            S.knobTouched          = knobIdx;
-            S.knobTurnedTick[knobIdx] = S.tickCount;
-            S.screenDirty   = true;
-            if (knobIdx === 0) {
-                /* K1 Oct: shift all notes ±12 semitones, sens=12 */
-                S.knobAccum[knobIdx] = (dir === S.knobLastDir[knobIdx]) ? S.knobAccum[knobIdx] + 1 : 1;
-                S.knobLastDir[knobIdx] = dir;
-                if (S.knobAccum[knobIdx] >= 12) {
-                    S.knobAccum[knobIdx] = 0;
-                    S.heldStepNotes = S.heldStepNotes.map(function(n) {
-                        return Math.max(0, Math.min(127, n + dir * 12));
-                    });
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param(pfx + '_set_notes', S.heldStepNotes.join(' '));
-                }
-            } else if (knobIdx === 1) {
-                /* K2 Pitch: shift each note ±1 scale degree (or ±1 semitone if scale-aware off), sens=16 */
-                S.knobAccum[knobIdx] = (dir === S.knobLastDir[knobIdx]) ? S.knobAccum[knobIdx] + 1 : 1;
-                S.knobLastDir[knobIdx] = dir;
-                if (S.knobAccum[knobIdx] >= 16) {
-                    S.knobAccum[knobIdx] = 0;
-                    S.heldStepNotes = S.heldStepNotes.map(function(n) {
-                        return scaleNudgeNote(n, dir, S.padKey, S.padScale);
-                    });
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param(pfx + '_set_notes', S.heldStepNotes.join(' '));
-                }
-            } else if (knobIdx === 2) {
-                /* K3 Dur: gate in 6-tick steps (±25% of a step per detent) */
-                { const _acD = effectiveClip(S.activeTrack);
-                  const _gmaxD = Math.min(65535, 256 * (S.clipTPS[S.activeTrack][_acD] || 24));
-                  S.stepEditGate = Math.max(1, Math.min(_gmaxD, S.stepEditGate + dir * 6)); }
+            } else if (S.trackWillRelaunch[t] && isActiveClip) {
+                /* Transport stopped, clip primed to restart → cancel */
                 if (typeof host_module_set_param === 'function')
-                    host_module_set_param(pfx + '_gate', String(S.stepEditGate));
-            } else if (knobIdx === 3) {
-                /* K4 Vel: velocity 0-127 */
-                S.stepEditVel = Math.max(0, Math.min(127, S.stepEditVel + dir));
+                    host_module_set_param('t' + t + '_deactivate', '1');
+            } else if (S.trackQueuedClip[t] === clipIdx) {
+                /* Queued to launch → cancel */
                 if (typeof host_module_set_param === 'function')
-                    host_module_set_param(pfx + '_vel', String(S.stepEditVel));
+                    host_module_set_param('t' + t + '_deactivate', '1');
             } else {
-                /* K5 Nudge: tick offset ±(TPS-1), sens=16 */
-                S.knobAccum[knobIdx] = (dir === S.knobLastDir[knobIdx]) ? S.knobAccum[knobIdx] + 1 : 1;
-                S.knobLastDir[knobIdx] = dir;
-                if (S.knobAccum[knobIdx] >= 16) {
-                    S.knobAccum[knobIdx] = 0;
-                    const _acN = effectiveClip(S.activeTrack);
-                    const _tpsN1 = (S.clipTPS[S.activeTrack][_acN] || 24) - 1;
-                    S.stepEditNudge = Math.max(-_tpsN1, Math.min(_tpsN1, S.stepEditNudge + dir));
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param(pfx + '_nudge', String(S.stepEditNudge));
+                /* Launch: legato if S.playing, queued if not */
+                if (!S.playing) {
+                    S.trackActiveClip[t]  = clipIdx;
+                    S.trackCurrentPage[t] = 0;
+                    refreshPerClipBankParams(t);
+                    if (S.trackPadMode[t] === PAD_MODE_DRUM) {
+                        S.pendingDrumResync      = 2;
+                        S.pendingDrumResyncTrack = t;
+                    }
                 }
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
             }
-            return;
         }
+    }
 
-        /* Knob CCs 71-78: apply delta to active bank parameter.
-         * Relative encoder: d2 1-63 = CW (+1), d2 64-127 = CCW (-1).
-         * pm.sens > 1 = accumulate that many ticks before firing one unit change.
-         * pm.lock = true: fire once then block until touch release (S.knobLocked). */
-        if (d1 >= 71 && d1 <= 78) {
-            const knobIdx = d1 - 71;
-            S.knobTouched          = knobIdx;
-            S.knobTurnedTick[knobIdx] = S.tickCount;
-            S.screenDirty = true;
-            const bank    = S.activeBank;
-            if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 0) {
-                const t    = S.activeTrack;
-                const ac   = effectiveClip(t);
-                const lane = S.activeDrumLane[t];
-                const dir  = (d2 >= 1 && d2 <= 63) ? 1 : -1;
-                if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
+}
 
-                if (knobIdx === 0) {
-                    /* K1 = Stch (beat stretch, lock, sens=16) */
-                    if (S.knobLocked[knobIdx]) return;
-                    const len = S.drumLaneLength[t];
-                    const canFire = dir === 1 ? (len * 2 <= 256) : (len >= 2);
-                    if (!canFire) return;
-                    S.knobAccum[knobIdx]++;
-                    if (S.knobAccum[knobIdx] >= 16) {
-                        S.knobAccum[knobIdx] = 0;
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + t + '_l' + lane + '_beat_stretch', String(dir));
-                        S.knobLocked[knobIdx] = true;
-                        const blocked = host_module_get_param('t' + t + '_beat_stretch_blocked') === '1';
-                        if (dir === -1 && blocked) {
-                            S.stretchBlockedEndTick = S.tickCount + STRETCH_BLOCKED_TICKS;
-                        } else {
-                            S.drumLaneLength[t] = dir === 1 ? len * 2 : Math.floor(len / 2);
-                            const maxPage = Math.max(0, Math.ceil(S.drumLaneLength[t] / 16) - 1);
-                            if (S.drumStepPage[t] > maxPage) S.drumStepPage[t] = maxPage;
-                            S.bankParams[t][0][0] = dir;
-                            S.pendingDrumResync = 2; S.pendingDrumResyncTrack = t;
-                        }
-                        S.screenDirty = true;
-                    }
-                    return;
-                }
-                if (knobIdx === 1) {
-                    /* K2 = Shft (clock shift, sens=8) */
-                    S.knobAccum[knobIdx]++;
-                    if (S.knobAccum[knobIdx] >= 8) {
-                        S.knobAccum[knobIdx] = 0;
-                        S.clockShiftTouchDelta += dir;
-                        S.bankParams[t][0][knobIdx] = S.clockShiftTouchDelta;
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + t + '_l' + lane + '_clock_shift', String(dir));
-                        S.pendingDrumLaneResync = 2; S.pendingDrumLaneResyncTrack = t; S.pendingDrumLaneResyncLane = lane;
-                        S.screenDirty = true;
-                    }
-                    return;
-                }
-                if (knobIdx === 2) {
-                    /* K3 = Ndg (nudge, sens=8) */
-                    S.knobAccum[knobIdx]++;
-                    if (S.knobAccum[knobIdx] >= 8) {
-                        S.knobAccum[knobIdx] = 0;
-                        S.bankParams[t][0][knobIdx] += dir;
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + t + '_l' + lane + '_nudge', String(dir));
-                        S.pendingDrumLaneResync = 2; S.pendingDrumLaneResyncTrack = t; S.pendingDrumLaneResyncLane = lane;
-                        S.screenDirty = true;
-                    }
-                    return;
-                }
-                if (knobIdx === 3) {
-                    /* K4 = Res (normal=proportional rescale; Shift=zoom, sens=16) */
-                    S.knobAccum[knobIdx]++;
-                    if (S.knobAccum[knobIdx] >= 16) {
-                        S.knobAccum[knobIdx] = 0;
-                        const curIdx = Math.max(0, TPS_VALUES.indexOf(S.drumLaneTPS[t]));
-                        const nv = Math.max(0, Math.min(5, curIdx + dir));
-                        if (nv !== curIdx) {
-                            if (S.shiftHeld) {
-                                /* Zoom: absolute note positions fixed, step grid shifts, length adjusts */
-                                const newTps = TPS_VALUES[nv];
-                                const newLen = Math.ceil(S.drumLaneLength[t] * S.drumLaneTPS[t] / newTps);
-                                if (newLen > 256) {
-                                    showActionPopup('NOTES OUT', 'OF RANGE');
-                                    forceRedraw();
-                                } else if (S.heldStep >= 0) {
-                                    /* blocked during step edit */
-                                } else {
-                                    S.drumLaneTPS[t]    = newTps;
-                                    S.drumLaneLength[t] = newLen;
-                                    S.bankParams[t][0][knobIdx] = nv;
-                                    const maxPage = Math.max(0, Math.ceil(newLen / 16) - 1);
-                                    if (S.drumStepPage[t] > maxPage) S.drumStepPage[t] = maxPage;
-                                    if (typeof host_module_set_param === 'function')
-                                        host_module_set_param('t' + t + '_l' + lane + '_clip_resolution_zoom', String(nv));
-                                    S.pendingDrumLaneResync = 2; S.pendingDrumLaneResyncTrack = t; S.pendingDrumLaneResyncLane = lane;
-                                    forceRedraw();
-                                }
-                            } else {
-                                S.drumLaneTPS[t] = TPS_VALUES[nv];
-                                S.bankParams[t][0][knobIdx] = nv;
-                                if (typeof host_module_set_param === 'function')
-                                    host_module_set_param('t' + t + '_l' + lane + '_clip_resolution', String(nv));
-                                S.pendingDrumResync = 2; S.pendingDrumResyncTrack = t;
-                            }
-                        }
-                        S.screenDirty = true;
-                    }
-                    return;
-                }
-                if (knobIdx === 4) {
-                    /* K5 = Len (lane length, sens=8) */
-                    S.knobAccum[knobIdx]++;
-                    if (S.knobAccum[knobIdx] >= 8) {
-                        S.knobAccum[knobIdx] = 0;
-                        const nv = Math.max(1, Math.min(256, S.drumLaneLength[t] + dir));
-                        if (nv !== S.drumLaneLength[t]) {
-                            S.drumLaneLength[t] = nv;
-                            const maxPage = Math.max(0, Math.ceil(nv / 16) - 1);
-                            if (S.drumStepPage[t] > maxPage) S.drumStepPage[t] = maxPage;
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + t + '_l' + lane + '_clip_length', String(nv));
-                        }
-                        S.screenDirty = true;
-                    }
-                    return;
-                }
-                if (knobIdx === 5) {
-                    /* K6 = Qnt (drum lanes quantize macro, sens=4) */
-                    S.knobAccum[knobIdx]++;
-                    if (S.knobAccum[knobIdx] >= 4) {
-                        S.knobAccum[knobIdx] = 0;
-                        const nv = Math.max(0, Math.min(100, S.drumLaneQnt[t] + dir));
-                        if (nv !== S.drumLaneQnt[t]) {
-                            S.drumLaneQnt[t] = nv;
-                            S.bankParams[t][1][4] = nv; /* mirror to NOTE FX K5 for active lane display */
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + t + '_drum_lanes_qnt', String(nv));
-                        }
-                        S.screenDirty = true;
-                    }
-                    return;
-                }
-                if (knobIdx === 6) {
-                    /* K7 = Perf (perform mode: Vel → Rpt → Rpt2), sens=16 */
-                    S.knobAccum[knobIdx]++;
-                    if (S.knobAccum[knobIdx] >= 16) {
-                        S.knobAccum[knobIdx] = 0;
-                        const nv = Math.max(0, Math.min(2, S.drumPerformMode[t] + (dir > 0 ? 1 : -1)));
-                        if (nv !== S.drumPerformMode[t]) {
-                            if (S.drumPerformMode[t] === 1) {
-                                if (typeof host_module_set_param === 'function')
-                                    host_module_set_param('t' + t + '_drum_repeat_stop', '1');
-                                S.drumRepeatHeldPad[t] = -1;
-                            }
-                            if (S.drumPerformMode[t] === 2) {
-                                S.drumRepeat2HeldLanes[t].clear();
-                                S.drumRepeat2LatchedLanes[t].clear();
-                                if (typeof host_module_set_param === 'function')
-                                    host_module_set_param('t' + t + '_drum_repeat2_stop', '1');
-                            }
-                            S.drumRepeatLatched[t] = false;
-                            S.drumPerformMode[t] = nv;
-                        }
-                        showModePopup('PERFORMANCE PADS',
-                            ['Velocity', 'Repeat Play (Rpt1)', 'Repeat Set (Rpt2)'],
-                            S.drumPerformMode[t]);
-                    }
-                    return;
-                }
-                if (knobIdx === 7) {
-                    /* K8 = SqFl: sens=16 — matches melodic */
-                    S.knobAccum[knobIdx]++;
-                    if (S.knobAccum[knobIdx] >= 16) {
-                        S.knobAccum[knobIdx] = 0;
-                        const _cur = S.clipSeqFollow[t][ac] ? 1 : 0;
-                        const _nv  = Math.max(0, Math.min(1, _cur + dir));
-                        if (_nv !== _cur) {
-                            S.clipSeqFollow[t][ac] = _nv !== 0;
-                            S.bankParams[t][0][7]  = _nv;
-                            S.screenDirty = true;
-                        }
-                    }
-                    return;
-                }
+function _onCC_stepedit(d1, d2) {
+    /* CC step-edit: bank 6 + held step — all 8 knobs write CC automation at step's tick */
+    if (S.heldStep >= 0 && S.activeBank === 6 &&
+            S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM && d1 >= 71 && d1 <= 78) {
+        const _kIdx = d1 - 71;
+        const _dir  = (d2 >= 1 && d2 <= 63) ? 1 : -1;
+        const _t    = S.activeTrack;
+        const _ac   = effectiveClip(_t);
+        S.knobTouched          = _kIdx;
+        S.knobTurnedTick[_kIdx] = S.tickCount;
+        S.screenDirty  = true;
+        S.ccStepEditVal[_kIdx] = Math.max(0, Math.min(127, S.ccStepEditVal[_kIdx] + _dir));
+        const _tps   = S.clipTPS[_t][_ac] || 24;
+        const _tick  = S.heldStep * _tps;
+        const _hold  = Math.min(65535, _tick + _tps - 1);
+        if (typeof host_module_set_param === 'function')
+            host_module_set_param('t' + _t + '_cc_auto_set2',
+                _ac + ' ' + _kIdx + ' ' + _tick + ' ' + _hold + ' ' + S.ccStepEditVal[_kIdx]);
+        S.trackCCAutoBits[_t][_ac] |= (1 << _kIdx);
+        return;
+    }
+
+    /* Drum step edit: K1 (Dur) + K2 (Vel) + K3 (Ndg); K4/K5 swallowed */
+    if (S.heldStep >= 0 && S.heldStepNotes.length > 0 && d1 >= 71 && d1 <= 75 &&
+            S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
+        const knobIdx = d1 - 71;
+        const dir     = (d2 >= 1 && d2 <= 63) ? 1 : -1;
+        const t       = S.activeTrack;
+        const lane    = S.activeDrumLane[t];
+        S.knobTouched          = knobIdx;
+        S.knobTurnedTick[knobIdx] = S.tickCount;
+        S.screenDirty = true;
+        if (knobIdx === 0) {
+            const _gmaxD = Math.min(65535, 256 * (S.drumLaneTPS[t] || 24));
+            S.stepEditGate = Math.max(1, Math.min(_gmaxD, S.stepEditGate + dir * 6));
+            if (typeof host_module_set_param === 'function')
+                host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_gate', String(S.stepEditGate));
+        } else if (knobIdx === 1) {
+            S.stepEditVel = Math.max(0, Math.min(127, S.stepEditVel + dir));
+            if (typeof host_module_set_param === 'function')
+                host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_vel', String(S.stepEditVel));
+        } else if (knobIdx === 2) {
+            S.knobAccum[knobIdx] = (dir === S.knobLastDir[knobIdx]) ? S.knobAccum[knobIdx] + 1 : 1;
+            S.knobLastDir[knobIdx] = dir;
+            if (S.knobAccum[knobIdx] >= 16) {
+                S.knobAccum[knobIdx] = 0;
+                const _tpsN1 = (S.drumLaneTPS[t] || 24) - 1;
+                S.stepEditNudge = Math.max(-_tpsN1, Math.min(_tpsN1, S.stepEditNudge + dir));
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_nudge', String(S.stepEditNudge));
             }
-            /* Drum NOTE FX bank: K7 (lane oct, coarse ±12) and K8 (lane note, fine ±1) */
-            if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 1 &&
-                    (knobIdx === 6 || knobIdx === 7)) {
-                const t    = S.activeTrack;
-                const lane = S.activeDrumLane[t];
-                const dir  = (d2 >= 1 && d2 <= 63) ? 1 : -1;
-                if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
+        }
+        return;
+    }
+    /* Step edit overlay: K1-K5 intercept per-step params while a step is held and active */
+    if (S.heldStep >= 0 && S.heldStepNotes.length > 0 && d1 >= 71 && d1 <= 75) {
+        const knobIdx = d1 - 71;
+        const dir     = (d2 >= 1 && d2 <= 63) ? 1 : -1;
+        const t       = S.activeTrack;
+        const ac      = effectiveClip(t);
+        const pfx     = 't' + t + '_c' + ac + '_step_' + S.heldStep;
+        S.knobTouched          = knobIdx;
+        S.knobTurnedTick[knobIdx] = S.tickCount;
+        S.screenDirty   = true;
+        if (knobIdx === 0) {
+            /* K1 Oct: shift all notes ±12 semitones, sens=12 */
+            S.knobAccum[knobIdx] = (dir === S.knobLastDir[knobIdx]) ? S.knobAccum[knobIdx] + 1 : 1;
+            S.knobLastDir[knobIdx] = dir;
+            if (S.knobAccum[knobIdx] >= 12) {
+                S.knobAccum[knobIdx] = 0;
+                S.heldStepNotes = S.heldStepNotes.map(function(n) {
+                    return Math.max(0, Math.min(127, n + dir * 12));
+                });
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param(pfx + '_set_notes', S.heldStepNotes.join(' '));
+            }
+        } else if (knobIdx === 1) {
+            /* K2 Pitch: shift each note ±1 scale degree (or ±1 semitone if scale-aware off), sens=16 */
+            S.knobAccum[knobIdx] = (dir === S.knobLastDir[knobIdx]) ? S.knobAccum[knobIdx] + 1 : 1;
+            S.knobLastDir[knobIdx] = dir;
+            if (S.knobAccum[knobIdx] >= 16) {
+                S.knobAccum[knobIdx] = 0;
+                S.heldStepNotes = S.heldStepNotes.map(function(n) {
+                    return scaleNudgeNote(n, dir, S.padKey, S.padScale);
+                });
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param(pfx + '_set_notes', S.heldStepNotes.join(' '));
+            }
+        } else if (knobIdx === 2) {
+            /* K3 Dur: gate in 6-tick steps (±25% of a step per detent) */
+            { const _acD = effectiveClip(S.activeTrack);
+              const _gmaxD = Math.min(65535, 256 * (S.clipTPS[S.activeTrack][_acD] || 24));
+              S.stepEditGate = Math.max(1, Math.min(_gmaxD, S.stepEditGate + dir * 6)); }
+            if (typeof host_module_set_param === 'function')
+                host_module_set_param(pfx + '_gate', String(S.stepEditGate));
+        } else if (knobIdx === 3) {
+            /* K4 Vel: velocity 0-127 */
+            S.stepEditVel = Math.max(0, Math.min(127, S.stepEditVel + dir));
+            if (typeof host_module_set_param === 'function')
+                host_module_set_param(pfx + '_vel', String(S.stepEditVel));
+        } else {
+            /* K5 Nudge: tick offset ±(TPS-1), sens=16 */
+            S.knobAccum[knobIdx] = (dir === S.knobLastDir[knobIdx]) ? S.knobAccum[knobIdx] + 1 : 1;
+            S.knobLastDir[knobIdx] = dir;
+            if (S.knobAccum[knobIdx] >= 16) {
+                S.knobAccum[knobIdx] = 0;
+                const _acN = effectiveClip(S.activeTrack);
+                const _tpsN1 = (S.clipTPS[S.activeTrack][_acN] || 24) - 1;
+                S.stepEditNudge = Math.max(-_tpsN1, Math.min(_tpsN1, S.stepEditNudge + dir));
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param(pfx + '_nudge', String(S.stepEditNudge));
+            }
+        }
+        return;
+    }
+
+}
+
+function _onCC_knobs(d1, d2) {
+    /* Knob CCs 71-78: apply delta to active bank parameter.
+     * Relative encoder: d2 1-63 = CW (+1), d2 64-127 = CCW (-1).
+     * pm.sens > 1 = accumulate that many ticks before firing one unit change.
+     * pm.lock = true: fire once then block until touch release (S.knobLocked). */
+    if (d1 >= 71 && d1 <= 78) {
+        const knobIdx = d1 - 71;
+        S.knobTouched          = knobIdx;
+        S.knobTurnedTick[knobIdx] = S.tickCount;
+        S.screenDirty = true;
+        const bank    = S.activeBank;
+        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 0) {
+            const t    = S.activeTrack;
+            const ac   = effectiveClip(t);
+            const lane = S.activeDrumLane[t];
+            const dir  = (d2 >= 1 && d2 <= 63) ? 1 : -1;
+            if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
+
+            if (knobIdx === 0) {
+                /* K1 = Stch (beat stretch, lock, sens=16) */
+                if (S.knobLocked[knobIdx]) return;
+                const len = S.drumLaneLength[t];
+                const canFire = dir === 1 ? (len * 2 <= 256) : (len >= 2);
+                if (!canFire) return;
                 S.knobAccum[knobIdx]++;
                 if (S.knobAccum[knobIdx] >= 16) {
                     S.knobAccum[knobIdx] = 0;
-                    const delta = knobIdx === 6 ? dir * 12 : dir;
-                    const nv = Math.max(0, Math.min(127, S.drumLaneNote[t][lane] + delta));
-                    if (nv !== S.drumLaneNote[t][lane]) {
-                        S.drumLaneNote[t][lane] = nv;
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + t + '_l' + lane + '_lane_note', String(nv));
-                        S.screenDirty = true;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_l' + lane + '_beat_stretch', String(dir));
+                    S.knobLocked[knobIdx] = true;
+                    const blocked = host_module_get_param('t' + t + '_beat_stretch_blocked') === '1';
+                    if (dir === -1 && blocked) {
+                        S.stretchBlockedEndTick = S.tickCount + STRETCH_BLOCKED_TICKS;
+                    } else {
+                        S.drumLaneLength[t] = dir === 1 ? len * 2 : Math.floor(len / 2);
+                        const maxPage = Math.max(0, Math.ceil(S.drumLaneLength[t] / 16) - 1);
+                        if (S.drumStepPage[t] > maxPage) S.drumStepPage[t] = maxPage;
+                        S.bankParams[t][0][0] = dir;
+                        S.pendingDrumResync = 2; S.pendingDrumResyncTrack = t;
                     }
+                    S.screenDirty = true;
                 }
                 return;
             }
-            /* Repeat Groove bank (bank 6 on drum tracks): vel scale (unshifted) or nudge (Shift) */
-            if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 5) {
-                const t    = S.activeTrack;
-                const lane = S.activeDrumLane[t];
-                const dir  = (d2 >= 1 && d2 <= 63) ? 1 : -1;
-                if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
+            if (knobIdx === 1) {
+                /* K2 = Shft (clock shift, sens=8) */
+                S.knobAccum[knobIdx]++;
+                if (S.knobAccum[knobIdx] >= 8) {
+                    S.knobAccum[knobIdx] = 0;
+                    S.clockShiftTouchDelta += dir;
+                    S.bankParams[t][0][knobIdx] = S.clockShiftTouchDelta;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_l' + lane + '_clock_shift', String(dir));
+                    S.pendingDrumLaneResync = 2; S.pendingDrumLaneResyncTrack = t; S.pendingDrumLaneResyncLane = lane;
+                    S.screenDirty = true;
+                }
+                return;
+            }
+            if (knobIdx === 2) {
+                /* K3 = Ndg (nudge, sens=8) */
+                S.knobAccum[knobIdx]++;
+                if (S.knobAccum[knobIdx] >= 8) {
+                    S.knobAccum[knobIdx] = 0;
+                    S.bankParams[t][0][knobIdx] += dir;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_l' + lane + '_nudge', String(dir));
+                    S.pendingDrumLaneResync = 2; S.pendingDrumLaneResyncTrack = t; S.pendingDrumLaneResyncLane = lane;
+                    S.screenDirty = true;
+                }
+                return;
+            }
+            if (knobIdx === 3) {
+                /* K4 = Res (normal=proportional rescale; Shift=zoom, sens=16) */
+                S.knobAccum[knobIdx]++;
+                if (S.knobAccum[knobIdx] >= 16) {
+                    S.knobAccum[knobIdx] = 0;
+                    const curIdx = Math.max(0, TPS_VALUES.indexOf(S.drumLaneTPS[t]));
+                    const nv = Math.max(0, Math.min(5, curIdx + dir));
+                    if (nv !== curIdx) {
+                        if (S.shiftHeld) {
+                            /* Zoom: absolute note positions fixed, step grid shifts, length adjusts */
+                            const newTps = TPS_VALUES[nv];
+                            const newLen = Math.ceil(S.drumLaneLength[t] * S.drumLaneTPS[t] / newTps);
+                            if (newLen > 256) {
+                                showActionPopup('NOTES OUT', 'OF RANGE');
+                                forceRedraw();
+                            } else if (S.heldStep >= 0) {
+                                /* blocked during step edit */
+                            } else {
+                                S.drumLaneTPS[t]    = newTps;
+                                S.drumLaneLength[t] = newLen;
+                                S.bankParams[t][0][knobIdx] = nv;
+                                const maxPage = Math.max(0, Math.ceil(newLen / 16) - 1);
+                                if (S.drumStepPage[t] > maxPage) S.drumStepPage[t] = maxPage;
+                                if (typeof host_module_set_param === 'function')
+                                    host_module_set_param('t' + t + '_l' + lane + '_clip_resolution_zoom', String(nv));
+                                S.pendingDrumLaneResync = 2; S.pendingDrumLaneResyncTrack = t; S.pendingDrumLaneResyncLane = lane;
+                                forceRedraw();
+                            }
+                        } else {
+                            S.drumLaneTPS[t] = TPS_VALUES[nv];
+                            S.bankParams[t][0][knobIdx] = nv;
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_l' + lane + '_clip_resolution', String(nv));
+                            S.pendingDrumResync = 2; S.pendingDrumResyncTrack = t;
+                        }
+                    }
+                    S.screenDirty = true;
+                }
+                return;
+            }
+            if (knobIdx === 4) {
+                /* K5 = Len (lane length, sens=8) */
+                S.knobAccum[knobIdx]++;
+                if (S.knobAccum[knobIdx] >= 8) {
+                    S.knobAccum[knobIdx] = 0;
+                    const nv = Math.max(1, Math.min(256, S.drumLaneLength[t] + dir));
+                    if (nv !== S.drumLaneLength[t]) {
+                        S.drumLaneLength[t] = nv;
+                        const maxPage = Math.max(0, Math.ceil(nv / 16) - 1);
+                        if (S.drumStepPage[t] > maxPage) S.drumStepPage[t] = maxPage;
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + t + '_l' + lane + '_clip_length', String(nv));
+                    }
+                    S.screenDirty = true;
+                }
+                return;
+            }
+            if (knobIdx === 5) {
+                /* K6 = Qnt (drum lanes quantize macro, sens=4) */
                 S.knobAccum[knobIdx]++;
                 if (S.knobAccum[knobIdx] >= 4) {
                     S.knobAccum[knobIdx] = 0;
-                    const step = knobIdx;
-                    if (S.shiftHeld) {
-                        const nv = Math.max(-50, Math.min(50, (S.drumRepeatNudge[t][lane][step] | 0) + dir));
-                        if (nv !== S.drumRepeatNudge[t][lane][step]) {
-                            S.drumRepeatNudge[t][lane][step] = nv;
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + t + '_l' + lane + '_repeat_nudge', step + ' ' + nv);
-                        }
-                    } else {
-                        const nv = Math.max(0, Math.min(200, (S.drumRepeatVelScale[t][lane][step] | 0) + dir * 3));
-                        if (nv !== S.drumRepeatVelScale[t][lane][step]) {
-                            S.drumRepeatVelScale[t][lane][step] = nv;
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + t + '_l' + lane + '_repeat_vel_scale', step + ' ' + nv);
-                        }
-                    }
-                    S.screenDirty = true;
-                }
-                return;
-            }
-            /* CC PARAM bank (bank 6): normal turn = transmit CC, Shift+turn = reassign CC number */
-            if (bank === 6) {
-                const t = S.activeTrack;
-                /* Delete+turn: clear this knob's automation for the active clip */
-                if (S.deleteHeld && !S.shiftHeld) {
-                    const ac = S.trackActiveClip[t];
-                    S.trackCCAutoBits[t][ac] &= ~(1 << knobIdx);
-                    S.trackCCLiveVal[t][knobIdx] = -1;
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + t + '_cc_auto_clear_k', ac + ' ' + knobIdx);
-                    showActionPopup('CC AUTO', 'CLEAR');
-                    invalidateLEDCache();
-                    return;
-                }
-                const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
-                if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
-                S.knobAccum[knobIdx]++;
-                if (S.shiftHeld) {
-                    /* Shift+turn: reassign CC number 0-127, sens=4 */
-                    if (S.knobAccum[knobIdx] >= 4) {
-                        S.knobAccum[knobIdx] = 0;
-                        const nv = Math.max(0, Math.min(127, S.trackCCAssign[t][knobIdx] + dir));
-                        if (nv !== S.trackCCAssign[t][knobIdx]) {
-                            S.trackCCAssign[t][knobIdx] = nv;
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + t + '_cc_assign', knobIdx + ' ' + nv);
-                            S.screenDirty = true;
-                        }
-                    }
-                } else {
-                    /* Normal turn: send CC value 0-127, sens=2 */
-                    if (S.knobAccum[knobIdx] >= 2) {
-                        S.knobAccum[knobIdx] = 0;
-                        const nv = Math.max(0, Math.min(127, S.trackCCVal[t][knobIdx] + dir));
-                        if (nv !== S.trackCCVal[t][knobIdx]) {
-                            S.trackCCVal[t][knobIdx] = nv;
-                            if (typeof host_module_set_param === 'function') {
-                                host_module_set_param('t' + t + '_cc_send', knobIdx + ' ' + nv);
-                                const ac = S.trackActiveClip[t];
-                                /* Step edit: write automation point at held step's tick */
-                                if (S.heldStep >= 0 && S.trackPadMode[t] !== PAD_MODE_DRUM) {
-                                    const stepTick = S.heldStep * (S.clipTPS[t][ac] || 24);
-                                    host_module_set_param('t' + t + '_cc_auto_set',
-                                        ac + ' ' + knobIdx + ' ' + stepTick + ' ' + nv);
-                                    S.trackCCAutoBits[t][ac] |= (1 << knobIdx);
-                                }
-                                /* Live record: mark automation bit so LED updates immediately */
-                                if (S.recordArmed && !S.recordCountingIn && S.recordArmedTrack === t) {
-                                    S.trackCCAutoBits[t][ac] |= (1 << knobIdx);
-                                }
-                            }
-                            S.screenDirty = true;
-                        }
-                    }
-                }
-                return;
-            }
-            const pm      = BANKS[bank].knobs[knobIdx];
-            if (pm && pm.abbrev && pm.scope !== 'stub' && !S.knobLocked[knobIdx]) {
-                const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
-                if (dir !== S.knobLastDir[knobIdx]) {
-                    S.knobAccum[knobIdx]   = 0;
-                    S.knobLastDir[knobIdx] = dir;
-                }
-                S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= pm.sens) {
-                    S.knobAccum[knobIdx] = 0;
-                    S.screenDirty = true;
-                    if (pm.scope === 'action') {
-                        const t   = S.activeTrack;
-                        const ac  = S.trackActiveClip[t];
-                        const len = S.clipLength[t][ac];
-                        if (pm.lock) {
-                            /* Beat Stretch: one-shot, then lock until touch release */
-                            const canFire = dir === 1 ? (len * 2 <= 256) : (len >= 2);
-                            if (canFire && typeof host_module_set_param === 'function') {
-                                host_module_set_param('t' + t + '_' + pm.dspKey, String(dir));
-                                S.knobLocked[knobIdx] = true;
-                                /* For compress: check if DSP blocked due to step collision */
-                                if (dir === -1 && host_module_get_param('t' + t + '_beat_stretch_blocked') === '1') {
-                                    S.stretchBlockedEndTick = S.tickCount + STRETCH_BLOCKED_TICKS;
-                                } else {
-                                    /* Mirror DSP step rewrite in JS S.clipSteps */
-                                    const steps = S.clipSteps[t][ac];
-                                    if (dir === 1) {
-                                        for (let si = len - 1; si >= 1; si--) {
-                                            steps[si * 2] = steps[si];
-                                            steps[si] = 0;
-                                        }
-                                        for (let si = 1; si < len * 2; si += 2) steps[si] = 0;
-                                        S.clipLength[t][ac] = len * 2;
-                                    } else {
-                                        const halfLen = len >> 1;
-                                        const tmp = new Array(halfLen).fill(0);
-                                        for (let si = 0; si < len; si++) {
-                                            if (steps[si] === 1 && !tmp[si >> 1]) tmp[si >> 1] = 1;
-                                        }
-                                        for (let si = 0; si < len; si++) {
-                                            if (steps[si] === 2 && !tmp[si >> 1]) tmp[si >> 1] = 2;
-                                        }
-                                        for (let si = 0; si < len; si++) steps[si] = 0;
-                                        for (let si = 0; si < halfLen; si++) steps[si] = tmp[si];
-                                        S.clipLength[t][ac] = halfLen;
-                                    }
-                                    /* Clamp page index to new length */
-                                    const newPages = Math.max(1, Math.ceil(S.clipLength[t][ac] / 16));
-                                    if (S.trackCurrentPage[t] >= newPages)
-                                        S.trackCurrentPage[t] = newPages - 1;
-                                    /* Per-touch label: dir +1 → fmtStretch shows 'x2', -1 → '/2' */
-                                    S.bankParams[t][bank][knobIdx] = dir;
-                                }
-                            }
-                        } else if (pm.dspKey === 'clock_shift') {
-                            /* Clock Shift: continuous rotation, no lock */
-                            if (len >= 2 && typeof host_module_set_param === 'function') {
-                                host_module_set_param('t' + t + '_' + pm.dspKey, String(dir));
-                                const steps = S.clipSteps[t][ac];
-                                if (dir === 1) {
-                                    const last = steps[len - 1];
-                                    for (let si = len - 1; si > 0; si--) steps[si] = steps[si - 1];
-                                    steps[0] = last;
-                                } else {
-                                    const first = steps[0];
-                                    for (let si = 0; si < len - 1; si++) steps[si] = steps[si + 1];
-                                    steps[len - 1] = first;
-                                }
-                                S.clockShiftTouchDelta += dir;
-                                S.bankParams[t][bank][knobIdx] = S.clockShiftTouchDelta;
-                            }
-                        } else {
-                            /* Nudge: fire DSP, mirror counter locally for display, schedule steps re-read */
-                            if (typeof host_module_set_param === 'function') {
-                                host_module_set_param('t' + t + '_' + pm.dspKey, String(dir));
-                                S.bankParams[t][bank][knobIdx] += dir;
-                                S.pendingStepsReread      = 2;
-                                S.pendingStepsRereadTrack = t;
-                                S.pendingStepsRereadClip  = ac;
-                            }
-                        }
-                    } else {
-                        const cur = S.bankParams[S.activeTrack][bank][knobIdx];
-                        let nv  = Math.max(pm.min, Math.min(pm.max, cur + dir));
-                        if (nv !== cur) {
-                            if (S.shiftHeld && pm.dspKey === 'clip_resolution') {
-                                const _t   = S.activeTrack;
-                                const _ac  = effectiveClip(_t);
-                                const _old_tps = S.clipTPS[_t][_ac];
-                                const _new_tps = TPS_VALUES[nv];
-                                const _old_ticks = S.clipLength[_t][_ac] * _old_tps;
-                                const _new_len = Math.ceil(_old_ticks / _new_tps);
-                                if (_new_len > 256) {
-                                    showActionPopup('NOTES OUT', 'OF RANGE');
-                                    forceRedraw();
-                                } else if (S.heldStep >= 0 || (S.recordArmed && !S.recordCountingIn && S.recordArmedTrack === _t)) {
-                                    /* blocked — do nothing */
-                                } else {
-                                    S.bankParams[S.activeTrack][bank][knobIdx] = nv;
-                                    S.clipTPS[_t][_ac]    = _new_tps;
-                                    S.clipLength[_t][_ac] = _new_len;
-                                    const _maxPage = Math.max(0, Math.ceil(_new_len / 16) - 1);
-                                    if (S.trackCurrentPage[_t] > _maxPage) S.trackCurrentPage[_t] = _maxPage;
-                                    if (typeof host_module_set_param === 'function')
-                                        host_module_set_param('t' + _t + '_clip_resolution_zoom', String(nv));
-                                    S.pendingStepsReread      = 2;
-                                    S.pendingStepsRereadTrack = _t;
-                                    S.pendingStepsRereadClip  = _ac;
-                                    refreshPerClipBankParams(_t);
-                                    forceRedraw();
-                                }
-                            } else {
-                                S.bankParams[S.activeTrack][bank][knobIdx] = nv;
-                                applyBankParam(S.activeTrack, bank, knobIdx, nv);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /* Step buttons: notes 16-31, note-on only */
-    if ((status & 0xF0) === 0x90 && d1 >= 16 && d1 <= 31 && d2 > 0) {
-        if (S.tapTempoOpen) return;
-        S.stepOpTick = S.tickCount;
-        const idx = d1 - 16;
-        /* Perf Mode: step buttons are preset snapshot slots. */
-        if (S.sessionView && (S.loopHeld || S.perfViewLocked)) {
-            if (S.shiftHeld) {
-                /* Shift+step: save current active mods to this slot */
-                S.perfSnapshots[idx] = S.perfModsToggled | S.perfModsHeld | S.perfRecalledMods;
-                showActionPopup('SAVED');
-            } else if (S.perfRecalledSlot === idx) {
-                /* Tap active slot again: deactivate recall */
-                S.perfRecalledSlot = -1;
-                S.perfRecalledMods = 0;
-                sendPerfMods();
-            } else {
-                /* Tap a slot: recall its mods */
-                S.perfRecalledSlot = idx;
-                S.perfRecalledMods = S.perfSnapshots[idx];
-                sendPerfMods();
-            }
-            forceRedraw();
-            return;
-        }
-        if (S.sessionView) {
-            if (S.muteHeld) {
-                /* All 16 step buttons are snapshot slots 0-15 */
-                if (S.shiftHeld) {
-                    /* Shift+tap: save/overwrite snapshot */
-                    const drumEffMutes = [];
-                    for (let _t = 0; _t < NUM_TRACKS; _t++) {
-                        const mMask = S.drumLaneMute[_t];
-                        const sMask = S.drumLaneSolo[_t];
-                        let effMask = mMask;
-                        if (sMask) {
-                            let notSoloed = 0;
-                            for (let _l = 0; _l < DRUM_LANES; _l++) {
-                                if (!(sMask & (1 << _l))) notSoloed |= (1 << _l);
-                            }
-                            effMask = (mMask | notSoloed) >>> 0;
-                        }
-                        drumEffMutes.push(effMask >>> 0);
-                    }
-                    S.snapshots[idx] = { mute: S.trackMuted.slice(), solo: S.trackSoloed.slice(), drumEffMute: drumEffMutes };
-                    const mStr = S.trackMuted.map(function(m) { return m ? '1' : '0'; }).join(' ');
-                    const sStr = S.trackSoloed.map(function(s) { return s ? '1' : '0'; }).join(' ');
-                    const dStr = drumEffMutes.join(' ');
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('snap_save', idx + ' ' + mStr + ' ' + sStr + ' ' + dStr);
-                } else if (S.snapshots[idx] !== null) {
-                    /* Tap occupied: recall snapshot */
-                    const snap = S.snapshots[idx];
-                    for (let _t = 0; _t < NUM_TRACKS; _t++) {
-                        S.trackMuted[_t]  = snap.mute[_t];
-                        S.trackSoloed[_t] = snap.solo[_t];
-                        if (snap.drumEffMute) {
-                            S.drumLaneMute[_t] = snap.drumEffMute[_t];
-                            S.drumLaneSolo[_t] = 0;
-                        }
-                    }
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('snap_load', String(idx));
-                    S.screenDirty = true;
-                }
-                /* Tap empty: no-op; S.muteHeld swallows all step buttons in Session View */
-            } else if (!S.deleteHeld && !S.shiftHeld) {
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('launch_scene', String(idx));
-            }
-            /* S.deleteHeld/S.shiftHeld (non-S.muteHeld) in Session View: swallow step buttons */
-        } else if (S.loopHeld) {
-            if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
-                /* Drum: set active lane clip length */
-                const t    = S.activeTrack;
-                const lane = S.activeDrumLane[t];
-                const newLen = (idx + 1) * 16;
-                S.drumLaneLength[t] = newLen;
-                const maxPage = Math.max(0, Math.ceil(newLen / 16) - 1);
-                if (S.drumStepPage[t] > maxPage) S.drumStepPage[t] = maxPage;
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('t' + t + '_l' + lane + '_clip_length', String(newLen));
-            } else {
-            const ac      = effectiveClip(S.activeTrack);
-            const newLen  = (idx + 1) * 16;
-            S.clipLength[S.activeTrack][ac] = newLen;
-            const maxPage = Math.max(0, Math.ceil(newLen / 16) - 1);
-            if (S.trackCurrentPage[S.activeTrack] > maxPage)
-                S.trackCurrentPage[S.activeTrack] = maxPage;
-            if (typeof host_module_set_param === 'function')
-                host_module_set_param('t' + S.activeTrack + '_c' + ac + '_length', String(newLen));
-            }
-            forceRedraw();
-        } else if (S.copyHeld) {
-            /* Copy + step button (Track View): step-to-step copy within active clip */
-            const ac     = effectiveClip(S.activeTrack);
-            const absIdx = S.trackCurrentPage[S.activeTrack] * 16 + idx;
-            if (!S.copySrc) {
-                S.copySrc = { kind: 'step', absStep: absIdx };
-                invalidateLEDCache();
-            } else if (S.copySrc.kind === 'step') {
-                if (S.copySrc.absStep !== absIdx) copyStep(S.activeTrack, ac, S.copySrc.absStep, absIdx);
-                invalidateLEDCache();
-                forceRedraw();
-            }
-            /* S.copySrc.kind !== 'step': swallow — don't mix copy types */
-        } else if (S.deleteHeld) {
-            /* Delete + step button (Track View): clear all notes from that step */
-            if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
-                /* Drum mode: clear step in active lane */
-                const t       = S.activeTrack;
-                const lane    = S.activeDrumLane[t];
-                const absStep = S.drumStepPage[t] * 16 + idx;
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('t' + t + '_l' + lane + '_step_' + absStep + '_clear', '1');
-                S.drumLaneSteps[t][lane][absStep] = '0';
-                S.drumLaneHasNotes[t][lane] = S.drumLaneSteps[t][lane].some(c => c !== '0');
-                forceRedraw();
-            } else {
-            const ac     = effectiveClip(S.activeTrack);
-            const absIdx = S.trackCurrentPage[S.activeTrack] * 16 + idx;
-            clearStep(S.activeTrack, ac, absIdx);
-            forceRedraw();
-            }
-        } else if (!S.shiftHeld && S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
-            /* Drum mode: tap toggles hit; hold enters step edit (Dur/Vel).
-             * Press records time and state; toggle/clear deferred to release. */
-            const t       = S.activeTrack;
-            const lane    = S.activeDrumLane[t];
-            const absStep = S.drumStepPage[t] * 16 + idx;
-            S.stepBtnPressedTick[idx] = S.tickCount;
-            if (S.heldStep < 0) {
-                S.heldStepBtn = idx;
-                S.heldStep    = absStep;
-                const cur   = S.drumLaneSteps[t][lane][absStep];
-                if (cur === '1') {
-                    S.stepWasEmpty  = false;
-                    S.heldStepNotes = [S.drumLaneNote[t][lane]];
-                    const rv = typeof host_module_get_param === 'function'
-                        ? host_module_get_param('t' + t + '_l' + lane + '_step_' + absStep + '_vel') : null;
-                    const rg = typeof host_module_get_param === 'function'
-                        ? host_module_get_param('t' + t + '_l' + lane + '_step_' + absStep + '_gate') : null;
-                    const rn = typeof host_module_get_param === 'function'
-                        ? host_module_get_param('t' + t + '_l' + lane + '_step_' + absStep + '_nudge') : null;
-                    S.stepEditVel   = rv !== null ? parseInt(rv, 10) : 100;
-                    S.stepEditGate  = rg !== null ? parseInt(rg, 10) : (S.drumLaneTPS[t] || 24);
-                    S.stepEditNudge = rn !== null ? parseInt(rn, 10) : 0;
-                } else {
-                    S.stepWasEmpty  = true;
-                    S.heldStepNotes = [];
-                    S.stepEditVel   = drumVelZoneToVelocity(S.drumLastVelZone[t]);
-                    S.stepEditGate  = S.drumLaneTPS[t] || 24;
-                    S.stepEditNudge = 0;
-                }
-                forceRedraw();
-            } else if (S.heldStepNotes.length > 0) {
-                /* Second step tapped while first is held: set gate to span the distance */
-                S.stepBtnPressedTick[S.heldStepBtn] = -1;
-                S.stepWasHeld = true;
-                const tappedStep = S.drumStepPage[t] * 16 + idx;
-                if (tappedStep !== S.heldStep) {
-                    const len     = S.drumLaneLength[t];
-                    const tps     = S.drumLaneTPS[t] || 24;
-                    const dist    = tappedStep > S.heldStep
-                        ? tappedStep - S.heldStep
-                        : len - S.heldStep + tappedStep;
-                    const newGate = Math.max(1, Math.min(dist * tps, 65535));
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_gate', String(newGate));
-                    S.stepEditGate = newGate;
-                    forceRedraw();
-                }
-            }
-        } else if (!S.shiftHeld) {
-            /* Record press time for tap detection on release.
-             * Enter step edit immediately — tap vs hold decided on release. */
-            S.stepBtnPressedTick[idx] = S.tickCount;
-            if (S.heldStep < 0) {
-                const ac_p   = effectiveClip(S.activeTrack);
-                const absP   = S.trackCurrentPage[S.activeTrack] * 16 + idx;
-                S.heldStepBtn  = idx;
-                S.heldStep     = absP;
-                const pref_p = 't' + S.activeTrack + '_c' + ac_p + '_step_' + absP;
-                const raw_p  = typeof host_module_get_param === 'function'
-                    ? host_module_get_param(pref_p + '_notes') : null;
-                S.heldStepNotes = (raw_p && raw_p.trim().length > 0)
-                    ? raw_p.trim().split(' ').map(Number).filter(function(n) { return n >= 0 && n <= 127; })
-                    : [];
-                if (S.heldStepNotes.length === 0) {
-                    S.stepWasEmpty = true;
-                    if (S.activeBank === 6) {
-                        /* CC step-edit: no note required — enter edit immediately */
-                        S.ccStepEditActive = true;
-                    } else if (S.lastPlayedNote >= 0) {
-                        /* Known note: assign immediately so knobs work right away */
-                        const assignNote = S.lastPlayedNote;
-                        const assignVel  = effectiveVelocity(S.lastPadVelocity);
+                    const nv = Math.max(0, Math.min(100, S.drumLaneQnt[t] + dir));
+                    if (nv !== S.drumLaneQnt[t]) {
+                        S.drumLaneQnt[t] = nv;
+                        S.bankParams[t][1][4] = nv; /* mirror to NOTE FX K5 for active lane display */
                         if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + S.activeTrack + '_c' + ac_p + '_step_' + absP + '_toggle', assignNote + ' ' + assignVel);
-                        const raw_aa = typeof host_module_get_param === 'function'
-                            ? host_module_get_param(pref_p + '_notes') : null;
-                        S.heldStepNotes = (raw_aa && raw_aa.trim().length > 0)
-                            ? raw_aa.trim().split(' ').map(Number).filter(function(n) { return n >= 0 && n <= 127; })
-                            : [];
-                        S.clipSteps[S.activeTrack][ac_p][absP] = S.heldStepNotes.length > 0 ? 1 : 0;
-                        if (S.heldStepNotes.length > 0) S.clipNonEmpty[S.activeTrack][ac_p] = true;
-                        S.stepEditVel = assignVel; S.stepEditGate = 12; S.stepEditNudge = 0;
-                    } else {
-                        /* No note played yet: flash message, don't enter step edit */
-                        S.heldStep    = -1;
-                        S.heldStepBtn = -1;
-                        S.stepWasEmpty = false;
-                        S.stepWasHeld  = false;
-                        S.noNoteFlashEndTick = S.tickCount + NO_NOTE_FLASH_TICKS;
+                            host_module_set_param('t' + t + '_drum_lanes_qnt', String(nv));
+                    }
+                    S.screenDirty = true;
+                }
+                return;
+            }
+            if (knobIdx === 6) {
+                /* K7 = Perf (perform mode: Vel → Rpt → Rpt2), sens=16 */
+                S.knobAccum[knobIdx]++;
+                if (S.knobAccum[knobIdx] >= 16) {
+                    S.knobAccum[knobIdx] = 0;
+                    const nv = Math.max(0, Math.min(2, S.drumPerformMode[t] + (dir > 0 ? 1 : -1)));
+                    if (nv !== S.drumPerformMode[t]) {
+                        if (S.drumPerformMode[t] === 1) {
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_drum_repeat_stop', '1');
+                            S.drumRepeatHeldPad[t] = -1;
+                        }
+                        if (S.drumPerformMode[t] === 2) {
+                            S.drumRepeat2HeldLanes[t].clear();
+                            S.drumRepeat2LatchedLanes[t].clear();
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_drum_repeat2_stop', '1');
+                        }
+                        S.drumRepeatLatched[t] = false;
+                        S.drumPerformMode[t] = nv;
+                    }
+                    showModePopup('PERFORMANCE PADS',
+                        ['Velocity', 'Repeat Play (Rpt1)', 'Repeat Set (Rpt2)'],
+                        S.drumPerformMode[t]);
+                }
+                return;
+            }
+            if (knobIdx === 7) {
+                /* K8 = SqFl: sens=16 — matches melodic */
+                S.knobAccum[knobIdx]++;
+                if (S.knobAccum[knobIdx] >= 16) {
+                    S.knobAccum[knobIdx] = 0;
+                    const _cur = S.clipSeqFollow[t][ac] ? 1 : 0;
+                    const _nv  = Math.max(0, Math.min(1, _cur + dir));
+                    if (_nv !== _cur) {
+                        S.clipSeqFollow[t][ac] = _nv !== 0;
+                        S.bankParams[t][0][7]  = _nv;
                         S.screenDirty = true;
                     }
+                }
+                return;
+            }
+        }
+        /* Drum NOTE FX bank: K7 (lane oct, coarse ±12) and K8 (lane note, fine ±1) */
+        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 1 &&
+                (knobIdx === 6 || knobIdx === 7)) {
+            const t    = S.activeTrack;
+            const lane = S.activeDrumLane[t];
+            const dir  = (d2 >= 1 && d2 <= 63) ? 1 : -1;
+            if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
+            S.knobAccum[knobIdx]++;
+            if (S.knobAccum[knobIdx] >= 16) {
+                S.knobAccum[knobIdx] = 0;
+                const delta = knobIdx === 6 ? dir * 12 : dir;
+                const nv = Math.max(0, Math.min(127, S.drumLaneNote[t][lane] + delta));
+                if (nv !== S.drumLaneNote[t][lane]) {
+                    S.drumLaneNote[t][lane] = nv;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_l' + lane + '_lane_note', String(nv));
+                    S.screenDirty = true;
+                }
+            }
+            return;
+        }
+        /* Repeat Groove bank (bank 6 on drum tracks): vel scale (unshifted) or nudge (Shift) */
+        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 5) {
+            const t    = S.activeTrack;
+            const lane = S.activeDrumLane[t];
+            const dir  = (d2 >= 1 && d2 <= 63) ? 1 : -1;
+            if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
+            S.knobAccum[knobIdx]++;
+            if (S.knobAccum[knobIdx] >= 4) {
+                S.knobAccum[knobIdx] = 0;
+                const step = knobIdx;
+                if (S.shiftHeld) {
+                    const nv = Math.max(-50, Math.min(50, (S.drumRepeatNudge[t][lane][step] | 0) + dir));
+                    if (nv !== S.drumRepeatNudge[t][lane][step]) {
+                        S.drumRepeatNudge[t][lane][step] = nv;
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + t + '_l' + lane + '_repeat_nudge', step + ' ' + nv);
+                    }
                 } else {
-                    S.stepWasEmpty = false;
-                    if (S.activeBank === 6) {
-                        S.ccStepEditActive = true;
-                    } else {
-                        const rv = typeof host_module_get_param === 'function' ? host_module_get_param(pref_p + '_vel') : null;
-                        const rg = typeof host_module_get_param === 'function' ? host_module_get_param(pref_p + '_gate') : null;
-                        const rn = typeof host_module_get_param === 'function' ? host_module_get_param(pref_p + '_nudge') : null;
-                        S.stepEditVel   = rv !== null ? parseInt(rv, 10) : 100;
-                        S.stepEditGate  = rg !== null ? parseInt(rg, 10) : 12;
-                        S.stepEditNudge = rn !== null ? parseInt(rn, 10) : 0;
+                    const nv = Math.max(0, Math.min(200, (S.drumRepeatVelScale[t][lane][step] | 0) + dir * 3));
+                    if (nv !== S.drumRepeatVelScale[t][lane][step]) {
+                        S.drumRepeatVelScale[t][lane][step] = nv;
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + t + '_l' + lane + '_repeat_vel_scale', step + ' ' + nv);
                     }
                 }
-                forceRedraw();
-            } else if (S.heldStepNotes.length > 0) {
-                /* Second step tapped while first is held: set gate to span the distance.
-                 * Clear S.heldStepBtn press-tick so the first step's release doesn't also tap-toggle. */
-                S.stepBtnPressedTick[S.heldStepBtn] = -1;
-                S.stepWasHeld = true;
-                const ac_tap     = effectiveClip(S.activeTrack);
-                const tappedStep = S.trackCurrentPage[S.activeTrack] * 16 + idx;
-                if (tappedStep !== S.heldStep) {
-                    const len     = S.clipLength[S.activeTrack][ac_tap];
-                    const tps     = S.clipTPS[S.activeTrack][ac_tap] || 24;
-                    const dist    = tappedStep > S.heldStep
-                        ? tappedStep - S.heldStep
-                        : len - S.heldStep + tappedStep;
-                    const newGate = Math.max(1, Math.min(dist * tps, 65535));
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + S.activeTrack + '_c' + ac_tap + '_step_' + S.heldStep + '_gate', String(newGate));
-                    S.stepEditGate = newGate;
-                    forceRedraw();
+                S.screenDirty = true;
+            }
+            return;
+        }
+        /* CC PARAM bank (bank 6): normal turn = transmit CC, Shift+turn = reassign CC number */
+        if (bank === 6) {
+            const t = S.activeTrack;
+            /* Delete+turn: clear this knob's automation for the active clip */
+            if (S.deleteHeld && !S.shiftHeld) {
+                const ac = S.trackActiveClip[t];
+                S.trackCCAutoBits[t][ac] &= ~(1 << knobIdx);
+                S.trackCCLiveVal[t][knobIdx] = -1;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + t + '_cc_auto_clear_k', ac + ' ' + knobIdx);
+                showActionPopup('CC AUTO', 'CLEAR');
+                invalidateLEDCache();
+                return;
+            }
+            const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
+            if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
+            S.knobAccum[knobIdx]++;
+            if (S.shiftHeld) {
+                /* Shift+turn: reassign CC number 0-127, sens=4 */
+                if (S.knobAccum[knobIdx] >= 4) {
+                    S.knobAccum[knobIdx] = 0;
+                    const nv = Math.max(0, Math.min(127, S.trackCCAssign[t][knobIdx] + dir));
+                    if (nv !== S.trackCCAssign[t][knobIdx]) {
+                        S.trackCCAssign[t][knobIdx] = nv;
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + t + '_cc_assign', knobIdx + ' ' + nv);
+                        S.screenDirty = true;
+                    }
+                }
+            } else {
+                /* Normal turn: send CC value 0-127, sens=2 */
+                if (S.knobAccum[knobIdx] >= 2) {
+                    S.knobAccum[knobIdx] = 0;
+                    const nv = Math.max(0, Math.min(127, S.trackCCVal[t][knobIdx] + dir));
+                    if (nv !== S.trackCCVal[t][knobIdx]) {
+                        S.trackCCVal[t][knobIdx] = nv;
+                        if (typeof host_module_set_param === 'function') {
+                            host_module_set_param('t' + t + '_cc_send', knobIdx + ' ' + nv);
+                            const ac = S.trackActiveClip[t];
+                            /* Step edit: write automation point at held step's tick */
+                            if (S.heldStep >= 0 && S.trackPadMode[t] !== PAD_MODE_DRUM) {
+                                const stepTick = S.heldStep * (S.clipTPS[t][ac] || 24);
+                                host_module_set_param('t' + t + '_cc_auto_set',
+                                    ac + ' ' + knobIdx + ' ' + stepTick + ' ' + nv);
+                                S.trackCCAutoBits[t][ac] |= (1 << knobIdx);
+                            }
+                            /* Live record: mark automation bit so LED updates immediately */
+                            if (S.recordArmed && !S.recordCountingIn && S.recordArmedTrack === t) {
+                                S.trackCCAutoBits[t][ac] |= (1 << knobIdx);
+                            }
+                        }
+                        S.screenDirty = true;
+                    }
+                }
+            }
+            return;
+        }
+        const pm      = BANKS[bank].knobs[knobIdx];
+        if (pm && pm.abbrev && pm.scope !== 'stub' && !S.knobLocked[knobIdx]) {
+            const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
+            if (dir !== S.knobLastDir[knobIdx]) {
+                S.knobAccum[knobIdx]   = 0;
+                S.knobLastDir[knobIdx] = dir;
+            }
+            S.knobAccum[knobIdx]++;
+            if (S.knobAccum[knobIdx] >= pm.sens) {
+                S.knobAccum[knobIdx] = 0;
+                S.screenDirty = true;
+                if (pm.scope === 'action') {
+                    const t   = S.activeTrack;
+                    const ac  = S.trackActiveClip[t];
+                    const len = S.clipLength[t][ac];
+                    if (pm.lock) {
+                        /* Beat Stretch: one-shot, then lock until touch release */
+                        const canFire = dir === 1 ? (len * 2 <= 256) : (len >= 2);
+                        if (canFire && typeof host_module_set_param === 'function') {
+                            host_module_set_param('t' + t + '_' + pm.dspKey, String(dir));
+                            S.knobLocked[knobIdx] = true;
+                            /* For compress: check if DSP blocked due to step collision */
+                            if (dir === -1 && host_module_get_param('t' + t + '_beat_stretch_blocked') === '1') {
+                                S.stretchBlockedEndTick = S.tickCount + STRETCH_BLOCKED_TICKS;
+                            } else {
+                                /* Mirror DSP step rewrite in JS S.clipSteps */
+                                const steps = S.clipSteps[t][ac];
+                                if (dir === 1) {
+                                    for (let si = len - 1; si >= 1; si--) {
+                                        steps[si * 2] = steps[si];
+                                        steps[si] = 0;
+                                    }
+                                    for (let si = 1; si < len * 2; si += 2) steps[si] = 0;
+                                    S.clipLength[t][ac] = len * 2;
+                                } else {
+                                    const halfLen = len >> 1;
+                                    const tmp = new Array(halfLen).fill(0);
+                                    for (let si = 0; si < len; si++) {
+                                        if (steps[si] === 1 && !tmp[si >> 1]) tmp[si >> 1] = 1;
+                                    }
+                                    for (let si = 0; si < len; si++) {
+                                        if (steps[si] === 2 && !tmp[si >> 1]) tmp[si >> 1] = 2;
+                                    }
+                                    for (let si = 0; si < len; si++) steps[si] = 0;
+                                    for (let si = 0; si < halfLen; si++) steps[si] = tmp[si];
+                                    S.clipLength[t][ac] = halfLen;
+                                }
+                                /* Clamp page index to new length */
+                                const newPages = Math.max(1, Math.ceil(S.clipLength[t][ac] / 16));
+                                if (S.trackCurrentPage[t] >= newPages)
+                                    S.trackCurrentPage[t] = newPages - 1;
+                                /* Per-touch label: dir +1 → fmtStretch shows 'x2', -1 → '/2' */
+                                S.bankParams[t][bank][knobIdx] = dir;
+                            }
+                        }
+                    } else if (pm.dspKey === 'clock_shift') {
+                        /* Clock Shift: continuous rotation, no lock */
+                        if (len >= 2 && typeof host_module_set_param === 'function') {
+                            host_module_set_param('t' + t + '_' + pm.dspKey, String(dir));
+                            const steps = S.clipSteps[t][ac];
+                            if (dir === 1) {
+                                const last = steps[len - 1];
+                                for (let si = len - 1; si > 0; si--) steps[si] = steps[si - 1];
+                                steps[0] = last;
+                            } else {
+                                const first = steps[0];
+                                for (let si = 0; si < len - 1; si++) steps[si] = steps[si + 1];
+                                steps[len - 1] = first;
+                            }
+                            S.clockShiftTouchDelta += dir;
+                            S.bankParams[t][bank][knobIdx] = S.clockShiftTouchDelta;
+                        }
+                    } else {
+                        /* Nudge: fire DSP, mirror counter locally for display, schedule steps re-read */
+                        if (typeof host_module_set_param === 'function') {
+                            host_module_set_param('t' + t + '_' + pm.dspKey, String(dir));
+                            S.bankParams[t][bank][knobIdx] += dir;
+                            S.pendingStepsReread      = 2;
+                            S.pendingStepsRereadTrack = t;
+                            S.pendingStepsRereadClip  = ac;
+                        }
+                    }
+                } else {
+                    const cur = S.bankParams[S.activeTrack][bank][knobIdx];
+                    let nv  = Math.max(pm.min, Math.min(pm.max, cur + dir));
+                    if (nv !== cur) {
+                        if (S.shiftHeld && pm.dspKey === 'clip_resolution') {
+                            const _t   = S.activeTrack;
+                            const _ac  = effectiveClip(_t);
+                            const _old_tps = S.clipTPS[_t][_ac];
+                            const _new_tps = TPS_VALUES[nv];
+                            const _old_ticks = S.clipLength[_t][_ac] * _old_tps;
+                            const _new_len = Math.ceil(_old_ticks / _new_tps);
+                            if (_new_len > 256) {
+                                showActionPopup('NOTES OUT', 'OF RANGE');
+                                forceRedraw();
+                            } else if (S.heldStep >= 0 || (S.recordArmed && !S.recordCountingIn && S.recordArmedTrack === _t)) {
+                                /* blocked — do nothing */
+                            } else {
+                                S.bankParams[S.activeTrack][bank][knobIdx] = nv;
+                                S.clipTPS[_t][_ac]    = _new_tps;
+                                S.clipLength[_t][_ac] = _new_len;
+                                const _maxPage = Math.max(0, Math.ceil(_new_len / 16) - 1);
+                                if (S.trackCurrentPage[_t] > _maxPage) S.trackCurrentPage[_t] = _maxPage;
+                                if (typeof host_module_set_param === 'function')
+                                    host_module_set_param('t' + _t + '_clip_resolution_zoom', String(nv));
+                                S.pendingStepsReread      = 2;
+                                S.pendingStepsRereadTrack = _t;
+                                S.pendingStepsRereadClip  = _ac;
+                                refreshPerClipBankParams(_t);
+                                forceRedraw();
+                            }
+                        } else {
+                            S.bankParams[S.activeTrack][bank][knobIdx] = nv;
+                            applyBankParam(S.activeTrack, bank, knobIdx, nv);
+                        }
+                    }
                 }
             }
         }
     }
+}
 
-    /* Pad presses: note-on */
-    if ((status & 0xF0) === 0x90 && d2 > 0) {
+function _onCCMsg(d1, d2) {
+    _onCC_jog(d1, d2);
+    _onCC_buttons(d1, d2);
+    _onCC_transport(d1, d2);
+    _onCC_side(d1, d2);
+    _onCC_stepedit(d1, d2);
+    _onCC_knobs(d1, d2);
+}
+
+
+function _onPadPressTrackView(status, d1, d2) {
+    if (d1 >= TRACK_PAD_BASE && d1 < TRACK_PAD_BASE + 32) {
+        const padIdx = d1 - TRACK_PAD_BASE;
+
+        /* Drum Pad Clear: Shift+Delete+lane pad — full factory reset of drum lane */
+        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.shiftHeld && S.deleteHeld) {
+            const t    = S.activeTrack;
+            const lane = drumPadToLane(padIdx);
+            if (lane >= 0 && lane < DRUM_LANES) {
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + t + '_l' + lane + '_hard_reset', '1');
+                S.activeDrumLane[t] = lane;
+                S.drumLaneLength[t]     = 16;
+                for (let s = 0; s < 256; s++) S.drumLaneSteps[t][lane][s] = '0';
+                S.drumLaneHasNotes[t][lane] = false;
+                const ac = S.trackActiveClip[t];
+                S.drumClipNonEmpty[t][ac] = false;
+                for (let ol = 0; ol < DRUM_LANES; ol++) {
+                    if (S.drumLaneHasNotes[t][ol]) { S.drumClipNonEmpty[t][ac] = true; break; }
+                }
+                refreshDrumLaneBankParams(t, lane);
+                showActionPopup('PAD CLEARED');
+                forceRedraw();
+            }
+            return;
+        }
+        /* Drum Repeat mode pad handling (intercepts left 4 cols when S.drumPerformMode===1) */
+        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.drumPerformMode[S.activeTrack] === 1 &&
+                !S.shiftHeld && !S.copyHeld && !S.muteHeld) {
+            const t   = S.activeTrack;
+            const col = padIdx % 8;
+            const row = Math.floor(padIdx / 8);
+            if (col >= 4 && row < 2) {
+                /* Rate pad (right side, bottom 2 rows): start/retrigger repeat */
+                const rateIdx = row * 4 + (col - 4);
+                const lane    = S.activeDrumLane[t];
+                const vel     = d2;
+                if (S.drumRepeatLatched[t] && S.drumRepeatHeldPad[t] === padIdx) {
+                    /* Same latched pad pressed again: unlatch and stop */
+                    S.drumRepeatLatched[t]  = false;
+                    S.drumRepeatHeldPad[t]  = -1;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_drum_repeat_stop', '1');
+                } else {
+                    /* New rate or held: start (latches if Loop is held) */
+                    S.drumRepeatHeldPad[t]  = padIdx;
+                    S.drumRepeatLatched[t]  = S.loopHeld;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_drum_repeat_start', lane + ' ' + rateIdx + ' ' + vel);
+                }
+                S.screenDirty = true;
+                return;
+            } else if (col >= 4 && row >= 2) {
+                /* Gate mask pad (right side, top 2 rows) */
+                const lane = S.activeDrumLane[t];
+                const step = (row - 2) * 4 + (col - 4);
+                if (S.deleteHeld) {
+                    /* Delete + gate pad: reset vel_scale and nudge for this step */
+                    S.drumRepeatVelScale[t][lane][step] = 100;
+                    S.drumRepeatNudge[t][lane][step]    = 0;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_l' + lane + '_repeat_defaults', String(step));
+                } else {
+                    /* Tap: toggle gate bit */
+                    S.drumRepeatGate[t][lane] = (S.drumRepeatGate[t][lane] ^ (1 << step)) & 0xFF;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_l' + lane + '_repeat_gate_toggle', String(step));
+                }
+                forceRedraw();
+                return;
+            }
+        }
+        /* Drum Repeat 2 mode pad handling (multi-lane simultaneous repeat) */
+        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.drumPerformMode[S.activeTrack] === 2 &&
+                !S.shiftHeld && !S.copyHeld && !S.muteHeld) {
+            const t   = S.activeTrack;
+            const col = padIdx % 8;
+            const row = Math.floor(padIdx / 8);
+            if (col >= 4 && row < 2) {
+                /* Rate pad: assign rate to active lane */
+                const rateIdx = row * 4 + (col - 4);
+                const lane = S.activeDrumLane[t];
+                S.drumRepeat2RatePerLane[t][lane] = rateIdx;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + t + '_drum_repeat2_rate', lane + ' ' + rateIdx);
+                S.screenDirty = true;
+                return;
+            } else if (col >= 4 && row >= 2) {
+                /* Gate mask: same as Rpt mode */
+                const lane = S.activeDrumLane[t];
+                const step = (row - 2) * 4 + (col - 4);
+                if (S.deleteHeld) {
+                    S.drumRepeatVelScale[t][lane][step] = 100;
+                    S.drumRepeatNudge[t][lane][step]    = 0;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_l' + lane + '_repeat_defaults', String(step));
+                } else {
+                    S.drumRepeatGate[t][lane] = (S.drumRepeatGate[t][lane] ^ (1 << step)) & 0xFF;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_l' + lane + '_repeat_gate_toggle', String(step));
+                }
+                forceRedraw();
+                return;
+            } else if (col < 4 && !S.deleteHeld) {
+                /* Lane pad: add/unlatch multi-lane repeat */
+                const lane = drumPadToLane(padIdx);
+                if (lane >= 0 && lane < DRUM_LANES) {
+                    S.activeDrumLane[t] = lane;
+                    syncDrumLaneSteps(t, lane);
+                    refreshDrumLaneBankParams(t, lane);
+                    if (S.drumRepeat2LatchedLanes[t].has(lane)) {
+                        S.drumRepeat2LatchedLanes[t].delete(lane);
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + t + '_drum_repeat2_lane_off', String(lane));
+                        if (S.loopHeld) S.rpt2LoopPadUsed = true;
+                    } else {
+                        S.drumRepeat2HeldLanes[t].add(lane);
+                        if (S.loopHeld) { S.drumRepeat2LatchedLanes[t].add(lane); S.rpt2LoopPadUsed = true; }
+                        padPitch[padIdx] = -1;
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + t + '_drum_repeat2_lane_on', lane + ' ' + d2);
+                    }
+                    forceRedraw();
+                }
+                return;
+            }
+        }
+        /* Drum mode pad handling */
+        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && (!S.shiftHeld || S.muteHeld)) {
+            const t = S.activeTrack;
+            const lane = drumPadToLane(padIdx);
+            const velZone = drumPadToVelZone(padIdx);
+            if (velZone >= 0) {
+                /* Velocity pad: which pad determines the zone; zone determines velocity.
+                 * Pad pressure is ignored — zone vel used for monitoring, step-edit, recording. */
+                S.drumLastVelZone[t] = velZone;
+                const zoneVel  = drumVelZoneToVelocity(velZone);
+                S.lastPadVelocity = zoneVel;
+                const lane_vp  = S.activeDrumLane[t];
+                const laneNote = S.drumLaneNote[t][lane_vp];
+                liveSendNote(t, 0x90, laneNote, zoneVel);
+                padPitch[padIdx] = laneNote;
+                S.liveActiveNotes.add(laneNote);
+                if (S.heldStep >= 0 && S.heldStepNotes.length > 0) {
+                    S.stepEditVel = zoneVel;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_l' + lane_vp + '_step_' + S.heldStep + '_vel', String(zoneVel));
+                    S.stepBtnPressedTick[S.heldStepBtn] = -1;
+                }
+                /* Record hit at zone velocity if armed */
+                if (S.recordArmed && !S.recordCountingIn && t === S.recordArmedTrack) {
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_drum_record_note_on', laneNote + ' ' + zoneVel);
+                    S.pendingDrumLaneResync      = 3;
+                    S.pendingDrumLaneResyncTrack = t;
+                    S.pendingDrumLaneResyncLane  = lane_vp;
+                }
+                S.screenDirty = true;
+            } else if (lane >= 0 && lane < DRUM_LANES && S.copyHeld && !S.muteHeld) {
+                /* Copy+lane pad: drum lane copy/cut gesture (same track, active clip) */
+                if (!S.copySrc) {
+                    S.copySrc = S.shiftHeld
+                        ? { kind: 'cut_drum_lane', track: t, lane: lane }
+                        : { kind: 'drum_lane',     track: t, lane: lane };
+                    invalidateLEDCache();
+                    showActionPopup(S.shiftHeld ? 'CUT' : 'COPIED');
+                } else if (S.copySrc.kind === 'drum_lane' && S.copySrc.track === t) {
+                    copyDrumLane(t, S.copySrc.lane, lane);
+                    S.activeDrumLane[t] = lane;
+                    refreshDrumLaneBankParams(t, lane);
+                    invalidateLEDCache();
+                    forceRedraw();
+                    showActionPopup('PASTED');
+                } else if (S.copySrc.kind === 'cut_drum_lane' && S.copySrc.track === t) {
+                    cutDrumLane(t, S.copySrc.lane, lane);
+                    S.copySrc = { kind: 'drum_lane', track: t, lane: lane };
+                    S.activeDrumLane[t] = lane;
+                    refreshDrumLaneBankParams(t, lane);
+                    invalidateLEDCache();
+                    forceRedraw();
+                    showActionPopup('PASTED');
+                }
+                /* Other S.copySrc kinds or cross-track: swallow */
+            } else if (lane >= 0 && lane < DRUM_LANES && S.muteHeld) {
+                /* Mute+pad: toggle lane mute; Shift+Mute+pad: toggle lane solo */
+                S.muteUsedAsModifier = true;
+                const bit = 1 << lane;
+                if (S.shiftHeld) {
+                    const wasOn = !!(S.drumLaneSolo[t] & bit);
+                    if (wasOn) { S.drumLaneSolo[t] &= ~bit; }
+                    else {
+                        S.drumLaneSolo[t] |= bit;
+                        if (S.drumLaneMute[t] & bit) {
+                            S.drumLaneMute[t] &= ~bit;
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_l' + lane + '_mute', '0');
+                        }
+                    }
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_l' + lane + '_solo', wasOn ? '0' : '1');
+                } else {
+                    const wasOn = !!(S.drumLaneMute[t] & bit);
+                    if (wasOn) { S.drumLaneMute[t] &= ~bit; }
+                    else {
+                        S.drumLaneMute[t] |= bit;
+                        if (S.drumLaneSolo[t] & bit) {
+                            S.drumLaneSolo[t] &= ~bit;
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_l' + lane + '_solo', '0');
+                        }
+                    }
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_l' + lane + '_mute', wasOn ? '0' : '1');
+                }
+                forceRedraw();
+            } else if (lane >= 0 && lane < DRUM_LANES) {
+                if (S.deleteHeld) {
+                    /* Delete + lane pad: clear all steps in this lane */
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_l' + lane + '_clear', '1');
+                    S.activeDrumLane[t] = lane;
+                    for (let s = 0; s < 256; s++) S.drumLaneSteps[t][lane][s] = '0';
+                    S.drumLaneHasNotes[t][lane] = false;
+                    const ac = S.trackActiveClip[t];
+                    S.drumClipNonEmpty[t][ac] = false;
+                    for (let ol = 0; ol < DRUM_LANES; ol++) {
+                        if (S.drumLaneHasNotes[t][ol]) { S.drumClipNonEmpty[t][ac] = true; break; }
+                    }
+                    refreshDrumLaneBankParams(t, lane);
+                    showActionPopup('LANE CLEARED');
+                    forceRedraw();
+                } else {
+                    /* Lane pad: select lane, sync its steps and bank params */
+                    S.activeDrumLane[t] = lane;
+                    syncDrumLaneSteps(t, lane);
+                    refreshDrumLaneBankParams(t, lane);
+                    /* Preview lane note at actual pad velocity */
+                    const vel = effectiveVelocity(d2);
+                    const laneNote = S.drumLaneNote[t][lane];
+                    liveSendNote(t, 0x90, laneNote, vel);
+                    padPitch[padIdx] = laneNote;
+                    S.liveActiveNotes.add(laneNote);
+                    /* Record step hit if armed */
+                    if (S.recordArmed && !S.recordCountingIn && t === S.recordArmedTrack) {
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + t + '_drum_record_note_on', laneNote + ' ' + vel);
+                        S.pendingDrumLaneResync      = 3;
+                        S.pendingDrumLaneResyncTrack = t;
+                        S.pendingDrumLaneResyncLane  = lane;
+                    }
+                    /* Rpt1: defer lane switch to tick (onMidiMessage set_params coalesce) */
+                    if (S.drumPerformMode[t] === 1 && (S.drumRepeatHeldPad[t] >= 0 || S.drumRepeatLatched[t])) {
+                        S.pendingRepeatLane = lane;
+                        S.pendingRepeatLaneTrack = t;
+                    }
+                    forceRedraw();
+                }
+            }
+        } else if (S.heldStep >= 0 && !S.shiftHeld) {
+            /* Step edit: tap pad to toggle note assignment for held step */
+            const ac    = effectiveClip(S.activeTrack);
+            const pitch = Math.max(0, Math.min(127, S.padNoteMap[padIdx] + S.trackOctave[S.activeTrack] * 12));
+            if (typeof host_module_set_param === 'function')
+                host_module_set_param('t' + S.activeTrack + '_c' + ac + '_step_' + S.heldStep + '_toggle', pitch + ' ' + effectiveVelocity(d2));
+            /* Read back authoritative note list */
+            const raw = typeof host_module_get_param === 'function'
+                ? host_module_get_param('t' + S.activeTrack + '_c' + ac + '_step_' + S.heldStep + '_notes')
+                : null;
+            S.heldStepNotes = (raw && raw.trim().length > 0)
+                ? raw.trim().split(' ').map(Number).filter(n => n >= 0 && n <= 127)
+                : [];
+            /* Mirror step active state in JS */
+            S.clipSteps[S.activeTrack][ac][S.heldStep] = S.heldStepNotes.length > 0 ? 1 : 0;
+            if (S.heldStepNotes.length > 0) {
+                S.clipNonEmpty[S.activeTrack][ac] = true;
+            } else if (S.clipNonEmpty[S.activeTrack][ac]) {
+                S.clipNonEmpty[S.activeTrack][ac] = clipHasContent(S.activeTrack, ac);
+            }
+            refreshSeqNotesIfCurrent(S.activeTrack, ac, S.heldStep);
+            /* Preview note */
+            padPitch[padIdx] = pitch;
+            S.liveActiveNotes.add(pitch);
+            liveSendNote(S.activeTrack, 0x90, pitch, effectiveVelocity(d2));
+            forceRedraw();
+        } else if (S.shiftHeld && padIdx >= 24 && padIdx <= 31) {
+            const bankIdx = padIdx - 24;
+            if (bankIdx <= 6) {
+                /* HARMZ (2) and ARP OUT (4) hidden on drum tracks */
+                const drumHidden = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && (bankIdx === 2 || bankIdx === 4);
+                if (!drumHidden) {
+                    if (S.activeBank === bankIdx) {
+                        S.bankSelectTick = -1;
+                    } else {
+                        S.activeBank = bankIdx;
+                        readBankParams(S.activeTrack, bankIdx);
+                        S.bankSelectTick = S.tickCount;
+                    }
+                    S.screenDirty = true;
+                }
+            }
+        } else if (S.shiftHeld && padIdx < NUM_TRACKS) {
+            /* Shift + bottom-row pad: select active track */
+            extNoteOffAll();
+            handoffRecordingToTrack(padIdx);
+            S.activeTrack = padIdx;
+            refreshPerClipBankParams(padIdx);
+            computePadNoteMap();
+            S.seqActiveNotes.clear();
+            S.seqLastStep = -1;
+            S.seqLastClip = -1;
+            /* Sync drum lane metadata for the new track */
+            if (S.trackPadMode[padIdx] === PAD_MODE_DRUM) {
+                /* Fall back from banks hidden on drum tracks */
+                if (S.activeBank === 2 || S.activeBank === 4) S.activeBank = 0;
+                syncDrumLanesMeta(padIdx);
+                syncDrumLaneSteps(padIdx, S.activeDrumLane[padIdx]);
+                syncDrumClipContent(padIdx);
+                refreshDrumLaneBankParams(padIdx, S.activeDrumLane[padIdx]);
+            }
+            S.screenDirty = true;
+        } else if (!S.shiftHeld) {
+            /* Live note — apply per-track octave shift, clamp 0-127 */
+            const basePitch = S.padNoteMap[padIdx];
+            const pitch = Math.max(0, Math.min(127, basePitch + S.trackOctave[S.activeTrack] * 12));
+            padPitch[padIdx] = pitch;
+            S.lastPlayedNote  = pitch;
+            S.lastPadVelocity = effectiveVelocity(d2);
+            S.liveActiveNotes.add(pitch);
+            liveSendNote(S.activeTrack, 0x90, pitch, effectiveVelocity(d2));
+            /* Pre-roll capture: note in last 1/16th of count-in → step 0 */
+            if (S.recordArmed && S.recordCountingIn &&
+                    S.activeTrack === S.recordArmedTrack &&
+                    S.countInQuarterTicks > 0 &&
+                    (S.tickCount - S.countInStartTick) >= Math.round(S.countInQuarterTicks * 7 / 2) &&
+                    typeof host_module_set_param === 'function') {
+                const rt   = S.recordArmedTrack;
+                const ac_r = S.trackActiveClip[rt];
+                host_module_set_param('t' + rt + '_c' + ac_r + '_step_0_add', pitch + ' 0 ' + effectiveVelocity(d2));
+                S.clipSteps[rt][ac_r][0] = 1;
+                S.clipNonEmpty[rt][ac_r] = true;
+            }
+            /* Overdub capture: add to current step of armed track with tick offset + velocity */
+            if (S.recordArmed && !S.recordCountingIn && S.activeTrack === S.recordArmedTrack)
+                recordNoteOn(pitch, effectiveVelocity(d2), S.recordArmedTrack);
+        }
+    }
+}
+
+function _onPadPress(status, d1, d2) {
         if (S.tapTempoOpen && d1 >= 68 && d1 <= 99) {
             registerTapTempo(d1);
             return;
@@ -5814,575 +5829,601 @@ globalThis.onMidiMessageInternal = function (data) {
                 }
             }
         } else {
-            if (d1 >= TRACK_PAD_BASE && d1 < TRACK_PAD_BASE + 32) {
-                const padIdx = d1 - TRACK_PAD_BASE;
-
-                /* Drum Pad Clear: Shift+Delete+lane pad — full factory reset of drum lane */
-                if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.shiftHeld && S.deleteHeld) {
-                    const t    = S.activeTrack;
-                    const lane = drumPadToLane(padIdx);
-                    if (lane >= 0 && lane < DRUM_LANES) {
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + t + '_l' + lane + '_hard_reset', '1');
-                        S.activeDrumLane[t] = lane;
-                        S.drumLaneLength[t]     = 16;
-                        for (let s = 0; s < 256; s++) S.drumLaneSteps[t][lane][s] = '0';
-                        S.drumLaneHasNotes[t][lane] = false;
-                        const ac = S.trackActiveClip[t];
-                        S.drumClipNonEmpty[t][ac] = false;
-                        for (let ol = 0; ol < DRUM_LANES; ol++) {
-                            if (S.drumLaneHasNotes[t][ol]) { S.drumClipNonEmpty[t][ac] = true; break; }
-                        }
-                        refreshDrumLaneBankParams(t, lane);
-                        showActionPopup('PAD CLEARED');
-                        forceRedraw();
-                    }
-                    return;
-                }
-                /* Drum Repeat mode pad handling (intercepts left 4 cols when S.drumPerformMode===1) */
-                if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.drumPerformMode[S.activeTrack] === 1 &&
-                        !S.shiftHeld && !S.copyHeld && !S.muteHeld) {
-                    const t   = S.activeTrack;
-                    const col = padIdx % 8;
-                    const row = Math.floor(padIdx / 8);
-                    if (col >= 4 && row < 2) {
-                        /* Rate pad (right side, bottom 2 rows): start/retrigger repeat */
-                        const rateIdx = row * 4 + (col - 4);
-                        const lane    = S.activeDrumLane[t];
-                        const vel     = d2;
-                        if (S.drumRepeatLatched[t] && S.drumRepeatHeldPad[t] === padIdx) {
-                            /* Same latched pad pressed again: unlatch and stop */
-                            S.drumRepeatLatched[t]  = false;
-                            S.drumRepeatHeldPad[t]  = -1;
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + t + '_drum_repeat_stop', '1');
-                        } else {
-                            /* New rate or held: start (latches if Loop is held) */
-                            S.drumRepeatHeldPad[t]  = padIdx;
-                            S.drumRepeatLatched[t]  = S.loopHeld;
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + t + '_drum_repeat_start', lane + ' ' + rateIdx + ' ' + vel);
-                        }
-                        S.screenDirty = true;
-                        return;
-                    } else if (col >= 4 && row >= 2) {
-                        /* Gate mask pad (right side, top 2 rows) */
-                        const lane = S.activeDrumLane[t];
-                        const step = (row - 2) * 4 + (col - 4);
-                        if (S.deleteHeld) {
-                            /* Delete + gate pad: reset vel_scale and nudge for this step */
-                            S.drumRepeatVelScale[t][lane][step] = 100;
-                            S.drumRepeatNudge[t][lane][step]    = 0;
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + t + '_l' + lane + '_repeat_defaults', String(step));
-                        } else {
-                            /* Tap: toggle gate bit */
-                            S.drumRepeatGate[t][lane] = (S.drumRepeatGate[t][lane] ^ (1 << step)) & 0xFF;
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + t + '_l' + lane + '_repeat_gate_toggle', String(step));
-                        }
-                        forceRedraw();
-                        return;
-                    }
-                }
-                /* Drum Repeat 2 mode pad handling (multi-lane simultaneous repeat) */
-                if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.drumPerformMode[S.activeTrack] === 2 &&
-                        !S.shiftHeld && !S.copyHeld && !S.muteHeld) {
-                    const t   = S.activeTrack;
-                    const col = padIdx % 8;
-                    const row = Math.floor(padIdx / 8);
-                    if (col >= 4 && row < 2) {
-                        /* Rate pad: assign rate to active lane */
-                        const rateIdx = row * 4 + (col - 4);
-                        const lane = S.activeDrumLane[t];
-                        S.drumRepeat2RatePerLane[t][lane] = rateIdx;
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + t + '_drum_repeat2_rate', lane + ' ' + rateIdx);
-                        S.screenDirty = true;
-                        return;
-                    } else if (col >= 4 && row >= 2) {
-                        /* Gate mask: same as Rpt mode */
-                        const lane = S.activeDrumLane[t];
-                        const step = (row - 2) * 4 + (col - 4);
-                        if (S.deleteHeld) {
-                            S.drumRepeatVelScale[t][lane][step] = 100;
-                            S.drumRepeatNudge[t][lane][step]    = 0;
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + t + '_l' + lane + '_repeat_defaults', String(step));
-                        } else {
-                            S.drumRepeatGate[t][lane] = (S.drumRepeatGate[t][lane] ^ (1 << step)) & 0xFF;
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + t + '_l' + lane + '_repeat_gate_toggle', String(step));
-                        }
-                        forceRedraw();
-                        return;
-                    } else if (col < 4 && !S.deleteHeld) {
-                        /* Lane pad: add/unlatch multi-lane repeat */
-                        const lane = drumPadToLane(padIdx);
-                        if (lane >= 0 && lane < DRUM_LANES) {
-                            S.activeDrumLane[t] = lane;
-                            syncDrumLaneSteps(t, lane);
-                            refreshDrumLaneBankParams(t, lane);
-                            if (S.drumRepeat2LatchedLanes[t].has(lane)) {
-                                S.drumRepeat2LatchedLanes[t].delete(lane);
-                                if (typeof host_module_set_param === 'function')
-                                    host_module_set_param('t' + t + '_drum_repeat2_lane_off', String(lane));
-                                if (S.loopHeld) S.rpt2LoopPadUsed = true;
-                            } else {
-                                S.drumRepeat2HeldLanes[t].add(lane);
-                                if (S.loopHeld) { S.drumRepeat2LatchedLanes[t].add(lane); S.rpt2LoopPadUsed = true; }
-                                padPitch[padIdx] = -1;
-                                if (typeof host_module_set_param === 'function')
-                                    host_module_set_param('t' + t + '_drum_repeat2_lane_on', lane + ' ' + d2);
-                            }
-                            forceRedraw();
-                        }
-                        return;
-                    }
-                }
-                /* Drum mode pad handling */
-                if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && (!S.shiftHeld || S.muteHeld)) {
-                    const t = S.activeTrack;
-                    const lane = drumPadToLane(padIdx);
-                    const velZone = drumPadToVelZone(padIdx);
-                    if (velZone >= 0) {
-                        /* Velocity pad: which pad determines the zone; zone determines velocity.
-                         * Pad pressure is ignored — zone vel used for monitoring, step-edit, recording. */
-                        S.drumLastVelZone[t] = velZone;
-                        const zoneVel  = drumVelZoneToVelocity(velZone);
-                        S.lastPadVelocity = zoneVel;
-                        const lane_vp  = S.activeDrumLane[t];
-                        const laneNote = S.drumLaneNote[t][lane_vp];
-                        liveSendNote(t, 0x90, laneNote, zoneVel);
-                        padPitch[padIdx] = laneNote;
-                        S.liveActiveNotes.add(laneNote);
-                        if (S.heldStep >= 0 && S.heldStepNotes.length > 0) {
-                            S.stepEditVel = zoneVel;
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + t + '_l' + lane_vp + '_step_' + S.heldStep + '_vel', String(zoneVel));
-                            S.stepBtnPressedTick[S.heldStepBtn] = -1;
-                        }
-                        /* Record hit at zone velocity if armed */
-                        if (S.recordArmed && !S.recordCountingIn && t === S.recordArmedTrack) {
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + t + '_drum_record_note_on', laneNote + ' ' + zoneVel);
-                            S.pendingDrumLaneResync      = 3;
-                            S.pendingDrumLaneResyncTrack = t;
-                            S.pendingDrumLaneResyncLane  = lane_vp;
-                        }
-                        S.screenDirty = true;
-                    } else if (lane >= 0 && lane < DRUM_LANES && S.copyHeld && !S.muteHeld) {
-                        /* Copy+lane pad: drum lane copy/cut gesture (same track, active clip) */
-                        if (!S.copySrc) {
-                            S.copySrc = S.shiftHeld
-                                ? { kind: 'cut_drum_lane', track: t, lane: lane }
-                                : { kind: 'drum_lane',     track: t, lane: lane };
-                            invalidateLEDCache();
-                            showActionPopup(S.shiftHeld ? 'CUT' : 'COPIED');
-                        } else if (S.copySrc.kind === 'drum_lane' && S.copySrc.track === t) {
-                            copyDrumLane(t, S.copySrc.lane, lane);
-                            S.activeDrumLane[t] = lane;
-                            refreshDrumLaneBankParams(t, lane);
-                            invalidateLEDCache();
-                            forceRedraw();
-                            showActionPopup('PASTED');
-                        } else if (S.copySrc.kind === 'cut_drum_lane' && S.copySrc.track === t) {
-                            cutDrumLane(t, S.copySrc.lane, lane);
-                            S.copySrc = { kind: 'drum_lane', track: t, lane: lane };
-                            S.activeDrumLane[t] = lane;
-                            refreshDrumLaneBankParams(t, lane);
-                            invalidateLEDCache();
-                            forceRedraw();
-                            showActionPopup('PASTED');
-                        }
-                        /* Other S.copySrc kinds or cross-track: swallow */
-                    } else if (lane >= 0 && lane < DRUM_LANES && S.muteHeld) {
-                        /* Mute+pad: toggle lane mute; Shift+Mute+pad: toggle lane solo */
-                        S.muteUsedAsModifier = true;
-                        const bit = 1 << lane;
-                        if (S.shiftHeld) {
-                            const wasOn = !!(S.drumLaneSolo[t] & bit);
-                            if (wasOn) { S.drumLaneSolo[t] &= ~bit; }
-                            else {
-                                S.drumLaneSolo[t] |= bit;
-                                if (S.drumLaneMute[t] & bit) {
-                                    S.drumLaneMute[t] &= ~bit;
-                                    if (typeof host_module_set_param === 'function')
-                                        host_module_set_param('t' + t + '_l' + lane + '_mute', '0');
-                                }
-                            }
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + t + '_l' + lane + '_solo', wasOn ? '0' : '1');
-                        } else {
-                            const wasOn = !!(S.drumLaneMute[t] & bit);
-                            if (wasOn) { S.drumLaneMute[t] &= ~bit; }
-                            else {
-                                S.drumLaneMute[t] |= bit;
-                                if (S.drumLaneSolo[t] & bit) {
-                                    S.drumLaneSolo[t] &= ~bit;
-                                    if (typeof host_module_set_param === 'function')
-                                        host_module_set_param('t' + t + '_l' + lane + '_solo', '0');
-                                }
-                            }
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + t + '_l' + lane + '_mute', wasOn ? '0' : '1');
-                        }
-                        forceRedraw();
-                    } else if (lane >= 0 && lane < DRUM_LANES) {
-                        if (S.deleteHeld) {
-                            /* Delete + lane pad: clear all steps in this lane */
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + t + '_l' + lane + '_clear', '1');
-                            S.activeDrumLane[t] = lane;
-                            for (let s = 0; s < 256; s++) S.drumLaneSteps[t][lane][s] = '0';
-                            S.drumLaneHasNotes[t][lane] = false;
-                            const ac = S.trackActiveClip[t];
-                            S.drumClipNonEmpty[t][ac] = false;
-                            for (let ol = 0; ol < DRUM_LANES; ol++) {
-                                if (S.drumLaneHasNotes[t][ol]) { S.drumClipNonEmpty[t][ac] = true; break; }
-                            }
-                            refreshDrumLaneBankParams(t, lane);
-                            showActionPopup('LANE CLEARED');
-                            forceRedraw();
-                        } else {
-                            /* Lane pad: select lane, sync its steps and bank params */
-                            S.activeDrumLane[t] = lane;
-                            syncDrumLaneSteps(t, lane);
-                            refreshDrumLaneBankParams(t, lane);
-                            /* Preview lane note at actual pad velocity */
-                            const vel = effectiveVelocity(d2);
-                            const laneNote = S.drumLaneNote[t][lane];
-                            liveSendNote(t, 0x90, laneNote, vel);
-                            padPitch[padIdx] = laneNote;
-                            S.liveActiveNotes.add(laneNote);
-                            /* Record step hit if armed */
-                            if (S.recordArmed && !S.recordCountingIn && t === S.recordArmedTrack) {
-                                if (typeof host_module_set_param === 'function')
-                                    host_module_set_param('t' + t + '_drum_record_note_on', laneNote + ' ' + vel);
-                                S.pendingDrumLaneResync      = 3;
-                                S.pendingDrumLaneResyncTrack = t;
-                                S.pendingDrumLaneResyncLane  = lane;
-                            }
-                            /* Rpt1: defer lane switch to tick (onMidiMessage set_params coalesce) */
-                            if (S.drumPerformMode[t] === 1 && (S.drumRepeatHeldPad[t] >= 0 || S.drumRepeatLatched[t])) {
-                                S.pendingRepeatLane = lane;
-                                S.pendingRepeatLaneTrack = t;
-                            }
-                            forceRedraw();
-                        }
-                    }
-                } else if (S.heldStep >= 0 && !S.shiftHeld) {
-                    /* Step edit: tap pad to toggle note assignment for held step */
-                    const ac    = effectiveClip(S.activeTrack);
-                    const pitch = Math.max(0, Math.min(127, S.padNoteMap[padIdx] + S.trackOctave[S.activeTrack] * 12));
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + S.activeTrack + '_c' + ac + '_step_' + S.heldStep + '_toggle', pitch + ' ' + effectiveVelocity(d2));
-                    /* Read back authoritative note list */
-                    const raw = typeof host_module_get_param === 'function'
-                        ? host_module_get_param('t' + S.activeTrack + '_c' + ac + '_step_' + S.heldStep + '_notes')
-                        : null;
-                    S.heldStepNotes = (raw && raw.trim().length > 0)
-                        ? raw.trim().split(' ').map(Number).filter(n => n >= 0 && n <= 127)
-                        : [];
-                    /* Mirror step active state in JS */
-                    S.clipSteps[S.activeTrack][ac][S.heldStep] = S.heldStepNotes.length > 0 ? 1 : 0;
-                    if (S.heldStepNotes.length > 0) {
-                        S.clipNonEmpty[S.activeTrack][ac] = true;
-                    } else if (S.clipNonEmpty[S.activeTrack][ac]) {
-                        S.clipNonEmpty[S.activeTrack][ac] = clipHasContent(S.activeTrack, ac);
-                    }
-                    refreshSeqNotesIfCurrent(S.activeTrack, ac, S.heldStep);
-                    /* Preview note */
-                    padPitch[padIdx] = pitch;
-                    S.liveActiveNotes.add(pitch);
-                    liveSendNote(S.activeTrack, 0x90, pitch, effectiveVelocity(d2));
-                    forceRedraw();
-                } else if (S.shiftHeld && padIdx >= 24 && padIdx <= 31) {
-                    const bankIdx = padIdx - 24;
-                    if (bankIdx <= 6) {
-                        /* HARMZ (2) and ARP OUT (4) hidden on drum tracks */
-                        const drumHidden = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && (bankIdx === 2 || bankIdx === 4);
-                        if (!drumHidden) {
-                            if (S.activeBank === bankIdx) {
-                                S.bankSelectTick = -1;
-                            } else {
-                                S.activeBank = bankIdx;
-                                readBankParams(S.activeTrack, bankIdx);
-                                S.bankSelectTick = S.tickCount;
-                            }
-                            S.screenDirty = true;
-                        }
-                    }
-                } else if (S.shiftHeld && padIdx < NUM_TRACKS) {
-                    /* Shift + bottom-row pad: select active track */
-                    extNoteOffAll();
-                    handoffRecordingToTrack(padIdx);
-                    S.activeTrack = padIdx;
-                    refreshPerClipBankParams(padIdx);
-                    computePadNoteMap();
-                    S.seqActiveNotes.clear();
-                    S.seqLastStep = -1;
-                    S.seqLastClip = -1;
-                    /* Sync drum lane metadata for the new track */
-                    if (S.trackPadMode[padIdx] === PAD_MODE_DRUM) {
-                        /* Fall back from banks hidden on drum tracks */
-                        if (S.activeBank === 2 || S.activeBank === 4) S.activeBank = 0;
-                        syncDrumLanesMeta(padIdx);
-                        syncDrumLaneSteps(padIdx, S.activeDrumLane[padIdx]);
-                        syncDrumClipContent(padIdx);
-                        refreshDrumLaneBankParams(padIdx, S.activeDrumLane[padIdx]);
-                    }
-                    S.screenDirty = true;
-                } else if (!S.shiftHeld) {
-                    /* Live note — apply per-track octave shift, clamp 0-127 */
-                    const basePitch = S.padNoteMap[padIdx];
-                    const pitch = Math.max(0, Math.min(127, basePitch + S.trackOctave[S.activeTrack] * 12));
-                    padPitch[padIdx] = pitch;
-                    S.lastPlayedNote  = pitch;
-                    S.lastPadVelocity = effectiveVelocity(d2);
-                    S.liveActiveNotes.add(pitch);
-                    liveSendNote(S.activeTrack, 0x90, pitch, effectiveVelocity(d2));
-                    /* Pre-roll capture: note in last 1/16th of count-in → step 0 */
-                    if (S.recordArmed && S.recordCountingIn &&
-                            S.activeTrack === S.recordArmedTrack &&
-                            S.countInQuarterTicks > 0 &&
-                            (S.tickCount - S.countInStartTick) >= Math.round(S.countInQuarterTicks * 7 / 2) &&
-                            typeof host_module_set_param === 'function') {
-                        const rt   = S.recordArmedTrack;
-                        const ac_r = S.trackActiveClip[rt];
-                        host_module_set_param('t' + rt + '_c' + ac_r + '_step_0_add', pitch + ' 0 ' + effectiveVelocity(d2));
-                        S.clipSteps[rt][ac_r][0] = 1;
-                        S.clipNonEmpty[rt][ac_r] = true;
-                    }
-                    /* Overdub capture: add to current step of armed track with tick offset + velocity */
-                    if (S.recordArmed && !S.recordCountingIn && S.activeTrack === S.recordArmedTrack)
-                        recordNoteOn(pitch, effectiveVelocity(d2), S.recordArmedTrack);
-                }
-            }
+            _onPadPressTrackView(status, d1, d2);
         }
-    }
+}
 
-    /* Pad releases: note-off */
-    if ((status & 0xF0) === 0x80 || ((status & 0xF0) === 0x90 && d2 === 0)) {
-        if (S.tapTempoOpen && d1 >= 68 && d1 <= 99) return;
-        /* Swallow pad releases while SEQ ARP step-level editor is open. */
-        if (!S.sessionView && S.activeBank === 4 && S.knobTouched === 4 &&
-                (S.bankParams[S.activeTrack][4][4] | 0) !== 0 &&
-                d1 >= 68 && d1 <= 99) return;
-        /* Swallow pad releases while TRACK ARP step-level editor is open. */
-        if (!S.sessionView && S.activeBank === 5 && S.knobTouched === 5 &&
-                (S.bankParams[S.activeTrack][5][5] | 0) !== 0 &&
-                d1 >= 68 && d1 <= 99) return;
-        /* Perf Mode pad release: handle R0 rate pad pop + mod pad release. */
-        if (S.sessionView && (S.loopHeld || S.perfViewLocked) && d1 >= 68 && d1 <= 99) {
-            if (d1 >= 68 && d1 <= 75) {
-                const subIdx = d1 - 68;
-                if (subIdx === 7) {
-                    /* Latch release: tap = toggle latch mode; exiting clears all toggled mods. */
-                    if (!S.perfLatchMode) {
-                        S.perfLatchMode = true;
-                    } else {
-                        S.perfLatchMode   = false;
-                        S.perfModsToggled = 0;
-                        sendPerfMods();
-                    }
-                } else if (subIdx === 5) {
-                    /* Hold pad release: drop momentary state + stop all loops it was holding */
-                    if (S.perfHoldPadHeld) {
-                        S.perfHoldPadHeld = false;
-                        if (S.perfStack.length > 0) {
-                            S.perfStack = [];
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('looper_stop', '1');
+function _onStepButtons(d1, d2) {
+    if (S.tapTempoOpen) return;
+    S.stepOpTick = S.tickCount;
+    const idx = d1 - 16;
+    /* Perf Mode: step buttons are preset snapshot slots. */
+    if (S.sessionView && (S.loopHeld || S.perfViewLocked)) {
+        if (S.shiftHeld) {
+            /* Shift+step: save current active mods to this slot */
+            S.perfSnapshots[idx] = S.perfModsToggled | S.perfModsHeld | S.perfRecalledMods;
+            showActionPopup('SAVED');
+        } else if (S.perfRecalledSlot === idx) {
+            /* Tap active slot again: deactivate recall */
+            S.perfRecalledSlot = -1;
+            S.perfRecalledMods = 0;
+            sendPerfMods();
+        } else {
+            /* Tap a slot: recall its mods */
+            S.perfRecalledSlot = idx;
+            S.perfRecalledMods = S.perfSnapshots[idx];
+            sendPerfMods();
+        }
+        forceRedraw();
+        return;
+    }
+    if (S.sessionView) {
+        if (S.muteHeld) {
+            /* All 16 step buttons are snapshot slots 0-15 */
+            if (S.shiftHeld) {
+                /* Shift+tap: save/overwrite snapshot */
+                const drumEffMutes = [];
+                for (let _t = 0; _t < NUM_TRACKS; _t++) {
+                    const mMask = S.drumLaneMute[_t];
+                    const sMask = S.drumLaneSolo[_t];
+                    let effMask = mMask;
+                    if (sMask) {
+                        let notSoloed = 0;
+                        for (let _l = 0; _l < DRUM_LANES; _l++) {
+                            if (!(sMask & (1 << _l))) notSoloed |= (1 << _l);
                         }
+                        effMask = (mMask | notSoloed) >>> 0;
                     }
-                } else if (subIdx < 5) {
-                    /* Rate pad release: pop from stack — unless sticky-held or hold-pad held */
-                    if (!S.perfStickyLengths.has(subIdx) && !S.perfHoldPadHeld) {
-                        const sIdx = S.perfStack.findIndex(function(e) { return e.idx === subIdx; });
-                        if (sIdx >= 0) {
-                            S.perfStack.splice(sIdx, 1);
-                            if (S.perfStack.length === 0) {
-                                if (typeof host_module_set_param === 'function')
-                                    host_module_set_param('looper_stop', '1');
-                            } else {
-                                const top = S.perfStack[S.perfStack.length - 1];
-                                if (typeof host_module_set_param === 'function')
-                                    host_module_set_param('looper_arm', String(top.ticks));
-                            }
-                        }
+                    drumEffMutes.push(effMask >>> 0);
+                }
+                S.snapshots[idx] = { mute: S.trackMuted.slice(), solo: S.trackSoloed.slice(), drumEffMute: drumEffMutes };
+                const mStr = S.trackMuted.map(function(m) { return m ? '1' : '0'; }).join(' ');
+                const sStr = S.trackSoloed.map(function(s) { return s ? '1' : '0'; }).join(' ');
+                const dStr = drumEffMutes.join(' ');
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('snap_save', idx + ' ' + mStr + ' ' + sStr + ' ' + dStr);
+            } else if (S.snapshots[idx] !== null) {
+                /* Tap occupied: recall snapshot */
+                const snap = S.snapshots[idx];
+                for (let _t = 0; _t < NUM_TRACKS; _t++) {
+                    S.trackMuted[_t]  = snap.mute[_t];
+                    S.trackSoloed[_t] = snap.solo[_t];
+                    if (snap.drumEffMute) {
+                        S.drumLaneMute[_t] = snap.drumEffMute[_t];
+                        S.drumLaneSolo[_t] = 0;
                     }
                 }
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('snap_load', String(idx));
+                S.screenDirty = true;
+            }
+            /* Tap empty: no-op; S.muteHeld swallows all step buttons in Session View */
+        } else if (!S.deleteHeld && !S.shiftHeld) {
+            if (typeof host_module_set_param === 'function')
+                host_module_set_param('launch_scene', String(idx));
+        }
+        /* S.deleteHeld/S.shiftHeld (non-S.muteHeld) in Session View: swallow step buttons */
+    } else if (S.loopHeld) {
+        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
+            /* Drum: set active lane clip length */
+            const t    = S.activeTrack;
+            const lane = S.activeDrumLane[t];
+            const newLen = (idx + 1) * 16;
+            S.drumLaneLength[t] = newLen;
+            const maxPage = Math.max(0, Math.ceil(newLen / 16) - 1);
+            if (S.drumStepPage[t] > maxPage) S.drumStepPage[t] = maxPage;
+            if (typeof host_module_set_param === 'function')
+                host_module_set_param('t' + t + '_l' + lane + '_clip_length', String(newLen));
+        } else {
+        const ac      = effectiveClip(S.activeTrack);
+        const newLen  = (idx + 1) * 16;
+        S.clipLength[S.activeTrack][ac] = newLen;
+        const maxPage = Math.max(0, Math.ceil(newLen / 16) - 1);
+        if (S.trackCurrentPage[S.activeTrack] > maxPage)
+            S.trackCurrentPage[S.activeTrack] = maxPage;
+        if (typeof host_module_set_param === 'function')
+            host_module_set_param('t' + S.activeTrack + '_c' + ac + '_length', String(newLen));
+        }
+        forceRedraw();
+    } else if (S.copyHeld) {
+        /* Copy + step button (Track View): step-to-step copy within active clip */
+        const ac     = effectiveClip(S.activeTrack);
+        const absIdx = S.trackCurrentPage[S.activeTrack] * 16 + idx;
+        if (!S.copySrc) {
+            S.copySrc = { kind: 'step', absStep: absIdx };
+            invalidateLEDCache();
+        } else if (S.copySrc.kind === 'step') {
+            if (S.copySrc.absStep !== absIdx) copyStep(S.activeTrack, ac, S.copySrc.absStep, absIdx);
+            invalidateLEDCache();
+            forceRedraw();
+        }
+        /* S.copySrc.kind !== 'step': swallow — don't mix copy types */
+    } else if (S.deleteHeld) {
+        /* Delete + step button (Track View): clear all notes from that step */
+        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
+            /* Drum mode: clear step in active lane */
+            const t       = S.activeTrack;
+            const lane    = S.activeDrumLane[t];
+            const absStep = S.drumStepPage[t] * 16 + idx;
+            if (typeof host_module_set_param === 'function')
+                host_module_set_param('t' + t + '_l' + lane + '_step_' + absStep + '_clear', '1');
+            S.drumLaneSteps[t][lane][absStep] = '0';
+            S.drumLaneHasNotes[t][lane] = S.drumLaneSteps[t][lane].some(c => c !== '0');
+            forceRedraw();
+        } else {
+        const ac     = effectiveClip(S.activeTrack);
+        const absIdx = S.trackCurrentPage[S.activeTrack] * 16 + idx;
+        clearStep(S.activeTrack, ac, absIdx);
+        forceRedraw();
+        }
+    } else if (!S.shiftHeld && S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
+        /* Drum mode: tap toggles hit; hold enters step edit (Dur/Vel).
+         * Press records time and state; toggle/clear deferred to release. */
+        const t       = S.activeTrack;
+        const lane    = S.activeDrumLane[t];
+        const absStep = S.drumStepPage[t] * 16 + idx;
+        S.stepBtnPressedTick[idx] = S.tickCount;
+        if (S.heldStep < 0) {
+            S.heldStepBtn = idx;
+            S.heldStep    = absStep;
+            const cur   = S.drumLaneSteps[t][lane][absStep];
+            if (cur === '1') {
+                S.stepWasEmpty  = false;
+                S.heldStepNotes = [S.drumLaneNote[t][lane]];
+                const rv = typeof host_module_get_param === 'function'
+                    ? host_module_get_param('t' + t + '_l' + lane + '_step_' + absStep + '_vel') : null;
+                const rg = typeof host_module_get_param === 'function'
+                    ? host_module_get_param('t' + t + '_l' + lane + '_step_' + absStep + '_gate') : null;
+                const rn = typeof host_module_get_param === 'function'
+                    ? host_module_get_param('t' + t + '_l' + lane + '_step_' + absStep + '_nudge') : null;
+                S.stepEditVel   = rv !== null ? parseInt(rv, 10) : 100;
+                S.stepEditGate  = rg !== null ? parseInt(rg, 10) : (S.drumLaneTPS[t] || 24);
+                S.stepEditNudge = rn !== null ? parseInt(rn, 10) : 0;
             } else {
-                /* Modifier pad release: clear momentary held bit */
-                const modIdx = PERF_MOD_PAD_MAP[d1];
-                if (modIdx !== undefined) {
-                    S.perfModsHeld &= ~(1 << modIdx);
-                    sendPerfMods();
-                }
+                S.stepWasEmpty  = true;
+                S.heldStepNotes = [];
+                S.stepEditVel   = drumVelZoneToVelocity(S.drumLastVelZone[t]);
+                S.stepEditGate  = S.drumLaneTPS[t] || 24;
+                S.stepEditNudge = 0;
             }
             forceRedraw();
-            return;
-        }
-        /* Step button release: tap-toggle if within threshold, always exit step edit */
-        if (d1 >= 16 && d1 <= 31) {
-            S.stepOpTick = S.tickCount;
-            const btn = d1 - 16;
-            if (btn === S.heldStepBtn) {
-                if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
-                    /* Drum step release: tap toggles, hold-release exits + vel confirm */
-                    const t    = S.activeTrack;
-                    const lane = S.activeDrumLane[t];
-                    let drumStepCleared = false;
-                    if (S.stepBtnPressedTick[btn] >= 0) {
-                        S.stepBtnPressedTick[btn] = -1;
-                        if (S.stepWasEmpty) {
-                            /* Empty step tapped: assign now with current velocity */
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_toggle', String(S.stepEditVel));
-                            S.drumLaneSteps[t][lane][S.heldStep] = '1';
-                            S.drumLaneHasNotes[t][lane] = true;
-                        } else {
-                            /* Occupied step tapped: clear it */
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_clear', '1');
-                            S.drumLaneSteps[t][lane][S.heldStep] = '0';
-                            S.drumLaneHasNotes[t][lane] = S.drumLaneSteps[t][lane].some(c => c !== '0');
-                            drumStepCleared = true;
-                        }
-                        if (typeof host_module_get_param === 'function') {
-                            const ac = S.trackActiveClip[t];
-                            const hcRaw = host_module_get_param('t' + t + '_c' + ac + '_drum_has_content');
-                            S.drumClipNonEmpty[t][ac] = hcRaw === '1';
-                        }
-                    }
-                    /* Hold release: reassign to adjacent step if nudge crossed midpoint */
-                    let drumDidReassign = false;
-                    if (S.stepWasHeld && S.heldStepNotes.length > 0) {
-                        const _tpsMid = Math.floor((S.drumLaneTPS[t] || 24) / 2);
-                        let dstStep = -1;
-                        if (S.stepEditNudge >= _tpsMid)
-                            dstStep = (S.heldStep + 1) % S.drumLaneLength[t];
-                        else if (S.stepEditNudge < -_tpsMid)
-                            dstStep = (S.heldStep - 1 + S.drumLaneLength[t]) % S.drumLaneLength[t];
-                        if (dstStep >= 0) {
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_reassign', String(dstStep));
-                            S.drumLaneSteps[t][lane][S.heldStep] = '0';
-                            S.pendingDrumLaneResync      = 3;
-                            S.pendingDrumLaneResyncTrack = t;
-                            S.pendingDrumLaneResyncLane  = lane;
-                            drumDidReassign = true;
-                        }
-                    }
-                    /* Confirm vel at release — ensures it sticks even if mid-hold send was coalesced */
-                    if (!drumStepCleared && !drumDidReassign && S.heldStepNotes.length > 0) {
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_vel', String(S.stepEditVel));
-                    }
-                } else {
-                if (S.stepBtnPressedTick[btn] >= 0) {
-                    /* Quick release within threshold — commit as tap toggle */
-                    const ac_t   = effectiveClip(S.activeTrack);
-                    const absIdx = S.heldStep;
-                    S.stepBtnPressedTick[btn] = -1;
-                    if (S.stepWasEmpty) {
-                        /* Note was assigned on press — tap confirms, nothing more to do */
-                    } else {
-                        const wasOn = S.clipSteps[S.activeTrack][ac_t][absIdx] === 1;
-                        if (!wasOn) {
-                            if (S.heldStepNotes.length === 0) {
-                                const assignNote2 = S.lastPlayedNote >= 0 ? S.lastPlayedNote : defaultStepNote();
-                                if (typeof host_module_set_param === 'function')
-                                    host_module_set_param('t' + S.activeTrack + '_c' + ac_t + '_step_' + absIdx + '_toggle', assignNote2 + ' ' + effectiveVelocity(S.lastPadVelocity));
-                            } else {
-                                if (typeof host_module_set_param === 'function')
-                                    host_module_set_param('t' + S.activeTrack + '_c' + ac_t + '_step_' + absIdx, '1');
-                            }
-                            S.clipSteps[S.activeTrack][ac_t][absIdx] = 1;
-                            S.clipNonEmpty[S.activeTrack][ac_t] = true;
-                            refreshSeqNotesIfCurrent(S.activeTrack, ac_t, absIdx);
-                        } else {
-                            /* Deactivating: preserve note data */
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + S.activeTrack + '_c' + ac_t + '_step_' + absIdx, '0');
-                            S.clipSteps[S.activeTrack][ac_t][absIdx] = S.heldStepNotes.length > 0 ? 2 : 0;
-                            if (S.clipNonEmpty[S.activeTrack][ac_t]) S.clipNonEmpty[S.activeTrack][ac_t] = clipHasContent(S.activeTrack, ac_t);
-                            refreshSeqNotesIfCurrent(S.activeTrack, ac_t, absIdx);
-                        }
-                    }
-                }
-                /* On long-hold release: if nudge moved notes past the step midpoint,
-                 * reassign them to the adjacent step slot so it's editable from there. */
-                if (S.stepWasHeld && S.heldStep >= 0 && S.heldStepNotes.length > 0) {
-                    const ac_ra = effectiveClip(S.activeTrack);
-                    const lenRa = S.clipLength[S.activeTrack][ac_ra];
-                    let dstStep = -1;
-                    if (S.stepEditNudge >= 12)
-                        dstStep = (S.heldStep + 1) % lenRa;
-                    else if (S.stepEditNudge <= -13)
-                        dstStep = (S.heldStep - 1 + lenRa) % lenRa;
-                    if (dstStep >= 0) {
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + S.activeTrack + '_c' + ac_ra + '_step_' + S.heldStep + '_reassign', String(dstStep));
-                        S.clipSteps[S.activeTrack][ac_ra][S.heldStep] = 0;
-                    }
-                    /* Always re-read after hold release: poll may have set a neighbor lit */
-                    S.pendingStepsReread = 2;
-                    S.pendingStepsRereadTrack = S.activeTrack;
-                    S.pendingStepsRereadClip  = ac_ra;
-                }
-                } /* end melodic branch */
-                /* Always exit step edit on release of the held button */
-                S.heldStepBtn   = -1;
-                S.heldStep      = -1;
-                S.heldStepNotes = [];
-                S.stepWasEmpty  = false;
-                S.stepWasHeld   = false;
+        } else if (S.heldStepNotes.length > 0) {
+            /* Second step tapped while first is held: set gate to span the distance */
+            S.stepBtnPressedTick[S.heldStepBtn] = -1;
+            S.stepWasHeld = true;
+            const tappedStep = S.drumStepPage[t] * 16 + idx;
+            if (tappedStep !== S.heldStep) {
+                const len     = S.drumLaneLength[t];
+                const tps     = S.drumLaneTPS[t] || 24;
+                const dist    = tappedStep > S.heldStep
+                    ? tappedStep - S.heldStep
+                    : len - S.heldStep + tappedStep;
+                const newGate = Math.max(1, Math.min(dist * tps, 65535));
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_gate', String(newGate));
+                S.stepEditGate = newGate;
                 forceRedraw();
             }
         }
-        if (d1 >= TRACK_PAD_BASE && d1 < TRACK_PAD_BASE + 32) {
-            const padIdx = d1 - TRACK_PAD_BASE;
-            const t = S.activeTrack;
-            /* Repeat mode: swallow all right-grid (col 4-7) releases; stop repeat on unlatched rate pad release */
-            if (S.trackPadMode[t] === PAD_MODE_DRUM && S.drumPerformMode[t] === 1 &&
-                    (padIdx % 8) >= 4) {
-                if (S.drumRepeatHeldPad[t] === padIdx && !S.drumRepeatLatched[t]) {
-                    S.drumRepeatHeldPad[t] = -1;
+    } else if (!S.shiftHeld) {
+        /* Record press time for tap detection on release.
+         * Enter step edit immediately — tap vs hold decided on release. */
+        S.stepBtnPressedTick[idx] = S.tickCount;
+        if (S.heldStep < 0) {
+            const ac_p   = effectiveClip(S.activeTrack);
+            const absP   = S.trackCurrentPage[S.activeTrack] * 16 + idx;
+            S.heldStepBtn  = idx;
+            S.heldStep     = absP;
+            const pref_p = 't' + S.activeTrack + '_c' + ac_p + '_step_' + absP;
+            const raw_p  = typeof host_module_get_param === 'function'
+                ? host_module_get_param(pref_p + '_notes') : null;
+            S.heldStepNotes = (raw_p && raw_p.trim().length > 0)
+                ? raw_p.trim().split(' ').map(Number).filter(function(n) { return n >= 0 && n <= 127; })
+                : [];
+            if (S.heldStepNotes.length === 0) {
+                S.stepWasEmpty = true;
+                if (S.activeBank === 6) {
+                    /* CC step-edit: no note required — enter edit immediately */
+                    S.ccStepEditActive = true;
+                } else if (S.lastPlayedNote >= 0) {
+                    /* Known note: assign immediately so knobs work right away */
+                    const assignNote = S.lastPlayedNote;
+                    const assignVel  = effectiveVelocity(S.lastPadVelocity);
                     if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + t + '_drum_repeat_stop', '1');
-                }
-                S.screenDirty = true;
-                return;
-            }
-            /* Rpt2 mode: lane pad release — stop only if not latched */
-            if (S.trackPadMode[t] === PAD_MODE_DRUM && S.drumPerformMode[t] === 2 &&
-                    (padIdx % 8) < 4) {
-                const lane = drumPadToLane(padIdx);
-                if (lane >= 0 && lane < DRUM_LANES && S.drumRepeat2HeldLanes[t].has(lane)) {
-                    S.drumRepeat2HeldLanes[t].delete(lane);
-                    if (!S.drumRepeat2LatchedLanes[t].has(lane)) {
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + t + '_drum_repeat2_lane_off', String(lane));
-                    }
+                        host_module_set_param('t' + S.activeTrack + '_c' + ac_p + '_step_' + absP + '_toggle', assignNote + ' ' + assignVel);
+                    const raw_aa = typeof host_module_get_param === 'function'
+                        ? host_module_get_param(pref_p + '_notes') : null;
+                    S.heldStepNotes = (raw_aa && raw_aa.trim().length > 0)
+                        ? raw_aa.trim().split(' ').map(Number).filter(function(n) { return n >= 0 && n <= 127; })
+                        : [];
+                    S.clipSteps[S.activeTrack][ac_p][absP] = S.heldStepNotes.length > 0 ? 1 : 0;
+                    if (S.heldStepNotes.length > 0) S.clipNonEmpty[S.activeTrack][ac_p] = true;
+                    S.stepEditVel = assignVel; S.stepEditGate = 12; S.stepEditNudge = 0;
+                } else {
+                    /* No note played yet: flash message, don't enter step edit */
+                    S.heldStep    = -1;
+                    S.heldStepBtn = -1;
+                    S.stepWasEmpty = false;
+                    S.stepWasHeld  = false;
+                    S.noNoteFlashEndTick = S.tickCount + NO_NOTE_FLASH_TICKS;
                     S.screenDirty = true;
                 }
-                return;
+            } else {
+                S.stepWasEmpty = false;
+                if (S.activeBank === 6) {
+                    S.ccStepEditActive = true;
+                } else {
+                    const rv = typeof host_module_get_param === 'function' ? host_module_get_param(pref_p + '_vel') : null;
+                    const rg = typeof host_module_get_param === 'function' ? host_module_get_param(pref_p + '_gate') : null;
+                    const rn = typeof host_module_get_param === 'function' ? host_module_get_param(pref_p + '_nudge') : null;
+                    S.stepEditVel   = rv !== null ? parseInt(rv, 10) : 100;
+                    S.stepEditGate  = rg !== null ? parseInt(rg, 10) : 12;
+                    S.stepEditNudge = rn !== null ? parseInt(rn, 10) : 0;
+                }
             }
-            /* Rpt2 mode: swallow all right-grid releases */
-            if (S.trackPadMode[t] === PAD_MODE_DRUM && S.drumPerformMode[t] === 2 &&
-                    (padIdx % 8) >= 4) {
-                S.screenDirty = true;
-                return;
+            forceRedraw();
+        } else if (S.heldStepNotes.length > 0) {
+            /* Second step tapped while first is held: set gate to span the distance.
+             * Clear S.heldStepBtn press-tick so the first step's release doesn't also tap-toggle. */
+            S.stepBtnPressedTick[S.heldStepBtn] = -1;
+            S.stepWasHeld = true;
+            const ac_tap     = effectiveClip(S.activeTrack);
+            const tappedStep = S.trackCurrentPage[S.activeTrack] * 16 + idx;
+            if (tappedStep !== S.heldStep) {
+                const len     = S.clipLength[S.activeTrack][ac_tap];
+                const tps     = S.clipTPS[S.activeTrack][ac_tap] || 24;
+                const dist    = tappedStep > S.heldStep
+                    ? tappedStep - S.heldStep
+                    : len - S.heldStep + tappedStep;
+                const newGate = Math.max(1, Math.min(dist * tps, 65535));
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + S.activeTrack + '_c' + ac_tap + '_step_' + S.heldStep + '_gate', String(newGate));
+                S.stepEditGate = newGate;
+                forceRedraw();
             }
-            const pitch = padPitch[padIdx] >= 0 ? padPitch[padIdx] : S.padNoteMap[padIdx];
-            S.liveActiveNotes.delete(pitch);
-            padPitch[padIdx] = -1;
-            if (!S.sessionView) liveSendNote(S.activeTrack, 0x80, pitch, 0);
-            if (S.recordArmed && !S.recordCountingIn) recordNoteOff(pitch);
         }
     }
+}
+
+function _onPadRelease(status, d1, d2) {
+    if (S.tapTempoOpen && d1 >= 68 && d1 <= 99) return;
+    /* Swallow pad releases while SEQ ARP step-level editor is open. */
+    if (!S.sessionView && S.activeBank === 4 && S.knobTouched === 4 &&
+            (S.bankParams[S.activeTrack][4][4] | 0) !== 0 &&
+            d1 >= 68 && d1 <= 99) return;
+    /* Swallow pad releases while TRACK ARP step-level editor is open. */
+    if (!S.sessionView && S.activeBank === 5 && S.knobTouched === 5 &&
+            (S.bankParams[S.activeTrack][5][5] | 0) !== 0 &&
+            d1 >= 68 && d1 <= 99) return;
+    /* Perf Mode pad release: handle R0 rate pad pop + mod pad release. */
+    if (S.sessionView && (S.loopHeld || S.perfViewLocked) && d1 >= 68 && d1 <= 99) {
+        if (d1 >= 68 && d1 <= 75) {
+            const subIdx = d1 - 68;
+            if (subIdx === 7) {
+                /* Latch release: tap = toggle latch mode; exiting clears all toggled mods. */
+                if (!S.perfLatchMode) {
+                    S.perfLatchMode = true;
+                } else {
+                    S.perfLatchMode   = false;
+                    S.perfModsToggled = 0;
+                    sendPerfMods();
+                }
+            } else if (subIdx === 5) {
+                /* Hold pad release: drop momentary state + stop all loops it was holding */
+                if (S.perfHoldPadHeld) {
+                    S.perfHoldPadHeld = false;
+                    if (S.perfStack.length > 0) {
+                        S.perfStack = [];
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('looper_stop', '1');
+                    }
+                }
+            } else if (subIdx < 5) {
+                /* Rate pad release: pop from stack — unless sticky-held or hold-pad held */
+                if (!S.perfStickyLengths.has(subIdx) && !S.perfHoldPadHeld) {
+                    const sIdx = S.perfStack.findIndex(function(e) { return e.idx === subIdx; });
+                    if (sIdx >= 0) {
+                        S.perfStack.splice(sIdx, 1);
+                        if (S.perfStack.length === 0) {
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('looper_stop', '1');
+                        } else {
+                            const top = S.perfStack[S.perfStack.length - 1];
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('looper_arm', String(top.ticks));
+                        }
+                    }
+                }
+            }
+        } else {
+            /* Modifier pad release: clear momentary held bit */
+            const modIdx = PERF_MOD_PAD_MAP[d1];
+            if (modIdx !== undefined) {
+                S.perfModsHeld &= ~(1 << modIdx);
+                sendPerfMods();
+            }
+        }
+        forceRedraw();
+        return;
+    }
+    /* Step button release: tap-toggle if within threshold, always exit step edit */
+    if (d1 >= 16 && d1 <= 31) {
+        S.stepOpTick = S.tickCount;
+        const btn = d1 - 16;
+        if (btn === S.heldStepBtn) {
+            if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
+                /* Drum step release: tap toggles, hold-release exits + vel confirm */
+                const t    = S.activeTrack;
+                const lane = S.activeDrumLane[t];
+                let drumStepCleared = false;
+                if (S.stepBtnPressedTick[btn] >= 0) {
+                    S.stepBtnPressedTick[btn] = -1;
+                    if (S.stepWasEmpty) {
+                        /* Empty step tapped: assign now with current velocity */
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_toggle', String(S.stepEditVel));
+                        S.drumLaneSteps[t][lane][S.heldStep] = '1';
+                        S.drumLaneHasNotes[t][lane] = true;
+                    } else {
+                        /* Occupied step tapped: clear it */
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_clear', '1');
+                        S.drumLaneSteps[t][lane][S.heldStep] = '0';
+                        S.drumLaneHasNotes[t][lane] = S.drumLaneSteps[t][lane].some(c => c !== '0');
+                        drumStepCleared = true;
+                    }
+                    if (typeof host_module_get_param === 'function') {
+                        const ac = S.trackActiveClip[t];
+                        const hcRaw = host_module_get_param('t' + t + '_c' + ac + '_drum_has_content');
+                        S.drumClipNonEmpty[t][ac] = hcRaw === '1';
+                    }
+                }
+                /* Hold release: reassign to adjacent step if nudge crossed midpoint */
+                let drumDidReassign = false;
+                if (S.stepWasHeld && S.heldStepNotes.length > 0) {
+                    const _tpsMid = Math.floor((S.drumLaneTPS[t] || 24) / 2);
+                    let dstStep = -1;
+                    if (S.stepEditNudge >= _tpsMid)
+                        dstStep = (S.heldStep + 1) % S.drumLaneLength[t];
+                    else if (S.stepEditNudge < -_tpsMid)
+                        dstStep = (S.heldStep - 1 + S.drumLaneLength[t]) % S.drumLaneLength[t];
+                    if (dstStep >= 0) {
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_reassign', String(dstStep));
+                        S.drumLaneSteps[t][lane][S.heldStep] = '0';
+                        S.pendingDrumLaneResync      = 3;
+                        S.pendingDrumLaneResyncTrack = t;
+                        S.pendingDrumLaneResyncLane  = lane;
+                        drumDidReassign = true;
+                    }
+                }
+                /* Confirm vel at release — ensures it sticks even if mid-hold send was coalesced */
+                if (!drumStepCleared && !drumDidReassign && S.heldStepNotes.length > 0) {
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_vel', String(S.stepEditVel));
+                }
+            } else {
+            if (S.stepBtnPressedTick[btn] >= 0) {
+                /* Quick release within threshold — commit as tap toggle */
+                const ac_t   = effectiveClip(S.activeTrack);
+                const absIdx = S.heldStep;
+                S.stepBtnPressedTick[btn] = -1;
+                if (S.stepWasEmpty) {
+                    /* Note was assigned on press — tap confirms, nothing more to do */
+                } else {
+                    const wasOn = S.clipSteps[S.activeTrack][ac_t][absIdx] === 1;
+                    if (!wasOn) {
+                        if (S.heldStepNotes.length === 0) {
+                            const assignNote2 = S.lastPlayedNote >= 0 ? S.lastPlayedNote : defaultStepNote();
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + S.activeTrack + '_c' + ac_t + '_step_' + absIdx + '_toggle', assignNote2 + ' ' + effectiveVelocity(S.lastPadVelocity));
+                        } else {
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + S.activeTrack + '_c' + ac_t + '_step_' + absIdx, '1');
+                        }
+                        S.clipSteps[S.activeTrack][ac_t][absIdx] = 1;
+                        S.clipNonEmpty[S.activeTrack][ac_t] = true;
+                        refreshSeqNotesIfCurrent(S.activeTrack, ac_t, absIdx);
+                    } else {
+                        /* Deactivating: preserve note data */
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + S.activeTrack + '_c' + ac_t + '_step_' + absIdx, '0');
+                        S.clipSteps[S.activeTrack][ac_t][absIdx] = S.heldStepNotes.length > 0 ? 2 : 0;
+                        if (S.clipNonEmpty[S.activeTrack][ac_t]) S.clipNonEmpty[S.activeTrack][ac_t] = clipHasContent(S.activeTrack, ac_t);
+                        refreshSeqNotesIfCurrent(S.activeTrack, ac_t, absIdx);
+                    }
+                }
+            }
+            /* On long-hold release: if nudge moved notes past the step midpoint,
+             * reassign them to the adjacent step slot so it's editable from there. */
+            if (S.stepWasHeld && S.heldStep >= 0 && S.heldStepNotes.length > 0) {
+                const ac_ra = effectiveClip(S.activeTrack);
+                const lenRa = S.clipLength[S.activeTrack][ac_ra];
+                let dstStep = -1;
+                if (S.stepEditNudge >= 12)
+                    dstStep = (S.heldStep + 1) % lenRa;
+                else if (S.stepEditNudge <= -13)
+                    dstStep = (S.heldStep - 1 + lenRa) % lenRa;
+                if (dstStep >= 0) {
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + S.activeTrack + '_c' + ac_ra + '_step_' + S.heldStep + '_reassign', String(dstStep));
+                    S.clipSteps[S.activeTrack][ac_ra][S.heldStep] = 0;
+                }
+                /* Always re-read after hold release: poll may have set a neighbor lit */
+                S.pendingStepsReread = 2;
+                S.pendingStepsRereadTrack = S.activeTrack;
+                S.pendingStepsRereadClip  = ac_ra;
+            }
+            } /* end melodic branch */
+            /* Always exit step edit on release of the held button */
+            S.heldStepBtn   = -1;
+            S.heldStep      = -1;
+            S.heldStepNotes = [];
+            S.stepWasEmpty  = false;
+            S.stepWasHeld   = false;
+            forceRedraw();
+        }
+    }
+    if (d1 >= TRACK_PAD_BASE && d1 < TRACK_PAD_BASE + 32) {
+        const padIdx = d1 - TRACK_PAD_BASE;
+        const t = S.activeTrack;
+        /* Repeat mode: swallow all right-grid (col 4-7) releases; stop repeat on unlatched rate pad release */
+        if (S.trackPadMode[t] === PAD_MODE_DRUM && S.drumPerformMode[t] === 1 &&
+                (padIdx % 8) >= 4) {
+            if (S.drumRepeatHeldPad[t] === padIdx && !S.drumRepeatLatched[t]) {
+                S.drumRepeatHeldPad[t] = -1;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + t + '_drum_repeat_stop', '1');
+            }
+            S.screenDirty = true;
+            return;
+        }
+        /* Rpt2 mode: lane pad release — stop only if not latched */
+        if (S.trackPadMode[t] === PAD_MODE_DRUM && S.drumPerformMode[t] === 2 &&
+                (padIdx % 8) < 4) {
+            const lane = drumPadToLane(padIdx);
+            if (lane >= 0 && lane < DRUM_LANES && S.drumRepeat2HeldLanes[t].has(lane)) {
+                S.drumRepeat2HeldLanes[t].delete(lane);
+                if (!S.drumRepeat2LatchedLanes[t].has(lane)) {
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_drum_repeat2_lane_off', String(lane));
+                }
+                S.screenDirty = true;
+            }
+            return;
+        }
+        /* Rpt2 mode: swallow all right-grid releases */
+        if (S.trackPadMode[t] === PAD_MODE_DRUM && S.drumPerformMode[t] === 2 &&
+                (padIdx % 8) >= 4) {
+            S.screenDirty = true;
+            return;
+        }
+        const pitch = padPitch[padIdx] >= 0 ? padPitch[padIdx] : S.padNoteMap[padIdx];
+        S.liveActiveNotes.delete(pitch);
+        padPitch[padIdx] = -1;
+        if (!S.sessionView) liveSendNote(S.activeTrack, 0x80, pitch, 0);
+        if (S.recordArmed && !S.recordCountingIn) recordNoteOff(pitch);
+    }
+}
+
+globalThis.onMidiMessageInternal = function (data) {
+    if (isNoiseMessage(data)) return;
+    const status = data[0] | 0;
+    const d1     = (data[1] ?? 0) | 0;
+    const d2     = (data[2] ?? 0) | 0;
+
+    /* While session overview is held, swallow everything except CC 50 release and Up/Down scroll. */
+    if (S.sessionOverlayHeld) {
+        const isRelease = (status === 0xB0 && d1 === MoveNoteSession && d2 === 0);
+        const isScroll  = (status === 0xB0 && (d1 === MoveUp || d1 === MoveDown) && d2 === 127);
+        if (!isRelease && !isScroll) return;
+    }
+
+
+    /* Knob touch (notes 0-7). MoveKnob1-8Touch = notes 0-7.
+     * Hardware: d2=127 = touch on; d2 in 0-63 (via 0x90 or 0x80) = touch off.
+     * Note 9 (jog touch): shows bank overview while held, locked out in global menu. */
+    if (d1 >= 0 && d1 <= 9) {
+        if ((status & 0xF0) === 0x90) {
+            if (d2 === 127) {
+                if (d1 <= 7 && S.activeBank >= 0) {
+                    S.knobTouched = d1; S.knobTurnedTick[d1] = -1; S.screenDirty = true;
+                    /* CC bank: Delete+touch clears this knob's automation immediately */
+                    if (S.activeBank === 6 && S.deleteHeld && !S.shiftHeld &&
+                            S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM) {
+                        const _dt = S.activeTrack, _dac = S.trackActiveClip[_dt];
+                        S.trackCCAutoBits[_dt][_dac] &= ~(1 << d1);
+                        S.trackCCLiveVal[_dt][d1] = -1;
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + _dt + '_cc_auto_clear_k', _dac + ' ' + d1);
+                        showActionPopup('CC AUTO', 'CLEAR');
+                        invalidateLEDCache();
+                    }
+                    /* CC bank: touch-record — start overwriting automation while held */
+                    if (S.activeBank === 6 && !S.deleteHeld && !S.sessionView &&
+                            S.recordArmed && !S.recordCountingIn &&
+                            S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM) {
+                        const _tv = S.trackCCVal[S.activeTrack][d1];
+                        host_module_set_param('t' + S.activeTrack + '_cc_touch',
+                            d1 + ' 1 ' + _tv);
+                        S.trackCCAutoBits[S.activeTrack][S.trackActiveClip[S.activeTrack]] |= (1 << d1);
+                    }
+                    /* SEQ ARP K5 / TRACK ARP K6 touch: switch pads to vel-slider editor immediately. */
+                    if ((S.activeBank === 4 && d1 === 4) || (S.activeBank === 5 && d1 === 5)) forceRedraw();
+                }
+                if (d1 === MoveMainTouch && !S.globalMenuOpen && !S.shiftHeld) { S.jogTouched = true; forceRedraw(); }
+            } else if (d2 < 64) {
+                if (d1 <= 7) {
+                    if (S.activeBank >= 0 && BANKS[S.activeBank].knobs[d1]) {
+                        const relPm = BANKS[S.activeBank].knobs[d1];
+                        if (relPm.dspKey === 'nudge') {
+                            S.bankParams[S.activeTrack][S.activeBank][d1] = 0;
+                            if (typeof host_module_set_param === 'function') {
+                                const _isDrumNdg = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.activeBank === 0;
+                                if (_isDrumNdg)
+                                    host_module_set_param('t' + S.activeTrack + '_l' + S.activeDrumLane[S.activeTrack] + '_nudge', '0');
+                                else
+                                    host_module_set_param('t' + S.activeTrack + '_nudge', '0');
+                            }
+                        } else if (relPm.dspKey === 'clock_shift' || relPm.dspKey === 'beat_stretch') {
+                            S.clockShiftTouchDelta = 0;
+                            S.bankParams[S.activeTrack][S.activeBank][d1] = 0;
+                        }
+                    }
+                    /* CC bank: touch-record — stop overwriting automation on release */
+                    if (S.activeBank === 6 && S.recordArmed && !S.recordCountingIn &&
+                            S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM)
+                        host_module_set_param('t' + S.activeTrack + '_cc_touch', d1 + ' 0 0');
+                    /* SEQ ARP K5 / TRACK ARP K6 release: refresh pads (vel-slider editor → normal pads). */
+                    if ((S.activeBank === 4 && d1 === 4) || (S.activeBank === 5 && d1 === 5)) forceRedraw();
+                    S.knobTouched = -1;
+                    S.knobLocked[d1] = false;
+                    S.knobAccum[d1]  = 0;
+                    S.screenDirty = true;
+                }
+                if (d1 === MoveMainTouch && S.jogTouched) { S.jogTouched = false; forceRedraw(); }
+            }
+            return;
+        }
+        if ((status & 0xF0) === 0x80) {
+            if (d1 <= 7) {
+                if (S.activeBank >= 0 && BANKS[S.activeBank].knobs[d1]) {
+                    const relPm = BANKS[S.activeBank].knobs[d1];
+                    if (relPm.dspKey === 'nudge') {
+                        S.bankParams[S.activeTrack][S.activeBank][d1] = 0;
+                        if (typeof host_module_set_param === 'function') {
+                            const _isDrumNdg = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.activeBank === 0;
+                            if (_isDrumNdg)
+                                host_module_set_param('t' + S.activeTrack + '_l' + S.activeDrumLane[S.activeTrack] + '_nudge', '0');
+                            else
+                                host_module_set_param('t' + S.activeTrack + '_nudge', '0');
+                        }
+                    } else if (relPm.dspKey === 'clock_shift' || relPm.dspKey === 'beat_stretch') {
+                        S.clockShiftTouchDelta = 0;
+                        S.bankParams[S.activeTrack][S.activeBank][d1] = 0;
+                    }
+                }
+                if ((S.activeBank === 4 && d1 === 4) || (S.activeBank === 5 && d1 === 5)) forceRedraw();
+                S.knobTouched = -1;
+                S.knobLocked[d1] = false;
+                S.knobAccum[d1]  = 0;
+                S.screenDirty = true;
+            }
+            if (d1 === MoveMainTouch && S.jogTouched) { S.jogTouched = false; forceRedraw(); }
+            return;
+        }
+    }
+
+    if (status === 0xB0) { _onCCMsg(d1, d2); return; }
+
+    /* Step buttons: notes 16-31, note-on only */
+    if ((status & 0xF0) === 0x90 && d1 >= 16 && d1 <= 31 && d2 > 0) { _onStepButtons(d1, d2); return; }
+
+    /* Pad presses: note-on */
+    if ((status & 0xF0) === 0x90 && d2 > 0) { _onPadPress(status, d1, d2); return; }
+
+    /* Pad releases: note-off */
+    if ((status & 0xF0) === 0x80 || ((status & 0xF0) === 0x90 && d2 === 0)) { _onPadRelease(status, d1, d2); return; }
 
     /* Poly aftertouch: update repeat velocity while rate pad is held */
     if ((status & 0xF0) === 0xA0 && d1 >= TRACK_PAD_BASE && d1 < TRACK_PAD_BASE + 32) {

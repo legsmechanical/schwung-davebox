@@ -8,7 +8,7 @@ import {
     NUM_TRACKS, NUM_CLIPS, NUM_STEPS, DRUM_LANES, DRUM_BASE_NOTE
 } from './ui_constants.mjs';
 
-const PERF_FACTORY_PRESETS = [
+export const PERF_FACTORY_PRESETS = [
     /* bits: 0=Oct↑ 1=Oct↓ 2=Sc↑ 3=Sc↓ 4=5th 5=Triton 6=Drift 7=Storm
              8=Soft 9=Hard 10=Cresc 11=Pulse 12=Sdchn 13=Stac 14=Lgto 15=RmpG
              16=½time 17=3Skip 18=Phnm 19=Sprs 20=Gltch 21=Stggr 22=Shfl 23=Back */
@@ -22,7 +22,7 @@ const PERF_FACTORY_PRESETS = [
     { name: 'Lift',     mods: (1<<2)|(1<<10)|(1<<15) },   /* Sc↑ + Cresc + RmpG */
 ];
 
-const CC_ASSIGN_DEFAULTS = [7, 74, 71, 73, 72, 91, 93, 10];
+export const CC_ASSIGN_DEFAULTS = [7, 74, 71, 73, 72, 91, 93, 10];
 
 export const S = {
     stubSwingAmt: 0,
@@ -147,8 +147,7 @@ export const S = {
     clockShiftTouchDelta: 0,
     screenDirty: true,
     lastBlinkOn: null,
-    bankParams: Array.from({length: NUM_TRACKS}, () =>
-    BANKS.map(bank => bank.knobs.map(k => k.def))),
+    bankParams: null,  /* set in ui.js after BANKS is defined */
     trackCCAssign: Array.from({length: NUM_TRACKS}, () => CC_ASSIGN_DEFAULTS.slice()),
     trackCCVal: Array.from({length: NUM_TRACKS}, () => new Array(8).fill(0)),
     trackCCAutoBits: Array.from({length: NUM_TRACKS}, () => new Array(NUM_CLIPS).fill(0)),
