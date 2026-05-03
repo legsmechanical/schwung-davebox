@@ -34,6 +34,7 @@ cp ui.js              "dist/${MODULE_ID}/"
 cp ui_constants.mjs   "dist/${MODULE_ID}/"
 cp ui_state.mjs       "dist/${MODULE_ID}/"
 cp ui_persistence.mjs "dist/${MODULE_ID}/"
+cp ui_dialogs.mjs    "dist/${MODULE_ID}/"
 # Convert to 16-bit mono (host_preview_play requires 16-bit; source is 24-bit stereo)
 python3 - <<'PYEOF'
 import wave, struct, os
