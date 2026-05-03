@@ -73,7 +73,9 @@ import {
     fmtDly, fmtBool, fmtRoute, fmtPlain, fmtNA,
     fmtArpStyle, fmtArpRate, fmtArpSteps, fmtArpOct, fmtVelOverride,
     col4, parseActionRaw, MCUFONT, pixelPrint, pixelPrintC,
-    BANKS, ACTION_POPUP_TICKS, PAD_MODE_DRUM
+    BANKS, ACTION_POPUP_TICKS, PAD_MODE_DRUM,
+    POLL_INTERVAL, CC_SCRATCH_PALETTE_BASE, TAP_TEMPO_FLASH_TICKS, TAP_TEMPO_RESET_TICKS,
+    PARAM_LED_BANKS
 } from './ui_constants.mjs';
 
 import { S, CC_ASSIGN_DEFAULTS, PERF_FACTORY_PRESETS } from './ui_state.mjs';
@@ -355,7 +357,6 @@ const padPitch = new Array(32).fill(-1);
 const DRUM_FLASH_TICKS = 8; /* ~130ms pad flash duration after a drum hit */
 /* S.drumClipNonEmpty[t][c] — true if any lane in drum clip c of track t has content */
 /* Per-track config (formerly TRACK bank 0 params) */
-const POLL_INTERVAL  = 4;
 
 /* Per-tick scene state cache — computed once at top of tick(), O(1) lookup in LED update fns */
 
@@ -390,7 +391,6 @@ const KNOB_TURN_HIGHLIGHT_TICKS = 120;            /* ~600ms at 196Hz — highlig
 
 /* Scratch palette indices for CC bank live value display (51-58, all undefined in palette).
  * Updated dynamically via SysEx each tick — one entry per knob. */
-const CC_SCRATCH_PALETTE_BASE = 51;
 
 /* Pack a SysEx byte array into 4-byte USB-MIDI SysEx packets for move_midi_internal_send. */
 function _sysexPkts(bytes) {
@@ -448,8 +448,6 @@ const STEP_HOLD_TICKS  = 40;   /* ~200ms at 196Hz: below = tap, at/above = hold 
 /* Global menu state (Phase 5q) */
 
 /* Tap Tempo screen state */
-const TAP_TEMPO_FLASH_TICKS = 20;   /* ~100ms at 196Hz */
-const TAP_TEMPO_RESET_TICKS = 392;  /* ~2s at 196Hz */
 
 /* Session overview overlay (hold CC 50) */
 const NOTE_SESSION_HOLD_TICKS = 40;  /* ~200ms at 196Hz */
@@ -1165,7 +1163,6 @@ function drainLedInit() {
 
 /* Per-clip banks: NOTE FX (2), HARMZ (3), SEQ ARP (4), MIDI DLY (5) */
 const PER_CLIP_BANKS  = [1, 2, 3, 4];
-const PARAM_LED_BANKS = [1, 2, 3, 4, 5];
 
 /* Read per-clip bank params from DSP into S.bankParams for track t.
  * Reads from clip[active_clip].pfx_params directly — immune to pfx_sync timing. */
