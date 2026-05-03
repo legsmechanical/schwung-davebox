@@ -216,6 +216,7 @@ export const S = {
     recordCountingIn: false,
     recordArmedTrack: -1,
     countInStartTick: -1,
+    countInBeatStartTick: -1,
     countInQuarterTicks: 0,
     countInDspPrev: false,
     playingPrev: false,

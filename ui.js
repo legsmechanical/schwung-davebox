@@ -1272,6 +1272,7 @@ function pollDSP() {
     if (_beatCount !== S.metroPrevBeat) {
         S.metroPrevBeat = _beatCount;
         playMetronomeClick();
+        if (S.recordCountingIn) S.countInBeatStartTick = S.tickCount;
     }
     if (v.length >= 54) S.masterPos      = (parseInt(v[53], 10) | 0) >>> 0;
     if (v.length >= 55) S.dspLooperState  = parseInt(v[54], 10) | 0;
@@ -2949,7 +2950,7 @@ globalThis.tick = function () {
             updateStepLEDs();
             /* Count-in flash: blink all step buttons white at quarter-note rate */
             if (S.recordArmed && S.recordCountingIn && S.countInQuarterTicks > 0) {
-                const elapsed  = S.tickCount - S.countInStartTick;
+                const elapsed  = S.tickCount - S.countInBeatStartTick;
                 const flashOn  = (elapsed % S.countInQuarterTicks) < (S.countInQuarterTicks >> 1);
                 const flashClr = flashOn ? White : LED_OFF;
                 for (let _i = 0; _i < 16; _i++) setLED(16 + _i, flashClr);
@@ -3619,6 +3620,7 @@ function _onCC_transport(d1, d2) {
             S.recordArmedTrack    = S.activeTrack;
             S.recordBpm           = bpm;
             S.countInStartTick    = S.tickCount;
+            S.countInBeatStartTick = S.tickCount;
             S.countInQuarterTicks = Math.round(196 * 60 / bpm);
             if (typeof host_module_set_param === 'function')
                 host_module_set_param('record_count_in', String(S.activeTrack));
