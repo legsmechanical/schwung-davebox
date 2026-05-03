@@ -844,7 +844,7 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
                 /* SEQ ARP — sparse, only emit if non-default */
                 if (p2->seq_arp_style     != 0)             fprintf(fp, ",\"t%dc%d_arst\":%d", t, c, p2->seq_arp_style);
                 if (p2->seq_arp_rate      != ARP_RATE_DEFAULT) fprintf(fp, ",\"t%dc%d_arrt\":%d", t, c, p2->seq_arp_rate);
-                if (p2->seq_arp_octaves   != 1)             fprintf(fp, ",\"t%dc%d_aroc\":%d", t, c, p2->seq_arp_octaves);
+                if (p2->seq_arp_octaves   != 0)             fprintf(fp, ",\"t%dc%d_aroc\":%d", t, c, p2->seq_arp_octaves);
                 if (p2->seq_arp_gate      != 50)            fprintf(fp, ",\"t%dc%d_argt\":%d", t, c, p2->seq_arp_gate);
                 if (p2->seq_arp_steps_mode != 0)            fprintf(fp, ",\"t%dc%d_arsm\":%d", t, c, p2->seq_arp_steps_mode);
                 if (p2->seq_arp_retrigger != 1)             fprintf(fp, ",\"t%dc%d_artg\":%d", t, c, p2->seq_arp_retrigger);
@@ -1285,11 +1285,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
             snprintf(key, sizeof(key), "t%dc%d_arrt", t, c);
             p2->seq_arp_rate      = clamp_i(json_get_int(buf, key, ARP_RATE_DEFAULT), 0, 9);
             snprintf(key, sizeof(key), "t%dc%d_aroc", t, c);
-            {
-                int _oc = clamp_i(json_get_int(buf, key, 1), -ARP_MAX_OCTAVES, ARP_MAX_OCTAVES);
-                if (_oc == 0) _oc = 1;
-                p2->seq_arp_octaves = _oc;
-            }
+            p2->seq_arp_octaves = clamp_i(json_get_int(buf, key, 0), -ARP_MAX_OCTAVES, ARP_MAX_OCTAVES);
             snprintf(key, sizeof(key), "t%dc%d_argt", t, c);
             p2->seq_arp_gate      = clamp_i(json_get_int(buf, key, 50), 1, 200);
             snprintf(key, sizeof(key), "t%dc%d_arsm", t, c);
@@ -2329,7 +2325,7 @@ static void arp_retrigger(arp_engine_t *a, uint32_t master_tick) {
 static void arp_init_defaults(arp_engine_t *a) {
     a->style     = 0;
     a->rate_idx  = ARP_RATE_DEFAULT;
-    a->octaves   = 1;
+    a->octaves   = 0;
     a->gate_pct  = 50;
     a->steps_mode = 0;
     a->retrigger = 1;
@@ -2662,9 +2658,8 @@ static int arp_compute_step(arp_engine_t *a, play_fx_t *fx,
     int N = arp_build_ordered(a, ordered);
     if (N == 0) return 0;
     int oct_signed = (int)a->octaves;
-    if (oct_signed == 0) oct_signed = 1;
-    int abs_oct = oct_signed < 0 ? -oct_signed : oct_signed;
-    if (abs_oct < 1) abs_oct = 1;
+    /* 0=Off (no extra octaves), +/-N adds N extra octave copies; span = N*(|oct|+1) */
+    int abs_oct = (oct_signed < 0 ? -oct_signed : oct_signed) + 1;
     int span = N * abs_oct;
     if (span > ARP_MAX_CYCLE) span = ARP_MAX_CYCLE;
 
@@ -3230,7 +3225,7 @@ static void clip_pfx_params_init(clip_pfx_params_t *p) {
     p->fb_clock        = 0;
     p->seq_arp_style     = 0;
     p->seq_arp_rate      = ARP_RATE_DEFAULT;
-    p->seq_arp_octaves   = 1;
+    p->seq_arp_octaves   = 0;
     p->seq_arp_gate      = 50;
     p->seq_arp_steps_mode = 0;
     p->seq_arp_retrigger = 1;
@@ -3262,11 +3257,7 @@ static void pfx_apply_params(play_fx_t *fx, const clip_pfx_params_t *p) {
     /* SEQ ARP — copy params without disturbing runtime state */
     fx->arp.style      = (uint8_t)clamp_i(p->seq_arp_style,    0, 9);
     fx->arp.rate_idx   = (uint8_t)clamp_i(p->seq_arp_rate,     0, 9);
-    {
-        int _oc = clamp_i(p->seq_arp_octaves, -ARP_MAX_OCTAVES, ARP_MAX_OCTAVES);
-        if (_oc == 0) _oc = 1;
-        fx->arp.octaves = (int8_t)_oc;
-    }
+    fx->arp.octaves = (int8_t)clamp_i(p->seq_arp_octaves, -ARP_MAX_OCTAVES, ARP_MAX_OCTAVES);
     fx->arp.gate_pct   = (uint16_t)clamp_i(p->seq_arp_gate,    1, 200);
     fx->arp.steps_mode = (uint8_t)clamp_i(p->seq_arp_steps_mode, 0, 2);
     fx->arp.retrigger  = (uint8_t)(p->seq_arp_retrigger != 0);

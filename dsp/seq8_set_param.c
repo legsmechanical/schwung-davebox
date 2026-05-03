@@ -77,7 +77,6 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
     }
     if (!strcmp(key, "seq_arp_octaves")) {
         int _v = clamp_i(my_atoi(val), -4, 4);
-        if (_v == 0) _v = 1; /* skip zero */
         cp->seq_arp_octaves = _v;
         fx->arp.octaves     = (int8_t)_v;
         return;
