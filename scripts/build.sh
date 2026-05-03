@@ -41,7 +41,7 @@ cp ui_leds.mjs       "dist/${MODULE_ID}/"
 python3 - <<'PYEOF'
 import wave, struct, os
 src = "MPC Metronome Click 001.wav"
-dst = "dist/seq8/metro_click.wav"
+dst = "dist/seq8/click-seq8.wav"
 with wave.open(src, 'rb') as r:
     rate, nch, sw, nf = r.getframerate(), r.getnchannels(), r.getsampwidth(), r.getnframes()
     raw = r.readframes(nf)
@@ -56,7 +56,7 @@ for i in range(0, len(raw), sw * nch):
 with wave.open(dst, 'wb') as w:
     w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate)
     w.writeframes(struct.pack('<' + 'h' * len(samples), *samples))
-print(f"metro_click.wav: {len(samples)} frames @ {rate} Hz, 16-bit mono")
+print(f"click-seq8.wav: {len(samples)} frames @ {rate} Hz, 16-bit mono")
 PYEOF
 
 echo ""

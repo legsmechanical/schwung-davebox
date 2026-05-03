@@ -539,7 +539,7 @@ function showModePopup(title, items, activeIdx) {
 
 function playMetronomeClick() {
     if (typeof host_preview_play === 'function') {
-        host_preview_play('/data/UserData/schwung/modules/tools/seq8/metro_click.wav');
+        host_preview_play('/data/UserData/schwung/modules/tools/seq8/click-seq8.wav');
     } else if (typeof shadow_send_midi_to_dsp === 'function') {
         const vel = Math.max(1, Math.round(S.metronomeVol * 127 / 100));
         shadow_send_midi_to_dsp([0x90, 76, vel]);
