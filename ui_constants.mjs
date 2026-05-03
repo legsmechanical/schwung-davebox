@@ -35,6 +35,8 @@ export const SCENE_BTN_FLASH_TICKS = 40;
 export const LEDS_PER_FRAME      = 8;
 export const NUM_TRACKS          = 8;
 export const NUM_CLIPS           = 16;
+export const DRUM_LANES          = 32;
+export const DRUM_BASE_NOTE      = 36;
 
 /* shim ui_flags bits that must be masked while SEQ8 owns the display. */
 export const FLAG_JUMP_TO_OVERTAKE = 0x04;
