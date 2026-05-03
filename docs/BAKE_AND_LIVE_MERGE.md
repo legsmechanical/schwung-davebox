@@ -4,6 +4,8 @@
 
 Bake permanently applies a clip's effects chain to its note data, then resets all effect parameters to their defaults. Use it to "freeze" a sound design decision and free up the effects chain for something new.
 
+### Melodic tracks
+
 **How to bake:**
 
 1. Select the track and clip you want to bake.
@@ -18,11 +20,31 @@ Bake permanently applies a clip's effects chain to its note data, then resets al
 
 The full effects chain is applied offline in order: NOTE FX + HARMZ → MIDI Delay → SEQ ARP output. The resulting notes are written back into the clip. All effect parameters (delay time, harmonize intervals, arp settings, etc.) are then reset to defaults.
 
+### Drum tracks
+
+Drum tracks offer two bake modes. Press **Sample** to open the **BAKE DRUMS?** dialog — default is **CANCEL**.
+
+Rotate the jog wheel to select a mode, then press the jog wheel to confirm. Press **Sample** or **NoteSession** to cancel at any point.
+
+**CLIP mode** — bakes the full effects chain across all lanes with pitch routing:
+
+- Each lane's effects chain (NOTE FX, HARMZ, MIDI Delay, SEQ ARP) runs offline.
+- Output notes are routed to whichever drum lane matches their pitch. HARMZ can therefore move hits from one lane to another — what you hear is what you get.
+- Notes at pitches with no matching lane are silently dropped.
+- All lane effect parameters are reset to defaults.
+
+**LANE mode** — bakes velocity, gate, timing, and arp effects per lane:
+
+- Each lane is processed independently. MIDI Delay and SEQ ARP timing changes are captured.
+- Velocity and gate transforms from NOTE FX are applied.
+- Pitch transforms and HARMZ are **not** captured (indicated by the **No Pitch / HARMZ FX** notice in the dialog). Drum lanes always play at their fixed pitch regardless of stored pitch data, so pitch-based FX have no effect when baked per-lane.
+- All lane effect parameters are reset to defaults.
+
 **Limitations:**
 
-- Bake is only available on **melodic tracks**. Drum track bake is not yet supported.
-- If the clip is empty, nothing happens.
-- Bake is undoable (one undo step is saved before writing).
+- If the clip is empty (all lanes), nothing happens.
+- Bake is undoable. Notes and steps are restored on undo; effect parameter values are not (they stay reset).
+- CLIP mode uses a per-clip output pool capped at 2048 notes. Clips with very dense content across many lanes may silently drop overflow notes.
 
 ---
 
