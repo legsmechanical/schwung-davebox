@@ -173,6 +173,7 @@ let stubSwingAmt = 0;
 let stubSwingRes = 0;
 let inpQuant = false;
 let midiInChannel = 0;  /* 0=All, 1-16=specific channel */
+let beatMarkersEnabled = true;
 
 /* Launch quantization: 0=Now, 1=1/16, 2=1/8, 3=1/4, 4=1/2, 5=1-bar; default 0 */
 let launchQuant = 0;
@@ -313,6 +314,11 @@ function buildGlobalMenuItems() {
             },
             min: 0, max: 100, step: 1,
             format: function(v) { return String(v | 0) + '%'; }
+        }),
+        createToggle('Beat Marks', {
+            get: function() { return beatMarkersEnabled; },
+            set: function(v) { beatMarkersEnabled = v; forceRedraw(); },
+            onLabel: 'On', offLabel: 'Off'
         }),
         createAction('Quit', function() {
             saveState();
@@ -1520,10 +1526,11 @@ function saveState() {
     if (typeof host_module_set_param === 'function') host_module_set_param('save', '1');
     if (typeof host_write_file === 'function')
         host_write_file(uuidToUiStatePath(currentSetUuid), JSON.stringify({
-            v: 2, at: activeTrack, ac: trackActiveClip.slice(), sv: sessionView ? 1 : 0,
+            v: 3, at: activeTrack, ac: trackActiveClip.slice(), sv: sessionView ? 1 : 0,
             dl: activeDrumLane.slice(),
             pm: perfModsToggled, lm: perfLatchMode ? 1 : 0,
-            rs: perfRecalledSlot, us: perfSnapshots.slice(8)
+            rs: perfRecalledSlot, us: perfSnapshots.slice(8),
+            bm: beatMarkersEnabled ? 1 : 0
         }));
 }
 
@@ -2207,7 +2214,7 @@ function updateStepLEDs() {
             if (absStep >= len)                    color = White;
             else if (playing && absStep === cs)    color = White;
             else if (ls[absStep] === '1')          color = TRACK_COLORS[t];
-            else                                   color = (i % 4 === 0) ? LightGrey : LED_OFF;
+            else                                   color = (beatMarkersEnabled && i % 4 === 0) ? LightGrey : LED_OFF;
             setLED(16 + i, color);
         }
         /* Gate span overlay: dim track color across steps covered by held step's gate */
@@ -2258,7 +2265,7 @@ function updateStepLEDs() {
         } else if (steps[absStep] === 2) {
             color = DarkGrey;
         } else {
-            color = (i % 4 === 0) ? LightGrey : LED_OFF;
+            color = (beatMarkersEnabled && i % 4 === 0) ? LightGrey : LED_OFF;
         }
         setLED(16 + i, color);
     }
@@ -3539,6 +3546,7 @@ globalThis.init = function () {
                         activeDrumLane[_t] = _l;
                 }
             }
+            if (typeof us.bm === 'number') beatMarkersEnabled = us.bm !== 0;
             /* Perf mod state (v=2+) */
             if (us.v >= 2) {
                 if (typeof us.pm === 'number') perfModsToggled = us.pm & 0xFFFFFF;
