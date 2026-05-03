@@ -2951,7 +2951,7 @@ globalThis.tick = function () {
             /* Count-in flash: blink all step buttons white at quarter-note rate */
             if (S.recordArmed && S.recordCountingIn && S.countInQuarterTicks > 0) {
                 const elapsed  = S.tickCount - S.countInBeatStartTick;
-                const flashOn  = (elapsed % S.countInQuarterTicks) < (S.countInQuarterTicks >> 1);
+                const flashOn  = (elapsed % S.countInQuarterTicks) < (S.countInQuarterTicks >> 3);
                 const flashClr = flashOn ? White : LED_OFF;
                 for (let _i = 0; _i < 16; _i++) setLED(16 + _i, flashClr);
             }
