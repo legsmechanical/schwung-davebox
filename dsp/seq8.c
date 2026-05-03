@@ -3956,9 +3956,210 @@ static void bake_clip(seq8_instance_t *inst, int t, int c) {
         if (bn->tick < clip_ticks)
             clip_insert_note(cl, bn->tick, bn->gate, bn->pitch, bn->vel);
     }
+    /* Rebuild step arrays so step editing doesn't wipe baked notes via clip_migrate_to_notes */
+    clip_build_steps_from_notes(cl);
     /* Sync render surface so pfx_snapshot returns reset values immediately */
     if (c == tr->active_clip)
         pfx_sync_from_clip(tr);
+    inst->state_dirty = 1;
+}
+
+/* Per-lane drum bake: applies vel/gate/timing/arp effects per lane.
+ * HARMZ and pitch transforms are discarded — drum lanes play at their
+ * fixed midi_note regardless of stored pitch.
+ * Undo restores notes/steps; pfx_params are not saved in drum undo snapshots. */
+static void bake_drum_lane(seq8_instance_t *inst, int t, int c) {
+    seq8_track_t *tr = &inst->tracks[t];
+    int l, ni;
+    int any = 0;
+    for (l = 0; l < DRUM_LANES; l++) {
+        if (tr->drum_clips[c].lanes[l].clip.note_count > 0) { any = 1; break; }
+    }
+    if (!any) return;
+
+    undo_begin_drum_clip(inst, t, c);
+
+    int scale_aware = (int)inst->scale_aware;
+    static bake_note_t dl_a[BAKE_BUF];
+    static bake_note_t dl_b[BAKE_BUF];
+
+    for (l = 0; l < DRUM_LANES; l++) {
+        drum_lane_t *dl = &tr->drum_clips[c].lanes[l];
+        clip_t *cl = &dl->clip;
+        if (cl->note_count == 0) continue;
+
+        play_fx_t fx;
+        pfx_init_defaults(&fx);
+        pfx_apply_params(&fx, &cl->pfx_params);
+        fx.track_idx = (uint8_t)t;
+        fx.route     = ROUTE_SCHWUNG;
+        fx.rng       = 0xDEADBEEFu;
+
+        uint16_t tps    = cl->ticks_per_step ? cl->ticks_per_step : (uint16_t)TICKS_PER_STEP;
+        uint16_t length = cl->length;
+        uint32_t clip_ticks = (uint32_t)length * tps;
+        int a_count = 0;
+
+        /* Stage 0: vel/gate from NOTE FX — no pitch/HARMZ expansion */
+        for (ni = 0; ni < cl->note_count && a_count < BAKE_BUF; ni++) {
+            note_t *nn = &cl->notes[ni];
+            if (nn->suppress_until_wrap) continue;
+            uint32_t gate = (uint32_t)nn->gate;
+            if (fx.gate_time != 100 && fx.gate_time > 0)
+                gate = gate * (uint32_t)fx.gate_time / 100u;
+            if (gate < 1) gate = 1; if (gate > 65535u) gate = 65535u;
+            int vel = (int)nn->vel + fx.velocity_offset;
+            if (vel < 1) vel = 1; if (vel > 127) vel = 127;
+            dl_a[a_count++] = (bake_note_t){ nn->tick, (uint16_t)gate,
+                                             dl->midi_note, (uint8_t)vel };
+        }
+
+        bake_note_t *in_buf = dl_a, *out_buf = dl_b;
+        int in_count = a_count;
+        int si;
+        for (si = 0; si < 2; si++) {
+            int out_count;
+            if (BAKE_STAGES[si] == BAKE_STAGE_MIDI_DLY)
+                out_count = bake_stage_midi_dly(inst, scale_aware, &fx, clip_ticks,
+                                                in_buf, in_count, out_buf, BAKE_BUF);
+            else
+                out_count = bake_stage_arp_out(&fx, clip_ticks,
+                                               in_buf, in_count, out_buf, BAKE_BUF);
+            bake_note_t *tmp = in_buf; in_buf = out_buf; out_buf = tmp;
+            in_count = out_count;
+        }
+
+        clip_init(cl);
+        cl->ticks_per_step = tps;
+        cl->length = length;
+        int ri;
+        for (ri = 0; ri < in_count; ri++) {
+            bake_note_t *bn = &in_buf[ri];
+            if (bn->tick < clip_ticks)
+                clip_insert_note(cl, bn->tick, bn->gate, dl->midi_note, bn->vel);
+        }
+        clip_build_steps_from_notes(cl);
+    }
+    inst->state_dirty = 1;
+}
+
+/* Per-clip drum bake: applies full effects chain per lane including HARMZ.
+ * Output notes are routed to lanes by pitch — HARMZ can redistribute hits
+ * across lanes. Notes with no matching lane are dropped.
+ * Pool cap: DRUM_BAKE_POOL notes; overflowing notes are silently dropped.
+ * Undo restores notes/steps; pfx_params are not saved in drum undo snapshots. */
+#define DRUM_BAKE_POOL 2048
+static void bake_drum_clip(seq8_instance_t *inst, int t, int c) {
+    seq8_track_t *tr = &inst->tracks[t];
+    int l, ni;
+    int any = 0;
+    for (l = 0; l < DRUM_LANES; l++) {
+        if (tr->drum_clips[c].lanes[l].clip.note_count > 0) { any = 1; break; }
+    }
+    if (!any) return;
+
+    undo_begin_drum_clip(inst, t, c);
+
+    int scale_aware = (int)inst->scale_aware;
+
+    uint16_t ref_tps = (uint16_t)TICKS_PER_STEP, ref_length = (uint16_t)SEQ_STEPS_DEFAULT;
+    for (l = 0; l < DRUM_LANES; l++) {
+        clip_t *cl = &tr->drum_clips[c].lanes[l].clip;
+        if (cl->note_count > 0 && cl->ticks_per_step > 0) {
+            ref_tps = cl->ticks_per_step; ref_length = cl->length; break;
+        }
+    }
+
+    static bake_note_t dc_pool[DRUM_BAKE_POOL];
+    static bake_note_t dc_a[BAKE_BUF];
+    static bake_note_t dc_b[BAKE_BUF];
+    int pool_count = 0;
+
+    /* Pass 1: bake each lane with full pitch routing, collect into pool */
+    for (l = 0; l < DRUM_LANES; l++) {
+        drum_lane_t *dl = &tr->drum_clips[c].lanes[l];
+        clip_t *cl = &dl->clip;
+        if (cl->note_count == 0) continue;
+
+        play_fx_t fx;
+        pfx_init_defaults(&fx);
+        pfx_apply_params(&fx, &cl->pfx_params);
+        fx.track_idx = (uint8_t)t;
+        fx.route     = ROUTE_SCHWUNG;
+        fx.rng       = 0xDEADBEEFu;
+
+        uint16_t tps    = cl->ticks_per_step ? cl->ticks_per_step : ref_tps;
+        uint16_t length = cl->length ? cl->length : ref_length;
+        uint32_t clip_ticks = (uint32_t)length * tps;
+        int a_count = 0;
+
+        for (ni = 0; ni < cl->note_count && a_count < BAKE_BUF; ni++) {
+            note_t *nn = &cl->notes[ni];
+            if (nn->suppress_until_wrap) continue;
+            uint32_t gate = (uint32_t)nn->gate;
+            if (fx.gate_time != 100 && fx.gate_time > 0)
+                gate = gate * (uint32_t)fx.gate_time / 100u;
+            if (gate < 1) gate = 1; if (gate > 65535u) gate = 65535u;
+            int vel = (int)nn->vel + fx.velocity_offset;
+            if (vel < 1) vel = 1; if (vel > 127) vel = 127;
+            uint8_t gen[MAX_GEN_NOTES];
+            int gc = pfx_build_gen_notes(inst, scale_aware, &fx, (int)nn->pitch, gen);
+            int gi;
+            for (gi = 0; gi < gc && a_count < BAKE_BUF; gi++)
+                dc_a[a_count++] = (bake_note_t){ nn->tick, (uint16_t)gate,
+                                                 gen[gi], (uint8_t)vel };
+        }
+
+        bake_note_t *in_buf = dc_a, *out_buf = dc_b;
+        int in_count = a_count;
+        int si;
+        for (si = 0; si < 2; si++) {
+            int out_count;
+            if (BAKE_STAGES[si] == BAKE_STAGE_MIDI_DLY)
+                out_count = bake_stage_midi_dly(inst, scale_aware, &fx, clip_ticks,
+                                                in_buf, in_count, out_buf, BAKE_BUF);
+            else
+                out_count = bake_stage_arp_out(&fx, clip_ticks,
+                                               in_buf, in_count, out_buf, BAKE_BUF);
+            bake_note_t *tmp = in_buf; in_buf = out_buf; out_buf = tmp;
+            in_count = out_count;
+        }
+
+        int ri;
+        for (ri = 0; ri < in_count && pool_count < DRUM_BAKE_POOL; ri++) {
+            bake_note_t *bn = &in_buf[ri];
+            if (bn->tick < clip_ticks)
+                dc_pool[pool_count++] = *bn;
+        }
+        if (pool_count >= DRUM_BAKE_POOL)
+            seq8_ilog(inst, "bake_drum_clip: pool full, notes dropped");
+    }
+
+    /* Pass 2: clear all lanes (resets pfx_params), route pool notes by pitch */
+    for (l = 0; l < DRUM_LANES; l++) {
+        clip_t *cl = &tr->drum_clips[c].lanes[l].clip;
+        clip_init(cl);
+        cl->ticks_per_step = ref_tps;
+        cl->length = ref_length;
+    }
+
+    int pi;
+    for (pi = 0; pi < pool_count; pi++) {
+        bake_note_t *bn = &dc_pool[pi];
+        for (l = 0; l < DRUM_LANES; l++) {
+            drum_lane_t *dl = &tr->drum_clips[c].lanes[l];
+            if (dl->midi_note == bn->pitch) {
+                clip_insert_note(&dl->clip, bn->tick, bn->gate, bn->pitch, bn->vel);
+                break;
+            }
+        }
+    }
+
+    for (l = 0; l < DRUM_LANES; l++) {
+        clip_t *cl = &tr->drum_clips[c].lanes[l].clip;
+        if (cl->note_count > 0)
+            clip_build_steps_from_notes(cl);
+    }
     inst->state_dirty = 1;
 }
 

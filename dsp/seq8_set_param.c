@@ -640,11 +640,14 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
     if (!strcmp(key, "bake")) {
-        /* val = "T C" — apply pfx chain offline and clear params */
-        int bt = 0, bc = 0;
-        sscanf(val, "%d %d", &bt, &bc);
-        if (bt >= 0 && bt < NUM_TRACKS && bc >= 0 && bc < NUM_CLIPS)
-            bake_clip(inst, bt, bc);
+        /* val = "T C [M]" — M: 0=melodic clip, 1=drum lane, 2=drum clip */
+        int bt = 0, bc = 0, bm = 0;
+        sscanf(val, "%d %d %d", &bt, &bc, &bm);
+        if (bt >= 0 && bt < NUM_TRACKS && bc >= 0 && bc < NUM_CLIPS) {
+            if (bm == 1)      bake_drum_lane(inst, bt, bc);
+            else if (bm == 2) bake_drum_clip(inst, bt, bc);
+            else              bake_clip(inst, bt, bc);
+        }
         return;
     }
     if (!strcmp(key, "perf_mods")) {

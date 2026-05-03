@@ -753,7 +753,8 @@ let bpmWasEditing         = false;
 let lastSentMenuEditValue = null;  /* dedup: only send set_param when edit value changes */
 let confirmClearSession   = false; /* showing Clear Session confirmation dialog */
 let confirmBake           = false; /* showing Bake confirmation dialog */
-let confirmBakeSel        = 1;     /* 0=Yes, 1=No; default No */
+let confirmBakeSel        = 1;     /* melodic: 0=Yes 1=No; drum: 0=CLIP 1=LANE 2=CANCEL */
+let confirmBakeIsDrum     = false;
 let confirmBakeTrack      = 0;
 let confirmBakeClip       = 0;
 
@@ -1331,30 +1332,37 @@ function drawClearSessionConfirm() {
 
 function drawBakeConfirm() {
     clear_screen();
-    drawMenuHeader('BAKE FX?');
-    print(4, 16, 'Apply effects chain', 1);
-    print(4, 25, 'to clip notes and', 1);
-    print(4, 34, 'clear the settings.', 1);
-    const noX = 6, yesX = 74, btnY = 46, btnW = 46, btnH = 13;
-    if (confirmBakeSel === 1) {
-        fill_rect(noX, btnY, btnW, btnH, 1);
-        print(noX + 17, btnY + 3, 'No', 0);
-    } else {
-        fill_rect(noX, btnY, btnW, 1, 1);
-        fill_rect(noX, btnY + btnH - 1, btnW, 1, 1);
-        fill_rect(noX, btnY, 1, btnH, 1);
-        fill_rect(noX + btnW - 1, btnY, 1, btnH, 1);
-        print(noX + 17, btnY + 3, 'No', 1);
+    function _btn(x, y, w, h, sel, label, labelOff) {
+        if (sel) {
+            fill_rect(x, y, w, h, 1);
+            print(x + labelOff, y + 3, label, 0);
+        } else {
+            fill_rect(x, y, w, 1, 1);
+            fill_rect(x, y + h - 1, w, 1, 1);
+            fill_rect(x, y, 1, h, 1);
+            fill_rect(x + w - 1, y, 1, h, 1);
+            print(x + labelOff, y + 3, label, 1);
+        }
     }
-    if (confirmBakeSel === 0) {
-        fill_rect(yesX, btnY, btnW, btnH, 1);
-        print(yesX + 14, btnY + 3, 'Yes', 0);
+    if (!confirmBakeIsDrum) {
+        drawMenuHeader('BAKE FX?');
+        print(4, 16, 'Apply effects chain', 1);
+        print(4, 25, 'to clip notes and', 1);
+        print(4, 34, 'clear the settings.', 1);
+        _btn(6,  46, 46, 13, confirmBakeSel === 1, 'No',  17);
+        _btn(74, 46, 46, 13, confirmBakeSel === 0, 'Yes', 14);
     } else {
-        fill_rect(yesX, btnY, btnW, 1, 1);
-        fill_rect(yesX, btnY + btnH - 1, btnW, 1, 1);
-        fill_rect(yesX, btnY, 1, btnH, 1);
-        fill_rect(yesX + btnW - 1, btnY, 1, btnH, 1);
-        print(yesX + 14, btnY + 3, 'Yes', 1);
+        drawMenuHeader('BAKE DRUMS?');
+        print(4, 16, 'Bake effects chain', 1);
+        print(4, 25, 'to drum lanes.', 1);
+        if (confirmBakeSel === 1) {
+            print(4, 36, 'No Pitch / HARMZ FX', 1);
+        }
+        /* 3 buttons: CLIP(0) | LANE(1) | CANCEL(2, default) */
+        const bW = 38, bH = 13, bY = 50;
+        _btn(4,  bY, bW, bH, confirmBakeSel === 0, 'CLIP',   7);
+        _btn(45, bY, bW, bH, confirmBakeSel === 1, 'LANE',   7);
+        _btn(86, bY, bW, bH, confirmBakeSel === 2, 'CANCEL', 1);
     }
 }
 
@@ -4101,16 +4109,30 @@ globalThis.onMidiMessageInternal = function (data) {
     if (status === 0xB0) {
         /* Bake confirm: jog click confirms/cancels when dialog is open */
         if (d1 === 3 && d2 === 127 && confirmBake) {
-            if (confirmBakeSel === 0) {
-                host_module_set_param('bake', confirmBakeTrack + ' ' + confirmBakeClip);
-                undoAvailable = true; redoAvailable = false; undoSeqArpSnapshot = null;
-                showActionPopup('BAKED');
-                /* Force a pfx bank refresh on the next poll so knobs show updated params */
-                pendingBankRefresh = confirmBakeTrack;
-                /* Re-read steps from DSP so LEDs reflect baked notes */
-                pendingStepsReread      = 2;
-                pendingStepsRereadTrack = confirmBakeTrack;
-                pendingStepsRereadClip  = confirmBakeClip;
+            if (!confirmBakeIsDrum) {
+                if (confirmBakeSel === 0) {
+                    host_module_set_param('bake', confirmBakeTrack + ' ' + confirmBakeClip);
+                    undoAvailable = true; redoAvailable = false; undoSeqArpSnapshot = null;
+                    showActionPopup('BAKED');
+                    pendingBankRefresh = confirmBakeTrack;
+                    pendingStepsReread      = 2;
+                    pendingStepsRereadTrack = confirmBakeTrack;
+                    pendingStepsRereadClip  = confirmBakeClip;
+                }
+            } else {
+                /* drum: 0=CLIP, 1=LANE, 2=CANCEL */
+                if (confirmBakeSel < 2) {
+                    const bakeMode = confirmBakeSel === 0 ? 2 : 1;
+                    host_module_set_param('bake',
+                        confirmBakeTrack + ' ' + confirmBakeClip + ' ' + bakeMode);
+                    undoAvailable = true; redoAvailable = false; undoSeqArpSnapshot = null;
+                    showActionPopup('BAKED');
+                    pendingBankRefresh = confirmBakeTrack;
+                    if (confirmBakeClip === trackActiveClip[confirmBakeTrack]) {
+                        pendingDrumResync      = 2;
+                        pendingDrumResyncTrack = confirmBakeTrack;
+                    }
+                }
             }
             confirmBake = false;
             screenDirty = true;
@@ -4224,7 +4246,14 @@ globalThis.onMidiMessageInternal = function (data) {
         if (d1 === MoveMainKnob) {
             if (confirmBake) {
                 const delta = decodeDelta(d2);
-                if (delta !== 0) { confirmBakeSel = confirmBakeSel === 0 ? 1 : 0; screenDirty = true; }
+                if (delta !== 0) {
+                    if (confirmBakeIsDrum) {
+                        confirmBakeSel = (confirmBakeSel + (delta > 0 ? 1 : 2)) % 3;
+                    } else {
+                        confirmBakeSel = confirmBakeSel === 0 ? 1 : 0;
+                    }
+                    screenDirty = true;
+                }
                 return;
             }
             if (globalMenuOpen && !shiftHeld) {
@@ -4718,7 +4747,8 @@ globalThis.onMidiMessageInternal = function (data) {
                 /* LED stays green until DSP finalizes at page boundary */
             } else {
                 confirmBake      = true;
-                confirmBakeSel   = 1;
+                confirmBakeIsDrum = trackPadMode[activeTrack] === PAD_MODE_DRUM;
+                confirmBakeSel   = confirmBakeIsDrum ? 2 : 1;
                 confirmBakeTrack = activeTrack;
                 confirmBakeClip  = trackActiveClip[activeTrack];
                 screenDirty      = true;
