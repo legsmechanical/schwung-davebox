@@ -73,7 +73,7 @@ import {
     fmtDly, fmtBool, fmtRoute, fmtPlain, fmtNA,
     fmtArpStyle, fmtArpRate, fmtArpSteps, fmtArpOct, fmtVelOverride,
     col4, parseActionRaw, MCUFONT, pixelPrint, pixelPrintC,
-    BANKS, ACTION_POPUP_TICKS
+    BANKS, ACTION_POPUP_TICKS, PAD_MODE_DRUM
 } from './ui_constants.mjs';
 
 import { S, CC_ASSIGN_DEFAULTS, PERF_FACTORY_PRESETS } from './ui_state.mjs';
@@ -338,7 +338,6 @@ const padPitch = new Array(32).fill(-1);
 /* S.clipNonEmpty[track][clip] — cached result of clipHasContent; updated on every S.clipSteps write */
 
 /* Drum mode state */
-const PAD_MODE_DRUM   = 1;
 /* S.drumLaneSteps[t][l] — '0'/'1'/'2' per step (up to 256), cached from DSP for the active clip */
 /* S.drumLaneHasNotes[t][l] — true if lane l has any programmed hits */
 /* S.drumLaneNote[t][l] — current MIDI note for lane l (JS mirror of lane->midi_note) */

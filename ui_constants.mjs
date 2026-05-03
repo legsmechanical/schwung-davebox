@@ -299,3 +299,5 @@ export const BANKS = [
 ];
 
 export const ACTION_POPUP_TICKS = 98; /* ~500ms at 196Hz */
+
+export const PAD_MODE_DRUM = 1;
