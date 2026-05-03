@@ -1601,6 +1601,38 @@ function applyTrackConfig(t, key, val) {
     else if (key === 'track_looper')    S.trackLooper[t] = val;
 }
 
+/* Rewrite the cable-2 channel remap table for the active track.
+ * When the active track is ROUTE_MOVE, incoming external MIDI is remapped to the
+ * track's channel so Move's firmware routes it to the correct track instrument.
+ * Called from tick() on any change to activeTrack/route/channel/midiInChannel,
+ * and directly from init() on first load / resume after full exit. */
+function applyExtMidiRemap() {
+    const t = S.activeTrack;
+    const isMove = S.trackRoute[t] === 1;
+    const hasRemap = typeof host_ext_midi_remap_enable === 'function';
+    if (!hasRemap) return;
+    if (!isMove) {
+        if (S.extMidiRemapActive) {
+            host_ext_midi_remap_clear();
+            host_ext_midi_remap_enable(0);
+            S.extMidiRemapActive = false;
+        }
+        return;
+    }
+    const outCh = S.trackChannel[t] - 1;  /* 0-indexed */
+    host_ext_midi_remap_clear();
+    if (S.midiInChannel === 0) {
+        for (var _i = 0; _i < 16; _i++) {
+            if (_i !== outCh) host_ext_midi_remap_set(_i, outCh);
+        }
+    } else {
+        const inCh = S.midiInChannel - 1;  /* 0-indexed */
+        if (inCh !== outCh) host_ext_midi_remap_set(inCh, outCh);
+    }
+    host_ext_midi_remap_enable(1);
+    S.extMidiRemapActive = true;
+}
+
 /* Send a single param change to DSP and apply any JS-side side-effects. */
 function applyBankParam(t, bankIdx, knobIdx, val) {
     const pm = BANKS[bankIdx].knobs[knobIdx];
@@ -2560,6 +2592,11 @@ globalThis.init = function () {
 
     computePadNoteMap();
 
+    /* Apply cable-2 channel remap for the current active track immediately
+     * (tick() change-detect also covers this, but fires one tick later). */
+    _lastRemapTrack = -1;
+    applyExtMidiRemap();
+
     S.ledInitComplete = false;
     invalidateLEDCache();
     S.ledInitQueue    = buildLedInitQueue();
@@ -2571,8 +2608,24 @@ globalThis.init = function () {
     S._wasSuspended    = false;
 };
 
+var _lastRemapTrack = -1, _lastRemapRoute = -1, _lastRemapChannel = -1, _lastRemapMidiIn = -2;
+
 globalThis.tick = function () {
     S.tickCount++;
+
+    /* Reapply cable-2 channel remap if anything affecting it changed. */
+    {
+        const _rt = S.activeTrack;
+        const _rr = S.trackRoute[_rt];
+        const _rc = S.trackChannel[_rt];
+        const _rm = S.midiInChannel;
+        if (_rt !== _lastRemapTrack || _rr !== _lastRemapRoute ||
+                _rc !== _lastRemapChannel || _rm !== _lastRemapMidiIn) {
+            applyExtMidiRemap();
+            _lastRemapTrack = _rt; _lastRemapRoute = _rr;
+            _lastRemapChannel = _rc; _lastRemapMidiIn = _rm;
+        }
+    }
 
     /* Suspend detection: host swaps clear_screen to a no-op while we're parked.
      * Save state on the transition edge; let tick run normally (display is no-oped by host). */
@@ -5661,15 +5714,23 @@ globalThis.onMidiMessageExternal = function (data) {
     const msgType = status & 0xF0;
     const msgCh   = (status & 0x0F) + 1;  /* 1-indexed */
 
-    if (S.midiInChannel !== 0 && msgCh !== S.midiInChannel) return;
     /* Route to S.activeTrack in all views — S.activeTrack always reflects last Track View focus */
-
     const t = S.activeTrack;
 
     /* ROUTE_MOVE: Move receives external cable-2 MIDI natively in overtake mode.
      * Never inject — injecting causes an echo cascade (Move echoes cable-2 back
      * as cable-2, we re-inject, infinite loop → crash). */
     const routeIsMove = S.trackRoute[t] === 1;
+
+    /* Channel filter. When the cable-2 remap is active for a ROUTE_MOVE track the
+     * shim rewrites the channel byte before we see it — messages arrive on
+     * trackChannel[t], not their original channel. Filter against the remapped
+     * channel so we don't accidentally drop them. */
+    if (S.extMidiRemapActive && routeIsMove) {
+        if (msgCh !== S.trackChannel[t]) return;
+    } else {
+        if (S.midiInChannel !== 0 && msgCh !== S.midiInChannel) return;
+    }
 
     /* Drum track: route by pitch to lanes; skip melodic step assignment */
     if (S.trackPadMode[t] === PAD_MODE_DRUM) {

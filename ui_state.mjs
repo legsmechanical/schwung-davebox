@@ -239,5 +239,6 @@ export const S = {
     pendingDrumLaneResync: 0,
     pendingDrumLaneResyncTrack: 0,
     pendingDrumLaneResyncLane: 0,
+    extMidiRemapActive: false,
 
 };
