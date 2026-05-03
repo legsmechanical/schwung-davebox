@@ -362,6 +362,7 @@ typedef struct {
     int16_t  note_tick_offset[SEQ_STEPS][8];
     uint16_t length;
     uint8_t  active;
+    clip_pfx_params_t pfx_params;
 } drum_rec_snap_lane_t;  /* ~7.4 KB/lane × 32 = ~237 KB/slot */
 
 typedef struct {
@@ -3678,6 +3679,7 @@ static void undo_begin_drum_clip(seq8_instance_t *inst, int t, int c) {
         memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
         dst->length = src->length;
         dst->active = src->active;
+        dst->pfx_params = src->pfx_params;
     }
     inst->drum_undo_valid = 1;
     inst->drum_undo_track = (uint8_t)t;

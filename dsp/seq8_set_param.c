@@ -1035,6 +1035,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
                 dst->length = src->length;
                 dst->active = src->active;
+                dst->pfx_params = src->pfx_params;
             }
             inst->drum_redo_track = (uint8_t)t;
             inst->drum_redo_clip  = (uint8_t)c;
@@ -1051,6 +1052,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
                 dst->length = src->length;
                 dst->active = src->active;
+                dst->pfx_params = src->pfx_params;
                 clip_migrate_to_notes(dst);
             }
             inst->drum_undo_valid = 0;
@@ -1097,6 +1099,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
                 dst->length = src->length;
                 dst->active = src->active;
+                dst->pfx_params = src->pfx_params;
             }
             inst->drum_undo_track = (uint8_t)t;
             inst->drum_undo_clip  = (uint8_t)c;
@@ -1113,6 +1116,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
                 dst->length = src->length;
                 dst->active = src->active;
+                dst->pfx_params = src->pfx_params;
                 clip_migrate_to_notes(dst);
             }
             inst->drum_redo_valid = 0;
