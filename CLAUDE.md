@@ -13,7 +13,8 @@
 - **Restart Move**: `ssh root@move.local "for name in MoveOriginal Move MoveLauncher MoveMessageDisplay shadow_ui schwung link-subscriber display-server schwung-manager; do pids=\$(pidof \$name 2>/dev/null || true); [ -n \"\$pids\" ] && kill -9 \$pids 2>/dev/null || true; done && /etc/init.d/move start >/dev/null 2>&1"`
 - **CLAUDE.md**: update at session end or after a major phase — not after routine task work.
 - **State version bump**: Any time DSP struct layout changes or state format changes, delete ALL state files on device before deploying: `ssh root@move.local "find /data/UserData/schwung/set_state -name 'seq8-state.json' -exec rm {} \; && find /data/UserData/schwung/set_state -name 'seq8-ui-state.json' -exec rm {} \;"`. This is a dev build — backward compatibility is not important; always prefer a clean slate over migration.
-- **DSP calls / pfx code**: read `SEQ8_API.md` for parameter keys, structs, and algorithm details.
+- **DSP calls / pfx code**: read `docs/SEQ8_API.md` for parameter keys, structs, and algorithm details.
+- **DSP work**: read `dsp/CLAUDE.md` for logging, build, state format keys, and deferred save details.
 
 SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move — standalone 8-track MIDI sequencer. No audio. C (DSP) + JavaScript (UI). `button_passthrough: [79]` — volume knob handled natively.
 
@@ -43,17 +44,17 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 
 **Global menu** (Shift+CC 50): **Track Config section** (Ch·Route·Mode·VelIn·Looper — per-`activeTrack`, live-updates on track switch; header shows "Track N") then `── Global ──` divider, then BPM·Tap Tempo·Key·Scale·Scale Aware·Launch·Swing Amt/Res·Inp Quant·MIDI In·Metro(Off/Count/On/Rec+Ply; Mute+Play shortcut)·Beat Marks(On/Off, persisted in UI sidecar)·Quit·Clear Sess (writes `{"v":0}`, wipes UI sidecar, triggers DSP fresh-init). Close: Shift+CC50 toggles; NoteSession (CC50 tap) closes menu/tap-tempo/confirm dialogs (Back no longer reaches module). Shift+jog passes through to normal track-switch while menu is open.
 
-**External MIDI**: →`activeTrack`. **ROUTE_MOVE**: `liveSendNote` NOT called — injecting causes echo cascade→crash. Pads unaffected (cable-0). Recording echo filter: `seqActiveNotes.has(d1)` guards ROUTE_MOVE `recordNoteOn`. External MIDI monitoring on rechannelized ROUTE_MOVE tracks not yet implemented (channel remap API exists in Schwung v0.9.8+ but causes crashes — reverted; see `ADDRESSING_MOVE_SYNTHS.md` in Schwung docs for DSP inject approach). **ROUTE_EXTERNAL** (Route=Ext in Global Menu): sequenced notes go DSP `pfx_send`→`ext_queue` ring buffer→JS tick() drains via `get_param('ext_queue')`→`move_midi_external_send` (USB-A). Live pad/MIDI input sent directly from JS via `move_midi_external_send` (no DSP round-trip). VelIn override applies. Verified on device. See `EXTERNAL_MIDI_USER_GUIDE.md`.
+**External MIDI**: →`activeTrack`. **ROUTE_MOVE**: `liveSendNote` NOT called — injecting causes echo cascade→crash. Pads unaffected (cable-0). Recording echo filter: `seqActiveNotes.has(d1)` guards ROUTE_MOVE `recordNoteOn`. External MIDI monitoring on rechannelized ROUTE_MOVE tracks not yet implemented (channel remap API exists in Schwung v0.9.8+ but causes crashes — reverted; see `ADDRESSING_MOVE_SYNTHS.md` in Schwung docs for DSP inject approach). **ROUTE_EXTERNAL** (Route=Ext in Global Menu): sequenced notes go DSP `pfx_send`→`ext_queue` ring buffer→JS tick() drains via `get_param('ext_queue')`→`move_midi_external_send` (USB-A). Live pad/MIDI input sent directly from JS via `move_midi_external_send` (no DSP round-trip). VelIn override applies. Verified on device. See `docs/EXTERNAL_MIDI_USER_GUIDE.md`.
 
-**Global MIDI Looper** (Session View): Loop+step arms. Steps 1–6=length(1/32..1bar; triplets with step 16 held). DSP: IDLE→ARMED→CAPTURING→LOOPING. Hook runs after SEQ ARP gate. Mid-loop rate: `looper_pending_rate_ticks` consumed at next boundary. JS: `looperStack {idx,ticks}`, `loopHeld`, `looperTriplet`, `dspLooperState`.
+**Global MIDI Looper** (Session View): Loop+step arms. Steps 1–6=length(1/32..1bar; triplets with step 16 held). DSP: IDLE→ARMED→CAPTURING→LOOPING. Hook runs after SEQ ARP gate. Mid-loop rate applied at next boundary.
 
-**Perf Mode** (Session View, loop running): double-tap Loop=lock; Loop+length pad=start. R0=length+Hold(73)+Latch(75); R1=8 pitch mods; R2=8 vel/gate mods; R3=8 wild mods (see `SEQ8_API.md` for full mod list). Step buttons=16 preset slots (1–8 factory). `perf_mods`=OR(toggled+held+recalled) sent on every change. Persistence: `perfModsToggled`/`perfLatchMode`/`perfRecalledSlot`/user snapshots(8–15) via UI sidecar v=3; re-sent via `pendingDefaultSetParams` on restore. DSP: `perf_apply()` in `pfx_send`; drum tracks bypass pitch mods.
+**Perf Mode** (Session View, loop running): double-tap Loop=lock; Loop+length pad=start. 4 rows × 8 pads = 32 mods (see `docs/SEQ8_API.md`). Step buttons=16 preset slots. `perf_mods`=OR(toggled+held+recalled) sent on every change. Persistence: `perfModsToggled`/`perfLatchMode`/`perfRecalledSlot`/user snapshots(8–15) via UI sidecar v=3; re-sent via `pendingDefaultSetParams` on restore. DSP: `perf_apply()` in `pfx_send`; drum tracks bypass pitch mods.
 
-**Play effects chain**: TRACK ARP→NOTE FX→HARMZ→MIDI DLY→SEQ ARP. TRACK ARP intercepts live input (pads + external MIDI) only; sequenced notes enter at NOTE FX. Per-clip params (`clip_pfx_params_t`); clip switch→`pfx_sync_from_clip`. See `SEQ8_API.md` for arp algorithm details. TRACK ARP bypassed on drum tracks.
+**Play effects chain**: TRACK ARP→NOTE FX→HARMZ→MIDI DLY→SEQ ARP. TRACK ARP intercepts live input (pads + external MIDI) only; sequenced notes enter at NOTE FX. Per-clip params (`clip_pfx_params_t`); clip switch→`pfx_sync_from_clip`. See `docs/SEQ8_API.md` for arp algorithm details. TRACK ARP bypassed on drum tracks.
 
 **Track config** (in Global Menu, not a bank): Ch·Route(0=Swng/1=Move/2=Ext)·Mode·VelIn·Looper. Per-track, stored in dedicated JS arrays (`trackChannel[]`, `trackRoute[]`, `trackPadMode[]`, `trackVelOverride[]`, `trackLooper[]`). `readTrackConfig(t)` syncs from DSP; `applyTrackConfig(t, key, val)` writes to DSP with side-effects. **VelIn** (per-track, `t%d_tvo`): 0=Live (raw velocity, default), 1–127=absolute fixed. Applies pre-pfx-chain to all note input (pads, ext MIDI, recording). DSP `effective_vel(tr, raw)` replaces old global `input_vel`. Global Input Velocity removed.
 
-**Note Repeat** (drum tracks, jog click or DRUM LANE K7 to cycle modes): Rpt1=single-lane hold-to-repeat; Rpt2=multi-lane simultaneous. Right pads: bottom 2 rows=rate (1/32,1/16,1/8,1/4 straight+triplet), top 2 rows=8-step gate mask. RPT GROOVE (bank 5 overlay): K1-K8 = vel scale (0-200%, unshifted) or nudge (-50..+50%, Shift) per step. Latch: Loop+rate(Rpt1) or Loop+lane(Rpt2). Gate/vel_scale/nudge per-lane (`drum_repeat_gate[DRUM_LANES]`). Aftertouch updates velocity live. Delete+jog=groove reset. State keys: `t%dl%drg` (gate, sparse, default 0xFF), `t%dl%dvs%d` (vel_scale), `t%dl%dnd%d` (nudge). JS sync: render-path `syncDrumRepeatState` (get_param fails from onMidiMessage; see constraints).
+**Note Repeat** (drum tracks, jog click or DRUM LANE K7 to cycle modes): Rpt1=single-lane hold-to-repeat; Rpt2=multi-lane simultaneous. Right pads: bottom 2 rows=rate (1/32,1/16,1/8,1/4 straight+triplet), top 2 rows=8-step gate mask. RPT GROOVE (bank 5 overlay): K1-K8 = vel scale (0-200%, unshifted) or nudge (-50..+50%, Shift) per step. Latch: Loop+rate(Rpt1) or Loop+lane(Rpt2). Aftertouch updates velocity live. Delete+jog=groove reset. State keys in `dsp/CLAUDE.md`. JS sync via render-path `syncDrumRepeatState` (get_param fails from onMidiMessage).
 
 **Mute/Solo**: `effective_mute(t)=mute[t]||(any_solo&&!solo[t])`. **Mutually exclusive** — setting one clears the other (recall paths bypass). Snapshots: Shift+Mute+step=save; Mute+step=recall; stores `snap_drum_eff_mute[16][NUM_TRACKS]`. Per-lane: `drum_lane_mute`/`drum_lane_solo` bitmasks; Delete+Mute clears all. Persisted as `t%ddlm`/`t%ddls`.
 
@@ -61,9 +62,7 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 
 **Live Merge** (Shift+Sample, melodic + drum tracks): captures live playback from the pfx chain into a new empty clip slot. Shift+Sample=arm (LED Red); transport start→LED Green (CAPTURING). Sample=schedule stop at next 16-step page boundary (STOPPING state, LED stays Green until DSP finalizes). DSP states: IDLE(0)→ARMED(1)→CAPTURING(2)→STOPPING(3)→IDLE(0). **Melodic**: notes captured into `clips[dst]` via `pfx_send` hook; on finalize JS triggers `pendingStepsReread`. **Drum**: notes routed to `drum_clips[dst].lanes[l].clip` by matching captured pitch to `lane->midi_note`; all 32 lanes init'd at arm; `clip_build_steps_from_notes` called per non-empty lane on finalize; JS triggers `syncDrumClipContent`. Auto-finalize at 256 steps (max length). Popups: "NO EMPTY / CLIP SLOT" when arm fails (detected via `pendingMergeArm` flag + next-poll check); "MAX LENGTH / REACHED" when DSP jumps CAPTURING→IDLE directly (state 2→0, not via STOPPING).
 
-**Scale**: 14 scales, `SCALE_IVLS[14][8]`. `scale_transpose(inst,note,deg_offset)` for scale-aware play effects.
-
-**State persistence**: v=17 (v=15,16 also accepted). Format: `tick:pitch:vel:gate:sm;`. SEQ ARP keys: `_arst/_arrt/_aroc/_argt/_arsm/_artg`. TRACK ARP keys: `t%d_taon/tast/tart/taoc/tagt/tasm/talc/tasv%d`. VelIn key: `t%d_tvo` (sparse, missing=0=Live). Note Repeat keys: `t%dl%drg` (gate, sparse default 255), `t%dl%dvs%d`, `t%dl%dnd%d`. Drum lane data sparse. v<15 rejected+deleted. `state_load` calls `drum_track_init` + `drum_repeat_init_defaults` first.
+**State persistence**: DSP state v=17 (v=15,16 also accepted); v<15 → deleted + clean start. Full key list and format in `dsp/CLAUDE.md`.
 
 **JS internals** (key gotchas):
 - `pendingDrumResync` deferred 2 ticks after drum clip switch — `tN_lL_steps` reads active_clip implicitly; must wait for `tN_launch_clip` to process first. Melodic `tN_cC_steps` is clip-indexed, no defer needed.
@@ -98,7 +97,7 @@ File: `/data/UserData/schwung/set_state/<UUID>/seq8-state.json`.
 
 JS `init()` reads UUID, compares with `state_uuid` get_param. Mismatch → `state_load=UUID` next tick → `pendingDspSync=5` → `syncClipsFromDsp()`.
 
-**Deferred save**: set_param handlers set `inst->state_dirty = 1` (no file I/O on audio thread). JS `pollDSP()` calls `get_param("state_full")` every `POLL_INTERVAL` ticks; DSP serializes via `fmemopen` into `inst->state_buf[65536]` when dirty, JS writes via `host_write_file` (~2ms). Overflow (>63KB state) falls back to synchronous file write with log warning. **Suspend path** (`set_param("save")`) still calls `seq8_save_state` synchronously — host may kill JS before async write completes. Handlers that never called `seq8_save_state` (bpm, key, scale, pfx bank knobs) still only save on suspend — identical to pre-refactor behavior.
+**Deferred save**: handlers set `inst->state_dirty = 1`; JS `pollDSP()` writes via `host_write_file` when dirty. Suspend path saves synchronously. Full details in `dsp/CLAUDE.md`.
 
 **Critical constraints**:
 - **Coalescing**: only the LAST `set_param` per audio buffer reaches DSP. `shadow_send_midi_to_dsp` shares the same delivery channel and also coalesces with `set_param`. In `onMidiMessage`, if both a `set_param` and `shadow_send_midi_to_dsp` fire, the set_param is lost. Workaround: defer set_params to the tick function via a pending variable (see `pendingRepeatLane` pattern). Multi-field operations require a single atomic DSP command.
@@ -119,7 +118,7 @@ JS `init()` reads UUID, compares with `state_uuid` get_param. Mismatch → `stat
 - **ROUTE_MOVE + external MIDI monitoring**: rechannelized monitoring not yet supported. Channel remap API (`host_ext_midi_remap`) was reverted due to crashes. External MIDI plays on its original channel, not the SEQ8 track's channel.
 - **TRACK ARP + ROUTE_SCHWUNG**: live notes injected via `shadow_send_midi_to_dsp` bypass `live_note_on`/`live_note_off` — TRACK ARP intercepts pad/external-MIDI notes on ROUTE_SCHWUNG tracks only via `live_notes` set_param (not the schwung chain path).
 - `pfx_send` from set_param context does NOT release Move synth voices.
-- See `SCHWUNG_SEQ8_LIMITATIONS.md` for framework interaction patterns.
+- See `docs/SCHWUNG_SEQ8_LIMITATIONS.md` for framework interaction patterns.
 
 ## Hardware reference
 
@@ -130,8 +129,8 @@ JS `init()` reads UUID, compares with `state_uuid` get_param. Mismatch → `stat
 
 ## MIDI routing
 
-**DSP**: `midi_send_internal`→chain. `midi_send_external`→USB-A — **never from render path** (deadlock).
 **JS**: `shadow_send_midi_to_dsp`→chain · `move_midi_internal_send`→LEDs · `move_midi_inject_to_move`→pads (68–99 only) · `move_midi_external_send`→USB-A (deferred) · `host_preview_play(path)`→WAV via speakers.
+**DSP routing + deadlock constraint**: see `dsp/CLAUDE.md`.
 
 ## Build / deploy / debug
 
@@ -142,11 +141,8 @@ nm -D dist/seq8/dsp.so | grep GLIBC             # verify ≤ 2.35
 ssh ableton@move.local "tail -f /data/UserData/schwung/seq8.log"
 ```
 
-**DSP logging**: Use `seq8_ilog(inst, msg)` — writes to seq8.log via `inst->log_fp`. `fprintf(stderr, ...)` goes to MoveOriginal's uncaptured stderr and will NOT appear in any log file.
-
 **JS**: `ui.js` (~6700 lines) + `ui_constants.mjs` (217 lines). Both must deploy together.
-**DSP**: `dsp/seq8.c` (~4998 lines) `#include`s `dsp/seq8_set_param.c` (~3390 lines). Single translation unit — no extern declarations.
-Schwung core: v0.9.9. GLIBC ≤ 2.35. `~/schwung-notetwist` — NoteTwist reference.
+**DSP**: see `dsp/CLAUDE.md` for file structure, logging, and GLIBC constraint.
 
 ## graphify
 
