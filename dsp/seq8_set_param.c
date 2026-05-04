@@ -660,13 +660,13 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
     if (!strcmp(key, "bake")) {
-        /* val = "T C [M]" — M: 0=melodic clip, 1=drum lane, 2=drum clip */
-        int bt = 0, bc = 0, bm = 0;
-        sscanf(val, "%d %d %d", &bt, &bc, &bm);
+        /* val = "T C [M] [N]" — M: 0=melodic, 1=drum lane, 2=drum clip; N: loop count 1/2/4 */
+        int bt = 0, bc = 0, bm = 0, bn = 1;
+        sscanf(val, "%d %d %d %d", &bt, &bc, &bm, &bn);
         if (bt >= 0 && bt < NUM_TRACKS && bc >= 0 && bc < NUM_CLIPS) {
             if (bm == 1)      bake_drum_lane(inst, bt, bc);
             else if (bm == 2) bake_drum_clip(inst, bt, bc);
-            else              bake_clip(inst, bt, bc);
+            else              bake_clip(inst, bt, bc, clamp_i(bn, 1, 4));
         }
         return;
     }

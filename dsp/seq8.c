@@ -4040,13 +4040,15 @@ static int bake_stage_arp_out(play_fx_t *fx, uint32_t clip_ticks,
     return oc;
 }
 
-static void bake_clip(seq8_instance_t *inst, int t, int c) {
+static void bake_clip(seq8_instance_t *inst, int t, int c, int loops) {
     seq8_track_t *tr = &inst->tracks[t];
     clip_t *cl;
-    int ni;
-    if (tr->pad_mode == PAD_MODE_DRUM) return; /* per-lane bake not yet supported */
+    int ni, si, ri;
+    if (tr->pad_mode == PAD_MODE_DRUM) return;
     cl = &tr->clips[c];
     if (cl->note_count == 0) return;
+    if (loops < 1) loops = 1;
+    if (loops > 4) loops = 4;
 
     undo_begin_single(inst, t, c);
 
@@ -4064,55 +4066,70 @@ static void bake_clip(seq8_instance_t *inst, int t, int c) {
 
     static bake_note_t bake_a[BAKE_BUF];
     static bake_note_t bake_b[BAKE_BUF];
-    int a_count = 0;
+    static bake_note_t bake_out[BAKE_BUF * 4]; /* accumulates all loop passes */
+    int total_out = 0;
+    int out_cap   = BAKE_BUF * loops;
 
-    /* Stage 0: NOTEFX + HARMZ */
-    for (ni = 0; ni < cl->note_count && a_count < BAKE_BUF; ni++) {
-        note_t *nn = &cl->notes[ni];
-        if (nn->suppress_until_wrap) continue;
-        uint32_t gate = (uint32_t)nn->gate;
-        if (fx.gate_time != 100 && fx.gate_time > 0)
-            gate = gate * (uint32_t)fx.gate_time / 100u;
-        if (gate < 1) gate = 1; if (gate > 65535u) gate = 65535u;
-        int vel = (int)nn->vel + fx.velocity_offset;
-        if (vel < 1) vel = 1; if (vel > 127) vel = 127;
-        uint8_t gen[MAX_GEN_NOTES];
-        int gc = pfx_build_gen_notes(inst, scale_aware, &fx, (int)nn->pitch, gen);
-        int gi;
-        for (gi = 0; gi < gc && a_count < BAKE_BUF; gi++)
-            bake_a[a_count++] = (bake_note_t){ nn->tick, (uint16_t)gate,
-                                               gen[gi], (uint8_t)vel };
-    }
+    int loop;
+    for (loop = 0; loop < loops; loop++) {
+        uint32_t tick_offset = (uint32_t)loop * clip_ticks;
+        int a_count = 0;
 
-    /* Process BAKE_STAGES in order */
-    bake_note_t *in_buf = bake_a, *out_buf = bake_b;
-    int in_count = a_count;
-    int si;
-    for (si = 0; si < 2; si++) {
-        int out_count;
-        if (BAKE_STAGES[si] == BAKE_STAGE_MIDI_DLY)
-            out_count = bake_stage_midi_dly(inst, scale_aware, &fx, clip_ticks,
-                                            in_buf, in_count, out_buf, BAKE_BUF);
-        else
-            out_count = bake_stage_arp_out(&fx, clip_ticks,
-                                           in_buf, in_count, out_buf, BAKE_BUF);
-        bake_note_t *tmp = in_buf; in_buf = out_buf; out_buf = tmp;
-        in_count = out_count;
+        /* Stage 0: NOTEFX + HARMZ — reads cl->notes (unmodified until clip_init below) */
+        for (ni = 0; ni < cl->note_count && a_count < BAKE_BUF; ni++) {
+            note_t *nn = &cl->notes[ni];
+            if (nn->suppress_until_wrap) continue;
+            uint32_t gate = (uint32_t)nn->gate;
+            if (fx.gate_time != 100 && fx.gate_time > 0)
+                gate = gate * (uint32_t)fx.gate_time / 100u;
+            if (gate < 1) gate = 1; if (gate > 65535u) gate = 65535u;
+            int vel = (int)nn->vel + fx.velocity_offset;
+            if (vel < 1) vel = 1; if (vel > 127) vel = 127;
+            uint8_t gen[MAX_GEN_NOTES];
+            int gc = pfx_build_gen_notes(inst, scale_aware, &fx, (int)nn->pitch, gen);
+            int gi;
+            for (gi = 0; gi < gc && a_count < BAKE_BUF; gi++)
+                bake_a[a_count++] = (bake_note_t){ nn->tick, (uint16_t)gate,
+                                                   gen[gi], (uint8_t)vel };
+        }
+
+        /* Process BAKE_STAGES */
+        bake_note_t *in_buf = bake_a, *out_buf = bake_b;
+        int in_count = a_count;
+        for (si = 0; si < 2; si++) {
+            int out_count;
+            if (BAKE_STAGES[si] == BAKE_STAGE_MIDI_DLY)
+                out_count = bake_stage_midi_dly(inst, scale_aware, &fx, clip_ticks,
+                                                in_buf, in_count, out_buf, BAKE_BUF);
+            else
+                out_count = bake_stage_arp_out(&fx, clip_ticks,
+                                               in_buf, in_count, out_buf, BAKE_BUF);
+            bake_note_t *tmp = in_buf; in_buf = out_buf; out_buf = tmp;
+            in_count = out_count;
+        }
+
+        /* Accumulate this pass with tick_offset */
+        for (ri = 0; ri < in_count && total_out < out_cap; ri++) {
+            bake_out[total_out].tick  = in_buf[ri].tick + tick_offset;
+            bake_out[total_out].gate  = in_buf[ri].gate;
+            bake_out[total_out].pitch = in_buf[ri].pitch;
+            bake_out[total_out].vel   = in_buf[ri].vel;
+            total_out++;
+        }
     }
 
     /* Write results back; clip_init also clears pfx_params */
+    uint16_t new_length   = (uint16_t)clamp_i(length * loops, 1, 256);
+    uint32_t total_ticks  = (uint32_t)new_length * tps;
     clip_init(cl);
     cl->ticks_per_step = tps;
-    cl->length         = length;
-    int ri;
-    for (ri = 0; ri < in_count; ri++) {
-        bake_note_t *bn = &in_buf[ri];
-        if (bn->tick < clip_ticks)
+    cl->length         = new_length;
+    for (ri = 0; ri < total_out; ri++) {
+        bake_note_t *bn = &bake_out[ri];
+        if (bn->tick < total_ticks)
             clip_insert_note(cl, bn->tick, bn->gate, bn->pitch, bn->vel);
     }
-    /* Rebuild step arrays so step editing doesn't wipe baked notes via clip_migrate_to_notes */
     clip_build_steps_from_notes(cl);
-    /* Sync render surface so pfx_snapshot returns reset values immediately */
     if (c == tr->active_clip)
         pfx_sync_from_clip(tr);
     inst->state_dirty = 1;
