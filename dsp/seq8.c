@@ -245,6 +245,7 @@ typedef struct {
      * pfx_send with arp_emitting=1 (no further chain processing). */
     arp_engine_t arp;
     uint8_t      arp_emitting;
+    uint8_t      seq_arp_sync;   /* 0=free, 1=sync to global rate boundary */
     /* Runtime */
     uint64_t    sample_counter;
     double      cached_bpm;
@@ -308,6 +309,7 @@ typedef struct {
     int seq_arp_gate;          /* 1..200 percent */
     int seq_arp_steps_mode;    /* 0..2 (Off/Mute/Skip) */
     int seq_arp_retrigger;     /* 0/1; default 1 */
+    int seq_arp_sync;          /* 0=free, 1=sync to global rate boundary */
     uint8_t seq_arp_step_vel[8]; /* level 0..4 (0=off, 1..4=row 0..3); default 4 */
 } clip_pfx_params_t;
 
@@ -795,7 +797,7 @@ static void ensure_parent_dir(const char *path) {
 
 static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
     int t, c;
-    fprintf(fp, "{\"v\":22,\"playing\":%d", inst->playing);
+    fprintf(fp, "{\"v\":23,\"playing\":%d", inst->playing);
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
     for (t = 0; t < NUM_TRACKS; t++)
@@ -866,6 +868,7 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
                 if (p2->seq_arp_gate      != 50)            fprintf(fp, ",\"t%dc%d_argt\":%d", t, c, p2->seq_arp_gate);
                 if (p2->seq_arp_steps_mode != 0)            fprintf(fp, ",\"t%dc%d_arsm\":%d", t, c, p2->seq_arp_steps_mode);
                 if (p2->seq_arp_retrigger != 1)             fprintf(fp, ",\"t%dc%d_artg\":%d", t, c, p2->seq_arp_retrigger);
+                if (p2->seq_arp_sync     != 0)              fprintf(fp, ",\"t%dc%d_arsy\":%d", t, c, p2->seq_arp_sync);
                 {
                     int _i;
                     for (_i = 0; _i < 8; _i++) {
@@ -1035,10 +1038,10 @@ static void seq8_load_state(seq8_instance_t *inst) {
     if (!n) { free(buf); remove(inst->state_path); return; }
     buf[n] = '\0';
 
-    /* Version gate: only v=22 accepted (dev build; wipe on version mismatch). */
+    /* Version gate: only v=23 accepted (dev build; wipe on version mismatch). */
     {
         int sv = json_get_int(buf, "v", -1);
-        if (sv != 22) {
+        if (sv != 23) {
             free(buf);
             remove(inst->state_path);
             seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
@@ -1309,6 +1312,8 @@ static void seq8_load_state(seq8_instance_t *inst) {
             p2->seq_arp_steps_mode = clamp_i(json_get_int(buf, key, 0), 0, 2);
             snprintf(key, sizeof(key), "t%dc%d_artg", t, c);
             p2->seq_arp_retrigger = json_get_int(buf, key, 1) ? 1 : 0;
+            snprintf(key, sizeof(key), "t%dc%d_arsy", t, c);
+            p2->seq_arp_sync = json_get_int(buf, key, 0) ? 1 : 0;
             {
                 int _i;
                 for (_i = 0; _i < 8; _i++) {
@@ -2850,13 +2855,20 @@ static void arp_tick(seq8_instance_t *inst, seq8_track_t *tr) {
     if (a->held_count == 0) return;
 
     if (a->pending_first_note) {
-        /* Wait for next master-tick boundary aligned with rate from anchor. */
         uint16_t rate = ARP_RATE_TICKS[a->rate_idx];
         if (rate == 0) rate = 24;
-        uint32_t total = inst->arp_master_tick - a->master_anchor;
-        if ((total % rate) == 0) {
-            a->pending_first_note = 0;
-            arp_fire_step(inst, tr);
+        if (fx->seq_arp_sync) {
+            if ((inst->arp_master_tick % rate) == 0) {
+                a->master_anchor      = inst->arp_master_tick;
+                a->pending_first_note = 0;
+                arp_fire_step(inst, tr);
+            }
+        } else {
+            uint32_t total = inst->arp_master_tick - a->master_anchor;
+            if ((total % rate) == 0) {
+                a->pending_first_note = 0;
+                arp_fire_step(inst, tr);
+            }
         }
         return;
     }
@@ -3282,6 +3294,7 @@ static void clip_pfx_params_init(clip_pfx_params_t *p) {
     p->seq_arp_gate      = 50;
     p->seq_arp_steps_mode = 0;
     p->seq_arp_retrigger = 1;
+    p->seq_arp_sync      = 0;
     int i;
     for (i = 0; i < 8; i++) p->seq_arp_step_vel[i] = 4;
 }
@@ -3314,6 +3327,7 @@ static void pfx_apply_params(play_fx_t *fx, const clip_pfx_params_t *p) {
     fx->arp.gate_pct   = (uint16_t)clamp_i(p->seq_arp_gate,    1, 200);
     fx->arp.steps_mode = (uint8_t)clamp_i(p->seq_arp_steps_mode, 0, 2);
     fx->arp.retrigger  = (uint8_t)(p->seq_arp_retrigger != 0);
+    fx->seq_arp_sync   = (uint8_t)(p->seq_arp_sync != 0);
     int i;
     for (i = 0; i < 8; i++) fx->arp.step_vel[i] = p->seq_arp_step_vel[i];
 }
@@ -4231,11 +4245,11 @@ static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
         return snprintf(out, out_len, "%d", (int)fx->looper_on);
 
     /* Batch read: per-clip pfx params. Fields 0-16: NOTE FX K0-K4, HARMZ K0-K3,
-     * MIDI DLY K0-K7 (legacy 17). Fields 17-22: SEQ ARP K1-K6 (style/rate/
-     * octaves/gate/steps_mode/retrigger). Fields 23-30: SEQ ARP step_vel[0..7]. */
+     * MIDI DLY K0-K7 (legacy 17). Fields 17-23: SEQ ARP K1-K7 (style/rate/
+     * octaves/gate/steps_mode/retrigger/sync). Fields 24-31: SEQ ARP step_vel[0..7]. */
     if (!strcmp(key, "pfx_snapshot"))
         return snprintf(out, out_len,
-            "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d "
+            "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d "
             "%d %d %d %d %d %d %d %d",
             fx->octave_shift, fx->note_offset, fx->gate_time, fx->velocity_offset, fx->quantize,
             fx->unison, fx->octaver, fx->harmonize_1, fx->harmonize_2,
@@ -4243,7 +4257,7 @@ static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
             fx->fb_velocity, fx->fb_note, fx->fb_gate_time, fx->fb_clock, fx->fb_note_random,
             (int)fx->arp.style, (int)fx->arp.rate_idx,
             (int)fx->arp.octaves, (int)fx->arp.gate_pct,
-            (int)fx->arp.steps_mode, (int)fx->arp.retrigger,
+            (int)fx->arp.steps_mode, (int)fx->arp.retrigger, (int)fx->seq_arp_sync,
             (int)fx->arp.step_vel[0], (int)fx->arp.step_vel[1], (int)fx->arp.step_vel[2],
             (int)fx->arp.step_vel[3], (int)fx->arp.step_vel[4], (int)fx->arp.step_vel[5],
             (int)fx->arp.step_vel[6], (int)fx->arp.step_vel[7]);

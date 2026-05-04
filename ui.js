@@ -1502,8 +1502,8 @@ function readBankParams(t, bankIdx) {
         const snap = host_module_get_param('t' + t + '_c' + ac + '_pfx_snapshot');
         if (snap) {
             const v = snap.split(' ');
-            if (v.length >= 23) {
-                for (let k = 0; k < 6; k++) S.bankParams[t][4][k] = parseInt(v[17 + k], 10) | 0;
+            if (v.length >= 24) {
+                for (let k = 0; k < 7; k++) S.bankParams[t][4][k] = parseInt(v[17 + k], 10) | 0;
             }
         }
         return;

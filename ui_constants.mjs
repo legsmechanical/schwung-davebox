@@ -283,7 +283,7 @@ export const BANKS = [
         p('Gate', 'Arp Gate',     'seq_arp_gate',       'track', 1,    200, 50, fmtPct,     16),
         p('Stps', 'Steps Mode',   'seq_arp_steps_mode', 'track', 0,    2,   0, fmtArpSteps, 16),
         p('Rtrg', 'Retrigger',    'seq_arp_retrigger',  'track', 0,    1,   1, fmtBool,     16),
-        _X,
+        p('Sync', 'Sync to Clock', 'seq_arp_sync',      'track', 0,    1,   0, fmtBool,     16),
         _X,
     ]},
     /* 5 — ARP IN (pad 97) */
