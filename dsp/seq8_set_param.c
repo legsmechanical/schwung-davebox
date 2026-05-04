@@ -52,6 +52,8 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
         { PFX_SET_BOTH(fb_note, fb_note, -24, 24); return; }
     if (!strcmp(key, "delay_pitch_random"))
         { PFX_SET_BOTH(fb_note_random, fb_note_random, 0, 24); return; }
+    if (!strcmp(key, "delay_pitch_random_mode"))
+        { PFX_SET_BOTH(fb_note_random_mode, fb_note_random_mode, 0, 2); return; }
     if (!strcmp(key, "delay_gate_fb"))
         { PFX_SET_BOTH(fb_gate_time, fb_gate_time, 0, 10); return; }
     if (!strcmp(key, "delay_clock_fb"))

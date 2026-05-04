@@ -236,12 +236,13 @@ typedef struct {
     int repeat_times;       /* 0..16 */
     int fb_velocity;        /* -127..+127 */
     int fb_note;            /* -24..+24 */
-    int fb_note_random;     /* 0..24, random pitch range in semitones */
-    int fb_gate_time;       /* 0..10: 0=Off, 1..10=fixed gate (1/64..1bar) */
-    int fb_clock;           /* -100..+100 */
-    int note_random;        /* 0..24, random semitone offset applied after oct+offset */
-    int note_random_mode;   /* 0=Uniform, 1=Gaussian, 2=Walk */
-    int note_random_walk;   /* runtime walk accumulator (reset on clip switch) */
+    int fb_note_random;      /* 0..24, random pitch range in semitones */
+    int fb_note_random_mode; /* 0=Uniform, 1=Gaussian, 2=Walk */
+    int fb_gate_time;        /* 0..10: 0=Off, 1..10=fixed gate (1/64..1bar) */
+    int fb_clock;            /* -100..+100 */
+    int note_random;         /* 0..24, random semitone offset applied after oct+offset */
+    int note_random_mode;    /* 0=Uniform, 1=Gaussian, 2=Walk */
+    int note_random_walk;    /* runtime walk accumulator (reset on clip switch) */
     /* SEQ ARP — last stage of the chain. NOTE FX → HARMZ → MIDI DLY emit
      * via pfx_send; when arp.on && !arp_emitting, pfx_send routes note-on/off
      * to the arp's held buffer instead of out. arp_fire_step emits raw via
@@ -302,11 +303,12 @@ typedef struct {
     int repeat_times;       /* 0..16 */
     int fb_velocity;        /* -127..+127 */
     int fb_note;            /* -24..+24 */
-    int fb_note_random;     /* 0..24, random pitch range in semitones */
-    int fb_gate_time;       /* 0..10: 0=Off, 1..10=fixed gate (1/64..1bar) */
-    int fb_clock;           /* -100..+100 */
-    int note_random;        /* 0..24, random semitone offset applied after oct+offset */
-    int note_random_mode;   /* 0=Uniform, 1=Gaussian, 2=Walk */
+    int fb_note_random;      /* 0..24, random pitch range in semitones */
+    int fb_note_random_mode; /* 0=Uniform, 1=Gaussian, 2=Walk */
+    int fb_gate_time;        /* 0..10: 0=Off, 1..10=fixed gate (1/64..1bar) */
+    int fb_clock;            /* -100..+100 */
+    int note_random;         /* 0..24, random semitone offset applied after oct+offset */
+    int note_random_mode;    /* 0=Uniform, 1=Gaussian, 2=Walk */
     /* SEQ ARP per-clip params */
     int seq_arp_style;         /* 0=Off (bypass), 1..9=Up/Dn/U-D/D-U/Cnv/Div/Ord/Rnd/RnO */
     int seq_arp_rate;          /* 0..9 (index into ARP_RATE_TICKS) */
@@ -865,6 +867,7 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
                 if (p2->fb_velocity     != 0)   fprintf(fp, ",\"t%dc%d_dvf\":%d",  t, c, p2->fb_velocity);
                 if (p2->fb_note         != 0)   fprintf(fp, ",\"t%dc%d_dpf\":%d",  t, c, p2->fb_note);
                 if (p2->fb_note_random  != 0)   fprintf(fp, ",\"t%dc%d_dpr\":%d",  t, c, p2->fb_note_random);
+                if (p2->fb_note_random_mode != 0) fprintf(fp, ",\"t%dc%d_dpnm\":%d", t, c, p2->fb_note_random_mode);
                 if (p2->fb_gate_time    != 0)    fprintf(fp, ",\"t%dc%d_dgf\":%d",  t, c, p2->fb_gate_time);
                 if (p2->fb_clock        != 0)   fprintf(fp, ",\"t%dc%d_dcf\":%d",  t, c, p2->fb_clock);
                 if (p2->note_random     != 0)   fprintf(fp, ",\"t%dc%d_nfrnd\":%d", t, c, p2->note_random);
@@ -1303,6 +1306,8 @@ static void seq8_load_state(seq8_instance_t *inst) {
             p2->fb_note         = clamp_i(json_get_int(buf, key,   0),   -24,  24);
             snprintf(key, sizeof(key), "t%dc%d_dpr",  t, c);
             p2->fb_note_random  = clamp_i(json_get_int(buf, key, 0), 0, 24);
+            snprintf(key, sizeof(key), "t%dc%d_dpnm", t, c);
+            p2->fb_note_random_mode = clamp_i(json_get_int(buf, key, 0), 0, 2);
             snprintf(key, sizeof(key), "t%dc%d_dgf",  t, c);
             p2->fb_gate_time    = clamp_i(json_get_int(buf, key,   0),     0,  10);
             snprintf(key, sizeof(key), "t%dc%d_dcf",  t, c);
@@ -2301,6 +2306,7 @@ static void pfx_sched_delay_ons(seq8_instance_t *inst, int scale_aware,
     int    cumul_pitch = 0;
     int    cumul_deg   = 0;
     int    rep_vel   = (int)an->orig_velocity * fx->delay_level / 127;
+    int    fb_walk   = 0;
 
     int i;
     for (i = 0; i < reps; i++) {
@@ -2313,12 +2319,30 @@ static void pfx_sched_delay_ons(seq8_instance_t *inst, int scale_aware,
         {
             if (fx->fb_note_random > 0) {
                 int rng = fx->fb_note_random;
+                int lim = rng;
                 if (scale_aware) {
-                    int lim = (int)SCALE_SIZES[inst->pad_scale < 14 ? inst->pad_scale : 0];
-                    if (rng < lim) lim = rng;
-                    cumul_deg = pfx_rand(fx, -lim, lim);
-                } else {
-                    cumul_pitch = pfx_rand(fx, -rng, rng);
+                    int sc = (int)SCALE_SIZES[inst->pad_scale < 14 ? inst->pad_scale : 0];
+                    if (lim > sc) lim = sc;
+                }
+                switch (fx->fb_note_random_mode) {
+                default:
+                case 0: /* Uniform */
+                    if (scale_aware) cumul_deg   = pfx_rand(fx, -lim, lim);
+                    else             cumul_pitch = pfx_rand(fx, -rng, rng);
+                    break;
+                case 1: /* Gaussian — average of 3 uniform draws */
+                    {
+                        int s = pfx_rand(fx, -lim, lim) + pfx_rand(fx, -lim, lim) + pfx_rand(fx, -lim, lim);
+                        int g = (s < 0 ? s - 1 : s + 1) / 3;
+                        if (scale_aware) cumul_deg   = g;
+                        else             cumul_pitch = g;
+                    }
+                    break;
+                case 2: /* Walk — drift ±2 per repeat, clamped to ±lim */
+                    fb_walk = clamp_i(fb_walk + pfx_rand(fx, -2, 2), -lim, lim);
+                    if (scale_aware) cumul_deg   = fb_walk;
+                    else             cumul_pitch = fb_walk;
+                    break;
                 }
             } else {
                 if (scale_aware) cumul_deg   += fx->fb_note;
@@ -2443,7 +2467,8 @@ static void pfx_reset(play_fx_t *fx) {
     fx->repeat_times    = 0;
     fx->fb_velocity     = 0;
     fx->fb_note         = 0;
-    fx->fb_note_random  = 0;
+    fx->fb_note_random      = 0;
+    fx->fb_note_random_mode = 0;
     fx->fb_gate_time    = 0;
     fx->fb_clock        = 0;
     fx->quantize        = 0;
@@ -3328,7 +3353,8 @@ static void clip_pfx_params_init(clip_pfx_params_t *p) {
     p->repeat_times    = 0;
     p->fb_velocity     = 0;
     p->fb_note         = 0;
-    p->fb_note_random  = 0;
+    p->fb_note_random      = 0;
+    p->fb_note_random_mode = 0;
     p->fb_gate_time    = 0;
     p->fb_clock        = 0;
     p->note_random      = 0;
@@ -3362,7 +3388,8 @@ static void pfx_apply_params(play_fx_t *fx, const clip_pfx_params_t *p) {
     fx->repeat_times    = p->repeat_times;
     fx->fb_velocity     = p->fb_velocity;
     fx->fb_note         = p->fb_note;
-    fx->fb_note_random  = p->fb_note_random;
+    fx->fb_note_random      = p->fb_note_random;
+    fx->fb_note_random_mode = p->fb_note_random_mode;
     fx->fb_gate_time    = p->fb_gate_time;
     fx->fb_clock        = p->fb_clock;
     fx->note_random      = p->note_random;
@@ -3871,7 +3898,7 @@ static int bake_stage_midi_dly(seq8_instance_t *inst, int scale_aware,
     if (dclk_master <= 0) return oc;
     for (ni = 0; ni < in_count && oc < out_max; ni++) {
         int rep_vel     = (int)in[ni].vel * fx->delay_level / 127;
-        int cumul_pitch = 0, cumul_deg = 0;
+        int cumul_pitch = 0, cumul_deg = 0, fb_walk = 0;
         double cur_delay = (double)dclk_master, cumul = 0.0;
         int rep;
         for (rep = 0; rep < fx->repeat_times && oc < out_max; rep++) {
@@ -3880,12 +3907,30 @@ static int bake_stage_midi_dly(seq8_instance_t *inst, int scale_aware,
             if (echo_tick >= clip_ticks) break;
             if (fx->fb_note_random > 0) {
                 int rng = fx->fb_note_random;
+                int lim = rng;
                 if (scale_aware) {
-                    int lim = (int)SCALE_SIZES[inst->pad_scale < 14 ? inst->pad_scale : 0];
-                    if (rng < lim) lim = rng;
-                    cumul_deg = pfx_rand(fx, -lim, lim);
-                } else {
-                    cumul_pitch = pfx_rand(fx, -rng, rng);
+                    int sc = (int)SCALE_SIZES[inst->pad_scale < 14 ? inst->pad_scale : 0];
+                    if (lim > sc) lim = sc;
+                }
+                switch (fx->fb_note_random_mode) {
+                default:
+                case 0: /* Uniform */
+                    if (scale_aware) cumul_deg   = pfx_rand(fx, -lim, lim);
+                    else             cumul_pitch = pfx_rand(fx, -rng, rng);
+                    break;
+                case 1: /* Gaussian */
+                    {
+                        int s = pfx_rand(fx, -lim, lim) + pfx_rand(fx, -lim, lim) + pfx_rand(fx, -lim, lim);
+                        int g = (s < 0 ? s - 1 : s + 1) / 3;
+                        if (scale_aware) cumul_deg   = g;
+                        else             cumul_pitch = g;
+                    }
+                    break;
+                case 2: /* Walk */
+                    fb_walk = clamp_i(fb_walk + pfx_rand(fx, -2, 2), -lim, lim);
+                    if (scale_aware) cumul_deg   = fb_walk;
+                    else             cumul_pitch = fb_walk;
+                    break;
                 }
             } else {
                 if (scale_aware) cumul_deg   += fx->fb_note;
@@ -4298,7 +4343,7 @@ static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
     if (!strcmp(key, "pfx_snapshot"))
         return snprintf(out, out_len,
             "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d "
-            "%d %d %d %d %d %d %d %d %d %d",
+            "%d %d %d %d %d %d %d %d %d %d %d",
             fx->octave_shift, fx->note_offset, fx->gate_time, fx->velocity_offset, fx->quantize,
             fx->unison, fx->octaver, fx->harmonize_1, fx->harmonize_2,
             fx->delay_time_idx, fx->delay_level, fx->repeat_times,
@@ -4309,7 +4354,7 @@ static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
             (int)fx->arp.step_vel[0], (int)fx->arp.step_vel[1], (int)fx->arp.step_vel[2],
             (int)fx->arp.step_vel[3], (int)fx->arp.step_vel[4], (int)fx->arp.step_vel[5],
             (int)fx->arp.step_vel[6], (int)fx->arp.step_vel[7],
-            fx->note_random, fx->note_random_mode);
+            fx->note_random, fx->note_random_mode, fx->fb_note_random_mode);
 
     if (!strcmp(key, "noteFX_octave"))    return snprintf(out, out_len, "%d", fx->octave_shift);
     if (!strcmp(key, "noteFX_offset"))    return snprintf(out, out_len, "%d", fx->note_offset);
@@ -4332,7 +4377,8 @@ static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
     if (!strcmp(key, "delay_repeats"))      return snprintf(out, out_len, "%d", fx->repeat_times);
     if (!strcmp(key, "delay_vel_fb"))       return snprintf(out, out_len, "%d", fx->fb_velocity);
     if (!strcmp(key, "delay_pitch_fb"))     return snprintf(out, out_len, "%d", fx->fb_note);
-    if (!strcmp(key, "delay_pitch_random")) return snprintf(out, out_len, "%d", fx->fb_note_random);
+    if (!strcmp(key, "delay_pitch_random"))      return snprintf(out, out_len, "%d", fx->fb_note_random);
+    if (!strcmp(key, "delay_pitch_random_mode")) return snprintf(out, out_len, "%d", fx->fb_note_random_mode);
     if (!strcmp(key, "delay_gate_fb"))      return snprintf(out, out_len, "%d", fx->fb_gate_time);
     if (!strcmp(key, "delay_clock_fb"))     return snprintf(out, out_len, "%d", fx->fb_clock);
 
