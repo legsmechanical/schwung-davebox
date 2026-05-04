@@ -98,6 +98,7 @@ export const S = {
     tarpStepVel: Array.from({length: 8}, () => new Array(8).fill(4)),
     noteFXRandomMode: new Array(8).fill(2),
     midiDlyRandomMode: new Array(8).fill(2),
+    rndDialogMode: -1,      /* pending algorithm while Rnd knob held; -1 = inactive */
     drumClipNonEmpty: Array.from({length: 8}, () => new Array(16).fill(false)),
     trackActiveClip: new Array(8).fill(0),
     lastDspActiveClip: new Array(8).fill(0),

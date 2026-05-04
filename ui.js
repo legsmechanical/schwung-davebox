@@ -2299,7 +2299,8 @@ function drawUI() {
         /* Rnd algorithm selector: shown while Rnd knob is touched/recently turned */
         const t      = S.activeTrack;
         const isMidi = bank === 3;
-        const mode   = isMidi ? (S.midiDlyRandomMode[t] || 0) : (S.noteFXRandomMode[t] || 0);
+        const committed = isMidi ? (S.midiDlyRandomMode[t] || 0) : (S.noteFXRandomMode[t] || 0);
+        const mode   = S.rndDialogMode >= 0 ? S.rndDialogMode : committed;
         const ALG_NAMES = ['UNIFORM', 'GAUSSIAN', 'WALK'];
         const header = isMidi ? '[ DLY PITCH ]' : '[ NOTE FX   ]';
         const hw = header.length * 6;
@@ -2977,6 +2978,14 @@ globalThis.tick = function () {
         }
         if (S.knobTouched >= 0 && S.knobTurnedTick[S.knobTouched] >= 0 &&
                 (S.tickCount - S.knobTurnedTick[S.knobTouched]) >= KNOB_TURN_HIGHLIGHT_TICKS) {
+            if (S.rndDialogMode >= 0) {
+                const _rt = S.activeTrack, _rb = S.activeBank;
+                if (_rb === 3) { S.midiDlyRandomMode[_rt] = S.rndDialogMode;
+                    if (typeof host_module_set_param === 'function') host_module_set_param('delay_pitch_random_mode', String(S.rndDialogMode)); }
+                else           { S.noteFXRandomMode[_rt]  = S.rndDialogMode;
+                    if (typeof host_module_set_param === 'function') host_module_set_param('noteFX_random_mode',        String(S.rndDialogMode)); }
+                S.rndDialogMode = -1;
+            }
             S.knobTouched = -1;
             S.screenDirty = true;
         }
@@ -3179,32 +3188,6 @@ function _onCC_jog(d1, d2) {
         S.confirmBake = false;
         S.screenDirty = true;
         return;
-    }
-
-    /* Rnd algorithm dialog: jog turn scrolls through algorithms */
-    if (d1 === 14 && !S.sessionView && !S.globalMenuOpen && !S.confirmBake) {
-        const _rb = S.activeBank;
-        const _isDrum = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
-        const _rndDlg = !_isDrum && ((_rb === 1 && S.knobTouched === 2) ||
-                                     (_rb === 3 && S.knobTouched === 7));
-        if (_rndDlg) {
-            const dir  = (d2 >= 1 && d2 <= 63) ? 1 : -1;
-            const t    = S.activeTrack;
-            const isMidi = _rb === 3;
-            const cur  = isMidi ? (S.midiDlyRandomMode[t] || 0) : (S.noteFXRandomMode[t] || 0);
-            const next = ((cur + dir) % 3 + 3) % 3;
-            if (isMidi) {
-                S.midiDlyRandomMode[t] = next;
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('delay_pitch_random_mode', String(next));
-            } else {
-                S.noteFXRandomMode[t] = next;
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('noteFX_random_mode', String(next));
-            }
-            S.screenDirty = true;
-            return;
-        }
     }
 
     /* CC 3 = jog wheel physical click */
@@ -4448,6 +4431,22 @@ function _onCC_knobs(d1, d2) {
                         S.screenDirty = true;
                     }
                 }
+            }
+            return;
+        }
+        /* Rnd knob in NOTE FX (K3) or MIDI DLY (K8) on melodic: scroll algorithm dialog */
+        if (S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM &&
+                ((bank === 1 && knobIdx === 2) || (bank === 3 && knobIdx === 7))) {
+            const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
+            if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
+            S.knobAccum[knobIdx]++;
+            if (S.knobAccum[knobIdx] >= 16) {
+                S.knobAccum[knobIdx] = 0;
+                const t = S.activeTrack;
+                const cur = S.rndDialogMode >= 0 ? S.rndDialogMode
+                    : (bank === 3 ? (S.midiDlyRandomMode[t] || 0) : (S.noteFXRandomMode[t] || 0));
+                S.rndDialogMode = ((cur + dir) % 3 + 3) % 3;
+                S.screenDirty = true;
             }
             return;
         }
@@ -5810,6 +5809,15 @@ globalThis.onMidiMessageInternal = function (data) {
                         host_module_set_param('t' + S.activeTrack + '_cc_touch', d1 + ' 0 0');
                     /* SEQ ARP K5 / TRACK ARP K6 release: refresh pads (vel-slider editor → normal pads). */
                     if ((S.activeBank === 4 && d1 === 4) || (S.activeBank === 5 && d1 === 5)) forceRedraw();
+                    /* Rnd dialog: commit selected algorithm on physical release */
+                    if (S.rndDialogMode >= 0) {
+                        const _rt = S.activeTrack, _rb = S.activeBank;
+                        if (_rb === 3) { S.midiDlyRandomMode[_rt] = S.rndDialogMode;
+                            if (typeof host_module_set_param === 'function') host_module_set_param('delay_pitch_random_mode', String(S.rndDialogMode)); }
+                        else           { S.noteFXRandomMode[_rt]  = S.rndDialogMode;
+                            if (typeof host_module_set_param === 'function') host_module_set_param('noteFX_random_mode',        String(S.rndDialogMode)); }
+                        S.rndDialogMode = -1;
+                    }
                     S.knobTouched = -1;
                     S.knobLocked[d1] = false;
                     S.knobAccum[d1]  = 0;
@@ -5838,6 +5846,15 @@ globalThis.onMidiMessageInternal = function (data) {
                     }
                 }
                 if ((S.activeBank === 4 && d1 === 4) || (S.activeBank === 5 && d1 === 5)) forceRedraw();
+                /* Rnd dialog: commit selected algorithm on physical release (0x80 path) */
+                if (S.rndDialogMode >= 0) {
+                    const _rt = S.activeTrack, _rb = S.activeBank;
+                    if (_rb === 3) { S.midiDlyRandomMode[_rt] = S.rndDialogMode;
+                        if (typeof host_module_set_param === 'function') host_module_set_param('delay_pitch_random_mode', String(S.rndDialogMode)); }
+                    else           { S.noteFXRandomMode[_rt]  = S.rndDialogMode;
+                        if (typeof host_module_set_param === 'function') host_module_set_param('noteFX_random_mode',        String(S.rndDialogMode)); }
+                    S.rndDialogMode = -1;
+                }
                 S.knobTouched = -1;
                 S.knobLocked[d1] = false;
                 S.knobAccum[d1]  = 0;
