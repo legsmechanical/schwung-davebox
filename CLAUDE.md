@@ -131,9 +131,10 @@ Local patches applied to `~/schwung/` that must be re-applied after any Schwung 
 
 | PR | Commit (on v0.9.10 branch) | File | Description |
 |----|----------------------------|------|-------------|
+| [#71](https://github.com/charlesvestal/schwung/pull/71) | `e70d7340` | `src/host/shadow_midi.c` | Defer cable-2 inject when cable-0 or cable-2 hardware is active — prevents SIGABRT in ROUTE_MOVE external MIDI monitoring |
 | [#72](https://github.com/charlesvestal/schwung/pull/72) | `5b74e6cc` + `4a95b4d6` | `src/host/shadow_midi.c` | Hold inject drain for 2 frames (~6ms) after overtake exit — prevents SIGABRT when suspending (Back) with a ROUTE_MOVE drum pattern playing |
 
-PR #71 (`DEFER_FRAMES` cable-2 gate) was merged into upstream v0.9.10 — no longer needs re-applying. PR #72 adds `exit_hold` block in `shadow_drain_midi_inject()` on the 1→0 overtake_mode transition.
+Both patches are in `src/host/shadow_midi.c` in `shadow_drain_midi_inject()`. PR #71 extends the existing `DEFER_FRAMES` cable-0 gate to also cover cable-2; PR #72 adds an `exit_hold` block on the overtake_mode 1→0 transition.
 
 ## Known limitations
 
@@ -142,7 +143,7 @@ PR #71 (`DEFER_FRAMES` cable-2 gate) was merged into upstream v0.9.10 — no lon
 - All 8 tracks route to the same Schwung chain.
 - State file v=23 (only v=23 accepted) — wrong/missing version → deleted, clean start.
 - `g_host->get_clock_status` is NULL; `get_bpm` doesn't track BPM changes while stopped.
-- **ROUTE_MOVE + external MIDI monitoring**: rechannelized monitoring implemented — `applyExtMidiRemap()` rewrites incoming cable-2 channel to `trackChannel[t]` via `host_ext_midi_remap_*`. The shim crash (cable-2 inject race) was fixed in Schwung PR #71 — now merged into v0.9.10 upstream.
+- **ROUTE_MOVE + external MIDI monitoring**: rechannelized monitoring implemented — `applyExtMidiRemap()` rewrites incoming cable-2 channel to `trackChannel[t]` via `host_ext_midi_remap_*`. The shim crash (cable-2 inject race) is fixed in Schwung PR #71 (local commit `e70d7340`).
 - **ROUTE_MOVE suspend crash**: suspending (Back) while a ROUTE_MOVE drum pattern is playing caused SIGABRT in the shim — DSP note-offs raced Move firmware during overtake exit. Fixed in Schwung PR #72 (local commit `4a95b4d6`, `shadow_drain_midi_inject` exit_hold).
 - **TRACK ARP + ROUTE_SCHWUNG**: live notes injected via `shadow_send_midi_to_dsp` bypass `live_note_on`/`live_note_off` — TRACK ARP intercepts pad/external-MIDI notes on ROUTE_SCHWUNG tracks only via `live_notes` set_param (not the schwung chain path).
 - `pfx_send` from set_param context does NOT release Move synth voices.
