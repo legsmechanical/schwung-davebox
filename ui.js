@@ -979,11 +979,11 @@ function drawBakeConfirm() {
         drawMenuHeader('BAKE FX?');
         print(4, 13, 'Rnd pitch active.', 1);
         print(4, 22, 'Capture N loops:', 1);
-        const mW = 36, mH = 11;
-        _btn(4,  33, mW, mH, S.confirmBakeSel === 0, '1x', 12);
-        _btn(46, 33, mW, mH, S.confirmBakeSel === 1, '2x', 12);
-        _btn(88, 33, mW, mH, S.confirmBakeSel === 2, '4x', 12);
-        _btn(14, 47, 100, mH, S.confirmBakeSel === 3, 'CANCEL', 31);
+        const mH = 11;
+        _btn(14, 33, 100, mH, S.confirmBakeSel === 0, 'CANCEL', 31);
+        _btn(4,  47, 36,  mH, S.confirmBakeSel === 1, '1x', 12);
+        _btn(46, 47, 36,  mH, S.confirmBakeSel === 2, '2x', 12);
+        _btn(88, 47, 36,  mH, S.confirmBakeSel === 3, '4x', 12);
     } else if (!S.confirmBakeIsDrum) {
         drawMenuHeader('BAKE FX?');
         print(4, 16, 'Apply effects chain', 1);
@@ -3163,8 +3163,8 @@ function _onCC_jog(d1, d2) {
     /* Bake confirm: jog click confirms/cancels when dialog is open */
     if (d1 === 3 && d2 === 127 && S.confirmBake) {
         if (S.confirmBakeIsMultiLoop) {
-            if (S.confirmBakeSel < 3) {
-                const _loops = [1, 2, 4][S.confirmBakeSel];
+            if (S.confirmBakeSel > 0) {
+                const _loops = [1, 2, 4][S.confirmBakeSel - 1];
                 host_module_set_param('bake', S.confirmBakeTrack + ' ' + S.confirmBakeClip + ' 0 ' + _loops);
                 S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
                 showActionPopup('BAKED', _loops + 'x');
