@@ -269,6 +269,22 @@ export function updateSessionLEDs() {
 export function updateTrackLEDs() {
     if (!S.ledInitComplete) return;
 
+    /* Step icon LEDs (CCs 16-31): light shortcut hints while Shift held in Track View */
+    {
+        const showIcons = !S.sessionView && S.shiftHeld;
+        const isDrum    = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
+        for (let i = 0; i < 16; i++) {
+            let on = false;
+            if (showIcons) {
+                if (i === 1)                    on = true;  // step 2
+                else if (i >= 4 && i <= 9)     on = true;  // steps 5-10
+                else if (i === 10 && !isDrum)  on = true;  // step 11 (melodic only)
+                else if (i === 14 || i === 15) on = true;  // steps 15-16
+            }
+            cachedSetButtonLED(16 + i, on ? White : LED_OFF);
+        }
+    }
+
     if (S.tapTempoOpen) {
         for (let i = 0; i < 32; i++) {
             const note  = TRACK_PAD_BASE + i;

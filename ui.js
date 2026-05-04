@@ -223,7 +223,7 @@ function buildGlobalMenuItems() {
             },
             options: [0, 1, 2, 3],
             format: function(v) {
-                return ['Off', 'Count', 'On', 'Rec+Ply'][v | 0];
+                return ['Off', 'Cnt-In', 'Play', 'Always'][v | 0];
             }
         }),
         createValue('Metro Vol', {
@@ -916,6 +916,39 @@ function registerTapTempo(padNote) {
 }
 
 
+function doDoubleFill() {
+    const _t = S.activeTrack;
+    if (S.trackPadMode[_t] === PAD_MODE_DRUM) {
+        const _l   = S.activeDrumLane[_t];
+        const _len = S.drumLaneLength[_t];
+        if (_len * 2 > 256) {
+            showActionPopup('CLIP FULL');
+        } else {
+            host_module_set_param('t' + _t + '_l' + _l + '_loop_double_fill', '1');
+            S.drumLaneLength[_t] = _len * 2;
+            S.pendingDrumResync      = 2;
+            S.pendingDrumResyncTrack = _t;
+            forceRedraw();
+        }
+    } else {
+        const _ac  = effectiveClip(_t);
+        const _len = S.clipLength[_t][_ac];
+        if (_len * 2 > 256) {
+            showActionPopup('CLIP FULL');
+        } else {
+            S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
+            if (typeof host_module_set_param === 'function')
+                host_module_set_param('t' + _t + '_loop_double_fill', '1');
+            S.clipLength[_t][_ac] = _len * 2;
+            S.pendingStepsReread      = 2;
+            S.pendingStepsRereadTrack = _t;
+            S.pendingStepsRereadClip  = _ac;
+            refreshPerClipBankParams(_t);
+            forceRedraw();
+        }
+    }
+}
+
 function openGlobalMenu() {
     S.globalMenuItems       = buildGlobalMenuItems();
     S.globalMenuState       = createMenuState();
@@ -973,9 +1006,17 @@ function clipHasContent(t, c) {
 
 
 function computePadNoteMap() {
+    const root = S.padOctave[S.activeTrack] * 12 + S.padKey;
+    if (S.padLayoutChromatic) {
+        for (let i = 0; i < 32; i++) {
+            const col = i % 8;
+            const row = Math.floor(i / 8);
+            S.padNoteMap[i] = Math.max(0, Math.min(127, root + col + row * 8));
+        }
+        return;
+    }
     const intervals = SCALE_INTERVALS[S.padScale] || SCALE_INTERVALS[0];
     const n = intervals.length;
-    const root = S.padOctave[S.activeTrack] * 12 + S.padKey;
     for (let i = 0; i < 32; i++) {
         const col = i % 8;
         const row = Math.floor(i / 8);
@@ -3342,7 +3383,8 @@ function _onCC_jog(d1, d2) {
 function _onCC_buttons(d1, d2) {
     if (d1 === MoveShift) {
         S.shiftHeld = d2 === 127;
-        if (!S.shiftHeld && S.jogTouched) { S.jogTouched = false; forceRedraw(); }
+        if (!S.shiftHeld && S.jogTouched) S.jogTouched = false;
+        if (!S.sessionView) forceRedraw();
     }
 
     if (d1 === MoveDelete) {
@@ -3500,37 +3542,7 @@ function _onCC_buttons(d1, d2) {
     /* Loop button (CC 58, Track View): hold + step buttons sets clip length */
     if (d1 === MoveLoop && !S.sessionView) {
         if (d2 === 127 && S.shiftHeld) {
-            /* Shift+Loop: double-and-fill active clip or drum lane */
-            const _t = S.activeTrack;
-            if (S.trackPadMode[_t] === PAD_MODE_DRUM) {
-                const _l   = S.activeDrumLane[_t];
-                const _len = S.drumLaneLength[_t];
-                if (_len * 2 > 256) {
-                    showActionPopup('CLIP FULL');
-                } else {
-                    host_module_set_param('t' + _t + '_l' + _l + '_loop_double_fill', '1');
-                    S.drumLaneLength[_t] = _len * 2;
-                    S.pendingDrumResync      = 2;
-                    S.pendingDrumResyncTrack = _t;
-                    forceRedraw();
-                }
-            } else {
-                const _ac  = effectiveClip(_t);
-                const _len = S.clipLength[_t][_ac];
-                if (_len * 2 > 256) {
-                    showActionPopup('CLIP FULL');
-                } else {
-                    S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + _t + '_loop_double_fill', '1');
-                    S.clipLength[_t][_ac] = _len * 2;
-                    S.pendingStepsReread      = 2;
-                    S.pendingStepsRereadTrack = _t;
-                    S.pendingStepsRereadClip  = _ac;
-                    refreshPerClipBankParams(_t);
-                    forceRedraw();
-                }
-            }
+            doDoubleFill();
             return;
         }
         S.loopHeld = d2 === 127;
@@ -4502,6 +4514,8 @@ function _onCC_knobs(d1, d2) {
                         } else {
                             S.bankParams[S.activeTrack][bank][knobIdx] = nv;
                             applyBankParam(S.activeTrack, bank, knobIdx, nv);
+                            if (bank === 5 && knobIdx === 0 && nv !== 0)
+                                S.lastTarpStyle[S.activeTrack] = nv;
                         }
                     }
                 }
@@ -5246,6 +5260,84 @@ function _onStepButtons(d1, d2) {
         clearStep(S.activeTrack, ac, absIdx);
         forceRedraw();
         }
+    } else if (S.shiftHeld) {
+        /* Shift+step shortcuts (Track View) */
+        const t      = S.activeTrack;
+        const isDrum = S.trackPadMode[t] === PAD_MODE_DRUM;
+        if (idx === 1) {
+            /* Step 2: open global menu at BPM */
+            openGlobalMenu();
+            S.globalMenuState.selectedIndex = 6;
+        } else if (idx === 4) {
+            /* Step 5: tap tempo */
+            openTapTempo();
+        } else if (idx === 5) {
+            /* Step 6: metro toggle — count-in only (1) ↔ always (3) */
+            S.metronomeOn = (S.metronomeOn === 1) ? 3 : 1;
+            if (typeof host_module_set_param === 'function')
+                host_module_set_param('metro_on', String(S.metronomeOn));
+            showActionPopup(['Off', 'Cnt-In', 'Play', 'Always'][S.metronomeOn]);
+        } else if (idx === 6) {
+            /* Step 7: open global menu at Swing Amt */
+            openGlobalMenu();
+            S.globalMenuState.selectedIndex = 12;
+        } else if (idx === 7) {
+            /* Step 8: drum=cycle perform mode; melodic=toggle chromatic pad layout */
+            if (isDrum) {
+                if (S.drumPerformMode[t] === 1) {
+                    host_module_set_param('t' + t + '_drum_repeat_stop', '1');
+                    S.drumRepeatHeldPad[t] = -1;
+                }
+                if (S.drumPerformMode[t] === 2) {
+                    S.drumRepeat2HeldLanes[t].clear();
+                    S.drumRepeat2LatchedLanes[t].clear();
+                    host_module_set_param('t' + t + '_drum_repeat2_stop', '1');
+                }
+                S.drumRepeatLatched[t] = false;
+                S.drumPerformMode[t]   = (S.drumPerformMode[t] + 1) % 3;
+                if (S.drumPerformMode[t] > 0) S.activeBank = 5;
+                showModePopup('PERFORMANCE PADS',
+                    ['Velocity', 'Repeat Play (Rpt1)', 'Repeat Set (Rpt2)'],
+                    S.drumPerformMode[t]);
+            } else {
+                S.padLayoutChromatic = !S.padLayoutChromatic;
+                computePadNoteMap();
+                showActionPopup(S.padLayoutChromatic ? 'CHROMATIC' : 'IN-SCALE');
+            }
+        } else if (idx === 8) {
+            /* Step 9: open global menu at Key */
+            openGlobalMenu();
+            S.globalMenuState.selectedIndex = 8;
+        } else if (idx === 9) {
+            /* Step 10: toggle VelIn between 0 (Live) and 127 */
+            const curVel = S.trackVelOverride[t];
+            const nextVel = curVel === 0 ? 127 : 0;
+            applyTrackConfig(t, 'track_vel_override', nextVel);
+            showActionPopup(nextVel === 0 ? 'VEL LIVE' : 'VEL 127');
+        } else if (idx === 10 && !isDrum) {
+            /* Step 11: toggle TRACK ARP style on/off (melodic only) */
+            const curStyle = S.bankParams[t][5][0] | 0;
+            const nextStyle = curStyle !== 0 ? 0 : S.lastTarpStyle[t];
+            S.bankParams[t][5][0] = nextStyle;
+            applyBankParam(t, 5, 0, nextStyle);
+            showActionPopup(nextStyle === 0 ? 'TARP OFF' : 'TARP ON');
+        } else if (idx === 14) {
+            /* Step 15: double-and-fill */
+            doDoubleFill();
+        } else if (idx === 15) {
+            /* Step 16: set quantize to 100% */
+            if (isDrum) {
+                const lane = S.activeDrumLane[t];
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + t + '_l' + lane + '_pfx_set', 'quantize 100');
+            } else {
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + t + '_quantize', '100');
+            }
+            S.bankParams[t][1][4] = 100;
+            showActionPopup('QUANT 100%');
+        }
+        forceRedraw();
     } else if (!S.shiftHeld && S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
         /* Drum mode: tap toggles hit; hold enters step edit (Dur/Vel).
          * Press records time and state; toggle/clear deferred to release. */
