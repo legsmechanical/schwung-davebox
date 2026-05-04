@@ -15,6 +15,7 @@
 - **State version bump**: Any time DSP struct layout changes or state format changes, delete ALL state files on device before deploying: `ssh root@move.local "find /data/UserData/schwung/set_state -name 'seq8-state.json' -exec rm {} \; && find /data/UserData/schwung/set_state -name 'seq8-ui-state.json' -exec rm {} \;"`. This is a dev build — backward compatibility is not important; always prefer a clean slate over migration.
 - **DSP calls / pfx code**: read `docs/SEQ8_API.md` for parameter keys, structs, and algorithm details.
 - **DSP work**: read `dsp/CLAUDE.md` for logging, build, state format keys, and deferred save details.
+- **After any Schwung upgrade**: re-apply all patches listed in the "Schwung patches" section below. Build with `cd ~/schwung && ./scripts/build.sh` then `scp ~/schwung/build/schwung-shim.so root@move.local:/usr/lib/schwung-shim.so` and restart Move.
 
 SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move — standalone 8-track MIDI sequencer. No audio. C (DSP) + JavaScript (UI). `button_passthrough: [79]` — volume knob handled natively.
 
@@ -124,6 +125,17 @@ JS `init()` reads UUID, compares with `state_uuid` get_param. Mismatch → `stat
 - **`reapplyPalette` resets CC LED hardware states**: `input_filter.mjs` `setButtonLED` has its own `buttonCache` — it skips `move_midi_internal_send` if the color hasn't changed. When `reapplyPalette` fires, the Move hardware resets all CC-based button LEDs (Play, Rec, etc.) to off, but the JS-side `buttonCache` still holds the old color, so subsequent `setButtonLED` calls are silently dropped. Fix: call `setButtonLED(cc, color, true)` (force=true) immediately after `reapplyPalette` for any button LEDs that must stay on.
 - **Palette SysEx rate-limit**: rapid knob turns can trigger `setPaletteEntryRGB` + `reapplyPalette` every tick, filling `move_midi_internal_send` queue and delaying button LED CC updates. Rate-limit palette updates to `POLL_INTERVAL` cadence. Also use `ccPaletteCache` to skip SysEx when values haven't changed.
 
+## Schwung patches
+
+Local patches applied to `~/schwung/` that must be re-applied after any Schwung upgrade. Check each commit is present with `cd ~/schwung && git log --oneline | grep <sha>` before deploying a new Schwung build.
+
+| PR | Commit | File | Description |
+|----|--------|------|-------------|
+| [#71](https://github.com/charlesvestal/schwung/pull/71) | `5275ec10` | `src/host/shadow_midi.c` | Defer cable-2 inject when cable-0 hardware is active — prevents SIGABRT in ROUTE_MOVE external MIDI monitoring |
+| [#72](https://github.com/charlesvestal/schwung/pull/72) | `01953e6d` | `src/host/shadow_midi.c` | Hold inject drain for 3 frames after overtake exit — prevents SIGABRT when suspending (Back) with a ROUTE_MOVE drum pattern playing |
+
+Both patches are in `src/host/shadow_midi.c` in `shadow_drain_midi_inject()`. If re-applying manually: PR #71 adds `DEFER_FRAMES` cable-0 gate; PR #72 adds `exit_hold` post-overtake-exit gate.
+
 ## Known limitations
 
 - Transport stop saves will_relaunch; panic does not.
@@ -131,7 +143,8 @@ JS `init()` reads UUID, compares with `state_uuid` get_param. Mismatch → `stat
 - All 8 tracks route to the same Schwung chain.
 - State file v=23 (only v=23 accepted) — wrong/missing version → deleted, clean start.
 - `g_host->get_clock_status` is NULL; `get_bpm` doesn't track BPM changes while stopped.
-- **ROUTE_MOVE + external MIDI monitoring**: rechannelized monitoring implemented — `applyExtMidiRemap()` rewrites incoming cable-2 channel to `trackChannel[t]` via `host_ext_midi_remap_*`. The shim crash (cable-2 inject race) is fixed in Schwung (commit 5275ec10).
+- **ROUTE_MOVE + external MIDI monitoring**: rechannelized monitoring implemented — `applyExtMidiRemap()` rewrites incoming cable-2 channel to `trackChannel[t]` via `host_ext_midi_remap_*`. The shim crash (cable-2 inject race) is fixed in Schwung PR #71 (commit 5275ec10).
+- **ROUTE_MOVE suspend crash**: suspending (Back) while a ROUTE_MOVE drum pattern is playing caused SIGABRT in the shim — DSP note-offs raced Move firmware during overtake exit. Fixed in Schwung PR #72 (commit 01953e6d, `shadow_drain_midi_inject` exit_hold).
 - **TRACK ARP + ROUTE_SCHWUNG**: live notes injected via `shadow_send_midi_to_dsp` bypass `live_note_on`/`live_note_off` — TRACK ARP intercepts pad/external-MIDI notes on ROUTE_SCHWUNG tracks only via `live_notes` set_param (not the schwung chain path).
 - `pfx_send` from set_param context does NOT release Move synth voices.
 - **Swing**: CC automation lanes are not swung (intentional). Live-recorded notes with inp_quant=off will have swing applied twice (once on input, once on playback). Long notes (gate > 1 step) get a slightly shorter effective gate since note-off fires at the unswung position.
