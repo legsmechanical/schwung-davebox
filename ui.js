@@ -1960,6 +1960,12 @@ function drawUI() {
     if (S.globalMenuOpen) { drawGlobalMenu(); return; }
     /* Perf Mode OLED takeover (Session View + Loop held or locked) */
     if (S.sessionView && (S.loopHeld || S.perfViewLocked)) { drawPerfModeOled(); return; }
+    if (S.stateLoading) {
+        clear_screen();
+        print(4, 22, 'SESSION', 1);
+        print(4, 34, 'LOADING...', 1);
+        return;
+    }
     clear_screen();
     if (S.sessionView) {
         if (S.actionPopupEndTick >= 0) {
@@ -2364,6 +2370,59 @@ function readActiveSetUuid() {
     }
 }
 
+function restoreUiSidecar(applyDefaultsNow) {
+    const uiSp = uuidToUiStatePath(S.currentSetUuid);
+    let us = null;
+    if (typeof host_read_file === 'function' && typeof host_file_exists === 'function'
+            && host_file_exists(uiSp)) {
+        try { us = JSON.parse(host_read_file(uiSp)); } catch (e) {}
+    }
+    if (us && us.v >= 1) {
+        if (typeof us.at === 'number' && us.at >= 0 && us.at < NUM_TRACKS)
+            S.activeTrack = us.at;
+        if (Array.isArray(us.ac)) {
+            for (let _t = 0; _t < NUM_TRACKS; _t++) {
+                const _c = us.ac[_t];
+                if (typeof _c === 'number' && _c >= 0 && _c < NUM_CLIPS)
+                    S.trackActiveClip[_t] = _c;
+            }
+        }
+        S.sessionView = us.sv === 1;
+        if (Array.isArray(us.dl)) {
+            for (let _t = 0; _t < NUM_TRACKS; _t++) {
+                const _l = us.dl[_t];
+                if (typeof _l === 'number' && _l >= 0 && _l < DRUM_LANES)
+                    S.activeDrumLane[_t] = _l;
+            }
+        }
+        if (typeof us.bm === 'number') S.beatMarkersEnabled = us.bm !== 0;
+        if (us.v >= 2) {
+            if (typeof us.pm === 'number') S.perfModsToggled = us.pm & 0xFFFFFF;
+            S.perfLatchMode = us.lm === 1;
+            if (typeof us.rs === 'number' && us.rs >= 0 && us.rs < 16) {
+                S.perfRecalledSlot = us.rs;
+                if (Array.isArray(us.us)) {
+                    for (let _i = 0; _i < 8; _i++) {
+                        if (typeof us.us[_i] === 'number')
+                            S.perfSnapshots[8 + _i] = us.us[_i];
+                    }
+                }
+                S.perfRecalledMods = S.perfSnapshots[S.perfRecalledSlot] || 0;
+            }
+            const _pm = S.perfModsToggled | S.perfRecalledMods;
+            if (_pm) S.pendingDefaultSetParams.push({ key: 'perf_mods', val: String(_pm) });
+        }
+    } else {
+        S.scaleAware   = 1;
+        S.metronomeVol = 100;
+        if (applyDefaultsNow) {
+            S.pendingDefaultSetParams = [
+                { key: 'scale_aware', val: '1' },
+                { key: 'metro_vol',   val: '100' }
+            ];
+        }
+    }
+}
 
 function syncClipsFromDsp() {
     if (typeof host_module_get_param !== 'function') return;
@@ -2535,65 +2594,9 @@ globalThis.init = function () {
     if (!S.hasInitedOnce) { S.sessionView = true; S.hasInitedOnce = true; }
 
     /* Restore UI state (active track, clip focus, view) from sidecar.
-     * Runs after DSP sync so sidecar overrides stale sync values.
-     * Also applies first-run defaults for S.scaleAware / S.metronomeVol when no sidecar exists. */
-    (function () {
-        const uiSp = uuidToUiStatePath(S.currentSetUuid);
-        let us = null;
-        if (typeof host_read_file === 'function' && typeof host_file_exists === 'function'
-                && host_file_exists(uiSp)) {
-            try { us = JSON.parse(host_read_file(uiSp)); } catch (e) {}
-        }
-        if (us && us.v >= 1) {
-            if (typeof us.at === 'number' && us.at >= 0 && us.at < NUM_TRACKS)
-                S.activeTrack = us.at;
-            if (Array.isArray(us.ac)) {
-                for (let _t = 0; _t < NUM_TRACKS; _t++) {
-                    const _c = us.ac[_t];
-                    if (typeof _c === 'number' && _c >= 0 && _c < NUM_CLIPS)
-                        S.trackActiveClip[_t] = _c;
-                }
-            }
-            S.sessionView = us.sv === 1;
-            if (Array.isArray(us.dl)) {
-                for (let _t = 0; _t < NUM_TRACKS; _t++) {
-                    const _l = us.dl[_t];
-                    if (typeof _l === 'number' && _l >= 0 && _l < DRUM_LANES)
-                        S.activeDrumLane[_t] = _l;
-                }
-            }
-            if (typeof us.bm === 'number') S.beatMarkersEnabled = us.bm !== 0;
-            /* Perf mod state (v=2+) */
-            if (us.v >= 2) {
-                if (typeof us.pm === 'number') S.perfModsToggled = us.pm & 0xFFFFFF;
-                S.perfLatchMode = us.lm === 1;
-                if (typeof us.rs === 'number' && us.rs >= 0 && us.rs < 16) {
-                    S.perfRecalledSlot = us.rs;
-                    if (Array.isArray(us.us)) {
-                        for (let _i = 0; _i < 8; _i++) {
-                            if (typeof us.us[_i] === 'number')
-                                S.perfSnapshots[8 + _i] = us.us[_i];
-                        }
-                    }
-                    S.perfRecalledMods = S.perfSnapshots[S.perfRecalledSlot] || 0;
-                }
-                const _pm = S.perfModsToggled | S.perfRecalledMods;
-                if (_pm) S.pendingDefaultSetParams.push({ key: 'perf_mods', val: String(_pm) });
-            }
-        } else {
-            /* No sidecar: apply first-run defaults. */
-            S.scaleAware   = 1;
-            S.metronomeVol = 100;
-            if (S.pendingSetLoad) {
-                S.uiDefaultsApplyAfterSync = true; /* re-apply after state_load re-sync */
-            } else {
-                S.pendingDefaultSetParams = [
-                    { key: 'scale_aware', val: '1' },
-                    { key: 'metro_vol',   val: '100' }
-                ];
-            }
-        }
-    })();
+     * Deferred if pendingSetLoad: DSP hasn't loaded the new set yet, restoreUiSidecar
+     * will be called again from the pendingDspSync completion path after the full resync. */
+    restoreUiSidecar(!S.pendingSetLoad);
 
     computePadNoteMap();
 
@@ -2635,9 +2638,31 @@ globalThis.tick = function () {
     /* Suspend detection: host swaps clear_screen to a no-op while we're parked.
      * Save state on the transition edge; let tick run normally (display is no-oped by host). */
     const isSuspended = S._origClearScreen && (clear_screen !== S._origClearScreen);
-    if (isSuspended && !S._wasSuspended) { saveState(); removeFlagsWrap(); }
+    if (isSuspended && !S._wasSuspended) {
+        /* Write UI sidecar immediately (host_write_file, no coalescing concern).
+         * Defer set_param('save') to end of tick() via flag so it is the last
+         * set_param and cannot be overwritten by other deferred sends. */
+        if (typeof host_write_file === 'function')
+            host_write_file(uuidToUiStatePath(S.currentSetUuid), JSON.stringify({
+                v: 3, at: S.activeTrack, ac: S.trackActiveClip.slice(), sv: S.sessionView ? 1 : 0,
+                dl: S.activeDrumLane.slice(),
+                pm: S.perfModsToggled, lm: S.perfLatchMode ? 1 : 0,
+                rs: S.perfRecalledSlot, us: S.perfSnapshots.slice(8),
+                bm: S.beatMarkersEnabled ? 1 : 0
+            }));
+        S.pendingSuspendSave = true;
+        removeFlagsWrap();
+    }
     if (!isSuspended && S._wasSuspended) {
         installFlagsWrap();
+        /* Check if the active set changed while we were parked. */
+        const _resumeUuid = readActiveSetUuid();
+        const _dspUuid = (typeof host_module_get_param === 'function')
+            ? (host_module_get_param('state_uuid') || '') : '';
+        if (_resumeUuid && _dspUuid !== _resumeUuid) {
+            S.currentSetUuid = _resumeUuid;
+            S.pendingSetLoad = true;
+        }
         S.ledInitComplete = false;
         invalidateLEDCache();
         S.ledInitQueue = buildLedInitQueue();
@@ -2747,6 +2772,7 @@ globalThis.tick = function () {
     /* Set change detected in init(): send UUID so DSP constructs path and loads. */
     if (S.pendingSetLoad && typeof host_module_set_param === 'function') {
         S.pendingSetLoad = false;
+        S.stateLoading = true;
         disarmRecord();
         S.heldStep = -1; S.heldStepBtn = -1; S.heldStepNotes = []; S.stepWasEmpty = false; S.stepWasHeld = false;
         S.seqActiveNotes.clear(); S.seqLastStep = -1; S.seqLastClip = -1;
@@ -2787,16 +2813,9 @@ globalThis.tick = function () {
                 S.trackCurrentPage[_t] = Math.max(0, Math.floor(S.trackCurrentStep[_t] / 16));
             syncClipsFromDsp();
             syncMuteSoloFromDsp();
-            if (S.uiDefaultsApplyAfterSync) {
-                S.uiDefaultsApplyAfterSync = false;
-                S.scaleAware   = 1;
-                S.metronomeVol = 100;
-                S.pendingDefaultSetParams = [
-                    { key: 'scale_aware', val: '1' },
-                    { key: 'metro_vol',   val: '100' }
-                ];
-            }
+            restoreUiSidecar(true);
             computePadNoteMap();
+            S.stateLoading = false;
             invalidateLEDCache();
             forceRedraw();
         }
@@ -3046,6 +3065,12 @@ globalThis.tick = function () {
             host_module_set_param('t' + rt + '_record_note_off', pitches);
             S._recNoteOffs.length = 0;
         }
+    }
+
+    /* Suspend save: fires last so no subsequent set_param can overwrite it. */
+    if (S.pendingSuspendSave && typeof host_module_set_param === 'function') {
+        S.pendingSuspendSave = false;
+        host_module_set_param('save', '1');
     }
 
     if (S.screenDirty) { S.screenDirty = false; drawUI(); }
