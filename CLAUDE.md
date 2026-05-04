@@ -167,7 +167,8 @@ This project has a graphify knowledge graph at graphify-out/.
 
 Rules:
 - **Session start**: read `graphify-out/GRAPH_REPORT.md` immediately after the docs update — required, not optional.
-- **Before any grep or file search**: stop and ask whether this is a navigation, relationship, or call-chain question. If yes, use graphify first — only fall back to grep if graphify cannot answer it or you already know the exact location.
+- **Before any grep or file search — mandatory gate**: classify the question first. If it is a navigation question (where is X defined?), a relationship question (what calls Y? what does Z depend on?), or a call-chain question (what does changing W cascade into?) — you MUST use graphify before grep. No exceptions. The PreToolUse hook reminder is a hard stop, not a suggestion.
+- **Grep is only permitted** when: (a) graphify has already been consulted and could not answer, or (b) you already know the exact file and line and are confirming a specific string, or (c) the target is outside this codebase (e.g. Schwung source, schwung-docs).
 - **Code navigation**: `graphify query "<question>"` (BFS, broad context) · `graphify path "<A>" "<B>"` (shortest path) · `graphify explain "<concept>"` (node definition + connections). Use BEFORE reaching for grep or raw file reads.
 - **Impact analysis**: `graphify query "<question>" --dfs` for dependency chains — use DFS when you need to know what a change cascades into (e.g. touching a god node like `set_param`).
 - **Architecture questions**: always consult the graph first. God nodes (`set_param`, `drawUI`, `pfx_send`, `render_block`) are cross-community bridges — tracing them via graph beats manual grep.
