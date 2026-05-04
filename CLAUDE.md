@@ -132,7 +132,7 @@ Local patches applied to `~/schwung/` that must be re-applied after any Schwung 
 | PR | Commit | File | Description |
 |----|--------|------|-------------|
 | [#71](https://github.com/charlesvestal/schwung/pull/71) | `5275ec10` | `src/host/shadow_midi.c` | Defer cable-2 inject when cable-0 hardware is active — prevents SIGABRT in ROUTE_MOVE external MIDI monitoring |
-| [#72](https://github.com/charlesvestal/schwung/pull/72) | `01953e6d` | `src/host/shadow_midi.c` | Hold inject drain for 3 frames after overtake exit — prevents SIGABRT when suspending (Back) with a ROUTE_MOVE drum pattern playing |
+| [#72](https://github.com/charlesvestal/schwung/pull/72) | `14eaa6ac` | `src/host/shadow_midi.c` | Hold inject drain for 1 frame (~3ms) after overtake exit — prevents SIGABRT when suspending (Back) with a ROUTE_MOVE drum pattern playing |
 
 Both patches are in `src/host/shadow_midi.c` in `shadow_drain_midi_inject()`. If re-applying manually: PR #71 adds `DEFER_FRAMES` cable-0 gate; PR #72 adds `exit_hold` post-overtake-exit gate.
 
@@ -144,7 +144,7 @@ Both patches are in `src/host/shadow_midi.c` in `shadow_drain_midi_inject()`. If
 - State file v=23 (only v=23 accepted) — wrong/missing version → deleted, clean start.
 - `g_host->get_clock_status` is NULL; `get_bpm` doesn't track BPM changes while stopped.
 - **ROUTE_MOVE + external MIDI monitoring**: rechannelized monitoring implemented — `applyExtMidiRemap()` rewrites incoming cable-2 channel to `trackChannel[t]` via `host_ext_midi_remap_*`. The shim crash (cable-2 inject race) is fixed in Schwung PR #71 (commit 5275ec10).
-- **ROUTE_MOVE suspend crash**: suspending (Back) while a ROUTE_MOVE drum pattern is playing caused SIGABRT in the shim — DSP note-offs raced Move firmware during overtake exit. Fixed in Schwung PR #72 (commit 01953e6d, `shadow_drain_midi_inject` exit_hold).
+- **ROUTE_MOVE suspend crash**: suspending (Back) while a ROUTE_MOVE drum pattern is playing caused SIGABRT in the shim — DSP note-offs raced Move firmware during overtake exit. Fixed in Schwung PR #72 (commit 14eaa6ac, `shadow_drain_midi_inject` exit_hold).
 - **TRACK ARP + ROUTE_SCHWUNG**: live notes injected via `shadow_send_midi_to_dsp` bypass `live_note_on`/`live_note_off` — TRACK ARP intercepts pad/external-MIDI notes on ROUTE_SCHWUNG tracks only via `live_notes` set_param (not the schwung chain path).
 - `pfx_send` from set_param context does NOT release Move synth voices.
 - **Swing**: CC automation lanes are not swung (intentional). Live-recorded notes with inp_quant=off will have swing applied twice (once on input, once on playback). Long notes (gate > 1 step) get a slightly shorter effective gate since note-off fires at the unswung position.
