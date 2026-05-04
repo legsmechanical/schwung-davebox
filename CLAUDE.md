@@ -17,7 +17,7 @@
 - **DSP work**: read `dsp/CLAUDE.md` for logging, build, state format keys, and deferred save details.
 - **After any Schwung upgrade**: re-apply all patches listed in the "Schwung patches" section below. Build with `cd ~/schwung && ./scripts/build.sh` then `scp ~/schwung/build/schwung-shim.so root@move.local:/usr/lib/schwung-shim.so` and restart Move.
 
-SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move — standalone 8-track MIDI sequencer. No audio. C (DSP) + JavaScript (UI). `button_passthrough: [79]` — volume knob handled natively.
+SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move — standalone 8-track MIDI sequencer. No audio. C (DSP) + JavaScript (UI). `claims_master_knob: true` — CC 79 arrives in `onMidiMessage`; JS reads `host_get_volume()` / writes `host_set_volume()` directly.
 
 ## What's Built
 
@@ -127,14 +127,13 @@ JS `init()` reads UUID, compares with `state_uuid` get_param. Mismatch → `stat
 
 ## Schwung patches
 
-Local patches applied to `~/schwung/` that must be re-applied after any Schwung upgrade. Check each commit is present with `cd ~/schwung && git log --oneline | grep <sha>` before deploying a new Schwung build.
+Local patches applied to `~/schwung/` that must be re-applied after any Schwung upgrade. Current base: **v0.9.10** (`1f65169b`), branch `fix/exit-hold-v0.9.10`. Check each commit is present with `cd ~/schwung && git log --oneline | grep <sha>` before deploying a new Schwung build.
 
-| PR | Commit | File | Description |
-|----|--------|------|-------------|
-| [#71](https://github.com/charlesvestal/schwung/pull/71) | `5275ec10` | `src/host/shadow_midi.c` | Defer cable-2 inject when cable-0 hardware is active — prevents SIGABRT in ROUTE_MOVE external MIDI monitoring |
-| [#72](https://github.com/charlesvestal/schwung/pull/72) | `0fa8b9a0` | `src/host/shadow_midi.c` | Hold inject drain for 2 frames (~6ms) after overtake exit — prevents SIGABRT when suspending (Back) with a ROUTE_MOVE drum pattern playing |
+| PR | Commit (on v0.9.10 branch) | File | Description |
+|----|----------------------------|------|-------------|
+| [#72](https://github.com/charlesvestal/schwung/pull/72) | `5b74e6cc` + `4a95b4d6` | `src/host/shadow_midi.c` | Hold inject drain for 2 frames (~6ms) after overtake exit — prevents SIGABRT when suspending (Back) with a ROUTE_MOVE drum pattern playing |
 
-Both patches are in `src/host/shadow_midi.c` in `shadow_drain_midi_inject()`. If re-applying manually: PR #71 adds `DEFER_FRAMES` cable-0 gate; PR #72 adds `exit_hold` post-overtake-exit gate.
+PR #71 (`DEFER_FRAMES` cable-2 gate) was merged into upstream v0.9.10 — no longer needs re-applying. PR #72 adds `exit_hold` block in `shadow_drain_midi_inject()` on the 1→0 overtake_mode transition.
 
 ## Known limitations
 
@@ -143,8 +142,8 @@ Both patches are in `src/host/shadow_midi.c` in `shadow_drain_midi_inject()`. If
 - All 8 tracks route to the same Schwung chain.
 - State file v=23 (only v=23 accepted) — wrong/missing version → deleted, clean start.
 - `g_host->get_clock_status` is NULL; `get_bpm` doesn't track BPM changes while stopped.
-- **ROUTE_MOVE + external MIDI monitoring**: rechannelized monitoring implemented — `applyExtMidiRemap()` rewrites incoming cable-2 channel to `trackChannel[t]` via `host_ext_midi_remap_*`. The shim crash (cable-2 inject race) is fixed in Schwung PR #71 (commit 5275ec10).
-- **ROUTE_MOVE suspend crash**: suspending (Back) while a ROUTE_MOVE drum pattern is playing caused SIGABRT in the shim — DSP note-offs raced Move firmware during overtake exit. Fixed in Schwung PR #72 (commit 0fa8b9a0, `shadow_drain_midi_inject` exit_hold).
+- **ROUTE_MOVE + external MIDI monitoring**: rechannelized monitoring implemented — `applyExtMidiRemap()` rewrites incoming cable-2 channel to `trackChannel[t]` via `host_ext_midi_remap_*`. The shim crash (cable-2 inject race) was fixed in Schwung PR #71 — now merged into v0.9.10 upstream.
+- **ROUTE_MOVE suspend crash**: suspending (Back) while a ROUTE_MOVE drum pattern is playing caused SIGABRT in the shim — DSP note-offs raced Move firmware during overtake exit. Fixed in Schwung PR #72 (local commit `4a95b4d6`, `shadow_drain_midi_inject` exit_hold).
 - **TRACK ARP + ROUTE_SCHWUNG**: live notes injected via `shadow_send_midi_to_dsp` bypass `live_note_on`/`live_note_off` — TRACK ARP intercepts pad/external-MIDI notes on ROUTE_SCHWUNG tracks only via `live_notes` set_param (not the schwung chain path).
 - `pfx_send` from set_param context does NOT release Move synth voices.
 - **Swing**: CC automation lanes are not swung (intentional). Live-recorded notes with inp_quant=off will have swing applied twice (once on input, once on playback). Long notes (gate > 1 step) get a slightly shorter effective gate since note-off fires at the unswung position.

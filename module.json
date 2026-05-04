@@ -16,7 +16,7 @@
         "midi_in": true,
         "midi_out": true,
         "aftertouch": true,
-        "button_passthrough": [79],
+        "claims_master_knob": true,
         "suspend_keeps_js": true
     }
 }

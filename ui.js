@@ -4605,6 +4605,13 @@ function _onCC_knobs(d1, d2) {
     }
 }
 
+function _onCC_volume(d1, d2) {
+    if (d1 !== 79) return;
+    const delta = decodeDelta(d2);
+    if (delta !== 0)
+        host_set_volume(Math.max(0, Math.min(100, host_get_volume() + delta)));
+}
+
 function _onCCMsg(d1, d2) {
     _onCC_jog(d1, d2);
     _onCC_buttons(d1, d2);
@@ -4612,6 +4619,7 @@ function _onCCMsg(d1, d2) {
     _onCC_side(d1, d2);
     _onCC_stepedit(d1, d2);
     _onCC_knobs(d1, d2);
+    _onCC_volume(d1, d2);
 }
 
 
