@@ -801,7 +801,8 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
     for (t = 0; t < NUM_TRACKS; t++)
-        fprintf(fp, ",\"t%d_wr\":%d", t, inst->tracks[t].will_relaunch);
+        fprintf(fp, ",\"t%d_wr\":%d", t,
+                (inst->tracks[t].will_relaunch || inst->tracks[t].clip_playing) ? 1 : 0);
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ch\":%d,\"t%d_rt\":%d",
                 t, (int)inst->tracks[t].channel,
