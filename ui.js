@@ -977,13 +977,13 @@ function drawBakeConfirm() {
     }
     if (S.confirmBakeIsMultiLoop) {
         drawMenuHeader('BAKE FX?');
-        print(4, 16, 'Rnd pitch active.', 1);
-        print(4, 26, 'Capture how many', 1);
-        print(4, 36, 'loops of the clip?', 1);
-        const mW = 36, mH = 13, mY = 50;
-        _btn(4,  mY, mW, mH, S.confirmBakeSel === 0, '1x', 12);
-        _btn(46, mY, mW, mH, S.confirmBakeSel === 1, '2x', 12);
-        _btn(88, mY, mW, mH, S.confirmBakeSel === 2, '4x', 12);
+        print(4, 13, 'Rnd pitch active.', 1);
+        print(4, 22, 'Capture N loops:', 1);
+        const mW = 36, mH = 11;
+        _btn(4,  33, mW, mH, S.confirmBakeSel === 0, '1x', 12);
+        _btn(46, 33, mW, mH, S.confirmBakeSel === 1, '2x', 12);
+        _btn(88, 33, mW, mH, S.confirmBakeSel === 2, '4x', 12);
+        _btn(14, 47, 100, mH, S.confirmBakeSel === 3, 'CANCEL', 31);
     } else if (!S.confirmBakeIsDrum) {
         drawMenuHeader('BAKE FX?');
         print(4, 16, 'Apply effects chain', 1);
@@ -3163,14 +3163,16 @@ function _onCC_jog(d1, d2) {
     /* Bake confirm: jog click confirms/cancels when dialog is open */
     if (d1 === 3 && d2 === 127 && S.confirmBake) {
         if (S.confirmBakeIsMultiLoop) {
-            const _loops = [1, 2, 4][S.confirmBakeSel] || 1;
-            host_module_set_param('bake', S.confirmBakeTrack + ' ' + S.confirmBakeClip + ' 0 ' + _loops);
-            S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
-            showActionPopup('BAKED', _loops + 'x');
-            S.pendingBankRefresh      = S.confirmBakeTrack;
-            S.pendingStepsReread      = 2;
-            S.pendingStepsRereadTrack = S.confirmBakeTrack;
-            S.pendingStepsRereadClip  = S.confirmBakeClip;
+            if (S.confirmBakeSel < 3) {
+                const _loops = [1, 2, 4][S.confirmBakeSel];
+                host_module_set_param('bake', S.confirmBakeTrack + ' ' + S.confirmBakeClip + ' 0 ' + _loops);
+                S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
+                showActionPopup('BAKED', _loops + 'x');
+                S.pendingBankRefresh      = S.confirmBakeTrack;
+                S.pendingStepsReread      = 2;
+                S.pendingStepsRereadTrack = S.confirmBakeTrack;
+                S.pendingStepsRereadClip  = S.confirmBakeClip;
+            }
         } else if (!S.confirmBakeIsDrum) {
             if (S.confirmBakeSel === 0) {
                 host_module_set_param('bake', S.confirmBakeTrack + ' ' + S.confirmBakeClip);
@@ -3309,8 +3311,10 @@ function _onCC_jog(d1, d2) {
         if (S.confirmBake) {
             const delta = decodeDelta(d2);
             if (delta !== 0) {
-                if (S.confirmBakeIsDrum || S.confirmBakeIsMultiLoop) {
+                if (S.confirmBakeIsDrum) {
                     S.confirmBakeSel = (S.confirmBakeSel + (delta > 0 ? 1 : 2)) % 3;
+                } else if (S.confirmBakeIsMultiLoop) {
+                    S.confirmBakeSel = (S.confirmBakeSel + (delta > 0 ? 1 : 3)) % 4;
                 } else {
                     S.confirmBakeSel = S.confirmBakeSel === 0 ? 1 : 0;
                 }
