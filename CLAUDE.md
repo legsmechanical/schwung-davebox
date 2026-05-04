@@ -17,7 +17,7 @@
 - **DSP work**: read `dsp/CLAUDE.md` for logging, build, state format keys, and deferred save details.
 - **After any Schwung upgrade**: re-apply all patches listed in the "Schwung patches" section below. Build with `cd ~/schwung && ./scripts/build.sh` then `scp ~/schwung/build/schwung-shim.so root@move.local:/usr/lib/schwung-shim.so` and restart Move.
 
-SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move — standalone 8-track MIDI sequencer. No audio. C (DSP) + JavaScript (UI). `claims_master_knob: true` — CC 79 arrives in `onMidiMessage`; JS reads `host_get_volume()` / writes `host_set_volume()` directly.
+SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move — standalone 8-track MIDI sequencer. No audio. C (DSP) + JavaScript (UI). `button_passthrough: [79]` — volume knob handled natively by Move firmware.
 
 ## What's Built
 
