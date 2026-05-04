@@ -2211,8 +2211,16 @@ static int pfx_apply_notefx(seq8_instance_t *inst, int scale_aware,
     int base = orig_note + fx->octave_shift * 12;
     int n = scale_aware ? scale_transpose(inst, clamp_i(base, 0, 127), fx->note_offset)
                         : clamp_i(base + fx->note_offset, 0, 127);
-    if (fx->note_random > 0)
-        n = clamp_i(n + pfx_rand(fx, -fx->note_random, fx->note_random), 0, 127);
+    if (fx->note_random > 0) {
+        int rng = fx->note_random;
+        if (scale_aware) {
+            int lim = (int)SCALE_SIZES[inst->pad_scale < 14 ? inst->pad_scale : 0];
+            if (rng > lim) rng = lim;
+            n = scale_transpose(inst, n, pfx_rand(fx, -rng, rng));
+        } else {
+            n = clamp_i(n + pfx_rand(fx, -rng, rng), 0, 127);
+        }
+    }
     return n;
 }
 
