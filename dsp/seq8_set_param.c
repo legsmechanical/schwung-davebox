@@ -158,12 +158,12 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
         cp->seq_arp_gate      = 50;
         cp->seq_arp_steps_mode = 0;
         cp->seq_arp_retrigger = 1;
-        cp->seq_arp_sync      = 0;
+        cp->seq_arp_sync      = 1;
         int _i;
         for (_i = 0; _i < 8; _i++) cp->seq_arp_step_vel[_i] = 4;
         arp_silence(inst, tr);
         arp_init_defaults(&fx->arp);
-        fx->seq_arp_sync = 0;
+        fx->seq_arp_sync = 1;
         return;
     }
 

@@ -868,7 +868,7 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
                 if (p2->seq_arp_gate      != 50)            fprintf(fp, ",\"t%dc%d_argt\":%d", t, c, p2->seq_arp_gate);
                 if (p2->seq_arp_steps_mode != 0)            fprintf(fp, ",\"t%dc%d_arsm\":%d", t, c, p2->seq_arp_steps_mode);
                 if (p2->seq_arp_retrigger != 1)             fprintf(fp, ",\"t%dc%d_artg\":%d", t, c, p2->seq_arp_retrigger);
-                if (p2->seq_arp_sync     != 0)              fprintf(fp, ",\"t%dc%d_arsy\":%d", t, c, p2->seq_arp_sync);
+                if (p2->seq_arp_sync     != 1)              fprintf(fp, ",\"t%dc%d_arsy\":%d", t, c, p2->seq_arp_sync);
                 {
                     int _i;
                     for (_i = 0; _i < 8; _i++) {
@@ -1313,7 +1313,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
             snprintf(key, sizeof(key), "t%dc%d_artg", t, c);
             p2->seq_arp_retrigger = json_get_int(buf, key, 1) ? 1 : 0;
             snprintf(key, sizeof(key), "t%dc%d_arsy", t, c);
-            p2->seq_arp_sync = json_get_int(buf, key, 0) ? 1 : 0;
+            p2->seq_arp_sync = json_get_int(buf, key, 1) ? 1 : 0;
             {
                 int _i;
                 for (_i = 0; _i < 8; _i++) {
@@ -3294,7 +3294,7 @@ static void clip_pfx_params_init(clip_pfx_params_t *p) {
     p->seq_arp_gate      = 50;
     p->seq_arp_steps_mode = 0;
     p->seq_arp_retrigger = 1;
-    p->seq_arp_sync      = 0;
+    p->seq_arp_sync      = 1;
     int i;
     for (i = 0; i < 8; i++) p->seq_arp_step_vel[i] = 4;
 }
