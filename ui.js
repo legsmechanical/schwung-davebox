@@ -1239,6 +1239,7 @@ function refreshPerClipBankParams(t) {
     S.bankParams[t][1][0] = parseInt(v[0], 10) | 0;  /* oct */
     S.bankParams[t][1][1] = parseInt(v[1], 10) | 0;  /* ofs */
     S.bankParams[t][1][2] = v.length >= 33 ? (parseInt(v[32], 10) | 0) : 0; /* rnd */
+    S.noteFXRandomMode[t] = v.length >= 34 ? (parseInt(v[33], 10) | 0) : 0;
     S.bankParams[t][1][3] = parseInt(v[2], 10) | 0;  /* gate */
     S.bankParams[t][1][4] = parseInt(v[3], 10) | 0;  /* vel */
     S.bankParams[t][1][5] = parseInt(v[4], 10) | 0;  /* qnt */
@@ -4401,6 +4402,26 @@ function _onCC_knobs(d1, d2) {
                         S.screenDirty = true;
                     }
                 }
+            }
+            return;
+        }
+        /* NOTE FX bank: Shift+Rnd (K3) = cycle pitch random algorithm */
+        if (S.shiftHeld && bank === 1 && knobIdx === 2 &&
+                S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM) {
+            const t   = S.activeTrack;
+            const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
+            if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
+            S.knobAccum[knobIdx]++;
+            if (S.knobAccum[knobIdx] >= 8) {
+                S.knobAccum[knobIdx] = 0;
+                const cur  = S.noteFXRandomMode[t] || 0;
+                const next = ((cur + dir) % 3 + 3) % 3;
+                S.noteFXRandomMode[t] = next;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('noteFX_random_mode', String(next));
+                const names = ['UNIFORM', 'GAUSSIAN', 'WALK'];
+                showActionPopup('RND MODE', names[next]);
+                S.screenDirty = true;
             }
             return;
         }
