@@ -907,8 +907,10 @@ function registerTapTempo(padNote) {
         const t = S.tapTempoTapTimes;
         const n = t.length;
         const avgInterval = (t[n - 1] - t[0]) / (n - 1);
-        if (avgInterval > 0)
+        if (avgInterval > 0) {
             S.tapTempoBpm = Math.max(40, Math.min(250, Math.round(60000 / avgInterval)));
+            host_module_set_param('bpm', String(S.tapTempoBpm));
+        }
     }
     S.tapTempoFlashTick = S.tickCount;
     S.tapTempoFlashPad  = padNote;
@@ -2014,7 +2016,7 @@ function drawPerfModeOled() {
 function drawUI() {
     if (S.sessionOverlayHeld) { drawSessionOverview(); return; }
     if (S.confirmBake) { drawBakeConfirm(); return; }
-    if (S.globalMenuOpen) { drawGlobalMenu(); return; }
+    if (S.globalMenuOpen || S.tapTempoOpen) { drawGlobalMenu(); return; }
     /* Perf Mode OLED takeover (Session View + Loop held or locked) */
     if (S.sessionView && (S.loopHeld || S.perfViewLocked)) { drawPerfModeOled(); return; }
     if (S.stateLoading) {
@@ -3212,12 +3214,12 @@ function _onCC_jog(d1, d2) {
     }
 
     /* CC 3 = jog wheel physical click */
+    if (d1 === 3 && d2 === 127 && S.tapTempoOpen) {
+        closeTapTempo();
+        S.screenDirty = true;
+        return;
+    }
     if (d1 === 3 && d2 === 127 && S.globalMenuOpen) {
-        if (S.tapTempoOpen) {
-            closeTapTempo();
-            S.screenDirty = true;
-            return;
-        }
         if (S.confirmClearSession) {
             if (S.confirmClearSel === 0) doClearSession();
             else { S.confirmClearSession = false; }
@@ -3330,14 +3332,17 @@ function _onCC_jog(d1, d2) {
             }
             return;
         }
+        if (S.tapTempoOpen && !S.shiftHeld) {
+            const delta = decodeDelta(d2);
+            if (delta !== 0) {
+                S.tapTempoBpm = Math.max(40, Math.min(250, S.tapTempoBpm + delta));
+                host_module_set_param('bpm', String(S.tapTempoBpm));
+                S.screenDirty = true;
+            }
+            return;
+        }
         if (S.globalMenuOpen && !S.shiftHeld) {
-            if (S.tapTempoOpen) {
-                const delta = decodeDelta(d2);
-                if (delta !== 0) {
-                    S.tapTempoBpm = Math.max(40, Math.min(250, S.tapTempoBpm + delta));
-                    S.screenDirty = true;
-                }
-            } else if (S.confirmClearSession) {
+            if (S.confirmClearSession) {
                 const delta = decodeDelta(d2);
                 if (delta !== 0) { S.confirmClearSel = S.confirmClearSel === 0 ? 1 : 0; S.screenDirty = true; }
             } else if (S.globalMenuState.editing) {
@@ -3471,7 +3476,7 @@ function _onCC_buttons(d1, d2) {
             if (S.shiftHeld) {
                 if (S.globalMenuOpen) { S.globalMenuOpen = false; forceRedraw(); }
                 else { openGlobalMenu(); }
-            } else if (S.globalMenuOpen && S.tapTempoOpen) {
+            } else if (S.tapTempoOpen) {
                 closeTapTempo();
                 forceRedraw();
             } else if (S.confirmBake) {
@@ -3648,7 +3653,7 @@ function _onCC_buttons(d1, d2) {
 function _onCC_transport(d1, d2) {
     /* Back: close global menu if open; otherwise (with Shift) hide module */
     if (d1 === MoveBack && d2 === 127) {
-        if (S.globalMenuOpen && S.tapTempoOpen) {
+        if (S.tapTempoOpen) {
             closeTapTempo();
             forceRedraw();
         } else if (S.confirmBake) {
