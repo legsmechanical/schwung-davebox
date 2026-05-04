@@ -1763,7 +1763,13 @@ static void set_param(void *instance, const char *key, const char *val) {
             return;
         }
         if (!strcmp(sub, "tarp_style")) {
-            int _v = clamp_i(my_atoi(val), 1, 9);
+            int _v = clamp_i(my_atoi(val), 0, 9);
+            if (_v == 0) {
+                if (tr->tarp_on) tarp_silence(inst, tr);
+                tr->tarp_on = 0;
+            } else {
+                tr->tarp_on = 1;
+            }
             tr->tarp.style = (uint8_t)_v;
             inst->state_dirty = 1;
             return;

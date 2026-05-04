@@ -4869,9 +4869,9 @@ function _onPadPress(status, d1, d2) {
             }
             return;
         }
-        /* TRACK ARP K6 (Steps Mode) touched + Mute/Step mode: pad press = level edit. */
-        if (!S.sessionView && S.activeBank === 5 && S.knobTouched === 5 &&
-                (S.bankParams[S.activeTrack][5][5] | 0) !== 0 &&
+        /* TRACK ARP K5 (Steps Mode) touched + Mute/Step mode: pad press = level edit. */
+        if (!S.sessionView && S.activeBank === 5 && S.knobTouched === 4 &&
+                (S.bankParams[S.activeTrack][5][4] | 0) !== 0 &&
                 d1 >= 68 && d1 <= 99) {
             const idx = d1 - 68;
             const col = idx % 8;
@@ -5357,8 +5357,8 @@ function _onPadRelease(status, d1, d2) {
             (S.bankParams[S.activeTrack][4][4] | 0) !== 0 &&
             d1 >= 68 && d1 <= 99) return;
     /* Swallow pad releases while TRACK ARP step-level editor is open. */
-    if (!S.sessionView && S.activeBank === 5 && S.knobTouched === 5 &&
-            (S.bankParams[S.activeTrack][5][5] | 0) !== 0 &&
+    if (!S.sessionView && S.activeBank === 5 && S.knobTouched === 4 &&
+            (S.bankParams[S.activeTrack][5][4] | 0) !== 0 &&
             d1 >= 68 && d1 <= 99) return;
     /* Perf Mode pad release: handle R0 rate pad pop + mod pad release. */
     if (S.sessionView && (S.loopHeld || S.perfViewLocked) && d1 >= 68 && d1 <= 99) {

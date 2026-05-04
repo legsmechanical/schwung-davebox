@@ -293,8 +293,7 @@ export const BANKS = [
     ]},
     /* 5 — ARP IN (pad 97) */
     { name: 'ARP IN', knobs: [
-        p('On',   'Track ARP On',  'tarp_on',         'track', 0,   1,   0,  fmtBool,     16),
-        p('Styl', 'Arp Style',     'tarp_style',      'track', 1,   9,   1,  fmtArpStyle, 16),
+        p('Styl', 'Arp Style',     'tarp_style',      'track', 0,   9,   0,  fmtArpStyle, 16),
         p('Rate', 'Arp Rate',      'tarp_rate',       'track', 0,   9,   1,  fmtArpRate,  16),
         p('Oct',  'Octave Range',  'tarp_octaves',    'track', -4,  4,   0,  fmtArpOct,   16),
         p('Gate', 'Arp Gate',      'tarp_gate',       'track', 1,   200, 50, fmtPct,      16),

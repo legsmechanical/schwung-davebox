@@ -810,7 +810,7 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
     for (t = 0; t < NUM_TRACKS; t++) {
         const seq8_track_t *tr2 = &inst->tracks[t];
         if (tr2->tarp_on)                              fprintf(fp, ",\"t%d_taon\":1",     t);
-        if (tr2->tarp.style != 1)                      fprintf(fp, ",\"t%d_tast\":%d",    t, (int)tr2->tarp.style);
+        if (tr2->tarp.style != 0)                      fprintf(fp, ",\"t%d_tast\":%d",    t, (int)tr2->tarp.style);
         if (tr2->tarp.rate_idx != ARP_RATE_DEFAULT)    fprintf(fp, ",\"t%d_tart\":%d",    t, (int)tr2->tarp.rate_idx);
         if (tr2->tarp.octaves != 0)                    fprintf(fp, ",\"t%d_taoc\":%d",    t, (int)tr2->tarp.octaves);
         if (tr2->tarp.gate_pct != 50)                  fprintf(fp, ",\"t%d_tagt\":%d",    t, (int)tr2->tarp.gate_pct);
@@ -1187,10 +1187,9 @@ static void seq8_load_state(seq8_instance_t *inst) {
     /* TRACK ARP — per-track params (sparse; missing = defaults) */
     for (t = 0; t < NUM_TRACKS; t++) {
         seq8_track_t *tr2 = &inst->tracks[t];
-        snprintf(key, sizeof(key), "t%d_taon", t);
-        tr2->tarp_on = (uint8_t)(json_get_int(buf, key, 0) ? 1 : 0);
         snprintf(key, sizeof(key), "t%d_tast", t);
-        tr2->tarp.style = (uint8_t)clamp_i(json_get_int(buf, key, 1), 1, 9);
+        tr2->tarp.style = (uint8_t)clamp_i(json_get_int(buf, key, 0), 0, 9);
+        tr2->tarp_on    = tr2->tarp.style != 0 ? 1 : 0;
         snprintf(key, sizeof(key), "t%d_tart", t);
         tr2->tarp.rate_idx = (uint8_t)clamp_i(json_get_int(buf, key, ARP_RATE_DEFAULT), 0, 9);
         snprintf(key, sizeof(key), "t%d_taoc", t);
@@ -2875,7 +2874,7 @@ static void tarp_init_defaults(seq8_track_t *tr) {
     tr->tarp_on    = 0;
     tr->tarp_latch = 0;
     arp_init_defaults(&tr->tarp);
-    tr->tarp.style = 1; /* default pattern: Up (tarp_on=0 bypasses; style never 0) */
+    tr->tarp.style = 0; /* 0=Off; style drives tarp_on */
 }
 
 static void drum_repeat_init_defaults(seq8_track_t *tr) {
