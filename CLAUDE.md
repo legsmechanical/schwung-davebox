@@ -56,6 +56,8 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 
 **Note Repeat** (drum tracks, jog click or DRUM LANE K7 to cycle modes): Rpt1=single-lane hold-to-repeat; Rpt2=multi-lane simultaneous. Right pads: bottom 2 rows=rate (1/32,1/16,1/8,1/4 straight+triplet), top 2 rows=8-step gate mask. RPT GROOVE (bank 5 overlay): K1-K8 = vel scale (0-200%, unshifted) or nudge (-50..+50%, Shift) per step. Latch: Loop+rate(Rpt1) or Loop+lane(Rpt2). Aftertouch updates velocity live. Delete+jog=groove reset. State keys in `dsp/CLAUDE.md`. JS sync via render-path `syncDrumRepeatState` (get_param fails from onMidiMessage).
 
+**Swing** (Global Menu: Swing Amt 0–100, Swing Res 1/16 or 1/8): MPC2000-style groove — delays even-indexed steps (Amt 0=50%, 100=75% of pair length). Applied as the final stage of `pfx_send` via sample-queue deferral (`PFX_EV_BYPASS_SWING` flag in `pfx_q`), so bake/merge naturally bypass it. MIDI Delay echoes automatically land on their swung step positions. State keys: `_swa` / `_swr` (sparse, default 0). CC automation not swung (intentional).
+
 **Mute/Solo**: `effective_mute(t)=mute[t]||(any_solo&&!solo[t])`. **Mutually exclusive** — setting one clears the other (recall paths bypass). Snapshots: Shift+Mute+step=save; Mute+step=recall; stores `snap_drum_eff_mute[16][NUM_TRACKS]`. Per-lane: `drum_lane_mute`/`drum_lane_solo` bitmasks; Delete+Mute clears all. Persisted as `t%ddlm`/`t%ddls`.
 
 **Bake** (Sample button): Opens confirm dialog. **Melodic**: default No/Yes; jog rotates, jog click confirms. Bake applies pfx chain offline (NOTE FX+HARMZ→MIDI DLY→SEQ ARP output), writes results back, calls `clip_build_steps_from_notes` (critical — step arrays must be rebuilt or subsequent `_toggle`→`clip_migrate_to_notes` will wipe baked notes), clears pfx_params via `clip_init`, restores tps/length, calls `pfx_sync_from_clip`. **Drum**: 3-button BAKE DRUMS? dialog (CLIP/LANE/CANCEL, default CANCEL). **CLIP mode** (`bm=2`, `bake_drum_clip`): full pfx chain per lane including HARMZ; output notes routed across lanes by `midi_note` pitch match; pool cap `DRUM_BAKE_POOL=2048`; all lanes cleared then pool routed. **LANE mode** (`bm=1`, `bake_drum_lane`): vel/gate/MIDI DLY/ARP per lane, no pitch/HARMZ expansion; "No Pitch / HARMZ FX" notice shown in dialog. Both drum modes use `undo_begin_drum_clip`; notes/steps and pfx_params fully restored on undo/redo. Sample or NoteSession cancels any bake dialog.
@@ -80,7 +82,7 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 2. ~~**Drum step-to-step copy**~~ **done** — `copyStep()` has drum lane branch using `tN_lL_step_S_copy_to`.
 3. **Scale-aware key/scale changes** — transpose all clip notes on Key/Scale change. Design TBD.
 4. **Step/note editing fixes** — see pending fixes in planning doc.
-5. MIDI Delay Rnd refinement · 6. Full instance reset · 7. State snapshots (16 slots) · 8. Swing · 9. MIDI clock sync
+5. MIDI Delay Rnd refinement · 6. Full instance reset · 7. State snapshots (16 slots) · 9. MIDI clock sync
 10. **Track conversion** (`tN_convert_to_drum`/`tN_convert_to_melodic`): Global Menu Mode item or dedicated dialog.
 11. ~~**VelIn**~~ **done** (Global Menu Track Config, per-track input velocity override).
 12. ~~**Note Repeat**~~ **done** (Rpt1/Rpt2, RPT GROOVE, gate/vel_scale/nudge per lane).
@@ -118,11 +120,12 @@ JS `init()` reads UUID, compares with `state_uuid` get_param. Mismatch → `stat
 - Transport stop saves will_relaunch; panic does not.
 - Do not load SEQ8 from within SEQ8 — LED corruption (Shift+Back first).
 - All 8 tracks route to the same Schwung chain.
-- State file v=17 (v=15,16 also accepted) — wrong/missing version → deleted, clean start.
+- State file v=18 (v=15,16,17 also accepted) — wrong/missing version → deleted, clean start.
 - `g_host->get_clock_status` is NULL; `get_bpm` doesn't track BPM changes while stopped.
 - **ROUTE_MOVE + external MIDI monitoring**: rechannelized monitoring implemented — `applyExtMidiRemap()` rewrites incoming cable-2 channel to `trackChannel[t]` via `host_ext_midi_remap_*`. The shim crash (cable-2 inject race) is fixed in Schwung (commit 5275ec10).
 - **TRACK ARP + ROUTE_SCHWUNG**: live notes injected via `shadow_send_midi_to_dsp` bypass `live_note_on`/`live_note_off` — TRACK ARP intercepts pad/external-MIDI notes on ROUTE_SCHWUNG tracks only via `live_notes` set_param (not the schwung chain path).
 - `pfx_send` from set_param context does NOT release Move synth voices.
+- **Swing**: CC automation lanes are not swung (intentional). Live-recorded notes with inp_quant=off will have swing applied twice (once on input, once on playback). Long notes (gate > 1 step) get a slightly shorter effective gate since note-off fires at the unswung position.
 - See `docs/SCHWUNG_SEQ8_LIMITATIONS.md` for framework interaction patterns.
 
 ## Hardware reference

@@ -34,7 +34,7 @@ ssh ableton@move.local "tail -f /data/UserData/schwung/seq8.log"
 
 ## State format
 
-Version v=17 (v=15, v=16 also accepted). v<15 → deleted + clean start.
+Version v=18 (v=15, v=16, v=17 also accepted). v<15 → deleted + clean start.
 
 Note format: `tick:pitch:vel:gate:sm;`
 
@@ -46,6 +46,7 @@ Key prefixes:
 - Note Repeat vel scale: `t%dl%dvs%d`
 - Note Repeat nudge: `t%dl%dnd%d`
 - Drum lane mute/solo: `t%ddlm` / `t%ddls`
+- Swing: `_swa` (0–100) / `_swr` (0=1/16, 1=1/8) — sparse, default 0
 
 `state_load` calls `drum_track_init` + `drum_repeat_init_defaults` before applying saved values.
 
