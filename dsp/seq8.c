@@ -239,6 +239,7 @@ typedef struct {
     int fb_note_random;     /* 0..24, random pitch range in semitones */
     int fb_gate_time;       /* 0..10: 0=Off, 1..10=fixed gate (1/64..1bar) */
     int fb_clock;           /* -100..+100 */
+    int note_random;        /* 0..24, random semitone offset applied after oct+offset */
     /* SEQ ARP — last stage of the chain. NOTE FX → HARMZ → MIDI DLY emit
      * via pfx_send; when arp.on && !arp_emitting, pfx_send routes note-on/off
      * to the arp's held buffer instead of out. arp_fire_step emits raw via
@@ -302,6 +303,7 @@ typedef struct {
     int fb_note_random;     /* 0..24, random pitch range in semitones */
     int fb_gate_time;       /* 0..10: 0=Off, 1..10=fixed gate (1/64..1bar) */
     int fb_clock;           /* -100..+100 */
+    int note_random;        /* 0..24, random semitone offset applied after oct+offset */
     /* SEQ ARP per-clip params */
     int seq_arp_style;         /* 0=Off (bypass), 1..9=Up/Dn/U-D/D-U/Cnv/Div/Ord/Rnd/RnO */
     int seq_arp_rate;          /* 0..9 (index into ARP_RATE_TICKS) */
@@ -862,6 +864,7 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
                 if (p2->fb_note_random  != 0)   fprintf(fp, ",\"t%dc%d_dpr\":%d",  t, c, p2->fb_note_random);
                 if (p2->fb_gate_time    != 0)    fprintf(fp, ",\"t%dc%d_dgf\":%d",  t, c, p2->fb_gate_time);
                 if (p2->fb_clock        != 0)   fprintf(fp, ",\"t%dc%d_dcf\":%d",  t, c, p2->fb_clock);
+                if (p2->note_random     != 0)   fprintf(fp, ",\"t%dc%d_nfrnd\":%d", t, c, p2->note_random);
                 /* SEQ ARP — sparse, only emit if non-default */
                 if (p2->seq_arp_style     != 0)             fprintf(fp, ",\"t%dc%d_arst\":%d", t, c, p2->seq_arp_style);
                 if (p2->seq_arp_rate      != ARP_RATE_DEFAULT) fprintf(fp, ",\"t%dc%d_arrt\":%d", t, c, p2->seq_arp_rate);
@@ -1300,6 +1303,8 @@ static void seq8_load_state(seq8_instance_t *inst) {
             p2->fb_gate_time    = clamp_i(json_get_int(buf, key,   0),     0,  10);
             snprintf(key, sizeof(key), "t%dc%d_dcf",  t, c);
             p2->fb_clock        = clamp_i(json_get_int(buf, key,   0),  -100, 100);
+            snprintf(key, sizeof(key), "t%dc%d_nfrnd", t, c);
+            p2->note_random     = clamp_i(json_get_int(buf, key,   0),     0,  24);
             /* SEQ ARP */
             snprintf(key, sizeof(key), "t%dc%d_arst", t, c);
             p2->seq_arp_style     = clamp_i(json_get_int(buf, key, 0), 0, 9);
@@ -2206,6 +2211,8 @@ static int pfx_apply_notefx(seq8_instance_t *inst, int scale_aware,
     int base = orig_note + fx->octave_shift * 12;
     int n = scale_aware ? scale_transpose(inst, clamp_i(base, 0, 127), fx->note_offset)
                         : clamp_i(base + fx->note_offset, 0, 127);
+    if (fx->note_random > 0)
+        n = clamp_i(n + pfx_rand(fx, -fx->note_random, fx->note_random), 0, 127);
     return n;
 }
 
@@ -3289,6 +3296,7 @@ static void clip_pfx_params_init(clip_pfx_params_t *p) {
     p->fb_note_random  = 0;
     p->fb_gate_time    = 0;
     p->fb_clock        = 0;
+    p->note_random     = 0;
     p->seq_arp_style     = 0;
     p->seq_arp_rate      = ARP_RATE_DEFAULT;
     p->seq_arp_octaves   = 0;
@@ -3321,6 +3329,7 @@ static void pfx_apply_params(play_fx_t *fx, const clip_pfx_params_t *p) {
     fx->fb_note_random  = p->fb_note_random;
     fx->fb_gate_time    = p->fb_gate_time;
     fx->fb_clock        = p->fb_clock;
+    fx->note_random     = p->note_random;
     /* SEQ ARP — copy params without disturbing runtime state */
     fx->arp.style      = (uint8_t)clamp_i(p->seq_arp_style,    0, 9);
     fx->arp.rate_idx   = (uint8_t)clamp_i(p->seq_arp_rate,     0, 9);
@@ -4251,7 +4260,7 @@ static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
     if (!strcmp(key, "pfx_snapshot"))
         return snprintf(out, out_len,
             "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d "
-            "%d %d %d %d %d %d %d %d",
+            "%d %d %d %d %d %d %d %d %d",
             fx->octave_shift, fx->note_offset, fx->gate_time, fx->velocity_offset, fx->quantize,
             fx->unison, fx->octaver, fx->harmonize_1, fx->harmonize_2,
             fx->delay_time_idx, fx->delay_level, fx->repeat_times,
@@ -4261,10 +4270,12 @@ static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
             (int)fx->arp.steps_mode, (int)fx->arp.retrigger, (int)fx->seq_arp_sync,
             (int)fx->arp.step_vel[0], (int)fx->arp.step_vel[1], (int)fx->arp.step_vel[2],
             (int)fx->arp.step_vel[3], (int)fx->arp.step_vel[4], (int)fx->arp.step_vel[5],
-            (int)fx->arp.step_vel[6], (int)fx->arp.step_vel[7]);
+            (int)fx->arp.step_vel[6], (int)fx->arp.step_vel[7],
+            fx->note_random);
 
     if (!strcmp(key, "noteFX_octave"))    return snprintf(out, out_len, "%d", fx->octave_shift);
     if (!strcmp(key, "noteFX_offset"))    return snprintf(out, out_len, "%d", fx->note_offset);
+    if (!strcmp(key, "noteFX_random"))    return snprintf(out, out_len, "%d", fx->note_random);
     if (!strcmp(key, "noteFX_gate"))      return snprintf(out, out_len, "%d", fx->gate_time);
     if (!strcmp(key, "noteFX_velocity"))  return snprintf(out, out_len, "%d", fx->velocity_offset);
     if (!strcmp(key, "quantize"))         return snprintf(out, out_len, "%d", fx->quantize);

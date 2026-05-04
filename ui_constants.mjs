@@ -249,12 +249,13 @@ export const BANKS = [
     ]},
     /* 1 — NOTE FX (pad 93) */
     { name: 'NOTE FX', knobs: [
-        p('Oct',  'Octave Shift',    'noteFX_octave',   'track', -4,   4,   0,   fmtSign, 16),
-        p('Ofs',  'Note Offset',     'noteFX_offset',   'track', -24,  24,  0,   fmtSign, 8),
-        p('Gate', 'Gate Time',       'noteFX_gate',     'track',  0,   400, 100, fmtPct,  2 ),
-        p('Vel',  'Velocity Offset', 'noteFX_velocity', 'track', -127, 127, 0,   fmtSign    ),
+        p('Oct',  'Octave Shift',    'noteFX_octave',   'track', -4,   4,   0,   fmtSign,    16),
+        p('Ofs',  'Note Offset',     'noteFX_offset',   'track', -24,  24,  0,   fmtSign,    8),
+        p('Rnd',  'Pitch Random',    'noteFX_random',   'track',  0,   24,  0,   fmtPitchRnd, 4),
+        p('Gate', 'Gate Time',       'noteFX_gate',     'track',  0,   400, 100, fmtPct,     2),
+        p('Vel',  'Velocity Offset', 'noteFX_velocity', 'track', -127, 127, 0,   fmtSign       ),
         p('Qnt',  'Quantize',        'quantize',        'track',  0,   100, 0,   fmtPct),
-        _X, _X, _X,
+        _X, _X,
     ]},
     /* 2 — HARMZ (pad 94) */
     { name: 'HARMZ', knobs: [

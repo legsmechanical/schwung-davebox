@@ -1235,8 +1235,13 @@ function refreshPerClipBankParams(t) {
     if (!snap) return;
     const v = snap.split(' ');
     if (v.length < 17) return;
-    /* NOTE FX bank (1): K0=oct K1=ofs K2=gate K3=vel K4=qnt */
-    for (let k = 0; k < 5; k++) S.bankParams[t][1][k] = parseInt(v[k], 10) | 0;
+    /* NOTE FX bank (1): K0=oct K1=ofs K2=rnd K3=gate K4=vel K5=qnt */
+    S.bankParams[t][1][0] = parseInt(v[0], 10) | 0;  /* oct */
+    S.bankParams[t][1][1] = parseInt(v[1], 10) | 0;  /* ofs */
+    S.bankParams[t][1][2] = v.length >= 33 ? (parseInt(v[32], 10) | 0) : 0; /* rnd */
+    S.bankParams[t][1][3] = parseInt(v[2], 10) | 0;  /* gate */
+    S.bankParams[t][1][4] = parseInt(v[3], 10) | 0;  /* vel */
+    S.bankParams[t][1][5] = parseInt(v[4], 10) | 0;  /* qnt */
     /* HARMZ bank (2): K0=unis K1=oct K2=hrm1 K3=hrm2 */
     for (let k = 0; k < 4; k++) S.bankParams[t][2][k] = parseInt(v[5 + k], 10) | 0;
     /* MIDI DLY bank (3): K0=dly K1=lvl K2=rep K3=vfb K4=pfb K5=gfb K6=clk K7=rnd */
@@ -4241,7 +4246,7 @@ function _onCC_knobs(d1, d2) {
                     const nv = Math.max(0, Math.min(100, S.drumLaneQnt[t] + dir));
                     if (nv !== S.drumLaneQnt[t]) {
                         S.drumLaneQnt[t] = nv;
-                        S.bankParams[t][1][4] = nv; /* mirror to NOTE FX K5 for active lane display */
+                        S.bankParams[t][1][5] = nv; /* mirror to NOTE FX K6 for active lane display */
                         if (typeof host_module_set_param === 'function')
                             host_module_set_param('t' + t + '_drum_lanes_qnt', String(nv));
                     }
@@ -5334,7 +5339,7 @@ function _onStepButtons(d1, d2) {
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('t' + t + '_quantize', '100');
             }
-            S.bankParams[t][1][4] = 100;
+            S.bankParams[t][1][5] = 100;
             showActionPopup('QUANT 100%');
         }
         forceRedraw();

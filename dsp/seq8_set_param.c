@@ -19,6 +19,8 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
         { PFX_SET_BOTH(gate_time, gate_time, 0, 400); return; }
     if (!strcmp(key, "noteFX_velocity"))
         { PFX_SET_BOTH(velocity_offset, velocity_offset, -127, 127); return; }
+    if (!strcmp(key, "noteFX_random"))
+        { PFX_SET_BOTH(note_random, note_random, 0, 24); return; }
 
     if (!strcmp(key, "harm_unison")) {
         int _v;
