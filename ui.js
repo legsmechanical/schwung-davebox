@@ -74,7 +74,7 @@ import {
     fmtArpStyle, fmtArpRate, fmtArpSteps, fmtArpOct, fmtVelOverride,
     col4, parseActionRaw, MCUFONT, pixelPrint, pixelPrintC,
     BANKS, ACTION_POPUP_TICKS, PAD_MODE_DRUM,
-    POLL_INTERVAL, CC_SCRATCH_PALETTE_BASE, TAP_TEMPO_FLASH_TICKS, TAP_TEMPO_RESET_TICKS,
+    POLL_INTERVAL, CC_SCRATCH_PALETTE_BASE, TAP_TEMPO_FLASH_TICKS, TAP_TEMPO_RESET_MS,
     PARAM_LED_BANKS
 } from '/data/UserData/schwung/modules/tools/seq8/ui_constants.mjs';
 
@@ -879,28 +879,28 @@ function closeTapTempo() {
 }
 
 function registerTapTempo(padNote) {
-    const now    = S.tickCount;
+    const nowMs  = Date.now();
     const taps   = S.tapTempoTapTimes;
     const last   = taps.length > 0 ? taps[taps.length - 1] : -1;
-    const intvl  = last >= 0 ? now - last : -1;
+    const intvl  = last >= 0 ? nowMs - last : -1;
 
-    /* Inactivity reset: gap exceeds 2s window */
-    if (intvl > TAP_TEMPO_RESET_TICKS) {
-        S.tapTempoTapTimes = [now];
+    /* Inactivity reset: gap exceeds 2s */
+    if (intvl > TAP_TEMPO_RESET_MS) {
+        S.tapTempoTapTimes = [nowMs];
     } else if (intvl > 0 && taps.length >= 2) {
         /* Deviation reset: new interval differs from previous by >~1.8x */
         const prevIntvl = taps[taps.length - 1] - taps[taps.length - 2];
         const ratio     = intvl / prevIntvl;
         if (ratio > 1.8 || ratio < 0.55) {
             /* Tempo change: keep last tap as anchor for new session */
-            S.tapTempoTapTimes = [last, now];
+            S.tapTempoTapTimes = [last, nowMs];
         } else {
-            taps.push(now);
+            taps.push(nowMs);
             /* Sliding window: cap at last 9 taps (8 intervals) */
             if (taps.length > 9) S.tapTempoTapTimes = taps.slice(-9);
         }
     } else {
-        taps.push(now);
+        taps.push(nowMs);
     }
 
     if (S.tapTempoTapTimes.length >= 2) {
@@ -908,9 +908,9 @@ function registerTapTempo(padNote) {
         const n = t.length;
         const avgInterval = (t[n - 1] - t[0]) / (n - 1);
         if (avgInterval > 0)
-            S.tapTempoBpm = Math.max(40, Math.min(250, Math.round(196 * 60 / avgInterval)));
+            S.tapTempoBpm = Math.max(40, Math.min(250, Math.round(60000 / avgInterval)));
     }
-    S.tapTempoFlashTick = now;
+    S.tapTempoFlashTick = S.tickCount;
     S.tapTempoFlashPad  = padNote;
     S.screenDirty = true;
 }
@@ -1562,8 +1562,6 @@ function readBankParams(t, bankIdx) {
             S.bankParams[t][bankIdx][k] = raw === 'x2' ? 1 : raw === 'x3' ? 2 : 0;
         } else if (pm.dspKey === 'route') {
             S.bankParams[t][bankIdx][k] = raw === 'external' ? 2 : raw === 'move' ? 1 : 0;
-        } else if (pm.dspKey === 'delay_pitch_random') {
-            S.bankParams[t][bankIdx][k] = (raw === 'on' || raw === '1') ? 1 : 0;
         } else {
             S.bankParams[t][bankIdx][k] = parseInt(raw, 10) || 0;
         }
@@ -1655,7 +1653,6 @@ function applyBankParam(t, bankIdx, knobIdx, val) {
         let strVal;
         if      (pm.dspKey === 'harm_unison')       strVal = ['OFF','x2','x3'][val] || 'OFF';
         else if (pm.dspKey === 'route')              strVal = val === 2 ? 'external' : val === 1 ? 'move' : 'schwung';
-        else if (pm.dspKey === 'delay_pitch_random') strVal = val ? 'on' : 'off';
         else                                         strVal = String(val);
         if ([1, 2, 3].indexOf(bankIdx) >= 0 && S.trackPadMode[t] === PAD_MODE_DRUM) {
             const lane = S.activeDrumLane[t];

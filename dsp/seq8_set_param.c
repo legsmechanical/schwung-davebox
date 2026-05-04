@@ -46,11 +46,8 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
         { PFX_SET_BOTH(fb_velocity, fb_velocity, -127, 127); return; }
     if (!strcmp(key, "delay_pitch_fb"))
         { PFX_SET_BOTH(fb_note, fb_note, -24, 24); return; }
-    if (!strcmp(key, "delay_pitch_random")) {
-        int _v = (!strcmp(val, "on") || !strcmp(val, "1")) ? 1 : 0;
-        fx->fb_note_random = _v; cp->fb_note_random = _v;
-        return;
-    }
+    if (!strcmp(key, "delay_pitch_random"))
+        { PFX_SET_BOTH(fb_note_random, fb_note_random, 0, 24); return; }
     if (!strcmp(key, "delay_gate_fb"))
         { PFX_SET_BOTH(fb_gate_time, fb_gate_time, -100, 100); return; }
     if (!strcmp(key, "delay_clock_fb"))
@@ -138,7 +135,7 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
         return;
     }
     if (!strcmp(key, "pfx_delay_reset")) {
-        fx->delay_time_idx  = 0; cp->delay_time_idx  = 0;
+        fx->delay_time_idx  = DEFAULT_DELAY_TIME_IDX; cp->delay_time_idx  = DEFAULT_DELAY_TIME_IDX;
         fx->delay_level     = 0; cp->delay_level     = 0;
         fx->repeat_times    = 0; cp->repeat_times    = 0;
         fx->fb_velocity     = 0; cp->fb_velocity     = 0;

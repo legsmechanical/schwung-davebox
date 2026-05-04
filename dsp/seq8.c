@@ -89,15 +89,18 @@ static const uint16_t TPS_VALUES[6] = {12, 24, 48, 96, 192, 384};
 #define MAX_GEN_NOTES       6
 #define MAX_REPEATS         16
 #define UNISON_STAGGER      220          /* ~5 ms at 44100 Hz */
-#define NUM_CLOCK_VALUES    11
+#define NUM_CLOCK_VALUES       17
+#define DEFAULT_DELAY_TIME_IDX 10   /* 1/8D = 360 clocks at 480 PPQN */
 #define MAX_DELAY_SAMPLES   (30ULL * 44100)
 
 /* 1 SEQ8 tick = 480/96 = 5 clocks at 480 PPQN (NoteTwist's resolution) */
 #define TICKS_TO_480PPQN    5
 
-/* CLOCK_VALUES: delay intervals in 480 PPQN clocks (from NoteTwist) */
+/* CLOCK_VALUES: delay intervals in 480 PPQN clocks.
+ * Indices: 0=1/64 1=1/64D 2=1/32 3=1/16T 4=1/32D 5=1/16 6=1/8T 7=1/16D
+ *          8=1/8  9=1/4T 10=1/8D 11=1/4 12=1/4D 13=1/2 14=1/2D 15=1/1 16=1/1D */
 static const int CLOCK_VALUES[NUM_CLOCK_VALUES] = {
-    0, 30, 60, 80, 120, 160, 240, 320, 480, 960, 1920
+    30, 45, 60, 80, 90, 120, 160, 180, 240, 320, 360, 480, 720, 960, 1440, 1920, 2880
 };
 
 /* QUANT_STEPS: launch quantization in steps. 0=Now(1), 1=1/16(1), 2=1/8(2), 3=1/4(4), 4=1/2(8), 5=1-bar(16) */
@@ -220,12 +223,12 @@ typedef struct {
     int harmonize_1;        /* -24..+24, 0=off */
     int harmonize_2;        /* -24..+24, 0=off */
     /* MIDI Delay (stage 5 from NoteTwist) */
-    int delay_time_idx;     /* 0..10, index into CLOCK_VALUES */
+    int delay_time_idx;     /* 0..16, index into CLOCK_VALUES */
     int delay_level;        /* 0..127 */
     int repeat_times;       /* 0..16 */
     int fb_velocity;        /* -127..+127 */
     int fb_note;            /* -24..+24 */
-    int fb_note_random;     /* 0 or 1 */
+    int fb_note_random;     /* 0..24, random pitch range in semitones */
     int fb_gate_time;       /* -100..+100 */
     int fb_clock;           /* -100..+100 */
     /* SEQ ARP — last stage of the chain. NOTE FX → HARMZ → MIDI DLY emit
@@ -282,12 +285,12 @@ typedef struct {
     int octaver;            /* -4..+4 */
     int harmonize_1;        /* -24..+24 */
     int harmonize_2;        /* -24..+24 */
-    int delay_time_idx;     /* 0..10 */
+    int delay_time_idx;     /* 0..16, index into CLOCK_VALUES */
     int delay_level;        /* 0..127 */
     int repeat_times;       /* 0..16 */
     int fb_velocity;        /* -127..+127 */
     int fb_note;            /* -24..+24 */
-    int fb_note_random;     /* 0 or 1 */
+    int fb_note_random;     /* 0..24, random pitch range in semitones */
     int fb_gate_time;       /* -100..+100 */
     int fb_clock;           /* -100..+100 */
     /* SEQ ARP per-clip params */
@@ -784,7 +787,7 @@ static void ensure_parent_dir(const char *path) {
 
 static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
     int t, c;
-    fprintf(fp, "{\"v\":18,\"playing\":%d", inst->playing);
+    fprintf(fp, "{\"v\":19,\"playing\":%d", inst->playing);
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
     for (t = 0; t < NUM_TRACKS; t++)
@@ -840,7 +843,7 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
                 if (p2->octaver         != 0)   fprintf(fp, ",\"t%dc%d_ho\":%d",   t, c, p2->octaver);
                 if (p2->harmonize_1     != 0)   fprintf(fp, ",\"t%dc%d_h1\":%d",   t, c, p2->harmonize_1);
                 if (p2->harmonize_2     != 0)   fprintf(fp, ",\"t%dc%d_h2\":%d",   t, c, p2->harmonize_2);
-                if (p2->delay_time_idx  != 0)   fprintf(fp, ",\"t%dc%d_dt\":%d",   t, c, p2->delay_time_idx);
+                if (p2->delay_time_idx  != DEFAULT_DELAY_TIME_IDX) fprintf(fp, ",\"t%dc%d_dt\":%d", t, c, p2->delay_time_idx);
                 if (p2->delay_level     != 0)   fprintf(fp, ",\"t%dc%d_dl\":%d",   t, c, p2->delay_level);
                 if (p2->repeat_times    != 0)   fprintf(fp, ",\"t%dc%d_dr\":%d",   t, c, p2->repeat_times);
                 if (p2->fb_velocity     != 0)   fprintf(fp, ",\"t%dc%d_dvf\":%d",  t, c, p2->fb_velocity);
@@ -1024,10 +1027,10 @@ static void seq8_load_state(seq8_instance_t *inst) {
     if (!n) { free(buf); remove(inst->state_path); return; }
     buf[n] = '\0';
 
-    /* Version gate: only v=18 accepted (dev build; wipe on version mismatch). */
+    /* Version gate: only v=19 accepted (dev build; wipe on version mismatch). */
     {
         int sv = json_get_int(buf, "v", -1);
-        if (sv != 18) {
+        if (sv != 19) {
             free(buf);
             remove(inst->state_path);
             seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
@@ -1271,7 +1274,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
             snprintf(key, sizeof(key), "t%dc%d_h2",   t, c);
             p2->harmonize_2     = clamp_i(json_get_int(buf, key,   0),   -24,  24);
             snprintf(key, sizeof(key), "t%dc%d_dt",   t, c);
-            p2->delay_time_idx  = clamp_i(json_get_int(buf, key,   0),     0, NUM_CLOCK_VALUES - 1);
+            p2->delay_time_idx  = clamp_i(json_get_int(buf, key, DEFAULT_DELAY_TIME_IDX), 0, NUM_CLOCK_VALUES - 1);
             snprintf(key, sizeof(key), "t%dc%d_dl",   t, c);
             p2->delay_level     = clamp_i(json_get_int(buf, key,   0),     0, 127);
             snprintf(key, sizeof(key), "t%dc%d_dr",   t, c);
@@ -1281,7 +1284,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
             snprintf(key, sizeof(key), "t%dc%d_dpf",  t, c);
             p2->fb_note         = clamp_i(json_get_int(buf, key,   0),   -24,  24);
             snprintf(key, sizeof(key), "t%dc%d_dpr",  t, c);
-            p2->fb_note_random  = json_get_int(buf, key, 0) ? 1 : 0;
+            p2->fb_note_random  = clamp_i(json_get_int(buf, key, 0), 0, 24);
             snprintf(key, sizeof(key), "t%dc%d_dgf",  t, c);
             p2->fb_gate_time    = clamp_i(json_get_int(buf, key,   0),  -100, 100);
             snprintf(key, sizeof(key), "t%dc%d_dcf",  t, c);
@@ -2253,12 +2256,14 @@ static void pfx_sched_delay_ons(seq8_instance_t *inst, int scale_aware,
         }
 
         {
-            if (fx->fb_note_random) {
+            if (fx->fb_note_random > 0) {
+                int rng = fx->fb_note_random;
                 if (scale_aware) {
                     int lim = (int)SCALE_SIZES[inst->pad_scale < 14 ? inst->pad_scale : 0];
+                    if (rng < lim) lim = rng;
                     cumul_deg = pfx_rand(fx, -lim, lim);
                 } else {
-                    cumul_pitch = pfx_rand(fx, -12, 12);
+                    cumul_pitch = pfx_rand(fx, -rng, rng);
                 }
             } else {
                 if (scale_aware) cumul_deg   += fx->fb_note;
@@ -2377,7 +2382,7 @@ static void pfx_reset(play_fx_t *fx) {
     fx->octaver         = 0;
     fx->harmonize_1     = 0;
     fx->harmonize_2     = 0;
-    fx->delay_time_idx  = 0;
+    fx->delay_time_idx  = DEFAULT_DELAY_TIME_IDX;
     fx->delay_level     = 0;
     fx->repeat_times    = 0;
     fx->fb_velocity     = 0;
@@ -3255,7 +3260,7 @@ static void clip_pfx_params_init(clip_pfx_params_t *p) {
     p->octaver         = 0;
     p->harmonize_1     = 0;
     p->harmonize_2     = 0;
-    p->delay_time_idx  = 0;
+    p->delay_time_idx  = DEFAULT_DELAY_TIME_IDX;
     p->delay_level     = 0;
     p->repeat_times    = 0;
     p->fb_velocity     = 0;
@@ -3790,7 +3795,7 @@ static int bake_stage_midi_dly(seq8_instance_t *inst, int scale_aware,
     int oc = 0, ni;
     for (ni = 0; ni < in_count && oc < out_max; ni++)
         out[oc++] = in[ni];
-    if (fx->repeat_times <= 0 || fx->delay_level <= 0 || fx->delay_time_idx <= 0)
+    if (fx->repeat_times <= 0 || fx->delay_level <= 0)
         return oc;
     int dclk_master = CLOCK_VALUES[fx->delay_time_idx] / 5; /* 480→96 PPQN */
     if (dclk_master <= 0) return oc;
@@ -3803,12 +3808,14 @@ static int bake_stage_midi_dly(seq8_instance_t *inst, int scale_aware,
             cumul += cur_delay;
             uint32_t echo_tick = in[ni].tick + (uint32_t)(cumul + 0.5);
             if (echo_tick >= clip_ticks) break;
-            if (fx->fb_note_random) {
+            if (fx->fb_note_random > 0) {
+                int rng = fx->fb_note_random;
                 if (scale_aware) {
                     int lim = (int)SCALE_SIZES[inst->pad_scale < 14 ? inst->pad_scale : 0];
+                    if (rng < lim) lim = rng;
                     cumul_deg = pfx_rand(fx, -lim, lim);
                 } else {
-                    cumul_pitch = pfx_rand(fx, -12, 12);
+                    cumul_pitch = pfx_rand(fx, -rng, rng);
                 }
             } else {
                 if (scale_aware) cumul_deg   += fx->fb_note;
@@ -4253,8 +4260,7 @@ static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
     if (!strcmp(key, "delay_repeats"))      return snprintf(out, out_len, "%d", fx->repeat_times);
     if (!strcmp(key, "delay_vel_fb"))       return snprintf(out, out_len, "%d", fx->fb_velocity);
     if (!strcmp(key, "delay_pitch_fb"))     return snprintf(out, out_len, "%d", fx->fb_note);
-    if (!strcmp(key, "delay_pitch_random")) return snprintf(out, out_len, "%s",
-                                                fx->fb_note_random ? "on" : "off");
+    if (!strcmp(key, "delay_pitch_random")) return snprintf(out, out_len, "%d", fx->fb_note_random);
     if (!strcmp(key, "delay_gate_fb"))      return snprintf(out, out_len, "%d", fx->fb_gate_time);
     if (!strcmp(key, "delay_clock_fb"))     return snprintf(out, out_len, "%d", fx->fb_clock);
 

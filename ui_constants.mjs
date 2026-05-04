@@ -74,7 +74,7 @@ export const SCALE_DISPLAY = [
     'Locrian', 'H Minor', 'M Minor', 'Pent Major', 'Pent Minor',
     'Blues', 'Whole Tone', 'Diminished'
 ];
-export const DELAY_LABELS = ['---','1/64','1/32','16T','1/16','8T','1/8','4T','1/4','1/2','1/1'];
+export const DELAY_LABELS = ['1/64','1/64D','1/32','1/16T','1/32D','1/16','1/8T','1/16D','1/8','1/4T','1/8D','1/4','1/4D','1/2','1/2D','1/1','1/1D'];
 
 export function fmtSign(v)    { return (v >= 0 ? '+' : '') + v; }
 export function fmtStretch(exp) {
@@ -88,8 +88,9 @@ export function fmtPct(v)    { return v + '%'; }
 export function fmtNote(v)   { return NOTE_KEYS[((v | 0) % 12 + 12) % 12]; }
 export function fmtPages(v)  { return v + 'pg'; }
 export function fmtUnis(v)   { return ['OFF','x2','x3'][v] || 'OFF'; }
-export function fmtDly(v)    { return DELAY_LABELS[v] || '---'; }
-export function fmtBool(v)   { return v ? 'ON' : 'OFF'; }
+export function fmtDly(v)      { return DELAY_LABELS[v] || '---'; }
+export function fmtBool(v)     { return v ? 'ON' : 'OFF'; }
+export function fmtPitchRnd(v) { return v === 0 ? 'OFF' : String(v); }
 export function fmtRoute(v)  { return v === 2 ? 'Ext' : v === 1 ? 'Move' : 'Swng'; }
 export function fmtPlain(v)  { return String(v); }
 export function fmtNA()      { return '-'; }
@@ -263,14 +264,14 @@ export const BANKS = [
     ]},
     /* 3 — MIDI DLY (pad 95) */
     { name: 'MIDI DLY', knobs: [
-        p('Dly',  'Delay Time',     'delay_time',         'track', 0,    10,  0, fmtDly,   16),
+        p('Dly',  'Delay Time',     'delay_time',         'track', 0,    16, 10, fmtDly,   16),
         p('Lvl',  'Delay Level',    'delay_level',        'track', 0,    127, 0, fmtPlain),
         p('Rep',  'Repeats',        'delay_repeats',      'track', 0,    16,  0, fmtPlain, 16),
         p('Vfb',  'Vel Feedback',   'delay_vel_fb',       'track', -127, 127, 0, fmtSign ),
         p('Pfb',  'Pitch Feedback', 'delay_pitch_fb',     'track', -24,  24,  0, fmtSign,  16),
         p('Gfb',  'Gate Feedback',  'delay_gate_fb',      'track', -100, 100, 0, fmtSign ),
         p('Clk',  'Clock Feedback', 'delay_clock_fb',     'track', -100, 100, 0, fmtSign ),
-        p('Rnd',  'Pitch Random',   'delay_pitch_random', 'track', 0,    1,   0, fmtBool ),
+        p('Rnd',  'Pitch Random',   'delay_pitch_random', 'track', 0,   24,   0, fmtPitchRnd ),
     ]},
     /* 4 — ARP OUT (pad 96) */
     { name: 'ARP OUT', knobs: [
@@ -303,7 +304,7 @@ export const ACTION_POPUP_TICKS = 98; /* ~500ms at 196Hz */
 export const POLL_INTERVAL = 4;
 export const CC_SCRATCH_PALETTE_BASE = 51;
 export const TAP_TEMPO_FLASH_TICKS = 20;   /* ~100ms at 196Hz */
-export const TAP_TEMPO_RESET_TICKS = 392;  /* ~2s at 196Hz */
+export const TAP_TEMPO_RESET_MS    = 2000; /* inactivity reset threshold */
 export const PARAM_LED_BANKS = [1, 2, 3, 4, 5];
 
 export const PAD_MODE_DRUM = 1;
