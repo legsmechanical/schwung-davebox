@@ -2294,7 +2294,7 @@ function drawUI() {
                 : (vs === 100 ? 'Live' : vs + '%');
             print(colX, rowY + 12, col4(disp), hi ? 0 : 1);
         }
-        } else if (S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM &&
+        } else if (S.shiftHeld && S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM &&
                 ((bank === 1 && S.knobTouched === 2) || (bank === 3 && S.knobTouched === 7))) {
         /* Rnd algorithm selector: shown while Rnd knob is touched/recently turned */
         const t      = S.activeTrack;
@@ -2978,14 +2978,7 @@ globalThis.tick = function () {
         }
         if (S.knobTouched >= 0 && S.knobTurnedTick[S.knobTouched] >= 0 &&
                 (S.tickCount - S.knobTurnedTick[S.knobTouched]) >= KNOB_TURN_HIGHLIGHT_TICKS) {
-            if (S.rndDialogMode >= 0) {
-                const _rt = S.activeTrack, _rb = S.activeBank;
-                if (_rb === 3) { S.midiDlyRandomMode[_rt] = S.rndDialogMode;
-                    if (typeof host_module_set_param === 'function') host_module_set_param('delay_pitch_random_mode', String(S.rndDialogMode)); }
-                else           { S.noteFXRandomMode[_rt]  = S.rndDialogMode;
-                    if (typeof host_module_set_param === 'function') host_module_set_param('noteFX_random_mode',        String(S.rndDialogMode)); }
-                S.rndDialogMode = -1;
-            }
+            S.rndDialogMode = -1;
             S.knobTouched = -1;
             S.screenDirty = true;
         }
@@ -3419,6 +3412,7 @@ function _onCC_buttons(d1, d2) {
     if (d1 === MoveShift) {
         S.shiftHeld = d2 === 127;
         if (!S.shiftHeld && S.jogTouched) S.jogTouched = false;
+        if (!S.shiftHeld && S.rndDialogMode >= 0) { S.rndDialogMode = -1; S.screenDirty = true; }
         if (!S.sessionView) forceRedraw();
     }
 
@@ -4434,8 +4428,8 @@ function _onCC_knobs(d1, d2) {
             }
             return;
         }
-        /* Rnd knob in NOTE FX (K3) or MIDI DLY (K8) on melodic: scroll algorithm dialog */
-        if (S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM &&
+        /* Rnd knob in NOTE FX (K3) or MIDI DLY (K8) on melodic + Shift: scroll algorithm dialog */
+        if (S.shiftHeld && S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM &&
                 ((bank === 1 && knobIdx === 2) || (bank === 3 && knobIdx === 7))) {
             const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
             if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
