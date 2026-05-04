@@ -77,7 +77,7 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 ## Upcoming tasks
 
 1. ~~**Undo LED freeze**~~ **done** — DSP populates `last_restore_info` on undo/redo; JS reads it 5 ticks later and re-syncs only the affected clip(s) (~5-15 get_param calls vs ~300).
-2. **Drum step-to-step copy** — `copyStep()` uses melodic `tN_cC_step_S_copy_to`; needs drum lane branch `tN_lL_step_S_copy_to`.
+2. ~~**Drum step-to-step copy**~~ **done** — `copyStep()` has drum lane branch using `tN_lL_step_S_copy_to`.
 3. **Scale-aware key/scale changes** — transpose all clip notes on Key/Scale change. Design TBD.
 4. **Step/note editing fixes** — see pending fixes in planning doc.
 5. MIDI Delay Rnd refinement · 6. Full instance reset · 7. State snapshots (16 slots) · 8. Swing · 9. MIDI clock sync
