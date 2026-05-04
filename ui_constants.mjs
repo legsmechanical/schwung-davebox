@@ -271,7 +271,7 @@ export const BANKS = [
     ]},
     /* 3 — MIDI DLY (pad 95) */
     { name: 'MIDI DLY', knobs: [
-        p('Dly',  'Delay Time',     'delay_time',         'track', 0,    16, 10, fmtDly,   10),
+        p('Rate', 'Delay Time',     'delay_time',         'track', 0,    16, 10, fmtDly,   10),
         p('Lvl',  'Delay Level',    'delay_level',        'track', 0,    127, 0, fmtPlain),
         p('Rep',  'Repeats',        'delay_repeats',      'track', 0,    16,  0, fmtPlain, 16),
         p('Vfb',  'Vel Feedback',   'delay_vel_fb',       'track', -127, 127, 0, fmtSign ),
