@@ -91,13 +91,8 @@ export function fmtUnis(v)   { return ['OFF','x2','x3'][v] || 'OFF'; }
 export function fmtDly(v)      { return DELAY_LABELS[v] || '---'; }
 export function fmtBool(v)     { return v ? 'ON' : 'OFF'; }
 export function fmtPitchRnd(v) { return v === 0 ? 'OFF' : String(v); }
-const GATE_CCW_LABELS = ['1bar','1/2','1/4','1/4T','1/8','1/8T','1/16','1/16T','1/32','1/64'];
-export function fmtGateMod(v) {
-    if (v === 0) return 'Off';
-    if (v < 0)   return GATE_CCW_LABELS[-v - 1];
-    const m = v * 0.5 + 0.5;
-    return (m % 1 === 0 ? m.toFixed(0) : m.toFixed(1)) + 'x';
-}
+const GATE_LABELS = ['Off','1/64','1/32','1/16T','1/16','1/8T','1/8','1/4T','1/4','1/2','1bar'];
+export function fmtGateMod(v) { return GATE_LABELS[v] || 'Off'; }
 export function fmtRoute(v)  { return v === 2 ? 'Ext' : v === 1 ? 'Move' : 'Swng'; }
 export function fmtPlain(v)  { return String(v); }
 export function fmtNA()      { return '-'; }
@@ -276,7 +271,7 @@ export const BANKS = [
         p('Rep',  'Repeats',        'delay_repeats',      'track', 0,    16,  0, fmtPlain, 16),
         p('Vfb',  'Vel Feedback',   'delay_vel_fb',       'track', -127, 127, 0, fmtSign ),
         p('Pfb',  'Pitch Feedback', 'delay_pitch_fb',     'track', -24,  24,  0, fmtSign,  16),
-        p('Gate', 'Gate',           'delay_gate_fb',      'track', -10,  15,   0, fmtGateMod, 2),
+        p('Gate', 'Gate',           'delay_gate_fb',      'track', 0,    10,   0, fmtGateMod, 2),
         p('Clk',  'Clock Feedback', 'delay_clock_fb',     'track', -100, 100, 0, fmtSign ),
         p('Rnd',  'Pitch Random',   'delay_pitch_random', 'track', 0,   24,   0, fmtPitchRnd, 4),
     ]},

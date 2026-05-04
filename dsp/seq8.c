@@ -103,11 +103,12 @@ static const int CLOCK_VALUES[NUM_CLOCK_VALUES] = {
     30, 45, 60, 80, 90, 120, 160, 180, 240, 320, 360, 480, 720, 960, 1440, 1920, 2880
 };
 
-/* GATE_FIXED_TICKS: fixed gate durations in 96 PPQN ticks for delay gate CCW values.
- * Index = (-fb_gate_time - 1): 0=1bar 1=1/2 2=1/4 3=1/4T 4=1/8 5=1/8T 6=1/16 7=1/16T 8=1/32 9=1/64 */
+/* GATE_FIXED_TICKS: fixed gate durations in 96 PPQN ticks.
+ * Index = fb_gate_time - 1 (value 1..10): 0=1/64 1=1/32 2=1/16T 3=1/16 4=1/8T
+ *         5=1/8 6=1/4T 7=1/4 8=1/2 9=1bar */
 #define NUM_GATE_FIXED 10
 static const int GATE_FIXED_TICKS[NUM_GATE_FIXED] = {
-    384, 192, 96, 64, 48, 32, 24, 16, 12, 6
+    6, 12, 16, 24, 32, 48, 64, 96, 192, 384
 };
 
 /* QUANT_STEPS: launch quantization in steps. 0=Now(1), 1=1/16(1), 2=1/8(2), 3=1/4(4), 4=1/2(8), 5=1-bar(16) */
@@ -236,7 +237,7 @@ typedef struct {
     int fb_velocity;        /* -127..+127 */
     int fb_note;            /* -24..+24 */
     int fb_note_random;     /* 0..24, random pitch range in semitones */
-    int fb_gate_time;       /* -10..15: 0=Off, <0=fixed(CCW), >0=multiplier(CW) */
+    int fb_gate_time;       /* 0..10: 0=Off, 1..10=fixed gate (1/64..1bar) */
     int fb_clock;           /* -100..+100 */
     /* SEQ ARP — last stage of the chain. NOTE FX → HARMZ → MIDI DLY emit
      * via pfx_send; when arp.on && !arp_emitting, pfx_send routes note-on/off
@@ -298,7 +299,7 @@ typedef struct {
     int fb_velocity;        /* -127..+127 */
     int fb_note;            /* -24..+24 */
     int fb_note_random;     /* 0..24, random pitch range in semitones */
-    int fb_gate_time;       /* -10..15: 0=Off, <0=fixed(CCW), >0=multiplier(CW) */
+    int fb_gate_time;       /* 0..10: 0=Off, 1..10=fixed gate (1/64..1bar) */
     int fb_clock;           /* -100..+100 */
     /* SEQ ARP per-clip params */
     int seq_arp_style;         /* 0=Off (bypass), 1..9=Up/Dn/U-D/D-U/Cnv/Div/Ord/Rnd/RnO */
@@ -794,7 +795,7 @@ static void ensure_parent_dir(const char *path) {
 
 static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
     int t, c;
-    fprintf(fp, "{\"v\":21,\"playing\":%d", inst->playing);
+    fprintf(fp, "{\"v\":22,\"playing\":%d", inst->playing);
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
     for (t = 0; t < NUM_TRACKS; t++)
@@ -1034,10 +1035,10 @@ static void seq8_load_state(seq8_instance_t *inst) {
     if (!n) { free(buf); remove(inst->state_path); return; }
     buf[n] = '\0';
 
-    /* Version gate: only v=21 accepted (dev build; wipe on version mismatch). */
+    /* Version gate: only v=22 accepted (dev build; wipe on version mismatch). */
     {
         int sv = json_get_int(buf, "v", -1);
-        if (sv != 21) {
+        if (sv != 22) {
             free(buf);
             remove(inst->state_path);
             seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
@@ -1292,7 +1293,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
             snprintf(key, sizeof(key), "t%dc%d_dpr",  t, c);
             p2->fb_note_random  = clamp_i(json_get_int(buf, key, 0), 0, 24);
             snprintf(key, sizeof(key), "t%dc%d_dgf",  t, c);
-            p2->fb_gate_time    = clamp_i(json_get_int(buf, key,   0),   -10,  15);
+            p2->fb_gate_time    = clamp_i(json_get_int(buf, key,   0),     0,  10);
             snprintf(key, sizeof(key), "t%dc%d_dcf",  t, c);
             p2->fb_clock        = clamp_i(json_get_int(buf, key,   0),  -100, 100);
             /* SEQ ARP */
@@ -2288,9 +2289,7 @@ static void pfx_sched_delay_ons(seq8_instance_t *inst, int scale_aware,
         an->reps[i].velocity = (uint8_t)rep_vel;
 
         if (fx->fb_gate_time > 0)
-            an->reps[i].gate_factor = (double)fx->fb_gate_time * 0.5 + 0.5;
-        else if (fx->fb_gate_time < 0)
-            an->reps[i].gate_factor = -(double)GATE_FIXED_TICKS[-fx->fb_gate_time - 1] * (double)TICKS_TO_480PPQN * sp;
+            an->reps[i].gate_factor = -(double)GATE_FIXED_TICKS[fx->fb_gate_time - 1] * (double)TICKS_TO_480PPQN * sp;
         else
             an->reps[i].gate_factor = 1.0;
 
@@ -3835,13 +3834,9 @@ static int bake_stage_midi_dly(seq8_instance_t *inst, int scale_aware,
                 : clamp_i((int)in[ni].pitch + cumul_pitch, 0, 127);
             if (rep > 0) rep_vel += fx->fb_velocity;
             rep_vel = clamp_i(rep_vel, 1, 127);
-            uint32_t eg;
-            if (fx->fb_gate_time > 0)
-                eg = (uint32_t)((double)in[ni].gate * ((double)fx->fb_gate_time * 0.5 + 0.5) + 0.5);
-            else if (fx->fb_gate_time < 0)
-                eg = (uint32_t)GATE_FIXED_TICKS[-fx->fb_gate_time - 1];
-            else
-                eg = in[ni].gate;
+            uint32_t eg = fx->fb_gate_time > 0
+                ? (uint32_t)GATE_FIXED_TICKS[fx->fb_gate_time - 1]
+                : in[ni].gate;
             if (eg < 1) eg = 1; if (eg > 65535u) eg = 65535u;
             out[oc++] = (bake_note_t){ echo_tick, (uint16_t)eg,
                                        (uint8_t)echo_pitch, (uint8_t)rep_vel };
