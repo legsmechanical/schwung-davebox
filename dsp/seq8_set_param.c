@@ -49,7 +49,7 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
     if (!strcmp(key, "delay_pitch_random"))
         { PFX_SET_BOTH(fb_note_random, fb_note_random, 0, 24); return; }
     if (!strcmp(key, "delay_gate_fb"))
-        { PFX_SET_BOTH(fb_gate_time, fb_gate_time, 0, 400); return; }
+        { PFX_SET_BOTH(fb_gate_time, fb_gate_time, -10, 15); return; }
     if (!strcmp(key, "delay_clock_fb"))
         { PFX_SET_BOTH(fb_clock, fb_clock, -100, 100); return; }
 
@@ -141,7 +141,7 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
         fx->fb_velocity     = 0; cp->fb_velocity     = 0;
         fx->fb_note         = 0; cp->fb_note         = 0;
         fx->fb_note_random  = 0; cp->fb_note_random  = 0;
-        fx->fb_gate_time    = 100; cp->fb_gate_time    = 100;
+        fx->fb_gate_time    = 0; cp->fb_gate_time    = 0;
         fx->fb_clock        = 0; cp->fb_clock        = 0;
         return;
     }
