@@ -269,19 +269,27 @@ export function updateSessionLEDs() {
 export function updateTrackLEDs() {
     if (!S.ledInitComplete) return;
 
-    /* Step icon LEDs (CCs 16-31): light shortcut hints while Shift held in Track View */
+    /* Step icon LEDs (CCs 16-31): light shortcut hints while Shift held in Track View.
+     * Force-send every POLL_INTERVAL to override any native Move state that bypasses caches. */
     {
         const showIcons = !S.sessionView && S.shiftHeld;
         const isDrum    = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
+        const force     = S.tickCount % POLL_INTERVAL === 0;
         for (let i = 0; i < 16; i++) {
             let on = false;
             if (showIcons) {
-                if (i === 1)                    on = true;  // step 2
-                else if (i >= 4 && i <= 9)     on = true;  // steps 5-10
-                else if (i === 10 && !isDrum)  on = true;  // step 11 (melodic only)
-                else if (i === 14 || i === 15) on = true;  // steps 15-16
+                if (i === 1)                    on = true;
+                else if (i >= 4 && i <= 9)     on = true;
+                else if (i === 10 && !isDrum)  on = true;
+                else if (i === 14 || i === 15) on = true;
             }
-            cachedSetButtonLED(16 + i, on ? White : LED_OFF);
+            const color = on ? White : LED_OFF;
+            if (force) {
+                lastSentButtonLED[16 + i] = color;
+                setButtonLED(16 + i, color, true);
+            } else {
+                cachedSetButtonLED(16 + i, color);
+            }
         }
     }
 
