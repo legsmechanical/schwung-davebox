@@ -4074,6 +4074,7 @@ static void bake_clip(seq8_instance_t *inst, int t, int c, int loops) {
     for (loop = 0; loop < loops; loop++) {
         uint32_t tick_offset = (uint32_t)loop * clip_ticks;
         int a_count = 0;
+        fx.note_random_walk = 0; /* fresh walk each loop so loops produce independent pitch sequences */
 
         /* Stage 0: NOTEFX + HARMZ — reads cl->notes (unmodified until clip_init below) */
         for (ni = 0; ni < cl->note_count && a_count < BAKE_BUF; ni++) {
