@@ -241,6 +241,10 @@ function buildGlobalMenuItems() {
             set: function(v) { S.beatMarkersEnabled = v; forceRedraw(); },
             onLabel: 'On', offLabel: 'Off'
         }),
+        createAction('Save', function() {
+            saveState();
+            showActionPopup(['STATE', 'SAVED'], -1);
+        }),
         createAction('Quit', function() {
             saveState();
             removeFlagsWrap();
