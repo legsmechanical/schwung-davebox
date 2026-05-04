@@ -269,7 +269,7 @@ export const BANKS = [
         p('Rep',  'Repeats',        'delay_repeats',      'track', 0,    16,  0, fmtPlain, 16),
         p('Vfb',  'Vel Feedback',   'delay_vel_fb',       'track', -127, 127, 0, fmtSign ),
         p('Pfb',  'Pitch Feedback', 'delay_pitch_fb',     'track', -24,  24,  0, fmtSign,  16),
-        p('Gfb',  'Gate Feedback',  'delay_gate_fb',      'track', -100, 100, 0, fmtSign ),
+        p('Gate', 'Gate',           'delay_gate_fb',      'track', 0,   400, 100, fmtPct ),
         p('Clk',  'Clock Feedback', 'delay_clock_fb',     'track', -100, 100, 0, fmtSign ),
         p('Rnd',  'Pitch Random',   'delay_pitch_random', 'track', 0,   24,   0, fmtPitchRnd ),
     ]},
