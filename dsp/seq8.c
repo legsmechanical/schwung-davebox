@@ -867,11 +867,11 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
                 if (p2->fb_velocity     != 0)   fprintf(fp, ",\"t%dc%d_dvf\":%d",  t, c, p2->fb_velocity);
                 if (p2->fb_note         != 0)   fprintf(fp, ",\"t%dc%d_dpf\":%d",  t, c, p2->fb_note);
                 if (p2->fb_note_random  != 0)   fprintf(fp, ",\"t%dc%d_dpr\":%d",  t, c, p2->fb_note_random);
-                if (p2->fb_note_random_mode != 0) fprintf(fp, ",\"t%dc%d_dpnm\":%d", t, c, p2->fb_note_random_mode);
+                if (p2->fb_note_random_mode != 2) fprintf(fp, ",\"t%dc%d_dpnm\":%d", t, c, p2->fb_note_random_mode);
                 if (p2->fb_gate_time    != 0)    fprintf(fp, ",\"t%dc%d_dgf\":%d",  t, c, p2->fb_gate_time);
                 if (p2->fb_clock        != 0)   fprintf(fp, ",\"t%dc%d_dcf\":%d",  t, c, p2->fb_clock);
                 if (p2->note_random     != 0)   fprintf(fp, ",\"t%dc%d_nfrnd\":%d", t, c, p2->note_random);
-                if (p2->note_random_mode != 0)  fprintf(fp, ",\"t%dc%d_nfrnm\":%d", t, c, p2->note_random_mode);
+                if (p2->note_random_mode != 2)  fprintf(fp, ",\"t%dc%d_nfrnm\":%d", t, c, p2->note_random_mode);
                 /* SEQ ARP — sparse, only emit if non-default */
                 if (p2->seq_arp_style     != 0)             fprintf(fp, ",\"t%dc%d_arst\":%d", t, c, p2->seq_arp_style);
                 if (p2->seq_arp_rate      != ARP_RATE_DEFAULT) fprintf(fp, ",\"t%dc%d_arrt\":%d", t, c, p2->seq_arp_rate);
@@ -1307,7 +1307,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
             snprintf(key, sizeof(key), "t%dc%d_dpr",  t, c);
             p2->fb_note_random  = clamp_i(json_get_int(buf, key, 0), 0, 24);
             snprintf(key, sizeof(key), "t%dc%d_dpnm", t, c);
-            p2->fb_note_random_mode = clamp_i(json_get_int(buf, key, 0), 0, 2);
+            p2->fb_note_random_mode = clamp_i(json_get_int(buf, key, 2), 0, 2);
             snprintf(key, sizeof(key), "t%dc%d_dgf",  t, c);
             p2->fb_gate_time    = clamp_i(json_get_int(buf, key,   0),     0,  10);
             snprintf(key, sizeof(key), "t%dc%d_dcf",  t, c);
@@ -1315,7 +1315,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
             snprintf(key, sizeof(key), "t%dc%d_nfrnd", t, c);
             p2->note_random     = clamp_i(json_get_int(buf, key,   0),     0,  24);
             snprintf(key, sizeof(key), "t%dc%d_nfrnm", t, c);
-            p2->note_random_mode = clamp_i(json_get_int(buf, key,  0),     0,   2);
+            p2->note_random_mode = clamp_i(json_get_int(buf, key,  2),     0,   2);
             /* SEQ ARP */
             snprintf(key, sizeof(key), "t%dc%d_arst", t, c);
             p2->seq_arp_style     = clamp_i(json_get_int(buf, key, 0), 0, 9);
@@ -3354,11 +3354,11 @@ static void clip_pfx_params_init(clip_pfx_params_t *p) {
     p->fb_velocity     = 0;
     p->fb_note         = 0;
     p->fb_note_random      = 0;
-    p->fb_note_random_mode = 0;
+    p->fb_note_random_mode = 2;  /* default Walk */
     p->fb_gate_time    = 0;
     p->fb_clock        = 0;
     p->note_random      = 0;
-    p->note_random_mode = 0;
+    p->note_random_mode = 2;     /* default Walk */
     p->seq_arp_style     = 0;
     p->seq_arp_rate      = ARP_RATE_DEFAULT;
     p->seq_arp_octaves   = 0;

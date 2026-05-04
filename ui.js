@@ -2194,7 +2194,8 @@ function drawUI() {
 
     if (bank >= 0 && (S.knobTouched >= 0 || inTimeout ||
             (S.shiftHeld && bank === 5 && S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) ||
-            (S.shiftHeld && bank === 6 && !S.sessionView))) {
+            (S.shiftHeld && bank === 6 && !S.sessionView) ||
+            (S.shiftHeld && (bank === 1 || bank === 3) && S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM))) {
         const isDrumLaneBank = (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 0);
         if (isDrumLaneBank) {
             /* DRUM LANE bank overview: mirrors CLIP bank at lane level */
@@ -2292,6 +2293,24 @@ function drawUI() {
                 ? (ndg === 0 ? ' 0%' : (ndg > 0 ? '+' : '') + ndg + '%')
                 : (vs === 100 ? 'Live' : vs + '%');
             print(colX, rowY + 12, col4(disp), hi ? 0 : 1);
+        }
+        } else if (S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM &&
+                ((bank === 1 && S.knobTouched === 2) || (bank === 3 && S.knobTouched === 7))) {
+        /* Rnd algorithm selector: shown while Rnd knob is touched/recently turned */
+        const t      = S.activeTrack;
+        const isMidi = bank === 3;
+        const mode   = isMidi ? (S.midiDlyRandomMode[t] || 0) : (S.noteFXRandomMode[t] || 0);
+        const ALG_NAMES = ['UNIFORM', 'GAUSSIAN', 'WALK'];
+        const header = isMidi ? '[ DLY PITCH ]' : '[ NOTE FX   ]';
+        const hw = header.length * 6;
+        print(Math.floor((128 - hw) / 2), 4, header, 1);
+        fill_rect(Math.floor((128 - hw) / 2), 13, hw, 1, 1);
+        for (let i = 0; i < 3; i++) {
+            const y  = 19 + i * 15;
+            const hi = (mode === i);
+            if (hi) fill_rect(2, y - 1, 124, 13, 1);
+            const lw = ALG_NAMES[i].length * 6;
+            print(Math.floor((128 - lw) / 2), y, ALG_NAMES[i], hi ? 0 : 1);
         }
         } else if (bank === 6) {
         /* CC PARAM bank overview: label = assigned CC, value = current value */
@@ -3160,6 +3179,32 @@ function _onCC_jog(d1, d2) {
         S.confirmBake = false;
         S.screenDirty = true;
         return;
+    }
+
+    /* Rnd algorithm dialog: jog turn scrolls through algorithms */
+    if (d1 === 14 && !S.sessionView && !S.globalMenuOpen && !S.confirmBake) {
+        const _rb = S.activeBank;
+        const _isDrum = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
+        const _rndDlg = !_isDrum && ((_rb === 1 && S.knobTouched === 2) ||
+                                     (_rb === 3 && S.knobTouched === 7));
+        if (_rndDlg) {
+            const dir  = (d2 >= 1 && d2 <= 63) ? 1 : -1;
+            const t    = S.activeTrack;
+            const isMidi = _rb === 3;
+            const cur  = isMidi ? (S.midiDlyRandomMode[t] || 0) : (S.noteFXRandomMode[t] || 0);
+            const next = ((cur + dir) % 3 + 3) % 3;
+            if (isMidi) {
+                S.midiDlyRandomMode[t] = next;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('delay_pitch_random_mode', String(next));
+            } else {
+                S.noteFXRandomMode[t] = next;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('noteFX_random_mode', String(next));
+            }
+            S.screenDirty = true;
+            return;
+        }
     }
 
     /* CC 3 = jog wheel physical click */
@@ -4403,46 +4448,6 @@ function _onCC_knobs(d1, d2) {
                         S.screenDirty = true;
                     }
                 }
-            }
-            return;
-        }
-        /* MIDI DLY bank: Shift+Rnd (K8) = cycle pitch random algorithm */
-        if (S.shiftHeld && bank === 3 && knobIdx === 7 &&
-                S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM) {
-            const t   = S.activeTrack;
-            const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
-            if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
-            S.knobAccum[knobIdx]++;
-            if (S.knobAccum[knobIdx] >= 8) {
-                S.knobAccum[knobIdx] = 0;
-                const cur  = S.midiDlyRandomMode[t] || 0;
-                const next = ((cur + dir) % 3 + 3) % 3;
-                S.midiDlyRandomMode[t] = next;
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('delay_pitch_random_mode', String(next));
-                const names = ['UNIFORM', 'GAUSSIAN', 'WALK'];
-                showActionPopup('DLY RND', names[next]);
-                S.screenDirty = true;
-            }
-            return;
-        }
-        /* NOTE FX bank: Shift+Rnd (K3) = cycle pitch random algorithm */
-        if (S.shiftHeld && bank === 1 && knobIdx === 2 &&
-                S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM) {
-            const t   = S.activeTrack;
-            const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
-            if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
-            S.knobAccum[knobIdx]++;
-            if (S.knobAccum[knobIdx] >= 8) {
-                S.knobAccum[knobIdx] = 0;
-                const cur  = S.noteFXRandomMode[t] || 0;
-                const next = ((cur + dir) % 3 + 3) % 3;
-                S.noteFXRandomMode[t] = next;
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('noteFX_random_mode', String(next));
-                const names = ['UNIFORM', 'GAUSSIAN', 'WALK'];
-                showActionPopup('RND MODE', names[next]);
-                S.screenDirty = true;
             }
             return;
         }
