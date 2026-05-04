@@ -446,6 +446,16 @@ static void set_param(void *instance, const char *key, const char *val) {
         inst->inp_quant = my_atoi(val) ? 1 : 0;
         return;
     }
+    if (!strcmp(key, "swing_amt")) {
+        inst->swing_amt = (uint8_t)clamp_i(my_atoi(val), 0, 100);
+        inst->state_dirty = 1;
+        return;
+    }
+    if (!strcmp(key, "swing_res")) {
+        inst->swing_res = (uint8_t)clamp_i(my_atoi(val), 0, 1);
+        inst->state_dirty = 1;
+        return;
+    }
     if (!strcmp(key, "midi_in_channel")) {
         inst->midi_in_channel = (uint8_t)clamp_i(my_atoi(val), 0, 16);
         inst->state_dirty = 1;

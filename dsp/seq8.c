@@ -108,10 +108,12 @@ static const uint32_t QUANT_STEPS[6] = {1, 1, 2, 4, 8, 16};
 /* Play effects structs (direct port from NoteTwist)                   */
 /* ------------------------------------------------------------------ */
 
+#define PFX_EV_BYPASS_SWING 0x01  /* event already swing-deferred; route directly, skip pfx_send */
+
 typedef struct {
     uint64_t fire_at;
     uint8_t  msg[3];
-    uint8_t  len;
+    uint8_t  flags;
 } pfx_event_t;
 
 typedef struct {
@@ -503,6 +505,9 @@ typedef struct {
     uint8_t  pad_key;               /* root key 0-11, default 9 (A) */
     uint8_t  pad_scale;             /* 0=Major (matches JS SCALE_NAMES index) */
     uint8_t  launch_quant;          /* 0=Now,1=1/16,2=1/8,3=1/4,4=1/2,5=1-bar; default 5 */
+    uint8_t  swing_amt;             /* 0-100 UI; maps to 50%-75% of pair (0=straight, 100=75%) */
+    uint8_t  swing_res;             /* 0=1/16 pairs, 1=1/8 pairs */
+    uint64_t swing_step_delay;      /* samples to defer notes in current even step; 0=no defer */
 
     /* External MIDI queue: ROUTE_MOVE note events buffered here; JS drains each tick */
     ext_msg_t ext_queue[EXT_QUEUE_SIZE];
@@ -990,6 +995,8 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
     fprintf(fp, ",\"mic\":%d", (int)inst->midi_in_channel);
     if (inst->metro_on != 1)   fprintf(fp, ",\"metro_on\":%d", (int)inst->metro_on);
     if (inst->metro_vol != 80) fprintf(fp, ",\"metro_vol\":%d", (int)inst->metro_vol);
+    if (inst->swing_amt != 0)  fprintf(fp, ",\"_swa\":%d", (int)inst->swing_amt);
+    if (inst->swing_res != 0)  fprintf(fp, ",\"_swr\":%d", (int)inst->swing_res);
     fprintf(fp, "}");
 }
 
@@ -1385,6 +1392,8 @@ static void seq8_load_state(seq8_instance_t *inst) {
     inst->midi_in_channel = (uint8_t)clamp_i(json_get_int(buf, "mic", 0), 0, 16);
     inst->metro_on  = (uint8_t)clamp_i(json_get_int(buf, "metro_on", 1), 0, 3);
     inst->metro_vol = (uint8_t)clamp_i(json_get_int(buf, "metro_vol", 80), 0, 100);
+    inst->swing_amt = (uint8_t)clamp_i(json_get_int(buf, "_swa", 0), 0, 100);
+    inst->swing_res = (uint8_t)clamp_i(json_get_int(buf, "_swr", 0), 0, 1);
     free(buf);
     /* Build step arrays from loaded notes[] for display/edit compat */
     for (t = 0; t < NUM_TRACKS; t++)
@@ -1489,6 +1498,9 @@ static void merge_finalize(seq8_instance_t *inst) {
     inst->merge_state  = MERGE_STATE_IDLE;
 }
 
+static void pfx_emit(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2);
+static void pfx_q_insert(play_fx_t *fx, uint64_t fire_at, uint8_t s, uint8_t d1, uint8_t d2, uint8_t flags);
+
 static void pfx_send(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
     /* SEQ ARP is the last chain stage. Any note-on/off coming out of the
      * upstream stages (NOTE FX → HARMZ → MIDI DLY immediate emit and queued
@@ -1579,6 +1591,22 @@ static void pfx_send(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
         }
     }
 
+    /* Swing deferral: note-on and note-off on even steps are queued and routed
+     * directly (bypass_swing) so they don't re-enter pfx_send on fire. */
+    if (g_inst && g_inst->playing && g_inst->swing_step_delay > 0) {
+        uint8_t st = status & 0xF0;
+        if (st == 0x90 || st == 0x80) {
+            pfx_q_insert(fx, fx->sample_counter + g_inst->swing_step_delay,
+                         status, d1, d2, PFX_EV_BYPASS_SWING);
+            return;
+        }
+    }
+    pfx_emit(fx, status, d1, d2);
+}
+
+/* Route a MIDI message directly to the track's output bus, bypassing all
+ * pfx_send hooks (ARP, looper, merge, swing). Used for already-deferred events. */
+static void pfx_emit(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
     if (!g_host) return;
     if (fx->route == ROUTE_MOVE) {
         if (!g_host->midi_inject_to_move) return;
@@ -2070,7 +2098,7 @@ static uint64_t pfx_gate_smp(seq8_instance_t *inst, seq8_track_t *tr) {
 /* ------------------------------------------------------------------ */
 
 static void pfx_q_insert(play_fx_t *fx, uint64_t fire_at,
-                         uint8_t s, uint8_t d1, uint8_t d2) {
+                         uint8_t s, uint8_t d1, uint8_t d2, uint8_t flags) {
     if (fx->event_count >= MAX_PFX_EVENTS) return;
     int lo = 0, hi = fx->event_count;
     while (lo < hi) {
@@ -2085,14 +2113,17 @@ static void pfx_q_insert(play_fx_t *fx, uint64_t fire_at,
     fx->events[lo].msg[0]   = s;
     fx->events[lo].msg[1]   = d1;
     fx->events[lo].msg[2]   = d2;
-    fx->events[lo].len      = 3;
+    fx->events[lo].flags    = flags;
     fx->event_count++;
 }
 
 static void pfx_q_fire(play_fx_t *fx, uint64_t now) {
     int f = 0;
     while (f < fx->event_count && fx->events[f].fire_at <= now) {
-        pfx_send(fx, fx->events[f].msg[0], fx->events[f].msg[1], fx->events[f].msg[2]);
+        if (fx->events[f].flags & PFX_EV_BYPASS_SWING)
+            pfx_emit(fx, fx->events[f].msg[0], fx->events[f].msg[1], fx->events[f].msg[2]);
+        else
+            pfx_send(fx, fx->events[f].msg[0], fx->events[f].msg[1], fx->events[f].msg[2]);
         f++;
     }
     if (f > 0) {
@@ -2254,12 +2285,13 @@ static void pfx_sched_delay_ons(seq8_instance_t *inst, int scale_aware,
         an->reps[i].cumul_delay = (uint64_t)(cumul + 0.5);
 
         uint64_t ft   = base_time + an->reps[i].cumul_delay;
+
         uint8_t  on_s = (uint8_t)(0x90 | an->channel);
         int j;
         for (j = 0; j < an->gen_count; j++) {
             int note = (int)an->gen_notes[j] + an->reps[i].pitch_offset;
             note = clamp_i(note, 0, 127);
-            pfx_q_insert(fx, ft, on_s, (uint8_t)note, an->reps[i].velocity);
+            pfx_q_insert(fx, ft, on_s, (uint8_t)note, an->reps[i].velocity, 0);
         }
 
         cur_delay *= (1.0 + fx->fb_clock / 100.0);
@@ -2281,7 +2313,7 @@ static void pfx_sched_delay_offs(play_fx_t *fx, pfx_active_t *an,
         for (j = 0; j < an->gen_count; j++) {
             int note = (int)an->gen_notes[j] + an->reps[i].pitch_offset;
             note = clamp_i(note, 0, 127);
-            pfx_q_insert(fx, off, off_s, (uint8_t)note, 0);
+            pfx_q_insert(fx, off, off_s, (uint8_t)note, 0, 0);
         }
     }
 }
@@ -2408,7 +2440,7 @@ static void pfx_note_on(seq8_instance_t *inst, seq8_track_t *tr,
     for (c = 0; c < fx->unison; c++) {
         uint64_t stagger = now + (uint64_t)(UNISON_STAGGER * (c + 1));
         for (i = 0; i < gc; i++)
-            pfx_q_insert(fx, stagger, on_s, gen[i], (uint8_t)v);
+            pfx_q_insert(fx, stagger, on_s, gen[i], (uint8_t)v, 0);
     }
 
     /* Delay repeats (note-ons only; note-offs scheduled at note-off time). */
@@ -2443,7 +2475,7 @@ static void pfx_note_off(seq8_instance_t *inst, seq8_track_t *tr,
         if (off_time <= now)
             pfx_send(fx, off_s, an->gen_notes[i], 0);
         else
-            pfx_q_insert(fx, off_time, off_s, an->gen_notes[i], 0);
+            pfx_q_insert(fx, off_time, off_s, an->gen_notes[i], 0, 0);
     }
 
     pfx_sched_delay_offs(fx, an, an->on_time + uni_ext, gate_smp);
@@ -4295,6 +4327,10 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         return snprintf(out, out_len, "%d", inst ? (int)inst->metro_vol : 80);
     if (!strcmp(key, "launch_quant"))
         return snprintf(out, out_len, "%d", inst ? (int)inst->launch_quant : 0);
+    if (!strcmp(key, "swing_amt"))
+        return snprintf(out, out_len, "%d", inst ? (int)inst->swing_amt : 0);
+    if (!strcmp(key, "swing_res"))
+        return snprintf(out, out_len, "%d", inst ? (int)inst->swing_res : 0);
     if (!strcmp(key, "version"))
         return snprintf(out, out_len, "6");
     if (!strcmp(key, "instance_id"))
@@ -4709,8 +4745,6 @@ static int effective_note_offset(clip_t *cl, seq8_track_t *tr, uint16_t s, int n
     return raw * (100 - tr->pfx.quantize) / 100;
 }
 
-/* Compute effective fire tick for a note_t in the note-centric model.
- * Quantize pulls tick toward step grid: q=100 → step grid, q=0 → raw tick. */
 static uint32_t effective_note_tick(const note_t *n, const clip_t *cl, int quantize) {
     uint16_t sn = note_step(n->tick, cl->length, cl->ticks_per_step);
     int32_t step_grid = (int32_t)sn * cl->ticks_per_step;
@@ -4878,6 +4912,28 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
          * Runs before track logic so arp_emit captures land at the same
          * pos that looper_tick just established. */
         looper_tick(inst);
+
+        /* Swing: recompute step delay at each 1/16 boundary. Even steps get a
+         * sample-domain delay applied in pfx_send; odd steps get no delay. */
+        if (inst->master_tick_in_step == 0 && inst->tick_delta > 0) {
+            if (inst->swing_amt > 0) {
+                int sw_even = (inst->swing_res == 0)
+                    ? (int)(inst->global_tick % 2 == 1)
+                    : (int)((inst->global_tick / 2) % 2 == 1);
+                if (sw_even) {
+                    uint32_t pair_ticks = (inst->swing_res == 0)
+                        ? (uint32_t)TICKS_PER_STEP * 2 : (uint32_t)TICKS_PER_STEP * 4;
+                    uint32_t off_ticks = (uint32_t)inst->swing_amt * pair_ticks / 400;
+                    double spt = (double)MOVE_FRAMES_PER_BLOCK
+                                 * (double)inst->tick_threshold / (double)inst->tick_delta;
+                    inst->swing_step_delay = (uint64_t)(off_ticks * spt + 0.5);
+                } else {
+                    inst->swing_step_delay = 0;
+                }
+            } else {
+                inst->swing_step_delay = 0;
+            }
+        }
 
         /* Merge: ARMED → CAPTURING at first step boundary; STOPPING → finalize at
          * next 16-step page boundary so the captured clip is an exact page length. */

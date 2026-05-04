@@ -188,14 +188,14 @@ function buildGlobalMenuItems() {
             }
         }),
         createValue('Swing Amt', {
-            get: function() { return S.stubSwingAmt; },
-            set: function(v) { S.stubSwingAmt = v; },
+            get: function() { return S.swingAmt; },
+            set: function(v) { S.swingAmt = v; host_module_set_param('swing_amt', String(v)); },
             min: 0, max: 100,
-            format: function(v) { return v + '%'; }
+            format: function(v) { return Math.round(50 + v * 0.25) + '%'; }
         }),
         createEnum('Swing Res', {
-            get: function() { return S.stubSwingRes; },
-            set: function(v) { S.stubSwingRes = v; },
+            get: function() { return S.swingRes; },
+            set: function(v) { S.swingRes = v; host_module_set_param('swing_res', String(v)); },
             options: [0, 1],
             format: function(v) { return ['1/16','1/8'][v] || '1/16'; }
         }),
@@ -2418,6 +2418,10 @@ function syncClipsFromDsp() {
     }
     const mvolRaw = host_module_get_param('metro_vol');
     if (mvolRaw !== null && mvolRaw !== undefined) S.metronomeVol = parseInt(mvolRaw, 10) | 0;
+    const swaRaw = host_module_get_param('swing_amt');
+    if (swaRaw !== null && swaRaw !== undefined) S.swingAmt = parseInt(swaRaw, 10) | 0;
+    const swrRaw = host_module_get_param('swing_res');
+    if (swrRaw !== null && swrRaw !== undefined) S.swingRes = parseInt(swrRaw, 10) | 0;
 }
 
 /* Targeted re-sync after undo/redo: re-read only the affected clips rather than all 64.

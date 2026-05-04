@@ -22,8 +22,8 @@ export const PERF_FACTORY_PRESETS = [
 export const CC_ASSIGN_DEFAULTS = [7, 74, 71, 73, 72, 91, 93, 10];
 
 export const S = {
-    stubSwingAmt: 0,
-    stubSwingRes: 0,
+    swingAmt: 0,
+    swingRes: 0,
     inpQuant: false,
     midiInChannel: 0,
     beatMarkersEnabled: true,
