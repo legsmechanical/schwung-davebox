@@ -422,6 +422,7 @@ typedef struct {
     arp_engine_t tarp;
     uint8_t      tarp_on;       /* K1: 0=bypassed, 1=enabled */
     uint8_t      tarp_latch;    /* K8: 0=release clears held, 1=latch keeps running */
+    uint8_t      tarp_sync;     /* 0=free (fires immediately), 1=sync to next rate boundary */
     uint8_t      tarp_physical; /* runtime: physical keys currently held (not persisted) */
     uint8_t      track_vel_override; /* TRACK K5: 0=Global, 1-127=absolute, 128=Live */
     /* Drum Repeat: gate mask, vel scale, nudge (per-lane, persisted) */
@@ -805,6 +806,7 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
         if (tr2->tarp.gate_pct != 50)                  fprintf(fp, ",\"t%d_tagt\":%d",    t, (int)tr2->tarp.gate_pct);
         if (tr2->tarp.steps_mode != 0)                 fprintf(fp, ",\"t%d_tasm\":%d",    t, (int)tr2->tarp.steps_mode);
         if (tr2->tarp_latch)                           fprintf(fp, ",\"t%d_talc\":1",     t);
+        if (tr2->tarp_sync)                            fprintf(fp, ",\"t%d_tasy\":1",     t);
         {
             int _i;
             for (_i = 0; _i < 8; _i++)
@@ -1189,6 +1191,8 @@ static void seq8_load_state(seq8_instance_t *inst) {
         tr2->tarp.steps_mode = (uint8_t)clamp_i(json_get_int(buf, key, 0), 0, 2);
         snprintf(key, sizeof(key), "t%d_talc", t);
         tr2->tarp_latch = (uint8_t)(json_get_int(buf, key, 0) ? 1 : 0);
+        snprintf(key, sizeof(key), "t%d_tasy", t);
+        tr2->tarp_sync = (uint8_t)(json_get_int(buf, key, 0) ? 1 : 0);
         {
             int _i;
             for (_i = 0; _i < 8; _i++) {
@@ -3199,10 +3203,18 @@ static void tarp_tick(seq8_instance_t *inst, seq8_track_t *tr) {
     if (a->pending_first_note) {
         uint16_t rate = ARP_RATE_TICKS[a->rate_idx];
         if (rate == 0) rate = 24;
-        uint32_t total = inst->arp_master_tick - a->master_anchor;
-        if ((total % rate) == 0) {
-            a->pending_first_note = 0;
-            tarp_fire_step(inst, tr);
+        if (tr->tarp_sync) {
+            if ((inst->arp_master_tick % rate) == 0) {
+                a->master_anchor      = inst->arp_master_tick;
+                a->pending_first_note = 0;
+                tarp_fire_step(inst, tr);
+            }
+        } else {
+            uint32_t total = inst->arp_master_tick - a->master_anchor;
+            if ((total % rate) == 0) {
+                a->pending_first_note = 0;
+                tarp_fire_step(inst, tr);
+            }
         }
         return;
     }
@@ -4254,6 +4266,7 @@ static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
     if (!strcmp(key, "tarp_gate"))       return snprintf(out, out_len, "%d", (int)tr->tarp.gate_pct);
     if (!strcmp(key, "tarp_steps_mode")) return snprintf(out, out_len, "%d", (int)tr->tarp.steps_mode);
     if (!strcmp(key, "tarp_latch"))         return snprintf(out, out_len, "%d", (int)tr->tarp_latch);
+    if (!strcmp(key, "tarp_sync"))          return snprintf(out, out_len, "%d", (int)tr->tarp_sync);
     if (!strcmp(key, "track_vel_override")) return snprintf(out, out_len, "%d", (int)tr->track_vel_override);
     /* Batch read: TRACK ARP step_vel[0..7] */
     if (!strcmp(key, "tarp_sv"))

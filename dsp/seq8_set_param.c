@@ -1821,6 +1821,11 @@ static void set_param(void *instance, const char *key, const char *val) {
             inst->state_dirty = 1;
             return;
         }
+        if (!strcmp(sub, "tarp_sync")) {
+            tr->tarp_sync = (uint8_t)(my_atoi(val) ? 1 : 0);
+            inst->state_dirty = 1;
+            return;
+        }
 
         /* CC PARAM bank set_params */
         if (!strcmp(sub, "cc_assign")) {

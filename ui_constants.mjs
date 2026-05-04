@@ -292,6 +292,7 @@ export const BANKS = [
         p('Gate', 'Arp Gate',      'tarp_gate',       'track', 1,   200, 50, fmtPct,      16),
         p('Stps', 'Steps Mode',    'tarp_steps_mode', 'track', 0,   2,   0,  fmtArpSteps, 16),
         _X,
+        p('Sync', 'Sync to Clock', 'tarp_sync',       'track', 0,   1,   0,  fmtBool,     16),
         p('Ltch', 'Latch',         'tarp_latch',      'track', 0,   1,   0,  fmtBool,     16),
     ]},
     /* 6 — CC PARAM (pad 98) — per-track CC assignments; custom handling, no DSP-wired knobs */
