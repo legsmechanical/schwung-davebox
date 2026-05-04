@@ -1883,9 +1883,6 @@ function drawTrackRow(y) {
         const bw = 10, bh = 12;
         const isActive = (_t === S.activeTrack);
         if (S.trackMuted[_t]) {
-            fill_rect(bx, by, bw, bh, 1);
-            print(cx, y, String(_t + 1), 0);
-        } else if (S.trackSoloed[_t]) {
             if (soloBlinkOn) print(cx, y, String(_t + 1), 1);
             if (isActive) {
                 fill_rect(bx, by,      bw, 1,  1);
@@ -1893,6 +1890,9 @@ function drawTrackRow(y) {
                 fill_rect(bx, by,      1,  bh, 1);
                 fill_rect(bx+bw-1, by, 1,  bh, 1);
             }
+        } else if (S.trackSoloed[_t]) {
+            fill_rect(bx, by, bw, bh, 1);
+            print(cx, y, String(_t + 1), 0);
         } else {
             print(cx, y, String(_t + 1), 1);
             if (isActive) {
