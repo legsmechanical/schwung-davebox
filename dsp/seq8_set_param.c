@@ -1779,7 +1779,6 @@ static void set_param(void *instance, const char *key, const char *val) {
         }
         if (!strcmp(sub, "tarp_octaves")) {
             int _v = clamp_i(my_atoi(val), -4, 4);
-            if (_v == 0) _v = 1;
             tr->tarp.octaves = (int8_t)_v;
             inst->state_dirty = 1;
             return;

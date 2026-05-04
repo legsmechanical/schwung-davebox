@@ -801,7 +801,7 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
         if (tr2->tarp_on)                              fprintf(fp, ",\"t%d_taon\":1",     t);
         if (tr2->tarp.style != 1)                      fprintf(fp, ",\"t%d_tast\":%d",    t, (int)tr2->tarp.style);
         if (tr2->tarp.rate_idx != ARP_RATE_DEFAULT)    fprintf(fp, ",\"t%d_tart\":%d",    t, (int)tr2->tarp.rate_idx);
-        if (tr2->tarp.octaves != 1)                    fprintf(fp, ",\"t%d_taoc\":%d",    t, (int)tr2->tarp.octaves);
+        if (tr2->tarp.octaves != 0)                    fprintf(fp, ",\"t%d_taoc\":%d",    t, (int)tr2->tarp.octaves);
         if (tr2->tarp.gate_pct != 50)                  fprintf(fp, ",\"t%d_tagt\":%d",    t, (int)tr2->tarp.gate_pct);
         if (tr2->tarp.steps_mode != 0)                 fprintf(fp, ",\"t%d_tasm\":%d",    t, (int)tr2->tarp.steps_mode);
         if (tr2->tarp_latch)                           fprintf(fp, ",\"t%d_talc\":1",     t);
@@ -1182,11 +1182,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
         snprintf(key, sizeof(key), "t%d_tart", t);
         tr2->tarp.rate_idx = (uint8_t)clamp_i(json_get_int(buf, key, ARP_RATE_DEFAULT), 0, 9);
         snprintf(key, sizeof(key), "t%d_taoc", t);
-        {
-            int _oc = clamp_i(json_get_int(buf, key, 1), -ARP_MAX_OCTAVES, ARP_MAX_OCTAVES);
-            if (_oc == 0) _oc = 1;
-            tr2->tarp.octaves = (int8_t)_oc;
-        }
+        tr2->tarp.octaves = (int8_t)clamp_i(json_get_int(buf, key, 0), -ARP_MAX_OCTAVES, ARP_MAX_OCTAVES);
         snprintf(key, sizeof(key), "t%d_tagt", t);
         tr2->tarp.gate_pct = (uint16_t)clamp_i(json_get_int(buf, key, 50), 1, 200);
         snprintf(key, sizeof(key), "t%d_tasm", t);
