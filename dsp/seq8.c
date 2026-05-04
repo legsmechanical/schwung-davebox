@@ -2290,7 +2290,7 @@ static void pfx_sched_delay_ons(seq8_instance_t *inst, int scale_aware,
         if (fx->fb_gate_time > 0)
             an->reps[i].gate_factor = (double)fx->fb_gate_time * 0.5 + 0.5;
         else if (fx->fb_gate_time < 0)
-            an->reps[i].gate_factor = -(double)GATE_FIXED_TICKS[-fx->fb_gate_time - 1] * sp;
+            an->reps[i].gate_factor = -(double)GATE_FIXED_TICKS[-fx->fb_gate_time - 1] * (double)TICKS_TO_480PPQN * sp;
         else
             an->reps[i].gate_factor = 1.0;
 
