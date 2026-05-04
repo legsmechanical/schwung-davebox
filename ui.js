@@ -2935,8 +2935,16 @@ globalThis.tick = function () {
                 for (let rs = 0; rs < NUM_STEPS; rs++)
                     S.clipSteps[prt][prac][rs] = bulk[rs] === '1' ? 1 : (bulk[rs] === '2' ? 2 : 0);
                 S.clipNonEmpty[prt][prac] = clipHasContent(prt, prac);
-                forceRedraw();
             }
+            const _plen = host_module_get_param('t' + prt + '_c' + prac + '_length');
+            if (_plen !== null && _plen !== undefined) S.clipLength[prt][prac] = parseInt(_plen, 10) || 16;
+            const _ptps = host_module_get_param('t' + prt + '_c' + prac + '_tps');
+            if (_ptps !== null && _ptps !== undefined) {
+                const _tv = parseInt(_ptps, 10);
+                S.clipTPS[prt][prac] = TPS_VALUES.indexOf(_tv) >= 0 ? _tv : 24;
+            }
+            if (prac === S.trackActiveClip[prt]) refreshPerClipBankParams(prt);
+            forceRedraw();
         }
     }
 
