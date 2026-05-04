@@ -54,6 +54,8 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 
 **MIDI DLY bank** (bank 3): Rate(K1, 17 values: 1/64..1/1D including dotted, default 1/8D=idx 10), Lvl(K2), Rep(K3), Vfb(K4), Pfb(K5, ±24 semitones), Gate(K6, 0=Off/1-10=1/64..1bar fixed absolute gate in 96-PPQN ticks × 5 → samples), Clk(K7), Rnd(K8, 0=Off/1-24=±semitone range). Gate sign in `reps[i].gate_factor`: negative=fixed (−ticks×TICKS_TO_480PPQN×sp), non-negative=relative (1.0=original). Bake uses GATE_FIXED_TICKS directly. Skip condition: `repeat_times<=0 || delay_level<=0` (time index 0 no longer skips since index 0 is now 1/64 not null).
 
+**SEQ ARP bank** (bank 4, "ARP OUT"): Styl(K1, 0=Off), Rate(K2), Oct(K3), Gate(K4), Stps(K5), Rtrg(K6, default ON), Sync(K7, default ON). Sync=ON: first step waits for next `arp_master_tick % rate == 0` boundary (global grid); Sync=OFF: fires at next boundary relative to anchor. Per-clip state key `t%dc%d_arsy` (sparse, default=ON i.e. emitted when 0). pfx_snapshot fields 17-23 = style/rate/oct/gate/stps/rtrg/sync; step_vel at 24-31.
+
 **TRACK ARP bank** (bank 5, "ARP IN"): Styl(K1, 0=Off/1-9=style, drives tarp_on — no separate On knob), Rate(K2), Oct(K3), Gate(K4), Stps(K5), _(K6 empty), Sync(K7), Ltch(K8). tarp_on derived from tarp_style on load: `style!=0 → tarp_on=1`. State saves tarp_style only when `!=0`.
 
 **Track config** (in Global Menu, not a bank): Ch·Route(0=Swng/1=Move/2=Ext)·Mode·VelIn·Looper. Per-track, stored in dedicated JS arrays (`trackChannel[]`, `trackRoute[]`, `trackPadMode[]`, `trackVelOverride[]`, `trackLooper[]`). `readTrackConfig(t)` syncs from DSP; `applyTrackConfig(t, key, val)` writes to DSP with side-effects. **VelIn** (per-track, `t%d_tvo`): 0=Live (raw velocity, default), 1–127=absolute fixed. Applies pre-pfx-chain to all note input (pads, ext MIDI, recording). DSP `effective_vel(tr, raw)` replaces old global `input_vel`. Global Input Velocity removed.
@@ -62,13 +64,13 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 
 **Swing** (Global Menu: Swing Amt 0–100, Swing Res 1/16 or 1/8): MPC2000-style groove — delays even-indexed steps (Amt 0=50%, 100=75% of pair length). Applied as the final stage of `pfx_send` via sample-queue deferral (`PFX_EV_BYPASS_SWING` flag in `pfx_q`), so bake/merge naturally bypass it. MIDI Delay echoes automatically land on their swung step positions. State keys: `_swa` / `_swr` (sparse, default 0). CC automation not swung (intentional).
 
-**Mute/Solo**: `effective_mute(t)=mute[t]||(any_solo&&!solo[t])`. **Mutually exclusive** — setting one clears the other (recall paths bypass). Snapshots: Shift+Mute+step=save; Mute+step=recall; stores `snap_drum_eff_mute[16][NUM_TRACKS]`. Per-lane: `drum_lane_mute`/`drum_lane_solo` bitmasks; Delete+Mute clears all. Persisted as `t%ddlm`/`t%ddls`.
+**Mute/Solo**: `effective_mute(t)=mute[t]||(any_solo&&!solo[t])`. **Mutually exclusive** — setting one clears the other (recall paths bypass). Snapshots: Shift+Mute+step=save; Mute+step=recall; stores `snap_drum_eff_mute[16][NUM_TRACKS]`. Per-lane: `drum_lane_mute`/`drum_lane_solo` bitmasks; Delete+Mute clears all. Persisted as `t%ddlm`/`t%ddls`. **OLED indicators** (`drawTrackRow`): muted=blinking number; soloed=filled/inverted box with dark number; normal=white number with border when active.
 
 **Bake** (Sample button): Opens confirm dialog. **Melodic**: default No/Yes; jog rotates, jog click confirms. Bake applies pfx chain offline (NOTE FX+HARMZ→MIDI DLY→SEQ ARP output), writes results back, calls `clip_build_steps_from_notes` (critical — step arrays must be rebuilt or subsequent `_toggle`→`clip_migrate_to_notes` will wipe baked notes), clears pfx_params via `clip_init`, restores tps/length, calls `pfx_sync_from_clip`. **Drum**: 3-button BAKE DRUMS? dialog (CLIP/LANE/CANCEL, default CANCEL). **CLIP mode** (`bm=2`, `bake_drum_clip`): full pfx chain per lane including HARMZ; output notes routed across lanes by `midi_note` pitch match; pool cap `DRUM_BAKE_POOL=2048`; all lanes cleared then pool routed. **LANE mode** (`bm=1`, `bake_drum_lane`): vel/gate/MIDI DLY/ARP per lane, no pitch/HARMZ expansion; "No Pitch / HARMZ FX" notice shown in dialog. Both drum modes use `undo_begin_drum_clip`; notes/steps and pfx_params fully restored on undo/redo. Sample or NoteSession cancels any bake dialog.
 
 **Live Merge** (Shift+Sample, melodic + drum tracks): captures live playback from the pfx chain into a new empty clip slot. Shift+Sample=arm (LED Red); transport start→LED Green (CAPTURING). Sample=schedule stop at next 16-step page boundary (STOPPING state, LED stays Green until DSP finalizes). DSP states: IDLE(0)→ARMED(1)→CAPTURING(2)→STOPPING(3)→IDLE(0). **Melodic**: notes captured into `clips[dst]` via `pfx_send` hook; on finalize JS triggers `pendingStepsReread`. **Drum**: notes routed to `drum_clips[dst].lanes[l].clip` by matching captured pitch to `lane->midi_note`; all 32 lanes init'd at arm; `clip_build_steps_from_notes` called per non-empty lane on finalize; JS triggers `syncDrumClipContent`. Auto-finalize at 256 steps (max length). Popups: "NO EMPTY / CLIP SLOT" when arm fails (detected via `pendingMergeArm` flag + next-poll check); "MAX LENGTH / REACHED" when DSP jumps CAPTURING→IDLE directly (state 2→0, not via STOPPING).
 
-**State persistence**: DSP state v=22 (v=22 only accepted); v<22 → deleted + clean start. Full key list and format in `dsp/CLAUDE.md`.
+**State persistence**: DSP state v=23 (v=23 only accepted); v<23 → deleted + clean start. Full key list and format in `dsp/CLAUDE.md`.
 
 **JS internals** (key gotchas):
 - `pendingDrumResync` deferred 2 ticks after drum clip switch — `tN_lL_steps` reads active_clip implicitly; must wait for `tN_launch_clip` to process first. Melodic `tN_cC_steps` is clip-indexed, no defer needed.
@@ -86,7 +88,7 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 2. ~~**Drum step-to-step copy**~~ **done** — `copyStep()` has drum lane branch using `tN_lL_step_S_copy_to`.
 3. **Scale-aware key/scale changes** — transpose all clip notes on Key/Scale change. Design TBD.
 4. **Step/note editing fixes** — see pending fixes in planning doc.
-5. ~~**MIDI Delay overhaul**~~ **done** — 17 timing values (dotted included), default 1/8D; Pitch Random 0..24 semitone range; Gate 0=Off/1-10=absolute fixed; ARP IN On knob removed (Style 0=Off), Ltch now K8; tap tempo uses Date.now() ms.
+5. ~~**MIDI Delay overhaul**~~ **done** — 17 timing values (dotted included), default 1/8D; Pitch Random 0..24 semitone range; Gate 0=Off/1-10=absolute fixed; ARP IN On knob removed (Style 0=Off), Ltch now K8; tap tempo uses Date.now() ms. SEQ ARP Sync knob added (K7, default ON). Mute/solo OLED indicators swapped.
 6. Full instance reset · 7. State snapshots (16 slots) · 9. MIDI clock sync
 10. **Track conversion** (`tN_convert_to_drum`/`tN_convert_to_melodic`): Global Menu Mode item or dedicated dialog.
 11. ~~**VelIn**~~ **done** (Global Menu Track Config, per-track input velocity override).
@@ -125,7 +127,7 @@ JS `init()` reads UUID, compares with `state_uuid` get_param. Mismatch → `stat
 - Transport stop saves will_relaunch; panic does not.
 - Do not load SEQ8 from within SEQ8 — LED corruption (Shift+Back first).
 - All 8 tracks route to the same Schwung chain.
-- State file v=22 (only v=22 accepted) — wrong/missing version → deleted, clean start.
+- State file v=23 (only v=23 accepted) — wrong/missing version → deleted, clean start.
 - `g_host->get_clock_status` is NULL; `get_bpm` doesn't track BPM changes while stopped.
 - **ROUTE_MOVE + external MIDI monitoring**: rechannelized monitoring implemented — `applyExtMidiRemap()` rewrites incoming cable-2 channel to `trackChannel[t]` via `host_ext_midi_remap_*`. The shim crash (cable-2 inject race) is fixed in Schwung (commit 5275ec10).
 - **TRACK ARP + ROUTE_SCHWUNG**: live notes injected via `shadow_send_midi_to_dsp` bypass `live_note_on`/`live_note_off` — TRACK ARP intercepts pad/external-MIDI notes on ROUTE_SCHWUNG tracks only via `live_notes` set_param (not the schwung chain path).
