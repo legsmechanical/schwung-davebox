@@ -2440,7 +2440,7 @@ function drawUI() {
         const oct       = Math.floor(note / 12) - 2;
         const name      = NOTE_KEYS[note % 12];
         const bankGroup = pg === 0 ? 'Bank: A' : 'Bank: B';
-        const bankName  = S.activeBank === 0 ? 'DRUM LANE' : S.activeBank === 1 ? 'NOTE/NOTEFX' : S.activeBank === 5 ? 'RPT GROOVE' : BANKS[S.activeBank] ? BANKS[S.activeBank].name : '?';
+        const bankName  = S.activeBank === 0 ? 'DRUM LANE >>' : S.activeBank === 1 ? '>> NOTE/NOTEFX' : S.activeBank === 5 ? '>> RPT GROOVE' : S.activeBank === 7 ? 'ALL LANES' : BANKS[S.activeBank] ? '>> ' + BANKS[S.activeBank].name : '?';
         drawBankHeading(bankName);
         pixelPrint(4, 10, bankGroup + '  Pad: ' + name + oct + ' (' + note + ')', 1);
         const laneBit = 1 << lane;
