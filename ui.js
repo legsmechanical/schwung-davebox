@@ -955,6 +955,7 @@ function doDoubleFill() {
         S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
         host_module_set_param('t' + _t + '_all_lanes_double_fill', '1');
         S.pendingDrumResync = 2; S.pendingDrumResyncTrack = _t;
+        showActionPopup('LOOP', 'DOUBLED');
         forceRedraw();
     } else if (S.trackPadMode[_t] === PAD_MODE_DRUM) {
         const _l   = S.activeDrumLane[_t];
@@ -967,6 +968,7 @@ function doDoubleFill() {
             S.drumLaneLength[_t] = _len * 2;
             S.pendingDrumResync      = 2;
             S.pendingDrumResyncTrack = _t;
+            showActionPopup('LOOP', 'DOUBLED');
             forceRedraw();
         }
     } else {
@@ -983,6 +985,7 @@ function doDoubleFill() {
             S.pendingStepsRereadTrack = _t;
             S.pendingStepsRereadClip  = _ac;
             refreshPerClipBankParams(_t);
+            showActionPopup('LOOP', 'DOUBLED');
             forceRedraw();
         }
     }
