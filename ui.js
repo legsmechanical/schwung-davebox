@@ -4518,7 +4518,7 @@ function _onCC_knobs(d1, d2) {
                     S.knobAccum[knobIdx] = 0;
                     const cur7v = S.trackVelOverride[t];
                     const nv = Math.max(0, Math.min(127, cur7v + dir));
-                    if (nv !== cur7v) applyTrackConfig(t, 'vel_override', nv);
+                    if (nv !== cur7v) applyTrackConfig(t, 'track_vel_override', nv);
                     S.screenDirty = true;
                 }
                 return;
