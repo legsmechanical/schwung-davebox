@@ -934,7 +934,11 @@ function registerTapTempo(padNote) {
 
 function doDoubleFill() {
     const _t = S.activeTrack;
-    if (S.trackPadMode[_t] === PAD_MODE_DRUM) {
+    if (S.trackPadMode[_t] === PAD_MODE_DRUM && S.activeBank === 7) {
+        host_module_set_param('t' + _t + '_all_lanes_double_fill', '1');
+        S.pendingDrumResync = 2; S.pendingDrumResyncTrack = _t;
+        forceRedraw();
+    } else if (S.trackPadMode[_t] === PAD_MODE_DRUM) {
         const _l   = S.activeDrumLane[_t];
         const _len = S.drumLaneLength[_t];
         if (_len * 2 > 256) {
@@ -1672,6 +1676,8 @@ function applyTrackConfig(t, key, val) {
             syncDrumLanesMeta(t);
             syncDrumLaneSteps(t, S.activeDrumLane[t]);
             syncDrumClipContent(t);
+        } else {
+            if (t === S.activeTrack && S.activeBank === 7) S.activeBank = 0;
         }
     }
     else if (key === 'track_vel_override') S.trackVelOverride[t] = val;
@@ -2203,8 +2209,13 @@ function drawUI() {
             const t    = S.activeTrack;
             const lane = S.activeDrumLane[t];
             const len  = S.drumLaneLength[t];
-            print(4, 10, 'TR' + (t + 1) + ' \xb7 LN ' + (lane + 1) + '  DRUM', 1);
-            print(4, 22, 'LEN: ' + len + ' STEPS', 1);
+            if (S.activeBank === 7) {
+                print(4, 10, 'TR' + (t + 1) + '  ALL LANES', 1);
+                print(4, 22, 'STEP BTN=set length', 1);
+            } else {
+                print(4, 10, 'TR' + (t + 1) + ' \xb7 LN ' + (lane + 1) + '  DRUM', 1);
+                print(4, 22, 'LEN: ' + len + ' STEPS', 1);
+            }
             print(4, 34, 'Jog=\xb11  Btn=set page', 1);
             drawTrackRow(46);
         } else {
@@ -2251,6 +2262,29 @@ function drawUI() {
                 if (hi) fill_rect(colX, rowY, 24, 24, 1);
                 print(colX, rowY,      col4(drumLaneLabels[k]), hi ? 0 : 1);
                 print(colX, rowY + 12, col4(drumLaneVals[k]),   hi ? 0 : 1);
+            }
+        } else if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 7) {
+            /* ALL LANES bank overview */
+            const t = S.activeTrack;
+            const qv = S.bankParams[t][7][3];
+            const allLabels = ['Stch', 'Shft', 'Ndg', 'Qnt', 'VelIn', null, null, null];
+            const allVals = [
+                fmtStretch(S.bankParams[t][7][0]),
+                fmtSign(S.bankParams[t][7][1]),
+                fmtSign(S.bankParams[t][7][2]),
+                qv < 0 ? '\x97' : fmtPct(qv),
+                fmtVelOverride(S.trackVelOverride[t]),
+                null, null, null,
+            ];
+            print(4, 0, '[ ALL LANES ]', 1);
+            for (let k = 0; k < 8; k++) {
+                if (!allLabels[k]) continue;
+                const colX = 4 + (k % 4) * 30;
+                const rowY = k < 4 ? 12 : 36;
+                const hi   = (S.knobTouched === k);
+                if (hi) fill_rect(colX, rowY, 24, 24, 1);
+                print(colX, rowY,      col4(allLabels[k]), hi ? 0 : 1);
+                print(colX, rowY + 12, col4(allVals[k]),   hi ? 0 : 1);
             }
         } else if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 1) {
         /* Drum NOTE FX bank overview */
@@ -3439,9 +3473,10 @@ function _onCC_jog(d1, d2) {
                     }
                 } else {
                     const cur = S.activeBank;
-                    let next  = Math.min(6, Math.max(0, cur + delta));
+                    const isDrumJog = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
+                    let next  = Math.min(isDrumJog ? 7 : 6, Math.max(0, cur + delta));
                     /* HARMZ (2) and ARP OUT (4) hidden on drum tracks */
-                    if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
+                    if (isDrumJog) {
                         if (next === 2) next = delta > 0 ? 3 : 1;
                         else if (next === 4) next = delta > 0 ? 5 : 3;
                     }
@@ -4378,6 +4413,79 @@ function _onCC_knobs(d1, d2) {
                 return;
             }
         }
+        /* ALL LANES bank (drum, bank 7): K1=Stch K2=Shft K3=Ndg K4=Qnt K5=VelIn */
+        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 7) {
+            const t   = S.activeTrack;
+            const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
+            if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
+            if (knobIdx === 0) {
+                /* K1 = Stch: beat stretch all lanes, lock, sens=16 */
+                if (S.knobLocked[knobIdx]) return;
+                S.knobAccum[knobIdx]++;
+                if (S.knobAccum[knobIdx] >= 16) {
+                    S.knobAccum[knobIdx] = 0;
+                    host_module_set_param('t' + t + '_all_lanes_beat_stretch', String(dir));
+                    S.knobLocked[knobIdx] = true;
+                    S.bankParams[t][7][0] += dir;
+                    S.pendingDrumResync = 2; S.pendingDrumResyncTrack = t;
+                    S.screenDirty = true;
+                }
+                return;
+            }
+            if (knobIdx === 1) {
+                /* K2 = Shft: clock shift all lanes, sens=8 */
+                S.knobAccum[knobIdx]++;
+                if (S.knobAccum[knobIdx] >= 8) {
+                    S.knobAccum[knobIdx] = 0;
+                    S.clockShiftTouchDelta += dir;
+                    S.bankParams[t][7][1] = S.clockShiftTouchDelta;
+                    host_module_set_param('t' + t + '_all_lanes_clock_shift', String(dir));
+                    S.pendingDrumResync = 2; S.pendingDrumResyncTrack = t;
+                    S.screenDirty = true;
+                }
+                return;
+            }
+            if (knobIdx === 2) {
+                /* K3 = Ndg: nudge all lanes, sens=8 */
+                S.knobAccum[knobIdx]++;
+                if (S.knobAccum[knobIdx] >= 8) {
+                    S.knobAccum[knobIdx] = 0;
+                    S.bankParams[t][7][2] += dir;
+                    host_module_set_param('t' + t + '_all_lanes_nudge', String(dir));
+                    S.pendingDrumResync = 2; S.pendingDrumResyncTrack = t;
+                    S.screenDirty = true;
+                }
+                return;
+            }
+            if (knobIdx === 3) {
+                /* K4 = Qnt: quantize all lanes 0-100, sens=4 */
+                S.knobAccum[knobIdx]++;
+                if (S.knobAccum[knobIdx] >= 4) {
+                    S.knobAccum[knobIdx] = 0;
+                    const cur7q = S.bankParams[t][7][3] < 0 ? 0 : S.bankParams[t][7][3];
+                    const nv = Math.max(0, Math.min(100, cur7q + dir));
+                    if (nv !== cur7q) {
+                        S.bankParams[t][7][3] = nv;
+                        host_module_set_param('t' + t + '_drum_lanes_qnt', String(nv));
+                    }
+                    S.screenDirty = true;
+                }
+                return;
+            }
+            if (knobIdx === 4) {
+                /* K5 = VelIn: track velocity override, sens=4 */
+                S.knobAccum[knobIdx]++;
+                if (S.knobAccum[knobIdx] >= 4) {
+                    S.knobAccum[knobIdx] = 0;
+                    const cur7v = S.trackVelOverride[t];
+                    const nv = Math.max(0, Math.min(127, cur7v + dir));
+                    if (nv !== cur7v) applyTrackConfig(t, 'vel_override', nv);
+                    S.screenDirty = true;
+                }
+                return;
+            }
+            return;
+        }
         /* Drum NOTE FX bank: K7 (lane oct, coarse ±12) and K8 (lane note, fine ±1) */
         if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 1 &&
                 (knobIdx === 6 || knobIdx === 7)) {
@@ -4921,20 +5029,27 @@ function _onPadPressTrackView(status, d1, d2) {
             liveSendNote(S.activeTrack, 0x90, pitch, effectiveVelocity(d2));
             forceRedraw();
         } else if (S.shiftHeld && padIdx >= 24 && padIdx <= 31) {
-            const bankIdx = padIdx - 24;
-            if (bankIdx <= 6) {
-                /* HARMZ (2) and ARP OUT (4) hidden on drum tracks */
-                const drumHidden = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && (bankIdx === 2 || bankIdx === 4);
-                if (!drumHidden) {
-                    if (S.activeBank === bankIdx) {
-                        S.bankSelectTick = -1;
-                    } else {
-                        S.activeBank = bankIdx;
-                        readBankParams(S.activeTrack, bankIdx);
-                        S.bankSelectTick = S.tickCount;
-                    }
-                    S.screenDirty = true;
+            const _padOff = padIdx - 24;
+            const _isDrum = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
+            let bankIdx;
+            if (_isDrum) {
+                /* Drum pad map: 92=ALL LANES(7) 93=DRUM LANE(0) 94=NOTE FX(1)
+                                 95=MIDI DLY(3) 96=RPT GROOVE(5) 97=hidden
+                                 98=CC PARAM(6) 99=hidden */
+                const DRUM_PAD_MAP = [7, 0, 1, 3, 5, -1, 6, -1];
+                bankIdx = DRUM_PAD_MAP[_padOff];
+            } else {
+                bankIdx = _padOff;
+            }
+            if (bankIdx >= 0 && bankIdx <= 7 && BANKS[bankIdx]) {
+                if (S.activeBank === bankIdx) {
+                    S.bankSelectTick = -1;
+                } else {
+                    S.activeBank = bankIdx;
+                    readBankParams(S.activeTrack, bankIdx);
+                    S.bankSelectTick = S.tickCount;
                 }
+                S.screenDirty = true;
             }
         } else if (S.shiftHeld && padIdx < NUM_TRACKS) {
             /* Shift + bottom-row pad: select active track */
@@ -4954,6 +5069,8 @@ function _onPadPressTrackView(status, d1, d2) {
                 syncDrumLaneSteps(padIdx, S.activeDrumLane[padIdx]);
                 syncDrumClipContent(padIdx);
                 refreshDrumLaneBankParams(padIdx, S.activeDrumLane[padIdx]);
+            } else {
+                if (S.activeBank === 7) S.activeBank = 0;
             }
             S.screenDirty = true;
         } else if (!S.shiftHeld) {
@@ -5311,15 +5428,22 @@ function _onStepButtons(d1, d2) {
         /* S.deleteHeld/S.shiftHeld (non-S.muteHeld) in Session View: swallow step buttons */
     } else if (S.loopHeld) {
         if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
-            /* Drum: set active lane clip length */
-            const t    = S.activeTrack;
-            const lane = S.activeDrumLane[t];
+            const t = S.activeTrack;
             const newLen = (idx + 1) * 16;
-            S.drumLaneLength[t] = newLen;
-            const maxPage = Math.max(0, Math.ceil(newLen / 16) - 1);
-            if (S.drumStepPage[t] > maxPage) S.drumStepPage[t] = maxPage;
-            if (typeof host_module_set_param === 'function')
-                host_module_set_param('t' + t + '_l' + lane + '_clip_length', String(newLen));
+            if (S.activeBank === 7) {
+                /* ALL LANES: set length on all drum lanes */
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + t + '_all_lanes_length', String(newLen));
+                S.pendingDrumResync = 2; S.pendingDrumResyncTrack = t;
+            } else {
+                /* Drum: set active lane clip length */
+                const lane = S.activeDrumLane[t];
+                S.drumLaneLength[t] = newLen;
+                const maxPage = Math.max(0, Math.ceil(newLen / 16) - 1);
+                if (S.drumStepPage[t] > maxPage) S.drumStepPage[t] = maxPage;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + t + '_l' + lane + '_clip_length', String(newLen));
+            }
         } else {
         const ac      = effectiveClip(S.activeTrack);
         const newLen  = (idx + 1) * 16;
@@ -5429,9 +5553,16 @@ function _onStepButtons(d1, d2) {
         } else if (idx === 15) {
             /* Step 16: set quantize to 100% */
             if (isDrum) {
-                const lane = S.activeDrumLane[t];
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('t' + t + '_l' + lane + '_pfx_set', 'quantize 100');
+                if (S.activeBank === 7) {
+                    /* ALL LANES: quantize all drum lanes */
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_drum_lanes_qnt', '100');
+                    S.bankParams[t][7][3] = 100;
+                } else {
+                    const lane = S.activeDrumLane[t];
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_l' + lane + '_pfx_set', 'quantize 100');
+                }
             } else {
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('t' + t + '_quantize', '100');
@@ -5890,8 +6021,11 @@ globalThis.onMidiMessageInternal = function (data) {
                         if (relPm.dspKey === 'nudge') {
                             S.bankParams[S.activeTrack][S.activeBank][d1] = 0;
                             if (typeof host_module_set_param === 'function') {
+                                const _isAllLanesNdg = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.activeBank === 7;
                                 const _isDrumNdg = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.activeBank === 0;
-                                if (_isDrumNdg)
+                                if (_isAllLanesNdg)
+                                    host_module_set_param('t' + S.activeTrack + '_all_lanes_nudge', '0');
+                                else if (_isDrumNdg)
                                     host_module_set_param('t' + S.activeTrack + '_l' + S.activeDrumLane[S.activeTrack] + '_nudge', '0');
                                 else
                                     host_module_set_param('t' + S.activeTrack + '_nudge', '0');
@@ -5932,8 +6066,11 @@ globalThis.onMidiMessageInternal = function (data) {
                     if (relPm.dspKey === 'nudge') {
                         S.bankParams[S.activeTrack][S.activeBank][d1] = 0;
                         if (typeof host_module_set_param === 'function') {
+                            const _isAllLanesNdg = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.activeBank === 7;
                             const _isDrumNdg = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.activeBank === 0;
-                            if (_isDrumNdg)
+                            if (_isAllLanesNdg)
+                                host_module_set_param('t' + S.activeTrack + '_all_lanes_nudge', '0');
+                            else if (_isDrumNdg)
                                 host_module_set_param('t' + S.activeTrack + '_l' + S.activeDrumLane[S.activeTrack] + '_nudge', '0');
                             else
                                 host_module_set_param('t' + S.activeTrack + '_nudge', '0');

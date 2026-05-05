@@ -2899,6 +2899,326 @@ static void set_param(void *instance, const char *key, const char *val) {
             return;
         }
 
+        if (!strcmp(sub, "all_lanes_beat_stretch")) {
+            /* tN_all_lanes_beat_stretch "dir" — stretch/shrink all 32 drum lanes. */
+            int dir = my_atoi(val);
+            drum_clip_t *dc_al = &tr->drum_clips[tr->active_clip];
+            int l_al;
+            for (l_al = 0; l_al < DRUM_LANES; l_al++) {
+                clip_t *dlc = &dc_al->lanes[l_al].clip;
+                int len = (int)dlc->length;
+                int i, ni2, new_len, any;
+                uint8_t  tmp_steps[SEQ_STEPS];
+                uint8_t  tmp_notes[SEQ_STEPS][8];
+                uint8_t  tmp_nc[SEQ_STEPS];
+                uint8_t  tmp_vel[SEQ_STEPS];
+                uint16_t tmp_gate[SEQ_STEPS];
+                int16_t  tmp_tick_offset[SEQ_STEPS][8];
+                int gmax_bs = SEQ_STEPS * dlc->ticks_per_step; if (gmax_bs > 65535) gmax_bs = 65535;
+                int off_clamp = dlc->ticks_per_step - 1;
+                if (dir == 1) {
+                    if (len * 2 > SEQ_STEPS) continue;
+                    new_len = len * 2;
+                    for (i = len - 1; i >= 1; i--) {
+                        int ng = (int)dlc->step_gate[i] * 2;
+                        if (ng > gmax_bs) ng = gmax_bs;
+                        dlc->steps[i*2]           = dlc->steps[i];
+                        memcpy(dlc->step_notes[i*2], dlc->step_notes[i], 8);
+                        dlc->step_note_count[i*2] = dlc->step_note_count[i];
+                        dlc->step_vel[i*2]        = dlc->step_vel[i];
+                        dlc->step_gate[i*2]       = (uint16_t)ng;
+                        for (ni2 = 0; ni2 < 8; ni2++) {
+                            int nt = (int)dlc->note_tick_offset[i][ni2] * 2;
+                            if (nt > off_clamp) nt = off_clamp; else if (nt < -off_clamp) nt = -off_clamp;
+                            dlc->note_tick_offset[i*2][ni2] = (int16_t)nt;
+                        }
+                        dlc->steps[i] = 0;
+                    }
+                    { int ng = (int)dlc->step_gate[0] * 2;
+                      if (ng > gmax_bs) ng = gmax_bs;
+                      dlc->step_gate[0] = (uint16_t)ng;
+                      for (ni2 = 0; ni2 < 8; ni2++) {
+                          int nt = (int)dlc->note_tick_offset[0][ni2] * 2;
+                          if (nt > off_clamp) nt = off_clamp; else if (nt < -off_clamp) nt = -off_clamp;
+                          dlc->note_tick_offset[0][ni2] = (int16_t)nt;
+                      }
+                    }
+                    for (i = 1; i < new_len; i += 2) {
+                        dlc->steps[i] = 0;
+                        memset(dlc->step_notes[i], 0, 8);
+                        dlc->step_note_count[i] = 0;
+                        dlc->step_vel[i]        = SEQ_VEL;
+                        dlc->step_gate[i]       = GATE_TICKS;
+                        memset(dlc->note_tick_offset[i], 0, 8 * sizeof(int16_t));
+                    }
+                    dlc->length = (uint16_t)new_len;
+                    dlc->stretch_exp++;
+                } else {
+                    if (len < 2) continue;
+                    { uint8_t seen[SEQ_STEPS];
+                      memset(seen, 0, sizeof(seen));
+                      int blocked = 0;
+                      for (i = 0; i < len; i++) {
+                          if (dlc->steps[i]) {
+                              int dst = i / 2;
+                              if (seen[dst]) { blocked = 1; break; }
+                              seen[dst] = 1;
+                          }
+                      }
+                      if (blocked) continue;
+                    }
+                    new_len = len / 2;
+                    memset(tmp_steps, 0, sizeof(tmp_steps));
+                    for (i = 0; i < SEQ_STEPS; i++) {
+                        memset(tmp_notes[i], 0, 8);
+                        tmp_nc[i]   = 0;
+                        tmp_vel[i]  = SEQ_VEL;
+                        tmp_gate[i] = GATE_TICKS;
+                        memset(tmp_tick_offset[i], 0, 8 * sizeof(int16_t));
+                    }
+                    for (i = 0; i < len; i++) {
+                        if (dlc->steps[i]) {
+                            int dst = i / 2;
+                            if (!tmp_steps[dst]) {
+                                int ng = ((int)dlc->step_gate[i] + 1) / 2;
+                                if (ng < 1) ng = 1;
+                                tmp_steps[dst] = 1;
+                                memcpy(tmp_notes[dst], dlc->step_notes[i], 8);
+                                tmp_nc[dst]   = dlc->step_note_count[i];
+                                tmp_vel[dst]  = dlc->step_vel[i];
+                                tmp_gate[dst] = (uint16_t)ng;
+                                for (ni2 = 0; ni2 < 8; ni2++) {
+                                    int nt = (int)dlc->note_tick_offset[i][ni2] / 2;
+                                    tmp_tick_offset[dst][ni2] = (int16_t)nt;
+                                }
+                            }
+                        }
+                    }
+                    for (i = 0; i < len; i++) {
+                        if (!dlc->steps[i] && dlc->step_note_count[i] > 0) {
+                            int dst = i / 2;
+                            if (tmp_nc[dst] == 0) {
+                                int ng = ((int)dlc->step_gate[i] + 1) / 2;
+                                if (ng < 1) ng = 1;
+                                memcpy(tmp_notes[dst], dlc->step_notes[i], 8);
+                                tmp_nc[dst]   = dlc->step_note_count[i];
+                                tmp_vel[dst]  = dlc->step_vel[i];
+                                tmp_gate[dst] = (uint16_t)ng;
+                                for (ni2 = 0; ni2 < 8; ni2++) {
+                                    int nt = (int)dlc->note_tick_offset[i][ni2] / 2;
+                                    tmp_tick_offset[dst][ni2] = (int16_t)nt;
+                                }
+                            }
+                        }
+                    }
+                    memcpy(dlc->steps,           tmp_steps,       sizeof(tmp_steps));
+                    memcpy(dlc->step_notes,      tmp_notes,       sizeof(tmp_notes));
+                    memcpy(dlc->step_note_count, tmp_nc,          sizeof(tmp_nc));
+                    memcpy(dlc->step_vel,        tmp_vel,         sizeof(tmp_vel));
+                    memcpy(dlc->step_gate,       tmp_gate,        sizeof(tmp_gate));
+                    memcpy(dlc->note_tick_offset, tmp_tick_offset, sizeof(tmp_tick_offset));
+                    dlc->length = (uint16_t)new_len;
+                    dlc->stretch_exp--;
+                }
+                if (tr->drum_current_step[l_al] >= dlc->length)
+                    tr->drum_current_step[l_al] = (uint16_t)(dlc->length - 1);
+                any = 0;
+                for (i = 0; i < (int)dlc->length; i++)
+                    if (dlc->steps[i]) { any = 1; break; }
+                dlc->active = (uint8_t)any;
+                clip_migrate_to_notes(dlc);
+            }
+            inst->state_dirty = 1;
+            return;
+        }
+
+        if (!strcmp(sub, "all_lanes_clock_shift")) {
+            /* tN_all_lanes_clock_shift "dir" — rotate all 32 drum lanes by one step. */
+            int dir = my_atoi(val);
+            drum_clip_t *dc_al = &tr->drum_clips[tr->active_clip];
+            int l_al;
+            for (l_al = 0; l_al < DRUM_LANES; l_al++) {
+                clip_t *dlc = &dc_al->lanes[l_al].clip;
+                int len = (int)dlc->length;
+                if (len < 2) continue;
+                uint8_t tmp_s, tmp_nc2, tmp_ns[8], tmp_v;
+                uint16_t tmp_g;
+                int16_t tmp_toff[8];
+                if (dir == 1) {
+                    tmp_s  = dlc->steps[len-1];
+                    memcpy(tmp_ns, dlc->step_notes[len-1], 8);
+                    tmp_nc2 = dlc->step_note_count[len-1];
+                    tmp_v  = dlc->step_vel[len-1];
+                    tmp_g  = dlc->step_gate[len-1];
+                    memcpy(tmp_toff, dlc->note_tick_offset[len-1], 8 * sizeof(int16_t));
+                    memmove(&dlc->steps[1],              &dlc->steps[0],              (size_t)(len-1));
+                    memmove(&dlc->step_notes[1][0],      &dlc->step_notes[0][0],      (size_t)(len-1) * 8);
+                    memmove(&dlc->step_note_count[1],    &dlc->step_note_count[0],    (size_t)(len-1));
+                    memmove(&dlc->step_vel[1],           &dlc->step_vel[0],           (size_t)(len-1));
+                    memmove(&dlc->step_gate[1],          &dlc->step_gate[0],          (size_t)(len-1) * 2);
+                    memmove(&dlc->note_tick_offset[1][0], &dlc->note_tick_offset[0][0], (size_t)(len-1) * 8 * sizeof(int16_t));
+                    dlc->steps[0] = tmp_s;
+                    memcpy(dlc->step_notes[0], tmp_ns, 8);
+                    dlc->step_note_count[0] = tmp_nc2;
+                    dlc->step_vel[0] = tmp_v;
+                    dlc->step_gate[0] = tmp_g;
+                    memcpy(dlc->note_tick_offset[0], tmp_toff, 8 * sizeof(int16_t));
+                    dlc->clock_shift_pos = (uint16_t)((dlc->clock_shift_pos + 1) % (uint16_t)len);
+                } else {
+                    tmp_s  = dlc->steps[0];
+                    memcpy(tmp_ns, dlc->step_notes[0], 8);
+                    tmp_nc2 = dlc->step_note_count[0];
+                    tmp_v  = dlc->step_vel[0];
+                    tmp_g  = dlc->step_gate[0];
+                    memcpy(tmp_toff, dlc->note_tick_offset[0], 8 * sizeof(int16_t));
+                    memmove(&dlc->steps[0],              &dlc->steps[1],              (size_t)(len-1));
+                    memmove(&dlc->step_notes[0][0],      &dlc->step_notes[1][0],      (size_t)(len-1) * 8);
+                    memmove(&dlc->step_note_count[0],    &dlc->step_note_count[1],    (size_t)(len-1));
+                    memmove(&dlc->step_vel[0],           &dlc->step_vel[1],           (size_t)(len-1));
+                    memmove(&dlc->step_gate[0],          &dlc->step_gate[1],          (size_t)(len-1) * 2);
+                    memmove(&dlc->note_tick_offset[0][0], &dlc->note_tick_offset[1][0], (size_t)(len-1) * 8 * sizeof(int16_t));
+                    dlc->steps[len-1] = tmp_s;
+                    memcpy(dlc->step_notes[len-1], tmp_ns, 8);
+                    dlc->step_note_count[len-1] = tmp_nc2;
+                    dlc->step_vel[len-1] = tmp_v;
+                    dlc->step_gate[len-1] = tmp_g;
+                    memcpy(dlc->note_tick_offset[len-1], tmp_toff, 8 * sizeof(int16_t));
+                    dlc->clock_shift_pos = (uint16_t)((dlc->clock_shift_pos + (uint16_t)(len-1)) % (uint16_t)len);
+                }
+                { int i2, any = 0;
+                  for (i2 = 0; i2 < len; i2++) if (dlc->steps[i2]) { any = 1; break; }
+                  dlc->active = (uint8_t)any;
+                }
+                clip_migrate_to_notes(dlc);
+            }
+            inst->state_dirty = 1;
+            return;
+        }
+
+        if (!strcmp(sub, "all_lanes_nudge")) {
+            /* tN_all_lanes_nudge "dir" — nudge all 32 drum lanes; dir=0 resets nudge_pos. */
+            int dir = my_atoi(val);
+            drum_clip_t *dc_al = &tr->drum_clips[tr->active_clip];
+            int l_al;
+            for (l_al = 0; l_al < DRUM_LANES; l_al++) {
+                clip_t *dlc = &dc_al->lanes[l_al].clip;
+                if (dir == 0) { dlc->nudge_pos = 0; continue; }
+                if (dir != 1 && dir != -1) continue;
+                int len = (int)dlc->length;
+                if (len < 1) continue;
+                int tps = (int)dlc->ticks_per_step;
+                int midpoint = tps / 2;
+                struct { int16_t dst, dst_off; uint8_t pitch, vel, active; uint16_t gate; } cross[512];
+                int ncross = 0;
+                int s, ni, wi;
+                for (s = 0; s < len; s++) {
+                    if (dlc->step_note_count[s] == 0) continue;
+                    wi = 0;
+                    for (ni = 0; ni < (int)dlc->step_note_count[s]; ni++) {
+                        int new_off = (int)dlc->note_tick_offset[s][ni] + dir;
+                        if (new_off > midpoint) {
+                            if (ncross < 512) {
+                                cross[ncross].dst     = (int16_t)((s + 1) % len);
+                                cross[ncross].dst_off = (int16_t)(new_off - tps);
+                                cross[ncross].pitch   = dlc->step_notes[s][ni];
+                                cross[ncross].vel     = dlc->step_vel[s];
+                                cross[ncross].gate    = dlc->step_gate[s];
+                                cross[ncross].active  = dlc->steps[s];
+                                ncross++;
+                            }
+                        } else if (new_off < -midpoint) {
+                            if (ncross < 512) {
+                                cross[ncross].dst     = (int16_t)((s - 1 + len) % len);
+                                cross[ncross].dst_off = (int16_t)(new_off + tps);
+                                cross[ncross].pitch   = dlc->step_notes[s][ni];
+                                cross[ncross].vel     = dlc->step_vel[s];
+                                cross[ncross].gate    = dlc->step_gate[s];
+                                cross[ncross].active  = dlc->steps[s];
+                                ncross++;
+                            }
+                        } else {
+                            dlc->step_notes[s][wi]       = dlc->step_notes[s][ni];
+                            dlc->note_tick_offset[s][wi] = (int16_t)new_off;
+                            wi++;
+                        }
+                    }
+                    for (ni = wi; ni < (int)dlc->step_note_count[s]; ni++) {
+                        dlc->step_notes[s][ni]       = 0;
+                        dlc->note_tick_offset[s][ni] = 0;
+                    }
+                    dlc->step_note_count[s] = (uint8_t)wi;
+                    if (wi == 0) {
+                        dlc->steps[s]     = 0;
+                        dlc->step_vel[s]  = (uint8_t)SEQ_VEL;
+                        dlc->step_gate[s] = (uint16_t)GATE_TICKS;
+                    }
+                }
+                { int ci;
+                  for (ci = 0; ci < ncross; ci++) {
+                      int dst = (int)cross[ci].dst;
+                      if (dlc->step_note_count[dst] >= 8) continue;
+                      int slot = (int)dlc->step_note_count[dst];
+                      dlc->step_notes[dst][slot]       = cross[ci].pitch;
+                      dlc->note_tick_offset[dst][slot] = cross[ci].dst_off;
+                      if (slot == 0) {
+                          dlc->step_vel[dst]  = cross[ci].vel;
+                          dlc->step_gate[dst] = cross[ci].gate;
+                      }
+                      if (cross[ci].active) dlc->steps[dst] = 1;
+                      dlc->step_note_count[dst]++;
+                  }
+                }
+                { int any2 = 0;
+                  for (s = 0; s < len; s++) if (dlc->steps[s]) { any2 = 1; break; }
+                  dlc->active = (uint8_t)any2;
+                }
+                dlc->nudge_pos += (int16_t)dir;
+                clip_migrate_to_notes(dlc);
+            }
+            inst->state_dirty = 1;
+            return;
+        }
+
+        if (!strcmp(sub, "all_lanes_length")) {
+            /* tN_all_lanes_length "steps" — set clip length on all 32 drum lanes. */
+            int newlen = clamp_i(my_atoi(val), 1, SEQ_STEPS);
+            drum_clip_t *dc_al = &tr->drum_clips[tr->active_clip];
+            int l_al;
+            for (l_al = 0; l_al < DRUM_LANES; l_al++) {
+                clip_t *dlc = &dc_al->lanes[l_al].clip;
+                dlc->length = (uint16_t)newlen;
+                if (tr->drum_current_step[l_al] >= (uint16_t)newlen)
+                    tr->drum_current_step[l_al] = 0;
+            }
+            inst->state_dirty = 1;
+            return;
+        }
+
+        if (!strcmp(sub, "all_lanes_double_fill")) {
+            /* tN_all_lanes_double_fill — double-and-fill all 32 drum lanes. */
+            drum_clip_t *dc_al = &tr->drum_clips[tr->active_clip];
+            int l_al, i;
+            for (l_al = 0; l_al < DRUM_LANES; l_al++) {
+                clip_t *dlc = &dc_al->lanes[l_al].clip;
+                int len = (int)dlc->length;
+                if (len * 2 > SEQ_STEPS) continue;
+                for (i = 0; i < len; i++) {
+                    dlc->steps[len + i]           = dlc->steps[i];
+                    memcpy(dlc->step_notes[len + i], dlc->step_notes[i], 8);
+                    dlc->step_note_count[len + i] = dlc->step_note_count[i];
+                    dlc->step_vel[len + i]        = dlc->step_vel[i];
+                    dlc->step_gate[len + i]       = dlc->step_gate[i];
+                    memcpy(dlc->note_tick_offset[len + i], dlc->note_tick_offset[i], 8 * sizeof(int16_t));
+                }
+                dlc->length = (uint16_t)(len * 2);
+                if (tr->drum_current_step[l_al] >= dlc->length)
+                    tr->drum_current_step[l_al] = (uint16_t)(dlc->length - 1);
+                clip_migrate_to_notes(dlc);
+            }
+            inst->state_dirty = 1;
+            return;
+        }
+
         if (!strcmp(sub, "drum_repeat_start")) {
             /* tN_drum_repeat_start "lane rate_idx vel" — activate repeat for a drum lane */
             const char *sp = val;
