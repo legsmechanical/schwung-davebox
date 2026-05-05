@@ -3036,7 +3036,7 @@ static void drum_repeat_tick(seq8_instance_t *inst, seq8_track_t *tr) {
 
     if ((int)tr->drum_repeat_phase == fire_at) {
         if (tr->drum_repeat_gate[lane] & (uint8_t)(1u << step)) {
-            int vel = (int)tr->drum_repeat_vel;
+            int vel = effective_vel(tr, (int)tr->drum_repeat_vel);
             int scale = (int)tr->drum_repeat_vel_scale[lane][step];
             vel = vel * scale / 100;
             if (vel < 1) vel = 1;
@@ -3131,7 +3131,7 @@ static void drum_repeat2_tick(seq8_instance_t *inst, seq8_track_t *tr) {
         if ((int)tr->drum_repeat2_phase[l] != fire_at) goto advance_l;
         if (!(tr->drum_repeat_gate[l] & (uint8_t)(1u << step))) goto advance_l;
         {
-            int vel   = (int)tr->drum_repeat2_vel[l];
+            int vel   = effective_vel(tr, (int)tr->drum_repeat2_vel[l]);
             int scale = (int)tr->drum_repeat_vel_scale[l][step];
             vel = vel * scale / 100;
             if (vel < 1) vel = 1;

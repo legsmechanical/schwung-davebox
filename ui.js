@@ -2379,7 +2379,7 @@ function drawUI() {
         const lane = S.activeDrumLane[t];
         syncDrumRepeatState(t, lane);
         drawBankHeading('>> RPT GROOVE');
-        print(S.shiftHeld ? 94 : 106, 0, S.shiftHeld ? 'Nudge' : 'Vel', 1);
+        print(S.shiftHeld ? 94 : 106, 0, S.shiftHeld ? 'Nudge' : 'Vel', 0);
         for (let k = 0; k < 8; k++) {
             const colX = 4 + (k % 4) * 30;
             const rowY = k < 4 ? 12 : 36;
@@ -2951,6 +2951,17 @@ globalThis.tick = function () {
         S.pendingRepeatLane = -1;
     }
 
+    /* Deferred melodic pre-roll (coalescing workaround: liveSendNote fires shadow_send same tick) */
+    if (S.pendingPrerollNote !== null) {
+        const pr = S.pendingPrerollNote;
+        S.pendingPrerollNote = null;
+        if (S.clipSteps[pr.track][pr.clip][0] === 0 && typeof host_module_set_param === 'function') {
+            host_module_set_param('t' + pr.track + '_c' + pr.clip + '_step_0_toggle', pr.pitch + ' ' + pr.vel);
+            S.clipSteps[pr.track][pr.clip][0] = 1;
+            S.clipNonEmpty[pr.track][pr.clip] = true;
+        }
+    }
+
     /* Set change detected in init(): send UUID so DSP constructs path and loads. */
     if (S.pendingSetLoad && typeof host_module_set_param === 'function') {
         S.pendingSetLoad = false;
@@ -3215,16 +3226,6 @@ globalThis.tick = function () {
             }
         }
 
-        /* CC 50 hold detection: crossing threshold momentarily switches view */
-        if (S.noteSessionPressedTick >= 0 && !S.sessionViewMomentary &&
-                (S.tickCount - S.noteSessionPressedTick) >= NOTE_SESSION_HOLD_TICKS) {
-            S.noteSessionPressedTick  = -1;
-            S.sessionViewMomentary    = true;
-            S.sessionView             = !S.sessionView;
-            _switchViewCleanup();
-            invalidateLEDCache();
-            S.screenDirty = true;
-        }
 
         /* Refresh scene state cache for O(1) lookups in LED update functions */
         for (let _i = 0; _i < 16; _i++) {
@@ -3655,19 +3656,23 @@ function _onCC_buttons(d1, d2) {
                 S.lastSentMenuEditValue = null;
                 forceRedraw();
             } else {
+                /* Switch immediately (like Loop entering perf); tap vs hold resolved on release */
                 S.noteSessionPressedTick = S.tickCount;
-            }
-        } else if (d2 === 0) {
-            if (S.sessionViewMomentary) {
-                /* Hold release: switch back to original view */
-                S.sessionViewMomentary = false;
-                S.sessionView = !S.sessionView;
+                S.sessionViewMomentary   = true;
+                S.sessionView            = !S.sessionView;
                 _switchViewCleanup();
                 invalidateLEDCache();
-                forceRedraw();
-            } else if (S.noteSessionPressedTick >= 0) {
-                /* Tap: permanently toggle view */
-                S.sessionView = !S.sessionView;
+                S.screenDirty = true;
+            }
+        } else if (d2 === 0) {
+            if (S.noteSessionPressedTick >= 0 &&
+                    (S.tickCount - S.noteSessionPressedTick) < NOTE_SESSION_HOLD_TICKS) {
+                /* Tap release: make permanent (don't switch back) */
+                S.sessionViewMomentary = false;
+            } else if (S.sessionViewMomentary) {
+                /* Hold release: switch back to original view */
+                S.sessionViewMomentary = false;
+                S.sessionView          = !S.sessionView;
                 _switchViewCleanup();
                 invalidateLEDCache();
                 forceRedraw();
@@ -4563,15 +4568,11 @@ function _onCC_knobs(d1, d2) {
                 return;
             }
             if (knobIdx === 4) {
-                /* K5 = VelIn: track velocity override, sens=4 */
-                S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 4) {
-                    S.knobAccum[knobIdx] = 0;
-                    const cur7v = S.trackVelOverride[t];
-                    const nv = Math.max(0, Math.min(127, cur7v + dir));
-                    if (nv !== cur7v) applyTrackConfig(t, 'track_vel_override', nv);
-                    S.screenDirty = true;
-                }
+                /* K5 = VelIn: track velocity override, sens=1 */
+                const cur7v = S.trackVelOverride[t];
+                const nv = Math.max(0, Math.min(127, cur7v + dir));
+                if (nv !== cur7v) applyTrackConfig(t, 'track_vel_override', nv);
+                S.screenDirty = true;
                 return;
             }
             if (knobIdx === 5) {
@@ -5160,6 +5161,18 @@ function _onPadPressTrackView(status, d1, d2) {
                         S.pendingDrumLaneResyncTrack = t;
                         S.pendingDrumLaneResyncLane  = lane;
                     }
+                    /* Pre-roll capture: last 1/8 beat of count-in → force hit at step 0 */
+                    if (S.recordArmed && S.recordCountingIn && t === S.recordArmedTrack &&
+                            S.countInQuarterTicks > 0 &&
+                            (S.tickCount - S.countInStartTick) >= Math.round(S.countInQuarterTicks * 7 / 2) &&
+                            S.drumLaneSteps[t][lane][0] === '0' &&
+                            typeof host_module_set_param === 'function') {
+                        const tvo = S.trackVelOverride[t];
+                        const recVel = tvo > 0 ? tvo : vel;
+                        host_module_set_param('t' + t + '_l' + lane + '_step_0_toggle', String(recVel));
+                        S.drumLaneSteps[t][lane][0] = '1';
+                        S.drumLaneHasNotes[t][lane] = true;
+                    }
                     /* Rpt1: defer lane switch to tick (onMidiMessage set_params coalesce) */
                     if (S.drumPerformMode[t] === 1 && (S.drumRepeatHeldPad[t] >= 0 || S.drumRepeatLatched[t])) {
                         S.pendingRepeatLane = lane;
@@ -5256,9 +5269,7 @@ function _onPadPressTrackView(status, d1, d2) {
                     typeof host_module_set_param === 'function') {
                 const rt   = S.recordArmedTrack;
                 const ac_r = S.trackActiveClip[rt];
-                host_module_set_param('t' + rt + '_c' + ac_r + '_step_0_add', pitch + ' 0 ' + effectiveVelocity(d2));
-                S.clipSteps[rt][ac_r][0] = 1;
-                S.clipNonEmpty[rt][ac_r] = true;
+                S.pendingPrerollNote = { track: rt, clip: ac_r, pitch: pitch, vel: effectiveVelocity(d2) };
             }
             /* Overdub capture: add to current step of armed track with tick offset + velocity */
             if (S.recordArmed && !S.recordCountingIn && S.activeTrack === S.recordArmedTrack)
@@ -5669,12 +5680,12 @@ function _onStepButtons(d1, d2) {
             /* Step 9: open global menu at Key */
             openGlobalMenu();
             S.globalMenuState.selectedIndex = 8;
-        } else if (idx === 9) {
-            /* Step 10: toggle VelIn between 0 (Live) and 127 */
+        } else if (idx === 9 && isDrum) {
+            /* Step 10 (drum): toggle ALL lane VelIn between Live and 127 */
             const curVel = S.trackVelOverride[t];
             const nextVel = curVel === 0 ? 127 : 0;
             applyTrackConfig(t, 'track_vel_override', nextVel);
-            showActionPopup(nextVel === 0 ? 'VEL LIVE' : 'VEL 127');
+            showActionPopup('ALL LANES', nextVel === 0 ? 'VEL LIVE' : 'VEL 127');
         } else if (idx === 10 && !isDrum) {
             /* Step 11: toggle TRACK ARP style on/off (melodic only) */
             const curStyle = S.bankParams[t][5][0] | 0;
