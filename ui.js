@@ -1603,6 +1603,11 @@ function readBankParams(t, bankIdx) {
         }
         return;
     }
+    /* ALL LANES bank: K4 quantize reads from drumLaneQnt mirror */
+    if (bankIdx === 7) {
+        S.bankParams[t][7][3] = S.drumLaneQnt[t] > 0 ? S.drumLaneQnt[t] : -1;
+        return;
+    }
     /* CC PARAM bank: read all 8 CC assignments from DSP */
     if (bankIdx === 6) {
         const raw = host_module_get_param('t' + t + '_cc_assigns');
@@ -4484,6 +4489,8 @@ function _onCC_knobs(d1, d2) {
                     const nv = Math.max(0, Math.min(100, cur7q + dir * 5));
                     if (nv !== cur7q) {
                         S.bankParams[t][7][3] = nv;
+                        S.drumLaneQnt[t] = nv;
+                        S.bankParams[t][1][5] = nv;
                         host_module_set_param('t' + t + '_drum_lanes_qnt', String(nv));
                     }
                     S.screenDirty = true;
@@ -5576,6 +5583,8 @@ function _onStepButtons(d1, d2) {
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + t + '_drum_lanes_qnt', '100');
                     S.bankParams[t][7][3] = 100;
+                    S.drumLaneQnt[t] = 100;
+                    S.bankParams[t][1][5] = 100;
                 } else {
                     const lane = S.activeDrumLane[t];
                     if (typeof host_module_set_param === 'function')
