@@ -131,6 +131,7 @@ Both patches are in `src/host/shadow_midi.c` in `shadow_drain_midi_inject()`. PR
 - **TRACK ARP + ROUTE_SCHWUNG**: live notes injected via `shadow_send_midi_to_dsp` bypass `live_note_on`/`live_note_off` — TRACK ARP intercepts pad/external-MIDI notes on ROUTE_SCHWUNG tracks only via `live_notes` set_param (not the schwung chain path).
 - `pfx_send` from set_param context does NOT release Move synth voices.
 - **Swing**: CC automation lanes are not swung (intentional). Live-recorded notes with inp_quant=off will have swing applied twice (once on input, once on playback). Long notes (gate > 1 step) get a slightly shorter effective gate since note-off fires at the unswung position.
+- **Multi-step toggle coalescing**: secondary step presses fire set_param on press (not release). If 3–4 fingers land in the same audio buffer, only the last set_param survives and earlier toggles are lost. Fix if observed: queue secondary toggles in a `pendingMultiToggle` array drained in `tick()` (same pattern as `pendingRepeatLane`).
 - See `docs/SCHWUNG_SEQ8_LIMITATIONS.md` for framework interaction patterns.
 
 ## Hardware reference

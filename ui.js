@@ -5455,8 +5455,25 @@ function _onStepButtons(d1, d2) {
                 S.stepEditNudge = 0;
             }
             forceRedraw();
+        } else if (S.stepBtnPressedTick[S.heldStepBtn] >= 0) {
+            /* Primary still in tap window: multi-toggle this step immediately */
+            const absStep2 = S.drumStepPage[t] * 16 + idx;
+            const cur2     = S.drumLaneSteps[t][lane][absStep2];
+            if (typeof host_module_set_param === 'function') {
+                if (cur2 !== '1') {
+                    host_module_set_param('t' + t + '_l' + lane + '_step_' + absStep2 + '_toggle', String(drumVelZoneToVelocity(S.drumLastVelZone[t])));
+                    S.drumLaneSteps[t][lane][absStep2] = '1';
+                    S.drumLaneHasNotes[t][lane] = true;
+                } else {
+                    host_module_set_param('t' + t + '_l' + lane + '_step_' + absStep2 + '_clear', '1');
+                    S.drumLaneSteps[t][lane][absStep2] = '0';
+                    S.drumLaneHasNotes[t][lane] = S.drumLaneSteps[t][lane].some(c => c !== '0');
+                }
+            }
+            S.stepBtnPressedTick[idx] = -1;
+            forceRedraw();
         } else if (S.heldStepNotes.length > 0) {
-            /* Second step tapped while first is held: set gate to span the distance */
+            /* Primary in step edit (past tap threshold): tap sets gate span */
             S.stepBtnPressedTick[S.heldStepBtn] = -1;
             S.stepWasHeld = true;
             const tappedStep = S.drumStepPage[t] * 16 + idx;
@@ -5530,8 +5547,38 @@ function _onStepButtons(d1, d2) {
                 }
             }
             forceRedraw();
+        } else if (S.stepBtnPressedTick[S.heldStepBtn] >= 0) {
+            /* Primary still in tap window: multi-toggle this step immediately.
+             * Use S.clipSteps for state — get_param is unreliable from onMidiMessage context. */
+            const ac_mp    = effectiveClip(S.activeTrack);
+            const absStep2 = S.trackCurrentPage[S.activeTrack] * 16 + idx;
+            const pref_mp  = 't' + S.activeTrack + '_c' + ac_mp + '_step_' + absStep2;
+            const state_mp = S.clipSteps[S.activeTrack][ac_mp][absStep2]; // 0=empty, 1=active, 2=inactive-with-notes
+            if (state_mp === 0) {
+                const assignNote3 = S.lastPlayedNote >= 0 ? S.lastPlayedNote : -1;
+                if (assignNote3 >= 0 && typeof host_module_set_param === 'function') {
+                    host_module_set_param(pref_mp + '_toggle', assignNote3 + ' ' + effectiveVelocity(S.lastPadVelocity));
+                    S.clipSteps[S.activeTrack][ac_mp][absStep2] = 1;
+                    S.clipNonEmpty[S.activeTrack][ac_mp] = true;
+                    refreshSeqNotesIfCurrent(S.activeTrack, ac_mp, absStep2);
+                }
+            } else if (state_mp === 1) {
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param(pref_mp, '0');
+                S.clipSteps[S.activeTrack][ac_mp][absStep2] = 2;
+                if (S.clipNonEmpty[S.activeTrack][ac_mp]) S.clipNonEmpty[S.activeTrack][ac_mp] = clipHasContent(S.activeTrack, ac_mp);
+                refreshSeqNotesIfCurrent(S.activeTrack, ac_mp, absStep2);
+            } else {
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param(pref_mp, '1');
+                S.clipSteps[S.activeTrack][ac_mp][absStep2] = 1;
+                S.clipNonEmpty[S.activeTrack][ac_mp] = true;
+                refreshSeqNotesIfCurrent(S.activeTrack, ac_mp, absStep2);
+            }
+            S.stepBtnPressedTick[idx] = -1;
+            forceRedraw();
         } else if (S.heldStepNotes.length > 0) {
-            /* Second step tapped while first is held: set gate to span the distance.
+            /* Primary in step edit (past tap threshold): tap sets gate span.
              * Clear S.heldStepBtn press-tick so the first step's release doesn't also tap-toggle. */
             S.stepBtnPressedTick[S.heldStepBtn] = -1;
             S.stepWasHeld = true;
