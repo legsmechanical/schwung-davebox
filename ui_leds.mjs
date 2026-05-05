@@ -210,6 +210,11 @@ export function updateStepLEDs() {
         const btnIdx = S.copySrc.absStep % 16;
         setLED(16 + btnIdx, (Math.floor(S.tickCount / 24) % 2) ? White : LED_OFF);
     }
+
+    /* Hold-save flash: briefly force all 16 step buttons white after a snapshot save */
+    if (S.stepSaveFlashEndTick >= 0 && S.tickCount < S.stepSaveFlashEndTick) {
+        for (let i = 0; i < 16; i++) setLED(16 + i, White);
+    }
 }
 
 export function updateSessionLEDs() {
@@ -270,13 +275,11 @@ export function updateTrackLEDs() {
     if (!S.ledInitComplete) return;
 
     /* Step icon LEDs (CCs 16-31): light shortcut hints while Shift held in Track View.
-     * Flash all white briefly after a hold-save in session view.
      * Force-send every POLL_INTERVAL to override any native Move state that bypasses caches. */
     {
-        const showIcons  = !S.sessionView && S.shiftHeld;
-        const flashSave  = S.stepSaveFlashEndTick >= 0 && S.tickCount < S.stepSaveFlashEndTick;
-        const isDrum     = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
-        const force      = S.tickCount % POLL_INTERVAL === 0;
+        const showIcons = !S.sessionView && S.shiftHeld;
+        const isDrum    = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
+        const force     = S.tickCount % POLL_INTERVAL === 0;
         for (let i = 0; i < 16; i++) {
             let on = false;
             if (showIcons) {
@@ -285,8 +288,8 @@ export function updateTrackLEDs() {
                 else if (i === 10 && !isDrum)  on = true;
                 else if (i === 14 || i === 15) on = true;
             }
-            const color = (flashSave || on) ? White : LED_OFF;
-            if (force || flashSave) {
+            const color = on ? White : LED_OFF;
+            if (force) {
                 lastSentButtonLED[16 + i] = color;
                 setButtonLED(16 + i, color, true);
             } else {

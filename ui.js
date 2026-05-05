@@ -471,8 +471,8 @@ function fmtCCLabel(cc) {
  * first button's release to exit step edit prematurely. */
 
 const STEP_HOLD_TICKS      = 40;   /* ~200ms at 196Hz: below = tap, at/above = hold */
-const STEP_SAVE_HOLD_TICKS = 294;  /* ~1.5s at 196Hz: hold step in session view to save */
-const STEP_SAVE_FLASH_TICKS = 15;  /* ~75ms white flash on all step LEDs after save */
+const STEP_SAVE_HOLD_TICKS = 517;  /* ~1.5s at 344Hz (128 frames/block @ 44100Hz) */
+const STEP_SAVE_FLASH_TICKS = 35;  /* ~100ms white flash on step button LEDs after save */
 
 /* Metronome */
 
