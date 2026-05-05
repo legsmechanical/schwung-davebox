@@ -1670,6 +1670,9 @@ function readBankParams(t, bankIdx) {
             S.bankParams[t][bankIdx][k] = parseInt(raw, 10) || 0;
         }
     }
+    /* Drum NOTE/NOTEFX bank: quantize slot is managed via drumLaneQnt mirror, not get_param */
+    if (bankIdx === 1 && S.trackPadMode[t] === PAD_MODE_DRUM)
+        S.bankParams[t][1][5] = S.drumLaneQnt[t];
 }
 
 function readTrackConfig(t) {
