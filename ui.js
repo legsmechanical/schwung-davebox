@@ -471,8 +471,8 @@ function fmtCCLabel(cc) {
  * first button's release to exit step edit prematurely. */
 
 const STEP_HOLD_TICKS      = 40;   /* ~200ms at 196Hz: below = tap, at/above = hold */
-const STEP_SAVE_HOLD_TICKS = 517;  /* ~1.5s at 344Hz (128 frames/block @ 44100Hz) */
-const STEP_SAVE_FLASH_TICKS = 35;  /* ~100ms white flash on step button LEDs after save */
+const STEP_SAVE_HOLD_TICKS = 150;  /* ~0.75s at 196Hz */
+const STEP_SAVE_FLASH_TICKS = 40;  /* ~200ms double-blink on step button LEDs after save */
 
 /* Metronome */
 
@@ -3118,7 +3118,8 @@ globalThis.tick = function () {
             S.screenDirty = true;
         }
         if (S.stepSaveFlashEndTick >= 0 && S.tickCount >= S.stepSaveFlashEndTick) {
-            S.stepSaveFlashEndTick = -1;
+            S.stepSaveFlashEndTick   = -1;
+            S.stepSaveFlashStartTick = -1;
         }
         /* Session view hold-to-save: fire exactly when threshold reached, not on release */
         if (S.sessionStepHeld >= 0) {
@@ -3154,7 +3155,8 @@ globalThis.tick = function () {
                         host_module_set_param('snap_save', _ssh + ' ' + mStr + ' ' + sStr + ' ' + dStr);
                     showActionPopup('MUTE STATE', 'SAVED');
                 }
-                S.stepSaveFlashEndTick = S.tickCount + STEP_SAVE_FLASH_TICKS;
+                S.stepSaveFlashStartTick = S.tickCount;
+                S.stepSaveFlashEndTick   = S.tickCount + STEP_SAVE_FLASH_TICKS;
                 forceRedraw();
             }
         }
@@ -5521,6 +5523,21 @@ function _onStepButtons(d1, d2) {
     if (S.tapTempoOpen) return;
     S.stepOpTick = S.tickCount;
     const idx = d1 - 16;
+    /* Delete+step in session view: clear perf preset or mute snapshot slot immediately. */
+    if (S.sessionView && S.deleteHeld) {
+        if (S.loopHeld || S.perfViewLocked) {
+            S.perfSnapshots[idx] = 0;
+            if (S.perfRecalledSlot === idx) { S.perfRecalledSlot = -1; S.perfRecalledMods = 0; sendPerfMods(); }
+            showActionPopup('PERF PRESET', 'CLEARED');
+        } else if (S.muteHeld) {
+            S.snapshots[idx] = null;
+            if (typeof host_module_set_param === 'function')
+                host_module_set_param('snap_delete', String(idx));
+            showActionPopup('MUTE STATE', 'CLEARED');
+        }
+        forceRedraw();
+        return;
+    }
     /* Perf Mode: step buttons are preset snapshot slots — defer to release for tap/hold decision. */
     if (S.sessionView && (S.loopHeld || S.perfViewLocked)) {
         S.stepBtnPressedTick[idx] = S.tickCount;

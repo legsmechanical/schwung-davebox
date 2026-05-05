@@ -757,6 +757,14 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
 
+    if (!strcmp(key, "snap_delete")) {
+        int n = my_atoi(val);
+        if (n < 0 || n >= 16) return;
+        inst->snap_valid[n] = 0;
+        inst->state_dirty = 1;
+        return;
+    }
+
     if (!strcmp(key, "clip_copy")) {
         const char *p = val;
         int nums[4], i;

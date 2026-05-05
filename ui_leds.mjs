@@ -211,10 +211,6 @@ export function updateStepLEDs() {
         setLED(16 + btnIdx, (Math.floor(S.tickCount / 24) % 2) ? White : LED_OFF);
     }
 
-    /* Hold-save flash: briefly force all 16 step buttons white after a snapshot save */
-    if (S.stepSaveFlashEndTick >= 0 && S.tickCount < S.stepSaveFlashEndTick) {
-        for (let i = 0; i < 16; i++) setLED(16 + i, White);
-    }
 }
 
 export function updateSessionLEDs() {
@@ -507,6 +503,15 @@ export function updateTrackLEDs() {
             }
         }
         cachedSetButtonLED(71 + k, ledVal);
+    }
+
+    /* Hold-save double-blink: override step button LEDs in any view */
+    if (S.stepSaveFlashEndTick >= 0 && S.tickCount < S.stepSaveFlashEndTick &&
+            S.stepSaveFlashStartTick >= 0) {
+        const elapsed = S.tickCount - S.stepSaveFlashStartTick;
+        if (Math.floor(elapsed / 10) % 2 === 0) {
+            for (let i = 0; i < 16; i++) setLED(16 + i, White);
+        }
     }
 }
 

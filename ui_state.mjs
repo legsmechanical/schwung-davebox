@@ -253,6 +253,7 @@ export const S = {
     drumInpQuant: new Array(8).fill(0),   /* per-track drum input quantize index 0-8 */
     sessionStepHeld: -1,       /* step button (0-15) held in session view awaiting tap/hold decision */
     sessionStepHeldCtx: 0,     /* 1=perf preset, 2=mute snapshot */
-    stepSaveFlashEndTick: -1,  /* step button LEDs flash white through this tick after save */
+    stepSaveFlashStartTick: -1, /* tick when hold-save flash began */
+    stepSaveFlashEndTick: -1,  /* step button LEDs double-blink through this tick after save */
 
 };
