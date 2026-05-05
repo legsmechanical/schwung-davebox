@@ -3439,7 +3439,6 @@ static void set_param(void *instance, const char *key, const char *val) {
                         vel = 0;
                         while (*sp >= '0' && *sp <= '9') { vel = vel * 10 + (*sp++ - '0'); }
                     }
-                    vel = effective_vel(tr, vel);
                     live_note_on(inst, tr, (uint8_t)pitch, (uint8_t)clamp_i(vel, 1, 127));
                 } else {
                     live_note_off(inst, tr, (uint8_t)pitch);

@@ -1797,7 +1797,7 @@ function liveSendNote(t, type, pitch, vel, rawVel) {
     const ch    = (S.trackChannel[t] - 1) & 0x0F;
     const route = S.trackRoute[t];
     const status = type | ch;
-    if (!rawVel && type === 0x90 && vel > 0 && route !== 1) {
+    if (!rawVel && type === 0x90 && vel > 0) {
         const tvo = S.trackVelOverride[t];
         if (tvo > 0) vel = tvo;
     }
