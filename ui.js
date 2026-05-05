@@ -2282,7 +2282,7 @@ function drawUI() {
                 S.drumPerformMode[t] === 2 ? 'Rpt2' : S.drumPerformMode[t] === 1 ? 'Rpt1' : 'Vel',
                 fmtBool(sqfl),
             ];
-            drawBankHeading('DRUM LANE');
+            drawBankHeading('DRUM LANE >>');
             for (let k = 0; k < 8; k++) {
                 if (!drumLaneLabels[k]) continue;
                 const colX = 4 + (k % 4) * 30;
@@ -2325,7 +2325,7 @@ function drawUI() {
         const vals    = S.bankParams[t][bank];
         const hiLane  = (S.knobTouched === 6 || S.knobTouched === 7);
 
-        drawBankHeading('NOTE/NOTEFX');
+        drawBankHeading('>> NOTE/NOTEFX');
 
         /* K1-K6 (k=0..5): normal grid render */
         for (let k = 0; k < 6; k++) {
@@ -2360,7 +2360,7 @@ function drawUI() {
         const t    = S.activeTrack;
         const lane = S.activeDrumLane[t];
         syncDrumRepeatState(t, lane);
-        drawBankHeading('RPT GROOVE');
+        drawBankHeading('>> RPT GROOVE');
         print(S.shiftHeld ? 94 : 106, 0, S.shiftHeld ? 'Nudge' : 'Vel', 1);
         for (let k = 0; k < 8; k++) {
             const colX = 4 + (k % 4) * 30;
@@ -2406,7 +2406,7 @@ function drawUI() {
         } else if (bank === 6) {
         /* CC PARAM bank overview: label = assigned CC, value = current value */
         const t = S.activeTrack;
-        drawBankHeading(BANKS[6].name);
+        drawBankHeading((S.trackPadMode[t] === PAD_MODE_DRUM ? '>> ' : '') + BANKS[6].name);
         for (let k = 0; k < 8; k++) {
             const colX = 4 + (k % 4) * 30;
             const rowY = k < 4 ? 12 : 36;
@@ -2419,7 +2419,8 @@ function drawUI() {
         /* Bank overview — 5 rows; touched knob column inverted */
         const knobs = BANKS[bank].knobs;
         const vals  = S.bankParams[S.activeTrack][bank];
-        drawBankHeading(BANKS[bank].name);
+        const _isDrum = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
+        drawBankHeading((_isDrum ? '>> ' : '') + BANKS[bank].name);
         for (let k = 0; k < 8; k++) {
             const colX = 4 + (k % 4) * 30;
             const rowY = k < 4 ? 12 : 36;
