@@ -4476,12 +4476,12 @@ function _onCC_knobs(d1, d2) {
                 return;
             }
             if (knobIdx === 3) {
-                /* K4 = Qnt: quantize all lanes 0-100, sens=4, step=5 */
+                /* K4 = Qnt: quantize all lanes 0-100, sens=1 */
                 S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 4) {
+                if (S.knobAccum[knobIdx] >= 1) {
                     S.knobAccum[knobIdx] = 0;
                     const cur7q = S.bankParams[t][7][3] < 0 ? 0 : S.bankParams[t][7][3];
-                    const nv = Math.max(0, Math.min(100, cur7q + dir * 5));
+                    const nv = Math.max(0, Math.min(100, cur7q + dir));
                     if (nv !== cur7q) {
                         S.bankParams[t][7][3] = nv;
                         S.drumLaneQnt[t] = nv;
