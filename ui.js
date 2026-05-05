@@ -1245,7 +1245,16 @@ function refreshDrumLaneBankParams(t, lane) {
     if (snap) {
         const v = snap.split(' ');
         if (v.length >= 17) {
-            for (let k = 0; k < 5; k++) S.bankParams[t][1][k] = parseInt(v[k], 10) | 0;
+            /* NOTE FX bank (1): snapshot order = oct, ofs, gate, vel, qnt — same as melodic */
+            S.bankParams[t][1][0] = parseInt(v[0], 10) | 0;  /* oct */
+            S.bankParams[t][1][1] = parseInt(v[1], 10) | 0;  /* ofs */
+            S.bankParams[t][1][2] = v.length >= 33 ? (parseInt(v[32], 10) | 0) : 0; /* rnd */
+            S.noteFXRandomMode[t]  = v.length >= 34 ? (parseInt(v[33], 10) | 0) : 0;
+            S.midiDlyRandomMode[t] = v.length >= 35 ? (parseInt(v[34], 10) | 0) : 0;
+            S.bankParams[t][1][3] = parseInt(v[2], 10) | 0;  /* gate */
+            S.bankParams[t][1][4] = parseInt(v[3], 10) | 0;  /* vel */
+            S.bankParams[t][1][5] = parseInt(v[4], 10) | 0;  /* qnt */
+            S.drumLaneQnt[t]      = S.bankParams[t][1][5];
             for (let k = 0; k < 4; k++) S.bankParams[t][2][k] = parseInt(v[5 + k], 10) | 0;
             for (let k = 0; k < 8; k++) S.bankParams[t][3][k] = parseInt(v[9 + k], 10) | 0;
         }
