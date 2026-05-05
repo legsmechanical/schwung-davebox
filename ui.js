@@ -2428,7 +2428,7 @@ function drawUI() {
         const bankGroup = pg === 0 ? 'Bank: A' : 'Bank: B';
         const bankName  = S.activeBank === 0 ? 'DRUM LANE' : S.activeBank === 1 ? 'NOTE/NOTEFX' : S.activeBank === 5 ? 'RPT GROOVE' : BANKS[S.activeBank] ? BANKS[S.activeBank].name : '?';
         drawBankHeading(bankName);
-        print(4, 10, bankGroup + '  Pad: ' + name + oct + ' (' + note + ')', 1);
+        pixelPrint(4, 10, bankGroup + '  Pad: ' + name + oct + ' (' + note + ')', 1);
         const laneBit = 1 << lane;
         if (S.drumLaneSolo[t] & laneBit) {
             pixelPrint(128 - 4 - 6 * 6, 23, 'SOLOED', 1);
@@ -2451,9 +2451,9 @@ function drawUI() {
         const CHAR_W  = 6;
         const keySclX = 128 - 4 - keyScl.length * CHAR_W;
         drawBankHeading(BANKS[S.activeBank].name + recTag);
-        print(4, 10, octStr, 1);
-        print(keySclX, 10, keyScl, 1);
-        if (S.scaleAware) fill_rect(keySclX, 18, keyScl.length * CHAR_W, 1, 1);
+        pixelPrint(4, 10, octStr, 1);
+        pixelPrint(keySclX, 10, keyScl, 1);
+        if (S.scaleAware) fill_rect(keySclX, 15, keyScl.length * CHAR_W, 1, 1);
         drawMetroIndicator();
         drawTrackRow(34);
         for (let t = 0; t < NUM_TRACKS; t++)
