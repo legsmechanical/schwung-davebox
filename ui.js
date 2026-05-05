@@ -3478,6 +3478,11 @@ function _onCC_jog(d1, d2) {
                         extNoteOffAll();
                         handoffRecordingToTrack(next);
                         S.activeTrack = next;
+                        if (S.trackPadMode[next] === PAD_MODE_DRUM) {
+                            if (S.activeBank === 2 || S.activeBank === 4) S.activeBank = 0;
+                        } else {
+                            if (S.activeBank === 7) S.activeBank = 0;
+                        }
                         refreshPerClipBankParams(next);
                         computePadNoteMap();
                         S.seqActiveNotes.clear();
