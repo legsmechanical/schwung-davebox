@@ -2259,19 +2259,20 @@ function drawUI() {
             const len  = S.drumLaneLength[t];
             const tpsIdx = Math.max(0, TPS_VALUES.indexOf(S.drumLaneTPS[t]));
             const sqfl   = S.clipSeqFollow[t][ac] ? 1 : 0;
-            const drumLaneLabels = ['Stch', 'Shft', 'Ndg', 'Res', 'Len', 'Qnt', 'Perf', 'SqFl'];
+            const drumLaneLabels = ['Stch', 'Shft', 'Ndg', 'Res', 'Len', null, 'Perf', 'SqFl'];
             const drumLaneVals  = [
                 fmtStretch(S.bankParams[t][0][0]),
                 fmtSign(S.bankParams[t][0][1]),
                 fmtSign(S.bankParams[t][0][2]),
                 fmtRes(tpsIdx),
                 fmtLen(len),
-                fmtPct(S.drumLaneQnt[t]),
+                null,
                 S.drumPerformMode[t] === 2 ? 'Rpt2' : S.drumPerformMode[t] === 1 ? 'Rpt1' : 'Vel',
                 fmtBool(sqfl),
             ];
             drawBankHeading('DRUM LANE');
             for (let k = 0; k < 8; k++) {
+                if (!drumLaneLabels[k]) continue;
                 const colX = 4 + (k % 4) * 30;
                 const rowY = k < 4 ? 12 : 36;
                 const hi   = (S.knobTouched === k);
@@ -4372,22 +4373,6 @@ function _onCC_knobs(d1, d2) {
                 }
                 return;
             }
-            if (knobIdx === 5) {
-                /* K6 = Qnt (drum lanes quantize macro, sens=1) */
-                S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 1) {
-                    S.knobAccum[knobIdx] = 0;
-                    const nv = Math.max(0, Math.min(100, S.drumLaneQnt[t] + dir));
-                    if (nv !== S.drumLaneQnt[t]) {
-                        S.drumLaneQnt[t] = nv;
-                        S.bankParams[t][1][5] = nv; /* mirror to NOTE FX K6 for active lane display */
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + t + '_drum_lanes_qnt', String(nv));
-                    }
-                    S.screenDirty = true;
-                }
-                return;
-            }
             if (knobIdx === 6) {
                 /* K7 = Perf (perform mode: Vel → Rpt → Rpt2), sens=16 */
                 S.knobAccum[knobIdx]++;
@@ -4506,7 +4491,25 @@ function _onCC_knobs(d1, d2) {
             }
             return;
         }
-        /* Drum NOTE FX bank: K7 (lane oct, coarse ±12) and K8 (lane note, fine ±1) */
+        /* Drum NOTE FX bank: K6 = Qnt (all-lane quantize macro, sens=1); K7/K8 = lane oct/note */
+        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 1 && knobIdx === 5) {
+            const t   = S.activeTrack;
+            const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
+            if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
+            S.knobAccum[knobIdx]++;
+            if (S.knobAccum[knobIdx] >= 1) {
+                S.knobAccum[knobIdx] = 0;
+                const nv = Math.max(0, Math.min(100, S.drumLaneQnt[t] + dir));
+                if (nv !== S.drumLaneQnt[t]) {
+                    S.drumLaneQnt[t] = nv;
+                    S.bankParams[t][1][5] = nv;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_drum_lanes_qnt', String(nv));
+                }
+                S.screenDirty = true;
+            }
+            return;
+        }
         if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 1 &&
                 (knobIdx === 6 || knobIdx === 7)) {
             const t    = S.activeTrack;
