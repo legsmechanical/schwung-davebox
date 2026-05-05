@@ -97,6 +97,17 @@ function drawBankHeading(name) {
     print(4, 1, name, 0);
 }
 
+function drawMetroIndicator() {
+    const METRO_LABELS = [null, 'Count', 'Rec', 'Rec/Ply'];
+    const label = METRO_LABELS[S.metronomeOn];
+    if (!label) return;
+    const tx = 8;
+    const tw = label.length * 6;
+    fill_rect(4, 24, 2, 2, 1);           /* left dot */
+    pixelPrint(tx, 23, label, 1);
+    fill_rect(tx + tw + 2, 24, 2, 2, 1); /* right dot */
+}
+
 /* ------------------------------------------------------------------ */
 /* Global menu items                                                    */
 /* ------------------------------------------------------------------ */
@@ -2420,11 +2431,12 @@ function drawUI() {
         print(4, 10, bankGroup + '  Pad: ' + name + oct + ' (' + note + ')', 1);
         const laneBit = 1 << lane;
         if (S.drumLaneSolo[t] & laneBit) {
-            pixelPrint(4, 24, 'SOLOED', 1);
+            pixelPrint(128 - 4 - 6 * 6, 23, 'SOLOED', 1);
         } else if (S.drumLaneMute[t] & laneBit) {
             if (Math.floor(S.tickCount / 50) % 2 === 0)
-                pixelPrint(4, 24, 'MUTED', 1);
+                pixelPrint(128 - 4 - 5 * 6, 23, 'MUTED', 1);
         }
+        drawMetroIndicator();
         drawTrackRow(34);
         for (let _t = 0; _t < NUM_TRACKS; _t++)
             print(_t * 16 + 5, 46, SCENE_LETTERS[S.trackActiveClip[_t]], 1);
@@ -2442,6 +2454,7 @@ function drawUI() {
         print(4, 10, octStr, 1);
         print(keySclX, 10, keyScl, 1);
         if (S.scaleAware) fill_rect(keySclX, 18, keyScl.length * CHAR_W, 1, 1);
+        drawMetroIndicator();
         drawTrackRow(34);
         for (let t = 0; t < NUM_TRACKS; t++)
             print(t * 16 + 5, 46, SCENE_LETTERS[S.trackActiveClip[t]], 1);
