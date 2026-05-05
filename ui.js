@@ -4554,9 +4554,9 @@ function _onCC_knobs(d1, d2) {
                 return;
             }
             if (knobIdx === 5) {
-                /* K6 = InQ: per-track drum input quantize, 9 values (0=Off..8=1/4T), sens=2 */
+                /* K6 = InQ: per-track drum input quantize, 9 values (0=Off..8=1/4T), sens=8 */
                 S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 2) {
+                if (S.knobAccum[knobIdx] >= 8) {
                     S.knobAccum[knobIdx] = 0;
                     const nv = Math.max(0, Math.min(8, S.drumInpQuant[t] + dir));
                     if (nv !== S.drumInpQuant[t]) {
