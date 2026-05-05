@@ -273,6 +273,7 @@ function buildGlobalMenuItems() {
         }),
         createAction('Save', function() {
             saveState();
+            S.globalMenuOpen = false;
             showActionPopup('STATE', 'SAVED');
         }),
         createAction('Quit', function() {
