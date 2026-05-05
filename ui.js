@@ -1793,11 +1793,11 @@ function applyBankParam(t, bankIdx, knobIdx, val) {
 }
 
 
-function liveSendNote(t, type, pitch, vel) {
+function liveSendNote(t, type, pitch, vel, rawVel) {
     const ch    = (S.trackChannel[t] - 1) & 0x0F;
     const route = S.trackRoute[t];
     const status = type | ch;
-    if (type === 0x90 && vel > 0 && route !== 1) {
+    if (!rawVel && type === 0x90 && vel > 0 && route !== 1) {
         const tvo = S.trackVelOverride[t];
         if (tvo > 0) vel = tvo;
     }
@@ -4941,7 +4941,7 @@ function _onPadPressTrackView(status, d1, d2) {
                 S.lastPadVelocity = zoneVel;
                 const lane_vp  = S.activeDrumLane[t];
                 const laneNote = S.drumLaneNote[t][lane_vp];
-                liveSendNote(t, 0x90, laneNote, zoneVel);
+                liveSendNote(t, 0x90, laneNote, zoneVel, true);
                 padPitch[padIdx] = laneNote;
                 S.liveActiveNotes.add(laneNote);
                 if (S.heldStep >= 0 && S.heldStepNotes.length > 0) {
