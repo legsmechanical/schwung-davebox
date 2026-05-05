@@ -2951,8 +2951,10 @@ globalThis.tick = function () {
         S.pendingRepeatLane = -1;
     }
 
-    /* Deferred melodic pre-roll (coalescing workaround: liveSendNote fires shadow_send same tick) */
-    if (S.pendingPrerollNote !== null) {
+    /* Deferred melodic pre-roll: wait for note-off AND recording active so step 0 has already
+     * fired on the first pass — note appears after and plays on the second loop (no double-trigger) */
+    if (S.pendingPrerollNote !== null && S.pendingPrerollNote.ready &&
+            !S.recordCountingIn && S.playing) {
         const pr = S.pendingPrerollNote;
         S.pendingPrerollNote = null;
         if (S.clipSteps[pr.track][pr.clip][0] === 0 && typeof host_module_set_param === 'function') {
@@ -5269,7 +5271,7 @@ function _onPadPressTrackView(status, d1, d2) {
                     typeof host_module_set_param === 'function') {
                 const rt   = S.recordArmedTrack;
                 const ac_r = S.trackActiveClip[rt];
-                S.pendingPrerollNote = { track: rt, clip: ac_r, pitch: pitch, vel: effectiveVelocity(d2) };
+                S.pendingPrerollNote = { track: rt, clip: ac_r, pitch: pitch, vel: effectiveVelocity(d2), ready: false };
             }
             /* Overdub capture: add to current step of armed track with tick offset + velocity */
             if (S.recordArmed && !S.recordCountingIn && S.activeTrack === S.recordArmedTrack)
@@ -6160,6 +6162,8 @@ function _onPadRelease(status, d1, d2) {
         const pitch = padPitch[padIdx] >= 0 ? padPitch[padIdx] : S.padNoteMap[padIdx];
         S.liveActiveNotes.delete(pitch);
         padPitch[padIdx] = -1;
+        if (S.pendingPrerollNote !== null && S.pendingPrerollNote.pitch === pitch)
+            S.pendingPrerollNote.ready = true;
         if (!S.sessionView) {
             const t = S.activeTrack;
             if (S.trackPadMode[t] === PAD_MODE_DRUM &&
