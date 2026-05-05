@@ -103,9 +103,9 @@ function drawMetroIndicator() {
     if (!label) return;
     const tx = 8;
     const tw = label.length * 6;
-    fill_rect(4, 24, 2, 2, 1);           /* left dot */
-    pixelPrint(tx, 23, label, 1);
-    fill_rect(tx + tw + 2, 24, 2, 2, 1); /* right dot */
+    fill_rect(4, 22, 2, 2, 1);           /* left dot */
+    pixelPrint(tx, 21, label, 1);
+    fill_rect(tx + tw + 2, 22, 2, 2, 1); /* right dot */
 }
 
 /* ------------------------------------------------------------------ */
@@ -2431,10 +2431,10 @@ function drawUI() {
         pixelPrint(4, 10, bankGroup + '  Pad: ' + name + oct + ' (' + note + ')', 1);
         const laneBit = 1 << lane;
         if (S.drumLaneSolo[t] & laneBit) {
-            pixelPrint(128 - 4 - 6 * 6, 23, 'SOLOED', 1);
+            pixelPrint(128 - 4 - 6 * 6, 21, 'SOLOED', 1);
         } else if (S.drumLaneMute[t] & laneBit) {
             if (Math.floor(S.tickCount / 50) % 2 === 0)
-                pixelPrint(128 - 4 - 5 * 6, 23, 'MUTED', 1);
+                pixelPrint(128 - 4 - 5 * 6, 21, 'MUTED', 1);
         }
         drawMetroIndicator();
         drawTrackRow(34);
