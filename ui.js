@@ -92,6 +92,11 @@ function bankHeader(bankIdx) {
     return '[ ' + BANKS[bankIdx].name + ' ]';
 }
 
+function drawBankHeading(name) {
+    fill_rect(0, 0, 128, 10, 1);
+    print(4, 1, name, 0);
+}
+
 /* ------------------------------------------------------------------ */
 /* Global menu items                                                    */
 /* ------------------------------------------------------------------ */
@@ -2254,7 +2259,7 @@ function drawUI() {
                 S.drumPerformMode[t] === 2 ? 'Rpt2' : S.drumPerformMode[t] === 1 ? 'Rpt1' : 'Vel',
                 fmtBool(sqfl),
             ];
-            print(4, 0, '[ DRUM LANE ]', 1);
+            drawBankHeading('DRUM LANE');
             for (let k = 0; k < 8; k++) {
                 const colX = 4 + (k % 4) * 30;
                 const rowY = k < 4 ? 12 : 36;
@@ -2276,7 +2281,7 @@ function drawUI() {
                 fmtVelOverride(S.trackVelOverride[t]),
                 null, null, null,
             ];
-            print(4, 0, '[ ALL LANES ]', 1);
+            drawBankHeading('ALL LANES');
             for (let k = 0; k < 8; k++) {
                 if (!allLabels[k]) continue;
                 const colX = 4 + (k % 4) * 30;
@@ -2296,7 +2301,7 @@ function drawUI() {
         const vals    = S.bankParams[t][bank];
         const hiLane  = (S.knobTouched === 6 || S.knobTouched === 7);
 
-        print(4, 0, '[ NOTE/NOTEFX ]', 1);
+        drawBankHeading('NOTE/NOTEFX');
 
         /* K1-K6 (k=0..5): normal grid render */
         for (let k = 0; k < 6; k++) {
@@ -2331,7 +2336,7 @@ function drawUI() {
         const t    = S.activeTrack;
         const lane = S.activeDrumLane[t];
         syncDrumRepeatState(t, lane);
-        print(4, 0, '[ RPT GROOVE ]', 1);
+        drawBankHeading('RPT GROOVE');
         print(S.shiftHeld ? 94 : 106, 0, S.shiftHeld ? 'Nudge' : 'Vel', 1);
         for (let k = 0; k < 8; k++) {
             const colX = 4 + (k % 4) * 30;
@@ -2377,7 +2382,7 @@ function drawUI() {
         } else if (bank === 6) {
         /* CC PARAM bank overview: label = assigned CC, value = current value */
         const t = S.activeTrack;
-        print(4, 0, bankHeader(6), 1);
+        drawBankHeading(BANKS[6].name);
         for (let k = 0; k < 8; k++) {
             const colX = 4 + (k % 4) * 30;
             const rowY = k < 4 ? 12 : 36;
@@ -2390,7 +2395,7 @@ function drawUI() {
         /* Bank overview — 5 rows; touched knob column inverted */
         const knobs = BANKS[bank].knobs;
         const vals  = S.bankParams[S.activeTrack][bank];
-        print(4, 0, bankHeader(bank), 1);
+        drawBankHeading(BANKS[bank].name);
         for (let k = 0; k < 8; k++) {
             const colX = 4 + (k % 4) * 30;
             const rowY = k < 4 ? 12 : 36;
@@ -2411,7 +2416,7 @@ function drawUI() {
         const name      = NOTE_KEYS[note % 12];
         const bankGroup = pg === 0 ? 'Bank: A' : 'Bank: B';
         const bankName  = S.activeBank === 0 ? 'DRUM LANE' : S.activeBank === 1 ? 'NOTE/NOTEFX' : S.activeBank === 5 ? 'RPT GROOVE' : BANKS[S.activeBank] ? BANKS[S.activeBank].name : '?';
-        print(4, 0,  'Knob: [ ' + bankName + ' ]', 1);
+        drawBankHeading(bankName);
         print(4, 10, bankGroup + '  Pad: ' + name + oct + ' (' + note + ')', 1);
         const laneBit = 1 << lane;
         if (S.drumLaneSolo[t] & laneBit) {
@@ -2437,7 +2442,7 @@ function drawUI() {
         const keyScl  = NOTE_KEYS[S.padKey] + ' ' + (SCALE_DISPLAY[S.padScale] || '?');
         const CHAR_W  = 6;
         const keySclX = 128 - 4 - keyScl.length * CHAR_W;
-        print(4, 0,  'Knob: [ ' + BANKS[S.activeBank].name + ' ]' + recTag, 1);
+        drawBankHeading(BANKS[S.activeBank].name + recTag);
         print(4, 10, octStr, 1);
         print(keySclX, 10, keyScl, 1);
         if (S.scaleAware) fill_rect(keySclX, 18, keyScl.length * CHAR_W, 1, 1);
@@ -3474,11 +3479,15 @@ function _onCC_jog(d1, d2) {
                 } else {
                     const cur = S.activeBank;
                     const isDrumJog = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
-                    let next  = Math.min(isDrumJog ? 7 : 6, Math.max(0, cur + delta));
-                    /* HARMZ (2) and ARP OUT (4) hidden on drum tracks */
+                    let next;
                     if (isDrumJog) {
-                        if (next === 2) next = delta > 0 ? 3 : 1;
-                        else if (next === 4) next = delta > 0 ? 5 : 3;
+                        /* Drum bank order: ALL LANES(7) → DRUM LANE(0) → NOTE FX(1) → MIDI DLY(3) → RPT GROOVE(5) → CC PARAM(6) */
+                        const DRUM_BANK_ORDER = [7, 0, 1, 3, 5, 6];
+                        const ci = DRUM_BANK_ORDER.indexOf(cur);
+                        const ni = Math.max(0, Math.min(DRUM_BANK_ORDER.length - 1, (ci >= 0 ? ci : 0) + delta));
+                        next = DRUM_BANK_ORDER[ni];
+                    } else {
+                        next = Math.min(6, Math.max(0, cur + delta));
                     }
                     if (next !== cur) {
                         S.activeBank = next;
