@@ -251,5 +251,8 @@ export const S = {
     lastTarpStyle: new Array(8).fill(1),
     padLayoutChromatic: new Array(8).fill(false),
     drumInpQuant: new Array(8).fill(0),   /* per-track drum input quantize index 0-8 */
+    sessionStepHeld: -1,       /* step button (0-15) held in session view awaiting tap/hold decision */
+    sessionStepHeldCtx: 0,     /* 1=perf preset, 2=mute snapshot */
+    stepSaveFlashEndTick: -1,  /* step button LEDs flash white through this tick after save */
 
 };

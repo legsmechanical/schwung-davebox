@@ -470,7 +470,9 @@ function fmtCCLabel(cc) {
  * Stored separately from S.heldStep so a second button press doesn't cause the
  * first button's release to exit step edit prematurely. */
 
-const STEP_HOLD_TICKS  = 40;   /* ~200ms at 196Hz: below = tap, at/above = hold */
+const STEP_HOLD_TICKS      = 40;   /* ~200ms at 196Hz: below = tap, at/above = hold */
+const STEP_SAVE_HOLD_TICKS = 294;  /* ~1.5s at 196Hz: hold step in session view to save */
+const STEP_SAVE_FLASH_TICKS = 15;  /* ~75ms white flash on all step LEDs after save */
 
 /* Metronome */
 
@@ -3115,6 +3117,9 @@ globalThis.tick = function () {
             S.noNoteFlashEndTick = -1;
             S.screenDirty = true;
         }
+        if (S.stepSaveFlashEndTick >= 0 && S.tickCount >= S.stepSaveFlashEndTick) {
+            S.stepSaveFlashEndTick = -1;
+        }
 
         if ((S.tickCount % POLL_INTERVAL) === 0) { pollDSP(); S.screenDirty = true; }
 
@@ -3629,6 +3634,8 @@ function _onCC_buttons(d1, d2) {
                 S.stepWasEmpty       = false;
                 S.stepWasHeld        = false;
                 S.stepBtnPressedTick.fill(-1);
+                S.sessionStepHeld    = -1;
+                S.sessionStepHeldCtx = 0;
                 /* Leaving Session View stops any active loop; mods/latch persist. */
                 if (!S.sessionView && (S.perfViewLocked || S.perfStack.length > 0)) {
                     const _hadLoop = S.perfStack.length > 0;
@@ -3757,6 +3764,8 @@ function _onCC_buttons(d1, d2) {
             S.stepWasEmpty       = false;
             S.stepWasHeld        = false;
             S.stepBtnPressedTick.fill(-1);
+            S.sessionStepHeld    = -1;
+            S.sessionStepHeldCtx = 0;
         } else {
             /* Loop released — Rpt2: unlatch all if no pad was touched during hold */
             const _lrt = S.activeTrack;
@@ -5474,67 +5483,20 @@ function _onStepButtons(d1, d2) {
     if (S.tapTempoOpen) return;
     S.stepOpTick = S.tickCount;
     const idx = d1 - 16;
-    /* Perf Mode: step buttons are preset snapshot slots. */
+    /* Perf Mode: step buttons are preset snapshot slots — defer to release for tap/hold decision. */
     if (S.sessionView && (S.loopHeld || S.perfViewLocked)) {
-        if (S.shiftHeld) {
-            /* Shift+step: save current active mods to this slot */
-            S.perfSnapshots[idx] = S.perfModsToggled | S.perfModsHeld | S.perfRecalledMods;
-            showActionPopup('SAVED');
-        } else if (S.perfRecalledSlot === idx) {
-            /* Tap active slot again: deactivate recall */
-            S.perfRecalledSlot = -1;
-            S.perfRecalledMods = 0;
-            sendPerfMods();
-        } else {
-            /* Tap a slot: recall its mods */
-            S.perfRecalledSlot = idx;
-            S.perfRecalledMods = S.perfSnapshots[idx];
-            sendPerfMods();
-        }
-        forceRedraw();
+        S.stepBtnPressedTick[idx] = S.tickCount;
+        S.sessionStepHeld         = idx;
+        S.sessionStepHeldCtx      = 1;  /* perf */
         return;
     }
     if (S.sessionView) {
         if (S.muteHeld) {
-            /* All 16 step buttons are snapshot slots 0-15 */
-            if (S.shiftHeld) {
-                /* Shift+tap: save/overwrite snapshot */
-                const drumEffMutes = [];
-                for (let _t = 0; _t < NUM_TRACKS; _t++) {
-                    const mMask = S.drumLaneMute[_t];
-                    const sMask = S.drumLaneSolo[_t];
-                    let effMask = mMask;
-                    if (sMask) {
-                        let notSoloed = 0;
-                        for (let _l = 0; _l < DRUM_LANES; _l++) {
-                            if (!(sMask & (1 << _l))) notSoloed |= (1 << _l);
-                        }
-                        effMask = (mMask | notSoloed) >>> 0;
-                    }
-                    drumEffMutes.push(effMask >>> 0);
-                }
-                S.snapshots[idx] = { mute: S.trackMuted.slice(), solo: S.trackSoloed.slice(), drumEffMute: drumEffMutes };
-                const mStr = S.trackMuted.map(function(m) { return m ? '1' : '0'; }).join(' ');
-                const sStr = S.trackSoloed.map(function(s) { return s ? '1' : '0'; }).join(' ');
-                const dStr = drumEffMutes.join(' ');
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('snap_save', idx + ' ' + mStr + ' ' + sStr + ' ' + dStr);
-            } else if (S.snapshots[idx] !== null) {
-                /* Tap occupied: recall snapshot */
-                const snap = S.snapshots[idx];
-                for (let _t = 0; _t < NUM_TRACKS; _t++) {
-                    S.trackMuted[_t]  = snap.mute[_t];
-                    S.trackSoloed[_t] = snap.solo[_t];
-                    if (snap.drumEffMute) {
-                        S.drumLaneMute[_t] = snap.drumEffMute[_t];
-                        S.drumLaneSolo[_t] = 0;
-                    }
-                }
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('snap_load', String(idx));
-                S.screenDirty = true;
-            }
-            /* Tap empty: no-op; S.muteHeld swallows all step buttons in Session View */
+            /* All 16 step buttons are snapshot slots — defer to release for tap/hold decision. */
+            S.stepBtnPressedTick[idx] = S.tickCount;
+            S.sessionStepHeld         = idx;
+            S.sessionStepHeldCtx      = 2;  /* mute */
+            return;
         } else if (!S.deleteHeld && !S.shiftHeld) {
             if (typeof host_module_set_param === 'function')
                 host_module_set_param('launch_scene', String(idx));
@@ -5929,6 +5891,77 @@ function _onPadRelease(status, d1, d2) {
     if (d1 >= 16 && d1 <= 31) {
         S.stepOpTick = S.tickCount;
         const btn = d1 - 16;
+        /* Session view hold-to-save (perf preset or mute snapshot) */
+        if (S.sessionStepHeld === btn) {
+            const elapsed = S.tickCount - S.stepBtnPressedTick[btn];
+            const ctx     = S.sessionStepHeldCtx;
+            S.sessionStepHeld    = -1;
+            S.sessionStepHeldCtx = 0;
+            S.stepBtnPressedTick[btn] = -1;
+            if (elapsed >= STEP_SAVE_HOLD_TICKS) {
+                /* Long hold: save */
+                if (ctx === 1) {
+                    /* Perf preset save */
+                    S.perfSnapshots[btn] = S.perfModsToggled | S.perfModsHeld | S.perfRecalledMods;
+                    showActionPopup('PERF PRESET', 'SAVED');
+                } else {
+                    /* Mute snapshot save */
+                    const drumEffMutes = [];
+                    for (let _t = 0; _t < NUM_TRACKS; _t++) {
+                        const mMask = S.drumLaneMute[_t];
+                        const sMask = S.drumLaneSolo[_t];
+                        let effMask = mMask;
+                        if (sMask) {
+                            let notSoloed = 0;
+                            for (let _l = 0; _l < DRUM_LANES; _l++) {
+                                if (!(sMask & (1 << _l))) notSoloed |= (1 << _l);
+                            }
+                            effMask = (mMask | notSoloed) >>> 0;
+                        }
+                        drumEffMutes.push(effMask >>> 0);
+                    }
+                    S.snapshots[btn] = { mute: S.trackMuted.slice(), solo: S.trackSoloed.slice(), drumEffMute: drumEffMutes };
+                    const mStr = S.trackMuted.map(function(m) { return m ? '1' : '0'; }).join(' ');
+                    const sStr = S.trackSoloed.map(function(s) { return s ? '1' : '0'; }).join(' ');
+                    const dStr = drumEffMutes.join(' ');
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('snap_save', btn + ' ' + mStr + ' ' + sStr + ' ' + dStr);
+                    showActionPopup('MUTE STATE', 'SAVED');
+                }
+                S.stepSaveFlashEndTick = S.tickCount + STEP_SAVE_FLASH_TICKS;
+            } else {
+                /* Short tap: recall */
+                if (ctx === 1) {
+                    /* Perf recall */
+                    if (S.perfRecalledSlot === btn) {
+                        S.perfRecalledSlot = -1;
+                        S.perfRecalledMods = 0;
+                    } else {
+                        S.perfRecalledSlot = btn;
+                        S.perfRecalledMods = S.perfSnapshots[btn];
+                    }
+                    sendPerfMods();
+                } else {
+                    /* Mute recall */
+                    if (S.snapshots[btn] !== null) {
+                        const snap = S.snapshots[btn];
+                        for (let _t = 0; _t < NUM_TRACKS; _t++) {
+                            S.trackMuted[_t]  = snap.mute[_t];
+                            S.trackSoloed[_t] = snap.solo[_t];
+                            if (snap.drumEffMute) {
+                                S.drumLaneMute[_t] = snap.drumEffMute[_t];
+                                S.drumLaneSolo[_t] = 0;
+                            }
+                        }
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('snap_load', String(btn));
+                    }
+                }
+                S.screenDirty = true;
+            }
+            forceRedraw();
+            return;
+        }
         if (btn === S.heldStepBtn) {
             if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
                 /* Drum step release: tap toggles, hold-release exits + vel confirm */
