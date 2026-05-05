@@ -372,6 +372,8 @@ function scaleNudgeNote(note, dir, key, scale) {
 
 /* Per-pad pitch sent at note-on — ensures matching note-off even if map changes mid-hold. */
 const padPitch = new Array(32).fill(-1);
+const padPressTick = new Array(32).fill(-1);  /* tick when each pad was pressed, for drum tap-vs-hold detection */
+const DRUM_TAP_TICKS = 10;  /* ~30ms — taps shorter than this suppress the release note-off */
 
 /* S.clipSteps[track][clip][step] — JS-authoritative mirror of DSP step data */
 /* S.clipNonEmpty[track][clip] — cached result of clipHasContent; updated on every S.clipSteps write */
@@ -488,6 +490,7 @@ const NOTE_SESSION_HOLD_TICKS = 40;  /* ~200ms at 196Hz */
 /* Real-time recording state */
 
 const pendingLiveNotes = Array.from({length: NUM_TRACKS}, () => []);  /* buffered live notes flushed each tick */
+const pendingDrumNoteOffs = Array.from({length: NUM_TRACKS}, () => []);  /* drum tap note-offs deferred 1 tick to avoid coalescing with note-on */
 
 
 /* ------------------------------------------------------------------ */
@@ -2856,6 +2859,13 @@ globalThis.tick = function () {
         }
     }
 
+    /* Drain deferred drum tap note-offs */
+    for (let _t = 0; _t < NUM_TRACKS; _t++) {
+        if (pendingDrumNoteOffs[_t].length === 0) continue;
+        const offs = pendingDrumNoteOffs[_t].splice(0);
+        for (const pitch of offs) liveSendNote(_t, 0x80, pitch, 0);
+    }
+
     /* Drain ROUTE_EXTERNAL queue: DSP enqueues sequenced notes; JS sends via USB-A */
     if (typeof host_module_get_param === 'function') {
         const eq = host_module_get_param('ext_queue');
@@ -4193,8 +4203,13 @@ function _onCC_stepedit(d1, d2) {
         S.knobTurnedTick[knobIdx] = S.tickCount;
         S.screenDirty = true;
         if (knobIdx === 0) {
-            const _gmaxD = Math.min(65535, 256 * (S.drumLaneTPS[t] || 24));
-            S.stepEditGate = Math.max(1, Math.min(_gmaxD, S.stepEditGate + dir * 6));
+            const _tpsD = S.drumLaneTPS[t] || 24;
+            const _gmaxD = Math.min(65535, 256 * _tpsD);
+            const _stepD = S.stepEditGate <= _tpsD / 2   ? 1
+                         : S.stepEditGate <= _tpsD * 2   ? Math.round(_tpsD / 4)
+                         : S.stepEditGate <= _tpsD * 8   ? Math.round(_tpsD / 2)
+                         :                                  _tpsD;
+            S.stepEditGate = Math.max(1, Math.min(_gmaxD, S.stepEditGate + dir * _stepD));
             if (typeof host_module_set_param === 'function')
                 host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_gate', String(S.stepEditGate));
         } else if (knobIdx === 1) {
@@ -4249,10 +4264,15 @@ function _onCC_stepedit(d1, d2) {
                     host_module_set_param(pfx + '_set_notes', S.heldStepNotes.join(' '));
             }
         } else if (knobIdx === 2) {
-            /* K3 Dur: gate in 6-tick steps (±25% of a step per detent) */
+            /* K3 Dur: variable step — fine at short gates, coarse at long gates */
             { const _acD = effectiveClip(S.activeTrack);
-              const _gmaxD = Math.min(65535, 256 * (S.clipTPS[S.activeTrack][_acD] || 24));
-              S.stepEditGate = Math.max(1, Math.min(_gmaxD, S.stepEditGate + dir * 6)); }
+              const _tpsD = S.clipTPS[S.activeTrack][_acD] || 24;
+              const _gmaxD = Math.min(65535, 256 * _tpsD);
+              const _stepD = S.stepEditGate <= _tpsD / 2   ? 1
+                           : S.stepEditGate <= _tpsD * 2   ? Math.round(_tpsD / 4)
+                           : S.stepEditGate <= _tpsD * 8   ? Math.round(_tpsD / 2)
+                           :                                  _tpsD;
+              S.stepEditGate = Math.max(1, Math.min(_gmaxD, S.stepEditGate + dir * _stepD)); }
             if (typeof host_module_set_param === 'function')
                 host_module_set_param(pfx + '_gate', String(S.stepEditGate));
         } else if (knobIdx === 3) {
@@ -4943,6 +4963,7 @@ function _onPadPressTrackView(status, d1, d2) {
                 const laneNote = S.drumLaneNote[t][lane_vp];
                 liveSendNote(t, 0x90, laneNote, zoneVel, true);
                 padPitch[padIdx] = laneNote;
+                padPressTick[padIdx] = S.tickCount;
                 S.liveActiveNotes.add(laneNote);
                 if (S.heldStep >= 0 && S.heldStepNotes.length > 0) {
                     S.stepEditVel = zoneVel;
@@ -5042,6 +5063,7 @@ function _onPadPressTrackView(status, d1, d2) {
                     const laneNote = S.drumLaneNote[t][lane];
                     liveSendNote(t, 0x90, laneNote, vel);
                     padPitch[padIdx] = laneNote;
+                    padPressTick[padIdx] = S.tickCount;
                     S.liveActiveNotes.add(laneNote);
                     /* Record step hit if armed */
                     if (S.recordArmed && !S.recordCountingIn && t === S.recordArmedTrack) {
@@ -6025,7 +6047,15 @@ function _onPadRelease(status, d1, d2) {
         const pitch = padPitch[padIdx] >= 0 ? padPitch[padIdx] : S.padNoteMap[padIdx];
         S.liveActiveNotes.delete(pitch);
         padPitch[padIdx] = -1;
-        if (!S.sessionView) liveSendNote(S.activeTrack, 0x80, pitch, 0);
+        if (!S.sessionView) {
+            const t = S.activeTrack;
+            if (S.trackPadMode[t] === PAD_MODE_DRUM &&
+                    (S.tickCount - padPressTick[padIdx]) < DRUM_TAP_TICKS)
+                pendingDrumNoteOffs[t].push(pitch);
+            else
+                liveSendNote(t, 0x80, pitch, 0);
+        }
+        padPressTick[padIdx] = -1;
         if (S.recordArmed && !S.recordCountingIn) recordNoteOff(pitch);
     }
 }
