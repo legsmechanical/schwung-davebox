@@ -3406,6 +3406,7 @@ function _onCC_jog(d1, d2) {
         if (S.drumPerformMode[t] === 1) {
             host_module_set_param('t' + t + '_drum_repeat_stop', '1');
             S.drumRepeatHeldPad[t] = -1;
+            S.drumRepeatHeldPadsStack[t].length = 0;
         }
         if (S.drumPerformMode[t] === 2) {
             S.drumRepeat2HeldLanes[t].clear();
@@ -3737,6 +3738,7 @@ function _onCC_buttons(d1, d2) {
             } else if (S.drumRepeatLatched[_lrt]) {
                 S.drumRepeatLatched[_lrt]  = false;
                 S.drumRepeatHeldPad[_lrt]  = -1;
+                S.drumRepeatHeldPadsStack[_lrt].length = 0;
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('t' + _lrt + '_drum_repeat_stop', '1');
             } else if (S.drumRepeatHeldPad[_lrt] >= 0) {
@@ -4437,6 +4439,7 @@ function _onCC_knobs(d1, d2) {
                             if (typeof host_module_set_param === 'function')
                                 host_module_set_param('t' + t + '_drum_repeat_stop', '1');
                             S.drumRepeatHeldPad[t] = -1;
+                            S.drumRepeatHeldPadsStack[t].length = 0;
                         }
                         if (S.drumPerformMode[t] === 2) {
                             S.drumRepeat2HeldLanes[t].clear();
@@ -4862,12 +4865,19 @@ function _onPadPressTrackView(status, d1, d2) {
                     /* Same latched pad pressed again: unlatch and stop */
                     S.drumRepeatLatched[t]  = false;
                     S.drumRepeatHeldPad[t]  = -1;
+                    S.drumRepeatHeldPadsStack[t].length = 0;
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + t + '_drum_repeat_stop', '1');
                 } else {
-                    /* New rate or held: start (latches if Loop is held) */
-                    S.drumRepeatHeldPad[t]  = padIdx;
-                    S.drumRepeatLatched[t]  = S.loopHeld;
+                    /* New rate or held: push previous held pad so release can resume it */
+                    if (S.drumRepeatHeldPad[t] >= 0 && !S.drumRepeatLatched[t]) {
+                        const _pp = S.drumRepeatHeldPad[t];
+                        const _pr = Math.floor(_pp / 8) * 4 + (_pp % 8) - 4;
+                        S.drumRepeatHeldPadsStack[t].push({ padIdx: _pp, rateIdx: _pr, vel: S.drumRepeatHeldPadVel[t] });
+                    }
+                    S.drumRepeatHeldPad[t]    = padIdx;
+                    S.drumRepeatHeldPadVel[t] = vel;
+                    S.drumRepeatLatched[t]    = S.loopHeld;
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + t + '_drum_repeat_start', lane + ' ' + rateIdx + ' ' + vel);
                 }
@@ -5595,6 +5605,7 @@ function _onStepButtons(d1, d2) {
                 if (S.drumPerformMode[t] === 1) {
                     host_module_set_param('t' + t + '_drum_repeat_stop', '1');
                     S.drumRepeatHeldPad[t] = -1;
+                    S.drumRepeatHeldPadsStack[t].length = 0;
                 }
                 if (S.drumPerformMode[t] === 2) {
                     S.drumRepeat2HeldLanes[t].clear();
@@ -6013,13 +6024,27 @@ function _onPadRelease(status, d1, d2) {
     if (d1 >= TRACK_PAD_BASE && d1 < TRACK_PAD_BASE + 32) {
         const padIdx = d1 - TRACK_PAD_BASE;
         const t = S.activeTrack;
-        /* Repeat mode: swallow all right-grid (col 4-7) releases; stop repeat on unlatched rate pad release */
+        /* Repeat mode: swallow all right-grid (col 4-7) releases; stop or resume prior rate */
         if (S.trackPadMode[t] === PAD_MODE_DRUM && S.drumPerformMode[t] === 1 &&
                 (padIdx % 8) >= 4) {
             if (S.drumRepeatHeldPad[t] === padIdx && !S.drumRepeatLatched[t]) {
-                S.drumRepeatHeldPad[t] = -1;
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('t' + t + '_drum_repeat_stop', '1');
+                const _prev = S.drumRepeatHeldPadsStack[t].length > 0
+                    ? S.drumRepeatHeldPadsStack[t].pop() : null;
+                if (_prev) {
+                    /* Resume the previously held rate pad */
+                    S.drumRepeatHeldPad[t] = _prev.padIdx;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_drum_repeat_start',
+                            S.activeDrumLane[t] + ' ' + _prev.rateIdx + ' ' + _prev.vel);
+                } else {
+                    S.drumRepeatHeldPad[t] = -1;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_drum_repeat_stop', '1');
+                }
+            } else if (S.drumRepeatHeldPad[t] !== padIdx) {
+                /* A queued-but-not-yet-active pad released — remove from stack */
+                const _si = S.drumRepeatHeldPadsStack[t].findIndex(e => e.padIdx === padIdx);
+                if (_si >= 0) S.drumRepeatHeldPadsStack[t].splice(_si, 1);
             }
             S.screenDirty = true;
             return;
@@ -6209,6 +6234,7 @@ globalThis.onMidiMessageInternal = function (data) {
         const padIdx = d1 - TRACK_PAD_BASE;
         if (S.trackPadMode[t] === PAD_MODE_DRUM && S.drumPerformMode[t] === 1 &&
                 S.drumRepeatHeldPad[t] === padIdx && d2 > 0) {
+            S.drumRepeatHeldPadVel[t] = d2;
             if (typeof host_module_set_param === 'function')
                 host_module_set_param('t' + t + '_drum_repeat_vel', String(d2));
         }

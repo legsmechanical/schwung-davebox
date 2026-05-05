@@ -82,6 +82,8 @@ export const S = {
     drumLaneQnt: new Array(8).fill(0),
     drumPerformMode: new Array(8).fill(0),
     drumRepeatHeldPad: new Array(8).fill(-1),
+    drumRepeatHeldPadVel: new Array(8).fill(100),
+    drumRepeatHeldPadsStack: Array.from({length: 8}, () => []),
     drumRepeatLatched: new Array(8).fill(false),
     pendingRepeatLane: -1,
     pendingRepeatLaneTrack: 0,
