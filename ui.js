@@ -3120,6 +3120,44 @@ globalThis.tick = function () {
         if (S.stepSaveFlashEndTick >= 0 && S.tickCount >= S.stepSaveFlashEndTick) {
             S.stepSaveFlashEndTick = -1;
         }
+        /* Session view hold-to-save: fire exactly when threshold reached, not on release */
+        if (S.sessionStepHeld >= 0) {
+            const _ssh = S.sessionStepHeld;
+            if (S.tickCount - S.stepBtnPressedTick[_ssh] >= STEP_SAVE_HOLD_TICKS) {
+                const _ctx = S.sessionStepHeldCtx;
+                S.sessionStepHeld    = -1;
+                S.sessionStepHeldCtx = 0;
+                S.stepBtnPressedTick[_ssh] = -1;
+                if (_ctx === 1) {
+                    S.perfSnapshots[_ssh] = S.perfModsToggled | S.perfModsHeld | S.perfRecalledMods;
+                    showActionPopup('PERF PRESET', 'SAVED');
+                } else {
+                    const drumEffMutes = [];
+                    for (let _t = 0; _t < NUM_TRACKS; _t++) {
+                        const mMask = S.drumLaneMute[_t];
+                        const sMask = S.drumLaneSolo[_t];
+                        let effMask = mMask;
+                        if (sMask) {
+                            let notSoloed = 0;
+                            for (let _l = 0; _l < DRUM_LANES; _l++) {
+                                if (!(sMask & (1 << _l))) notSoloed |= (1 << _l);
+                            }
+                            effMask = (mMask | notSoloed) >>> 0;
+                        }
+                        drumEffMutes.push(effMask >>> 0);
+                    }
+                    S.snapshots[_ssh] = { mute: S.trackMuted.slice(), solo: S.trackSoloed.slice(), drumEffMute: drumEffMutes };
+                    const mStr = S.trackMuted.map(function(m) { return m ? '1' : '0'; }).join(' ');
+                    const sStr = S.trackSoloed.map(function(s) { return s ? '1' : '0'; }).join(' ');
+                    const dStr = drumEffMutes.join(' ');
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('snap_save', _ssh + ' ' + mStr + ' ' + sStr + ' ' + dStr);
+                    showActionPopup('MUTE STATE', 'SAVED');
+                }
+                S.stepSaveFlashEndTick = S.tickCount + STEP_SAVE_FLASH_TICKS;
+                forceRedraw();
+            }
+        }
 
         if ((S.tickCount % POLL_INTERVAL) === 0) { pollDSP(); S.screenDirty = true; }
 
@@ -5891,73 +5929,37 @@ function _onPadRelease(status, d1, d2) {
     if (d1 >= 16 && d1 <= 31) {
         S.stepOpTick = S.tickCount;
         const btn = d1 - 16;
-        /* Session view hold-to-save (perf preset or mute snapshot) */
+        /* Session view hold-to-save: if still pending (tick hasn't fired save yet) → tap recall */
         if (S.sessionStepHeld === btn) {
-            const elapsed = S.tickCount - S.stepBtnPressedTick[btn];
-            const ctx     = S.sessionStepHeldCtx;
+            const ctx = S.sessionStepHeldCtx;
             S.sessionStepHeld    = -1;
             S.sessionStepHeldCtx = 0;
             S.stepBtnPressedTick[btn] = -1;
-            if (elapsed >= STEP_SAVE_HOLD_TICKS) {
-                /* Long hold: save */
-                if (ctx === 1) {
-                    /* Perf preset save */
-                    S.perfSnapshots[btn] = S.perfModsToggled | S.perfModsHeld | S.perfRecalledMods;
-                    showActionPopup('PERF PRESET', 'SAVED');
+            if (ctx === 1) {
+                /* Perf recall */
+                if (S.perfRecalledSlot === btn) {
+                    S.perfRecalledSlot = -1;
+                    S.perfRecalledMods = 0;
                 } else {
-                    /* Mute snapshot save */
-                    const drumEffMutes = [];
-                    for (let _t = 0; _t < NUM_TRACKS; _t++) {
-                        const mMask = S.drumLaneMute[_t];
-                        const sMask = S.drumLaneSolo[_t];
-                        let effMask = mMask;
-                        if (sMask) {
-                            let notSoloed = 0;
-                            for (let _l = 0; _l < DRUM_LANES; _l++) {
-                                if (!(sMask & (1 << _l))) notSoloed |= (1 << _l);
-                            }
-                            effMask = (mMask | notSoloed) >>> 0;
-                        }
-                        drumEffMutes.push(effMask >>> 0);
-                    }
-                    S.snapshots[btn] = { mute: S.trackMuted.slice(), solo: S.trackSoloed.slice(), drumEffMute: drumEffMutes };
-                    const mStr = S.trackMuted.map(function(m) { return m ? '1' : '0'; }).join(' ');
-                    const sStr = S.trackSoloed.map(function(s) { return s ? '1' : '0'; }).join(' ');
-                    const dStr = drumEffMutes.join(' ');
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('snap_save', btn + ' ' + mStr + ' ' + sStr + ' ' + dStr);
-                    showActionPopup('MUTE STATE', 'SAVED');
+                    S.perfRecalledSlot = btn;
+                    S.perfRecalledMods = S.perfSnapshots[btn];
                 }
-                S.stepSaveFlashEndTick = S.tickCount + STEP_SAVE_FLASH_TICKS;
+                sendPerfMods();
             } else {
-                /* Short tap: recall */
-                if (ctx === 1) {
-                    /* Perf recall */
-                    if (S.perfRecalledSlot === btn) {
-                        S.perfRecalledSlot = -1;
-                        S.perfRecalledMods = 0;
-                    } else {
-                        S.perfRecalledSlot = btn;
-                        S.perfRecalledMods = S.perfSnapshots[btn];
-                    }
-                    sendPerfMods();
-                } else {
-                    /* Mute recall */
-                    if (S.snapshots[btn] !== null) {
-                        const snap = S.snapshots[btn];
-                        for (let _t = 0; _t < NUM_TRACKS; _t++) {
-                            S.trackMuted[_t]  = snap.mute[_t];
-                            S.trackSoloed[_t] = snap.solo[_t];
-                            if (snap.drumEffMute) {
-                                S.drumLaneMute[_t] = snap.drumEffMute[_t];
-                                S.drumLaneSolo[_t] = 0;
-                            }
+                /* Mute recall */
+                if (S.snapshots[btn] !== null) {
+                    const snap = S.snapshots[btn];
+                    for (let _t = 0; _t < NUM_TRACKS; _t++) {
+                        S.trackMuted[_t]  = snap.mute[_t];
+                        S.trackSoloed[_t] = snap.solo[_t];
+                        if (snap.drumEffMute) {
+                            S.drumLaneMute[_t] = snap.drumEffMute[_t];
+                            S.drumLaneSolo[_t] = 0;
                         }
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('snap_load', String(btn));
                     }
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('snap_load', String(btn));
                 }
-                S.screenDirty = true;
             }
             forceRedraw();
             return;
