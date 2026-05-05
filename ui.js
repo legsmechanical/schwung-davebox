@@ -1018,6 +1018,9 @@ function clipHasContent(t, c) {
 
 function computePadNoteMap() {
     const root = S.padOctave[S.activeTrack] * 12 + S.padKey;
+    const intervals = SCALE_INTERVALS[S.padScale] || SCALE_INTERVALS[0];
+    S.padScaleSet.clear();
+    for (let i = 0; i < intervals.length; i++) S.padScaleSet.add(intervals[i]);
     if (S.padLayoutChromatic) {
         for (let i = 0; i < 32; i++) {
             const col = i % 8;
@@ -1026,7 +1029,6 @@ function computePadNoteMap() {
         }
         return;
     }
-    const intervals = SCALE_INTERVALS[S.padScale] || SCALE_INTERVALS[0];
     const n = intervals.length;
     for (let i = 0; i < 32; i++) {
         const col = i % 8;

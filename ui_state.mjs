@@ -55,6 +55,7 @@ export const S = {
     padScale: 1,
     padOctave: new Array(8).fill(3),
     padNoteMap: new Array(32).fill(60),
+    padScaleSet: new Set(),      /* semitones 0-11 in current key+scale; updated by computePadNoteMap */
     clipSteps: Array.from({length: 8}, () =>
                            Array.from({length: 16}, () => new Array(256).fill(0))),
     clipNonEmpty: Array.from({length: 8}, () => new Array(16).fill(false)),
