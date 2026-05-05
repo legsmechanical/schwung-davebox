@@ -2288,7 +2288,7 @@ function drawUI() {
                 fmtStretch(S.bankParams[t][7][0]),
                 fmtSign(S.bankParams[t][7][1]),
                 fmtSign(S.bankParams[t][7][2]),
-                qv < 0 ? '\x97' : fmtPct(qv),
+                qv <= 0 ? '--' : fmtPct(qv),
                 fmtVelOverride(S.trackVelOverride[t]),
                 null, null, null,
             ];
@@ -4476,12 +4476,12 @@ function _onCC_knobs(d1, d2) {
                 return;
             }
             if (knobIdx === 3) {
-                /* K4 = Qnt: quantize all lanes 0-100, sens=4 */
+                /* K4 = Qnt: quantize all lanes 0-100, sens=4, step=5 */
                 S.knobAccum[knobIdx]++;
                 if (S.knobAccum[knobIdx] >= 4) {
                     S.knobAccum[knobIdx] = 0;
                     const cur7q = S.bankParams[t][7][3] < 0 ? 0 : S.bankParams[t][7][3];
-                    const nv = Math.max(0, Math.min(100, cur7q + dir));
+                    const nv = Math.max(0, Math.min(100, cur7q + dir * 5));
                     if (nv !== cur7q) {
                         S.bankParams[t][7][3] = nv;
                         host_module_set_param('t' + t + '_drum_lanes_qnt', String(nv));
