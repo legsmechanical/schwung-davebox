@@ -3215,18 +3215,15 @@ globalThis.tick = function () {
             }
         }
 
-        /* CC 50 hold detection: crossing threshold enters session overview */
-        if (S.noteSessionPressedTick >= 0 && !S.sessionOverlayHeld &&
+        /* CC 50 hold detection: crossing threshold momentarily switches view */
+        if (S.noteSessionPressedTick >= 0 && !S.sessionViewMomentary &&
                 (S.tickCount - S.noteSessionPressedTick) >= NOTE_SESSION_HOLD_TICKS) {
-            S.noteSessionPressedTick = -1;
-            S.sessionOverlayHeld = true;
+            S.noteSessionPressedTick  = -1;
+            S.sessionViewMomentary    = true;
+            S.sessionView             = !S.sessionView;
+            _switchViewCleanup();
             invalidateLEDCache();
             S.screenDirty = true;
-            S.overviewCache = Array.from({length: NUM_TRACKS}, function(_, t) {
-                return Array.from({length: NUM_CLIPS}, function(_, c) {
-                    return clipHasContent(t, c);
-                });
-            });
         }
 
         /* Refresh scene state cache for O(1) lookups in LED update functions */
@@ -3250,6 +3247,8 @@ globalThis.tick = function () {
                 loopColor = flashAtRate(48) ? White : LED_OFF;
             } else if (_rptLatched) {
                 loopColor = flashAtRate(48) ? White : LED_OFF;
+            } else if (S.sessionView && S.perfLatchMode) {
+                loopColor = VividYellow;
             } else if (S.sessionView && S.loopHeld) {
                 loopColor = DarkGrey;
             }
@@ -3659,45 +3658,18 @@ function _onCC_buttons(d1, d2) {
                 S.noteSessionPressedTick = S.tickCount;
             }
         } else if (d2 === 0) {
-            if (S.sessionOverlayHeld) {
-                S.sessionOverlayHeld = false;
-                S.overviewCache = null;
+            if (S.sessionViewMomentary) {
+                /* Hold release: switch back to original view */
+                S.sessionViewMomentary = false;
+                S.sessionView = !S.sessionView;
+                _switchViewCleanup();
                 invalidateLEDCache();
                 forceRedraw();
             } else if (S.noteSessionPressedTick >= 0) {
-                /* Tap: toggle view */
+                /* Tap: permanently toggle view */
                 S.sessionView = !S.sessionView;
+                _switchViewCleanup();
                 invalidateLEDCache();
-                S.heldStepBtn        = -1;
-                S.heldStep           = -1;
-                S.heldStepNotes      = [];
-                S.stepWasEmpty       = false;
-                S.stepWasHeld        = false;
-                S.stepBtnPressedTick.fill(-1);
-                S.sessionStepHeld    = -1;
-                S.sessionStepHeldCtx = 0;
-                /* Leaving Session View stops any active loop; mods/latch persist. */
-                if (!S.sessionView && (S.perfViewLocked || S.perfStack.length > 0)) {
-                    const _hadLoop = S.perfStack.length > 0;
-                    S.perfStack         = [];
-                    S.perfStickyLengths = new Set();
-                    S.perfHoldPadHeld   = false;
-                    S.perfViewLocked    = false;
-                    S.loopHeld         = false;
-                    S.perfModsHeld     = 0;
-                    sendPerfMods();
-                    /* looper_stop last so set_param coalescing can't eat it */
-                    if (_hadLoop && typeof host_module_set_param === 'function')
-                        host_module_set_param('looper_stop', '1');
-                    invalidateLEDCache();
-                }
-                if (S.sessionView) {
-                    for (let i = 0; i < 16; i++) setLED(16 + i, LED_OFF);
-                    for (let t = 0; t < 8; t++) setLED(TRACK_PAD_BASE + t, LED_OFF);
-                } else {
-                    for (let row = 0; row < 4; row++)
-                        for (let t = 0; t < 8; t++) setLED(92 - row * 8 + t, LED_OFF);
-                }
                 forceRedraw();
             }
             S.noteSessionPressedTick = -1;
@@ -3709,6 +3681,18 @@ function _onCC_buttons(d1, d2) {
      * Double-tap locks the view after Loop is released. */
     if (d1 === MoveLoop && S.sessionView) {
         if (d2 === 127) {
+            if (S.shiftHeld) {
+                /* Shift+Loop: toggle perf latch mode */
+                if (S.perfLatchMode) {
+                    S.perfLatchMode   = false;
+                    S.perfModsToggled = 0;
+                    sendPerfMods();
+                } else {
+                    S.perfLatchMode = true;
+                }
+                forceRedraw();
+                return;
+            }
             S.loopPressTick = S.tickCount;
             S.loopHeld      = true;
             forceRedraw();
@@ -3718,17 +3702,15 @@ function _onCC_buttons(d1, d2) {
         const wasTap       = heldDuration < LOOP_TAP_TICKS;
 
         if (S.perfViewLocked) {
-            /* Locked + tap → unlock + stop. Long press keeps lock. */
+            /* Locked + tap → unlock + stop. */
             if (wasTap) {
-                S.perfViewLocked     = false;
-                S.loopHeld           = false;
-                S.loopLastTapEndTick = -999;
+                S.perfViewLocked    = false;
+                S.loopHeld          = false;
                 S.perfStack         = [];
                 S.perfStickyLengths = new Set();
                 S.perfHoldPadHeld   = false;
-                S.perfModsHeld     = 0;
+                S.perfModsHeld      = 0;
                 sendPerfMods();
-                /* looper_stop last so set_param coalescing can't eat it */
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('looper_stop', '1');
                 invalidateLEDCache();
@@ -3737,31 +3719,25 @@ function _onCC_buttons(d1, d2) {
             return;
         }
 
-        if (wasTap && (S.tickCount - S.loopLastTapEndTick) < LOOP_DBLTAP_GAP) {
-            /* Second tap → lock Perf Mode; preserve running loop + mods. */
-            S.perfViewLocked     = true;
-            S.loopHeld           = true;
-            S.loopLastTapEndTick = -999;
+        if (wasTap) {
+            /* Tap → lock Perf Mode; preserve running loop + mods. */
+            S.perfViewLocked = true;
+            S.loopHeld       = true;
             forceRedraw();
             return;
         }
 
-        if (wasTap) S.loopLastTapEndTick = S.tickCount;
-
-        /* Normal release: if sticky lengths or hold pad keep loops alive, lock perf mode.
-         * Otherwise exit Perf Mode, stop loop, clear all mods. */
+        /* Hold release: exit Perf Mode. Sticky lengths/hold pad auto-lock if still active. */
         S.loopHeld     = false;
         S.perfModsHeld = 0;
         if (S.perfStickyLengths.size > 0 || S.perfHoldPadHeld) {
             S.perfViewLocked = true;
-            /* Keep all stack entries when hold pad is engaged; otherwise filter to sticky */
             if (!S.perfHoldPadHeld)
                 S.perfStack = S.perfStack.filter(function(e) { return S.perfStickyLengths.has(e.idx); });
             if (S.perfStack.length > 0 && typeof host_module_set_param === 'function')
                 host_module_set_param('looper_arm', String(S.perfStack[S.perfStack.length - 1].ticks));
         } else {
-            if (S.perfStack.length > 0 &&
-                    typeof host_module_set_param === 'function')
+            if (S.perfStack.length > 0 && typeof host_module_set_param === 'function')
                 host_module_set_param('looper_stop', '1');
             S.perfStack = [];
         }
@@ -3773,10 +3749,6 @@ function _onCC_buttons(d1, d2) {
 
     /* Loop button (CC 58, Track View): hold + step buttons sets clip length */
     if (d1 === MoveLoop && !S.sessionView) {
-        if (d2 === 127 && S.shiftHeld) {
-            doDoubleFill();
-            return;
-        }
         S.loopHeld = d2 === 127;
         if (S.loopHeld) {
             /* Latch or clear drum repeat on the active track */
@@ -4882,6 +4854,37 @@ function _onCC_knobs(d1, d2) {
                 }
             }
         }
+    }
+}
+
+function _switchViewCleanup() {
+    S.heldStepBtn        = -1;
+    S.heldStep           = -1;
+    S.heldStepNotes      = [];
+    S.stepWasEmpty       = false;
+    S.stepWasHeld        = false;
+    S.stepBtnPressedTick.fill(-1);
+    S.sessionStepHeld    = -1;
+    S.sessionStepHeldCtx = 0;
+    /* Leaving Session View stops any active loop; mods/latch persist. */
+    if (!S.sessionView && (S.perfViewLocked || S.perfStack.length > 0)) {
+        const _hadLoop = S.perfStack.length > 0;
+        S.perfStack         = [];
+        S.perfStickyLengths = new Set();
+        S.perfHoldPadHeld   = false;
+        S.perfViewLocked    = false;
+        S.loopHeld          = false;
+        S.perfModsHeld      = 0;
+        sendPerfMods();
+        if (_hadLoop && typeof host_module_set_param === 'function')
+            host_module_set_param('looper_stop', '1');
+    }
+    if (S.sessionView) {
+        for (let i = 0; i < 16; i++) setLED(16 + i, LED_OFF);
+        for (let t = 0; t < 8; t++) setLED(TRACK_PAD_BASE + t, LED_OFF);
+    } else {
+        for (let row = 0; row < 4; row++)
+            for (let t = 0; t < 8; t++) setLED(92 - row * 8 + t, LED_OFF);
     }
 }
 
