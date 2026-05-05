@@ -93,7 +93,7 @@ function bankHeader(bankIdx) {
 }
 
 function drawBankHeading(name) {
-    fill_rect(0, 0, 128, 10, 1);
+    fill_rect(0, 0, 128, 9, 1);
     print(4, 1, name, 0);
 }
 
@@ -2420,14 +2420,10 @@ function drawUI() {
         print(4, 10, bankGroup + '  Pad: ' + name + oct + ' (' + note + ')', 1);
         const laneBit = 1 << lane;
         if (S.drumLaneSolo[t] & laneBit) {
-            const sw = 6 * 6, sx = (128 - sw) >> 1;
-            fill_rect(sx, 20, sw, 10, 1);
-            print(sx, 21, 'SOLOED', 0);
+            pixelPrint(4, 24, 'SOLOED', 1);
         } else if (S.drumLaneMute[t] & laneBit) {
-            if (Math.floor(S.tickCount / 50) % 2 === 0) {
-                const mw = 5 * 6, mx = (128 - mw) >> 1;
-                print(mx, 21, 'MUTED', 1);
-            }
+            if (Math.floor(S.tickCount / 50) % 2 === 0)
+                pixelPrint(4, 24, 'MUTED', 1);
         }
         drawTrackRow(34);
         for (let _t = 0; _t < NUM_TRACKS; _t++)
