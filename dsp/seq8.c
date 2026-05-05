@@ -165,6 +165,10 @@ static const uint16_t ARP_RATE_TICKS[10] = { 12, 24, 16, 48, 32, 96, 64, 192, 12
  * Pad 4-7 (row 2):      1/32T 1/16T 1/8T 1/4T */
 static const uint16_t DRUM_REPEAT_RATE_TICKS[8] = { 12, 24, 48, 96, 8, 16, 32, 64 };
 
+/* Per-track drum input quantize snap intervals (96 PPQN).
+ * Index 0=Off, 1=1/64, 2=1/32, 3=1/16, 4=1/16T, 5=1/8, 6=1/8T, 7=1/4, 8=1/4T */
+static const uint8_t DRUM_INQ_TICKS[9] = { 0, 6, 12, 24, 16, 48, 32, 96, 64 };
+
 /* Default CC assignments for CC PARAM bank knobs K1-K8 */
 static const uint8_t CC_ASSIGN_DEFAULT[8] = { 7, 74, 71, 73, 72, 91, 93, 10 };
 
@@ -462,6 +466,11 @@ typedef struct {
     uint8_t  drum_repeat2_step[DRUM_LANES];     /* per-lane gate mask step 0-7 */
     uint32_t drum_repeat2_phase[DRUM_LANES];    /* per-lane phase within step */
     uint8_t  drum_repeat2_vel[DRUM_LANES];      /* per-lane velocity in Rpt 2 */
+    /* Per-track drum input quantize (persisted) */
+    uint8_t  drum_inp_quant;    /* 0=Off, 1-8 = index into DRUM_INQ_TICKS */
+    /* Pending sync flags (runtime, not persisted): repeat waits for InQ boundary */
+    uint8_t  drum_repeat_pending;
+    uint32_t drum_repeat2_pending;  /* bitmask: bit l = lane l pending InQ sync */
     /* CC PARAM bank (bank 6): per-track CC assignments for 8 knobs (persisted) */
     uint8_t  cc_assign[8];
     /* Per-clip CC automation (melodic clips; persisted) */
@@ -807,7 +816,7 @@ static void ensure_parent_dir(const char *path) {
 
 static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
     int t, c;
-    fprintf(fp, "{\"v\":23,\"playing\":%d", inst->playing);
+    fprintf(fp, "{\"v\":24,\"playing\":%d", inst->playing);
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
     for (t = 0; t < NUM_TRACKS; t++)
@@ -977,6 +986,11 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
         if (inst->tracks[t].drum_lane_solo)
             fprintf(fp, ",\"t%ddls\":%u", t, inst->tracks[t].drum_lane_solo);
     }
+    /* Per-track: drum input quantize (sparse; omit if Off) */
+    for (t = 0; t < NUM_TRACKS; t++) {
+        if (inst->tracks[t].drum_inp_quant)
+            fprintf(fp, ",\"t%ddiq\":%d", t, (int)inst->tracks[t].drum_inp_quant);
+    }
     /* Per-track: drum repeat gate/vel_scale/nudge (sparse — only non-default) */
     { int l, s;
       for (t = 0; t < NUM_TRACKS; t++) {
@@ -1052,10 +1066,10 @@ static void seq8_load_state(seq8_instance_t *inst) {
     if (!n) { free(buf); remove(inst->state_path); return; }
     buf[n] = '\0';
 
-    /* Version gate: only v=23 accepted (dev build; wipe on version mismatch). */
+    /* Version gate: only v=24 accepted (dev build; wipe on version mismatch). */
     {
         int sv = json_get_int(buf, "v", -1);
-        if (sv != 23) {
+        if (sv != 24) {
             free(buf);
             remove(inst->state_path);
             seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
@@ -1185,6 +1199,11 @@ static void seq8_load_state(seq8_instance_t *inst) {
         inst->tracks[t].drum_lane_mute = json_get_uint(buf, key, 0);
         snprintf(key, sizeof(key), "t%ddls", t);
         inst->tracks[t].drum_lane_solo = json_get_uint(buf, key, 0);
+    }
+    /* Per-track: drum input quantize */
+    for (t = 0; t < NUM_TRACKS; t++) {
+        snprintf(key, sizeof(key), "t%ddiq", t);
+        inst->tracks[t].drum_inp_quant = (uint8_t)clamp_i(json_get_int(buf, key, 0), 0, 8);
     }
     /* Drum repeat gate/vel_scale/nudge (sparse; missing = defaults set by drum_repeat_init_defaults) */
     { int l, s;
@@ -2995,6 +3014,18 @@ static int effective_vel(seq8_track_t *tr, int raw_vel) {
  * step increments, so the first fire happens immediately on the tick after activation. */
 static void drum_repeat_tick(seq8_instance_t *inst, seq8_track_t *tr) {
     if (!tr->drum_repeat_active || tr->pad_mode != PAD_MODE_DRUM) return;
+    /* InQ pending: wait for nearest quant boundary before first fire */
+    if (tr->drum_repeat_pending) {
+        uint8_t diq = tr->drum_inp_quant;
+        if (diq > 0) {
+            int qt = (int)DRUM_INQ_TICKS[diq];
+            uint32_t abs = inst->global_tick * (uint32_t)TICKS_PER_STEP + inst->master_tick_in_step;
+            if ((int)(abs % (uint32_t)qt) != 0) return;
+        }
+        tr->drum_repeat_pending = 0;
+        tr->drum_repeat_step    = 0;
+        tr->drum_repeat_phase   = 0;
+    }
     uint8_t  lane = tr->drum_repeat_lane;
     uint8_t  step = tr->drum_repeat_step;
     uint16_t rate = DRUM_REPEAT_RATE_TICKS[tr->drum_repeat_rate_idx];
@@ -3036,7 +3067,7 @@ static void drum_repeat_tick(seq8_instance_t *inst, seq8_track_t *tr) {
                     rlc->step_note_count[rs]     = 1;
                     rlc->step_vel[rs]            = (uint8_t)vel;
                     rlc->step_gate[rs]           = (uint16_t)GATE_TICKS;
-                    rlc->note_tick_offset[rs][0] = inst->inp_quant
+                    rlc->note_tick_offset[rs][0] = (inst->inp_quant || tr->drum_inp_quant)
                         ? 0 : (int16_t)tr->drum_tick_in_step[lane];
                     rlc->steps[rs]               = 1;
                     rlc->active                  = 1;
@@ -3066,7 +3097,30 @@ static void drum_repeat_tick(seq8_instance_t *inst, seq8_track_t *tr) {
 /* Rpt 2 repeat tick — fires all held lanes at independent per-lane rates.
  * Each lane has its own rate_idx, phase, step, nudge, gate, vel_scale. */
 static void drum_repeat2_tick(seq8_instance_t *inst, seq8_track_t *tr) {
-    if (!tr->drum_repeat2_active || tr->pad_mode != PAD_MODE_DRUM) return;
+    if (!(tr->drum_repeat2_active | tr->drum_repeat2_pending) || tr->pad_mode != PAD_MODE_DRUM) return;
+    /* Resolve any lanes pending InQ boundary */
+    if (tr->drum_repeat2_pending) {
+        uint8_t diq = tr->drum_inp_quant;
+        if (diq > 0) {
+            int qt = (int)DRUM_INQ_TICKS[diq];
+            uint32_t abs = inst->global_tick * (uint32_t)TICKS_PER_STEP + inst->master_tick_in_step;
+            if ((int)(abs % (uint32_t)qt) == 0) {
+                /* Activate all pending lanes at this boundary */
+                int pl; for (pl = 0; pl < DRUM_LANES; pl++) {
+                    if (tr->drum_repeat2_pending & (1u << (unsigned)pl)) {
+                        tr->drum_repeat2_phase[pl] = 0;
+                        tr->drum_repeat2_step[pl]  = 0;
+                        tr->drum_repeat2_active   |= (1u << (unsigned)pl);
+                    }
+                }
+                tr->drum_repeat2_pending = 0;
+            }
+        } else {
+            tr->drum_repeat2_active  |= tr->drum_repeat2_pending;
+            tr->drum_repeat2_pending  = 0;
+        }
+    }
+    if (!tr->drum_repeat2_active) return;
     int l;
     for (l = 0; l < DRUM_LANES; l++) {
         if (!(tr->drum_repeat2_active & (1u << (unsigned)l))) continue;

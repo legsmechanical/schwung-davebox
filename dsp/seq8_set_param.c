@@ -2889,6 +2889,13 @@ static void set_param(void *instance, const char *key, const char *val) {
             return;
         }
 
+        if (!strcmp(sub, "diq")) {
+            /* tN_diq "value" — per-track drum input quantize: 0=Off, 1-8 = index into DRUM_INQ_TICKS */
+            tr->drum_inp_quant = (uint8_t)clamp_i(my_atoi(val), 0, 8);
+            inst->state_dirty = 1;
+            return;
+        }
+
         if (!strcmp(sub, "drum_lanes_qnt")) {
             /* tN_drum_lanes_qnt "value" — set NoteFX quantize on all 32 lanes of active drum clip. */
             int v = clamp_i(my_atoi(val), 0, 100);
@@ -3268,6 +3275,17 @@ static void set_param(void *instance, const char *key, const char *val) {
             tr->drum_repeat_step     = 0;
             tr->drum_repeat_phase    = 0;
             tr->drum_repeat_active   = 1;
+            /* InQ sync: if playing and InQ is set, arm pending if in second half of interval */
+            { uint8_t diq = tr->drum_inp_quant;
+              if (diq > 0 && inst->playing) {
+                  int qt = (int)DRUM_INQ_TICKS[diq];
+                  uint32_t abs = inst->global_tick * (uint32_t)TICKS_PER_STEP + inst->master_tick_in_step;
+                  int phase = (int)(abs % (uint32_t)qt);
+                  tr->drum_repeat_pending = (phase >= qt / 2) ? 1 : 0;
+              } else {
+                  tr->drum_repeat_pending = 0;
+              }
+            }
             return;
         }
 
@@ -3279,10 +3297,8 @@ static void set_param(void *instance, const char *key, const char *val) {
 
         if (!strcmp(sub, "drum_repeat_stop")) {
             /* tN_drum_repeat_stop — deactivate repeat; silence any open note */
-            if (tr->drum_repeat_active) {
-                tr->drum_repeat_active = 0;
-                /* Let play_pending gate countdown handle the note-off naturally */
-            }
+            tr->drum_repeat_active  = 0;
+            tr->drum_repeat_pending = 0;
             return;
         }
 
@@ -3309,14 +3325,32 @@ static void set_param(void *instance, const char *key, const char *val) {
             tr->drum_repeat2_vel[lane_r]   = (uint8_t)vel_r;
             tr->drum_repeat2_phase[lane_r] = 0;
             tr->drum_repeat2_step[lane_r]  = 0;
-            tr->drum_repeat2_active       |= (1u << (unsigned)lane_r);
+            /* InQ sync: if playing and InQ set, arm as pending if in second half of interval */
+            { uint8_t diq = tr->drum_inp_quant;
+              if (diq > 0 && inst->playing) {
+                  int qt = (int)DRUM_INQ_TICKS[diq];
+                  uint32_t abs = inst->global_tick * (uint32_t)TICKS_PER_STEP + inst->master_tick_in_step;
+                  int phase = (int)(abs % (uint32_t)qt);
+                  if (phase >= qt / 2) {
+                      tr->drum_repeat2_pending |=  (1u << (unsigned)lane_r);
+                      tr->drum_repeat2_active  &= ~(1u << (unsigned)lane_r);
+                  } else {
+                      tr->drum_repeat2_pending &= ~(1u << (unsigned)lane_r);
+                      tr->drum_repeat2_active  |=  (1u << (unsigned)lane_r);
+                  }
+              } else {
+                  tr->drum_repeat2_pending &= ~(1u << (unsigned)lane_r);
+                  tr->drum_repeat2_active  |=  (1u << (unsigned)lane_r);
+              }
+            }
             return;
         }
 
         if (!strcmp(sub, "drum_repeat2_lane_off")) {
-            /* tN_drum_repeat2_lane_off "lane" — remove lane from Rpt2 bitmask */
+            /* tN_drum_repeat2_lane_off "lane" — remove lane from Rpt2 bitmask (and pending) */
             int lane_r = clamp_i(my_atoi(val), 0, DRUM_LANES - 1);
-            tr->drum_repeat2_active &= ~(1u << (unsigned)lane_r);
+            tr->drum_repeat2_active  &= ~(1u << (unsigned)lane_r);
+            tr->drum_repeat2_pending &= ~(1u << (unsigned)lane_r);
             return;
         }
 
@@ -3341,8 +3375,9 @@ static void set_param(void *instance, const char *key, const char *val) {
         }
 
         if (!strcmp(sub, "drum_repeat2_stop")) {
-            /* tN_drum_repeat2_stop — clear all active Rpt2 lanes */
-            tr->drum_repeat2_active = 0;
+            /* tN_drum_repeat2_stop — clear all active Rpt2 lanes (and any pending) */
+            tr->drum_repeat2_active  = 0;
+            tr->drum_repeat2_pending = 0;
             return;
         }
 
@@ -3397,10 +3432,24 @@ static void set_param(void *instance, const char *key, const char *val) {
                         dlc->step_note_count[step]     = 1;
                         dlc->step_vel[step]            = (uint8_t)vel;
                         dlc->step_gate[step]           = (uint16_t)GATE_TICKS;
-                        /* inp_quant OFF: capture sub-step timing (like melodic record_note_on).
-                         * inp_quant ON:  snap to step boundary (offset=0). */
-                        dlc->note_tick_offset[step][0] = inst->inp_quant
-                            ? 0 : (int16_t)tr->drum_tick_in_step[lane];
+                        /* Timing snap: per-track InQ takes priority over global inp_quant.
+                         * InQ: nearest quant boundary within step (rounds to nearest multiple).
+                         * global inp_quant ON: snap to step boundary (offset=0).
+                         * Both Off: capture raw sub-step timing. */
+                        { uint8_t diq = tr->drum_inp_quant;
+                          int16_t off;
+                          if (diq > 0) {
+                              int qt  = (int)DRUM_INQ_TICKS[diq];
+                              int tis = (int)tr->drum_tick_in_step[lane];
+                              int sn  = (tis + qt / 2) / qt * qt;
+                              off = (int16_t)clamp_i(sn, 0, (int)TICKS_PER_STEP - 1);
+                          } else if (inst->inp_quant) {
+                              off = 0;
+                          } else {
+                              off = (int16_t)tr->drum_tick_in_step[lane];
+                          }
+                          dlc->note_tick_offset[step][0] = off;
+                        }
                         dlc->steps[step]               = 1;
                         dlc->active                    = 1;
                         clip_migrate_to_notes(dlc);

@@ -250,5 +250,6 @@ export const S = {
     extMidiRemapActive: false,
     lastTarpStyle: new Array(8).fill(1),
     padLayoutChromatic: new Array(8).fill(false),
+    drumInpQuant: new Array(8).fill(0),   /* per-track drum input quantize index 0-8 */
 
 };

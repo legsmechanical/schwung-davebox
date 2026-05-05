@@ -1696,6 +1696,11 @@ function readTrackConfig(t) {
     if (tvo !== null && tvo !== undefined) S.trackVelOverride[t] = parseInt(tvo, 10) | 0;
     const lpr = host_module_get_param('t' + t + '_track_looper');
     if (lpr !== null && lpr !== undefined) S.trackLooper[t] = parseInt(lpr, 10) | 0;
+    const diq = host_module_get_param('t' + t + '_diq');
+    if (diq !== null && diq !== undefined) {
+        S.drumInpQuant[t] = Math.max(0, Math.min(8, parseInt(diq, 10) | 0));
+        S.bankParams[t][7][5] = S.drumInpQuant[t];
+    }
 }
 
 function applyTrackConfig(t, key, val) {
@@ -2305,14 +2310,16 @@ function drawUI() {
             /* ALL LANES bank overview */
             const t = S.activeTrack;
             const qv = S.bankParams[t][7][3];
-            const allLabels = ['Stch', 'Shft', 'Ndg', 'Qnt', 'VelIn', null, null, null];
+            const DIQ_LABELS = ['Off','1/64','1/32','1/16','1/16T','1/8','1/8T','1/4','1/4T'];
+            const allLabels = ['Stch', 'Shft', 'Ndg', 'Qnt', 'VelIn', 'InQ', null, null];
             const allVals = [
                 fmtStretch(S.bankParams[t][7][0]),
                 fmtSign(S.bankParams[t][7][1]),
                 fmtSign(S.bankParams[t][7][2]),
                 qv <= 0 ? '--' : fmtPct(qv),
                 fmtVelOverride(S.trackVelOverride[t]),
-                null, null, null,
+                DIQ_LABELS[S.drumInpQuant[t]] || 'Off',
+                null, null,
             ];
             drawBankHeading('ALL LANES');
             for (let k = 0; k < 8; k++) {
@@ -4472,7 +4479,7 @@ function _onCC_knobs(d1, d2) {
                 return;
             }
         }
-        /* ALL LANES bank (drum, bank 7): K1=Stch K2=Shft K3=Ndg K4=Qnt K5=VelIn */
+        /* ALL LANES bank (drum, bank 7): K1=Stch K2=Shft K3=Ndg K4=Qnt K5=VelIn K6=InQ */
         if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 7) {
             const t   = S.activeTrack;
             const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
@@ -4542,6 +4549,21 @@ function _onCC_knobs(d1, d2) {
                     const cur7v = S.trackVelOverride[t];
                     const nv = Math.max(0, Math.min(127, cur7v + dir));
                     if (nv !== cur7v) applyTrackConfig(t, 'track_vel_override', nv);
+                    S.screenDirty = true;
+                }
+                return;
+            }
+            if (knobIdx === 5) {
+                /* K6 = InQ: per-track drum input quantize, 9 values (0=Off..8=1/4T), sens=2 */
+                S.knobAccum[knobIdx]++;
+                if (S.knobAccum[knobIdx] >= 2) {
+                    S.knobAccum[knobIdx] = 0;
+                    const nv = Math.max(0, Math.min(8, S.drumInpQuant[t] + dir));
+                    if (nv !== S.drumInpQuant[t]) {
+                        S.drumInpQuant[t] = nv;
+                        S.bankParams[t][7][5] = nv;
+                        host_module_set_param('t' + t + '_diq', String(nv));
+                    }
                     S.screenDirty = true;
                 }
                 return;

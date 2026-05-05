@@ -311,7 +311,8 @@ export const BANKS = [
         p('Ndg',  'Nudge',        'nudge',         'action', 0, 0,  0,  fmtSign,    8),
         _XQ,  /* K4: quantize all lanes — custom handling, def=-1 */
         _X,   /* K5: VelIn — custom handling via trackVelOverride */
-        _X, _X, _X,
+        _X,   /* K6: InQ — per-track drum input quantize, custom handling */
+        _X, _X,
     ]},
 ];
 
