@@ -4373,9 +4373,9 @@ function _onCC_knobs(d1, d2) {
                 return;
             }
             if (knobIdx === 5) {
-                /* K6 = Qnt (drum lanes quantize macro, sens=4) */
+                /* K6 = Qnt (drum lanes quantize macro, sens=1) */
                 S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 4) {
+                if (S.knobAccum[knobIdx] >= 1) {
                     S.knobAccum[knobIdx] = 0;
                     const nv = Math.max(0, Math.min(100, S.drumLaneQnt[t] + dir));
                     if (nv !== S.drumLaneQnt[t]) {
