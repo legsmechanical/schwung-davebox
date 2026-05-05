@@ -1603,11 +1603,6 @@ function readBankParams(t, bankIdx) {
         }
         return;
     }
-    /* ALL LANES bank: K4 quantize reads from drumLaneQnt mirror */
-    if (bankIdx === 7) {
-        S.bankParams[t][7][3] = S.drumLaneQnt[t] > 0 ? S.drumLaneQnt[t] : -1;
-        return;
-    }
     /* CC PARAM bank: read all 8 CC assignments from DSP */
     if (bankIdx === 6) {
         const raw = host_module_get_param('t' + t + '_cc_assigns');
