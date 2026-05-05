@@ -5045,8 +5045,11 @@ function _onPadPressTrackView(status, d1, d2) {
                     S.liveActiveNotes.add(laneNote);
                     /* Record step hit if armed */
                     if (S.recordArmed && !S.recordCountingIn && t === S.recordArmedTrack) {
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + t + '_drum_record_note_on', laneNote + ' ' + vel);
+                        if (typeof host_module_set_param === 'function') {
+                            const tvo = S.trackVelOverride[t];
+                            const recVel = tvo > 0 ? tvo : vel;
+                            host_module_set_param('t' + t + '_drum_record_note_on', laneNote + ' ' + recVel);
+                        }
                         S.pendingDrumLaneResync      = 3;
                         S.pendingDrumLaneResyncTrack = t;
                         S.pendingDrumLaneResyncLane  = lane;

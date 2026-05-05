@@ -3384,7 +3384,6 @@ static void set_param(void *instance, const char *key, const char *val) {
                     while (*sp >= '0' && *sp <= '9') { vel = vel * 10 + (*sp++ - '0'); }
                 }
                 vel = clamp_i(vel, 1, 127);
-                vel = effective_vel(tr, vel);
                 /* Find lane by matching midi_note */
                 int lane = -1;
                 { int l; for (l = 0; l < DRUM_LANES; l++) {
