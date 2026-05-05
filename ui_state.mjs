@@ -246,6 +246,6 @@ export const S = {
     pendingDrumLaneResyncLane: 0,
     extMidiRemapActive: false,
     lastTarpStyle: new Array(8).fill(1),
-    padLayoutChromatic: false,
+    padLayoutChromatic: new Array(8).fill(false),
 
 };

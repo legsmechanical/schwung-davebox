@@ -424,9 +424,10 @@ export function updateTrackLEDs() {
             const inHeld   = S.heldStep >= 0 && S.heldStepNotes.indexOf(pitch) >= 0;
             const semitone = ((S.padNoteMap[i] % 12) - S.padKey + 12) % 12;
             const inScale  = S.padScaleSet.has(semitone);
+            const chromatic = S.padLayoutChromatic[S.activeTrack];
             color = (sounding || inHeld) ? White
-                  : (S.padLayoutChromatic && !inScale) ? LED_OFF
-                  : (S.padNoteMap[i] % 12 === S.padKey ? rootColor : (S.padLayoutChromatic ? LightGrey : DarkGrey));
+                  : (chromatic && !inScale) ? LED_OFF
+                  : (S.padNoteMap[i] % 12 === S.padKey ? rootColor : (chromatic ? LightGrey : DarkGrey));
             cachedSetLED(TRACK_PAD_BASE + i, color);
         }
         }

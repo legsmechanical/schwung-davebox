@@ -120,6 +120,20 @@ function buildGlobalMenuItems() {
             options: [0, 1],
             format: function(v) { return v ? 'Drums' : 'Keys'; }
         }),
+        createEnum('Layout', {
+            get: function() { return S.padLayoutChromatic[S.activeTrack] ? 1 : 0; },
+            set: function(v) {
+                if (S.trackPadMode[S.activeTrack] !== 0) return;
+                S.padLayoutChromatic[S.activeTrack] = v !== 0;
+                computePadNoteMap();
+                forceRedraw();
+            },
+            options: [0, 1],
+            format: function(v) {
+                if (S.trackPadMode[S.activeTrack] !== 0) return fmtNA();
+                return v ? 'Chrom' : 'Scale';
+            }
+        }),
         createValue('VelIn', {
             get: function() { return S.trackVelOverride[S.activeTrack]; },
             set: function(v) { applyTrackConfig(S.activeTrack, 'track_vel_override', v); },
@@ -1021,7 +1035,7 @@ function computePadNoteMap() {
     const intervals = SCALE_INTERVALS[S.padScale] || SCALE_INTERVALS[0];
     S.padScaleSet.clear();
     for (let i = 0; i < intervals.length; i++) S.padScaleSet.add(intervals[i]);
-    if (S.padLayoutChromatic) {
+    if (S.padLayoutChromatic[S.activeTrack]) {
         for (let i = 0; i < 32; i++) {
             const col = i % 8;
             const row = Math.floor(i / 8);
@@ -5388,9 +5402,9 @@ function _onStepButtons(d1, d2) {
                     ['Velocity', 'Repeat Play (Rpt1)', 'Repeat Set (Rpt2)'],
                     S.drumPerformMode[t]);
             } else {
-                S.padLayoutChromatic = !S.padLayoutChromatic;
+                S.padLayoutChromatic[t] = !S.padLayoutChromatic[t];
                 computePadNoteMap();
-                showActionPopup(S.padLayoutChromatic ? 'CHROMATIC' : 'IN-SCALE');
+                showActionPopup(S.padLayoutChromatic[t] ? 'CHROMATIC' : 'IN-SCALE');
             }
         } else if (idx === 8) {
             /* Step 9: open global menu at Key */
