@@ -2079,7 +2079,7 @@ function drawUI() {
         print(4, 22, SCENE_LETTERS[base] + '-' + SCENE_LETTERS[base + 3], 1);
         drawTrackRow(34);
         for (let t = 0; t < NUM_TRACKS; t++)
-            print(t * 16 + 5, 46, SCENE_LETTERS[S.trackActiveClip[t]], 1);
+            pixelPrint(t * 16 + 5, 46, SCENE_LETTERS[S.trackActiveClip[t]], 1);
         return;
     }
 
@@ -2439,7 +2439,7 @@ function drawUI() {
         drawMetroIndicator();
         drawTrackRow(34);
         for (let _t = 0; _t < NUM_TRACKS; _t++)
-            print(_t * 16 + 5, 46, SCENE_LETTERS[S.trackActiveClip[_t]], 1);
+            pixelPrint(_t * 16 + 5, 46, SCENE_LETTERS[S.trackActiveClip[_t]], 1);
         drawDrumPositionBar(t);
     } else {
         /* State 4: normal Track View */
@@ -2457,7 +2457,7 @@ function drawUI() {
         drawMetroIndicator();
         drawTrackRow(34);
         for (let t = 0; t < NUM_TRACKS; t++)
-            print(t * 16 + 5, 46, SCENE_LETTERS[S.trackActiveClip[t]], 1);
+            pixelPrint(t * 16 + 5, 46, SCENE_LETTERS[S.trackActiveClip[t]], 1);
         drawPositionBar(S.activeTrack);
     }
 }
