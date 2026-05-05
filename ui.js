@@ -2995,7 +2995,7 @@ globalThis.tick = function () {
         S.pendingAllLanesStretchCheck = -1;
         const _res = host_module_get_param('t' + _sat + '_all_lanes_stretch_result');
         if (_res !== null && parseInt(_res, 10) === -1) {
-            showActionPopup('STRETCH', 'BLOCKED');
+            showActionPopup('NO ROOM');
             S.bankParams[_sat][7][0] -= (S.knobLastDir[0] || 1); /* revert display counter */
         }
     }
