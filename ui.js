@@ -952,6 +952,7 @@ function registerTapTempo(padNote) {
 function doDoubleFill() {
     const _t = S.activeTrack;
     if (S.trackPadMode[_t] === PAD_MODE_DRUM && S.activeBank === 7) {
+        S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
         host_module_set_param('t' + _t + '_all_lanes_double_fill', '1');
         S.pendingDrumResync = 2; S.pendingDrumResyncTrack = _t;
         forceRedraw();
@@ -961,6 +962,7 @@ function doDoubleFill() {
         if (_len * 2 > 256) {
             showActionPopup('CLIP FULL');
         } else {
+            S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
             host_module_set_param('t' + _t + '_l' + _l + '_loop_double_fill', '1');
             S.drumLaneLength[_t] = _len * 2;
             S.pendingDrumResync      = 2;

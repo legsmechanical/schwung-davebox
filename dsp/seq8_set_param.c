@@ -2060,6 +2060,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 int len = (int)dlc->length;
                 int i;
                 if (len * 2 > SEQ_STEPS) return;
+                undo_begin_drum_clip(inst, tidx, (int)tr->active_clip);
                 for (i = 0; i < len; i++) {
                     dlc->steps[len + i]           = dlc->steps[i];
                     memcpy(dlc->step_notes[len + i], dlc->step_notes[i], 8);
@@ -3221,6 +3222,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             /* tN_all_lanes_double_fill — double-and-fill all 32 drum lanes. */
             drum_clip_t *dc_al = &tr->drum_clips[tr->active_clip];
             int l_al, i;
+            undo_begin_drum_clip(inst, tidx, (int)tr->active_clip);
             for (l_al = 0; l_al < DRUM_LANES; l_al++) {
                 clip_t *dlc = &dc_al->lanes[l_al].clip;
                 int len = (int)dlc->length;
