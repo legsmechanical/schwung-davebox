@@ -2990,6 +2990,15 @@ globalThis.tick = function () {
     }
 
     /* Deferred _steps re-read after _reassign: confirm DSP move in JS mirror */
+    if (S.pendingAllLanesStretchCheck >= 0) {
+        const _sat = S.pendingAllLanesStretchCheck;
+        S.pendingAllLanesStretchCheck = -1;
+        const _res = host_module_get_param('t' + _sat + '_all_lanes_stretch_result');
+        if (_res !== null && parseInt(_res, 10) === -1) {
+            showActionPopup('STRETCH', 'BLOCKED');
+            S.bankParams[_sat][7][0] -= (S.knobLastDir[0] || 1); /* revert display counter */
+        }
+    }
     if (S.pendingDrumResync > 0) {
         S.pendingDrumResync--;
         if (S.pendingDrumResync === 0) {
@@ -4443,6 +4452,7 @@ function _onCC_knobs(d1, d2) {
                     host_module_set_param('t' + t + '_all_lanes_beat_stretch', String(dir));
                     S.knobLocked[knobIdx] = true;
                     S.bankParams[t][7][0] += dir;
+                    S.pendingAllLanesStretchCheck = t;
                     S.pendingDrumResync = 2; S.pendingDrumResyncTrack = t;
                     S.screenDirty = true;
                 }

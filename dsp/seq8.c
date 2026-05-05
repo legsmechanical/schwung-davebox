@@ -665,6 +665,9 @@ typedef struct {
     /* Deferred save: JS polls state_full get_param; audio thread only sets state_dirty */
     char    state_buf[65536];
     uint8_t state_dirty;
+
+    /* Result of last all_lanes_beat_stretch: 0=none, 1=ok, -1=blocked */
+    int all_lanes_stretch_result;
 } seq8_instance_t;
 
 static const host_api_v1_t *g_host = NULL;
@@ -4836,6 +4839,10 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                     (int)cp->seq_arp_step_vel[6], (int)cp->seq_arp_step_vel[7]);
             }
             return -1;
+        }
+
+        if (!strcmp(sub, "all_lanes_stretch_result")) {
+            return snprintf(out, out_len, "%d", inst->all_lanes_stretch_result);
         }
 
         return pfx_get(tr, sub, out, out_len);

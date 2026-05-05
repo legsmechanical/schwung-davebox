@@ -239,6 +239,7 @@ export const S = {
     pendingStepsReread: 0,
     pendingStepsRereadTrack: 0,
     pendingStepsRereadClip: 0,
+    pendingAllLanesStretchCheck: -1,   /* track index, -1 = none pending */
     pendingDrumResync: 0,
     pendingDrumResyncTrack: 0,
     pendingDrumLaneResync: 0,

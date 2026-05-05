@@ -2900,10 +2900,33 @@ static void set_param(void *instance, const char *key, const char *val) {
         }
 
         if (!strcmp(sub, "all_lanes_beat_stretch")) {
-            /* tN_all_lanes_beat_stretch "dir" — stretch/shrink all 32 drum lanes. */
+            /* tN_all_lanes_beat_stretch "dir" — stretch/shrink all 32 drum lanes.
+             * Pre-flight: if ANY lane is blocked, no-op entirely and set result=-1. */
             int dir = my_atoi(val);
             drum_clip_t *dc_al = &tr->drum_clips[tr->active_clip];
             int l_al;
+            /* Pre-flight: check all lanes before modifying any */
+            for (l_al = 0; l_al < DRUM_LANES; l_al++) {
+                clip_t *dlc_pf = &dc_al->lanes[l_al].clip;
+                int len_pf = (int)dlc_pf->length;
+                if (dir == 1) {
+                    if (len_pf * 2 > SEQ_STEPS) { inst->all_lanes_stretch_result = -1; return; }
+                } else {
+                    if (len_pf < 2) { inst->all_lanes_stretch_result = -1; return; }
+                    /* Check note collision: two active steps would map to same compressed slot */
+                    int i_pf;
+                    uint8_t seen_pf[SEQ_STEPS];
+                    memset(seen_pf, 0, sizeof(seen_pf));
+                    for (i_pf = 0; i_pf < len_pf; i_pf++) {
+                        if (dlc_pf->steps[i_pf]) {
+                            int dst_pf = i_pf / 2;
+                            if (seen_pf[dst_pf]) { inst->all_lanes_stretch_result = -1; return; }
+                            seen_pf[dst_pf] = 1;
+                        }
+                    }
+                }
+            }
+            inst->all_lanes_stretch_result = 1;
             for (l_al = 0; l_al < DRUM_LANES; l_al++) {
                 clip_t *dlc = &dc_al->lanes[l_al].clip;
                 int len = (int)dlc->length;
