@@ -2040,12 +2040,11 @@ function drawPerfModeOled() {
     } else if (S.perfLatchMode || S.perfModsToggled) {
         headerRight = S.perfLatchMode ? 'LATCH' : 'LATCHED';
     }
-    let header = 'PERF';
+    let header = 'PERFORMANCE';
     if (S.perfHoldPadHeld || S.perfStickyLengths.size > 0) header += ' \xb7 HOLD';
-    print(4, 4, header, 1);
-    if (headerRight) print(128 - headerRight.length * 6 - 4, 4, headerRight, 1);
-    /* Horizontal rule */
-    fill_rect(0, 13, 128, 1, 1);
+    fill_rect(0, 0, 128, 13, 1);
+    print(4, 4, header, 0);
+    if (headerRight) print(128 - headerRight.length * 6 - 4, 4, headerRight, 0);
     /* Brief full-name popup on mod activate */
     if (S.perfModPopupEndTick >= 0 && S.tickCount <= S.perfModPopupEndTick && S.perfModPopupName) {
         const px = Math.floor((128 - S.perfModPopupName.length * 6) / 2);
