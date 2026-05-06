@@ -97,6 +97,25 @@ function drawBankHeading(name) {
     print(4, 1, name, 0);
 }
 
+/* Palette viewer — dev tool, Shift+jog-click to enter, jog-click to exit */
+const _PNAMES = {
+    0:'Black',    1:'BrightRed',  2:'OrangeRed', 3:'BrtOrange', 4:'Tan',
+    5:'LtYellow', 6:'Ochre',      7:'VividYlw',  8:'BrtGreen',  9:'ForestGrn',
+    10:'DullGrn', 11:'NeonGreen', 12:'TealGrn',  13:'MutdTeal', 14:'Cyan',
+    15:'AzureBlue',16:'RoyalBlue',17:'Navy',     18:'BlueViolet',19:'Violet',
+    20:'ElecViolet',21:'HotMagenta',22:'Purple', 23:'NeonPink', 24:'Rose',
+    25:'BrtPink', 26:'LtMagenta', 27:'RustRed',  28:'BurntOrng',29:'Mustard',
+    30:'YellowGrn',31:'Lime',     32:'DeepGreen',33:'Blue',     34:'Lilac',
+    35:'Mauve',   43:'PaleGreen', 44:'MintGreen',45:'OliveGrn', 46:'PaleCyan',
+    47:'SkyBlue', 48:'LtBlue',    49:'MutedBlue',50:'LavBlue',
+    65:'DeepRed', 66:'VDkRed',    67:'Brick',    73:'DullYlw',  74:'VDkYlw',
+    75:'BrwnYlw', 77:'Olive',     78:'DarkOlive',79:'DullGrn2', 80:'VDkGreen',
+    95:'DarkBlue',104:'DeepViolet',109:'DeepMagenta',
+    117:'Black2', 118:'LtGrey',   119:'DkGrey2', 120:'White',
+    121:'White2', 122:'White3',   123:'LtGrey2', 124:'DarkGrey',
+    125:'PureBlue',126:'Green',   127:'Red'
+};
+
 function drawMetroIndicator() {
     const METRO_LABELS = [null, 'Count', 'Rec', 'Rec/Ply'];
     const label = METRO_LABELS[S.metronomeOn];
@@ -2115,6 +2134,19 @@ function drawUI() {
         print(4, 34, 'LOADING...', 1);
         return;
     }
+    if (S.paletteViewActive) {
+        clear_screen();
+        fill_rect(0, 0, 128, 12, 1);
+        print(4, 2, 'PALETTE  p.' + (S.paletteViewPage + 1) + '/4', 0);
+        if (S.paletteViewHovered >= 0) {
+            print(4, 16, 'idx: ' + S.paletteViewHovered, 1);
+            print(4, 28, (_PNAMES[S.paletteViewHovered] || '---'), 1);
+        } else {
+            print(4, 22, 'tap pad to inspect', 1);
+        }
+        print(4, 50, 'jog=page  click=exit', 1);
+        return;
+    }
     clear_screen();
     if (S.sessionView) {
         if (S.actionPopupEndTick >= 0) {
@@ -3462,6 +3494,20 @@ function _onCC_jog(d1, d2) {
         S.screenDirty = true;
         return;
     }
+    if (d1 === 3 && d2 === 127 && S.paletteViewActive) {
+        S.paletteViewActive = false;
+        S.paletteViewHovered = -1;
+        forceRedraw();
+        return;
+    }
+    if (d1 === 3 && d2 === 127 && S.shiftHeld && !S.deleteHeld && !S.copyHeld && !S.muteHeld &&
+            !S.globalMenuOpen && !S.tapTempoOpen && !S.confirmBake) {
+        S.paletteViewActive = true;
+        S.paletteViewPage = 0;
+        S.paletteViewHovered = -1;
+        forceRedraw();
+        return;
+    }
     if (d1 === 3 && d2 === 127 && S.shiftHeld && S.deleteHeld && !S.sessionView) {
         if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
             /* Drum: Shift+Delete+jog = reset all real-time FX banks */
@@ -3546,6 +3592,15 @@ function _onCC_jog(d1, d2) {
     }
 
     if (d1 === MoveMainKnob) {
+        if (S.paletteViewActive) {
+            const delta = decodeDelta(d2);
+            if (delta !== 0) {
+                S.paletteViewPage = (S.paletteViewPage + (delta > 0 ? 1 : 3)) % 4;
+                S.paletteViewHovered = -1;
+                forceRedraw();
+            }
+            return;
+        }
         if (S.confirmBake) {
             const delta = decodeDelta(d2);
             if (delta !== 0) {
@@ -4980,6 +5035,13 @@ function _onCCMsg(d1, d2) {
 
 
 function _onPadPressTrackView(status, d1, d2) {
+    if (S.paletteViewActive && d1 >= TRACK_PAD_BASE && d1 < TRACK_PAD_BASE + 32) {
+        if (d2 > 0) {
+            S.paletteViewHovered = S.paletteViewPage * 32 + (d1 - TRACK_PAD_BASE);
+            S.screenDirty = true;
+        }
+        return;
+    }
     if (d1 >= TRACK_PAD_BASE && d1 < TRACK_PAD_BASE + 32) {
         const padIdx = d1 - TRACK_PAD_BASE;
 

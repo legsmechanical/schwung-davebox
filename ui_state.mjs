@@ -259,5 +259,8 @@ export const S = {
     sessionStepHeldCtx: 0,     /* 1=perf preset, 2=mute snapshot */
     stepSaveFlashStartTick: -1, /* tick when hold-save flash began */
     stepSaveFlashEndTick: -1,  /* step button LEDs double-blink through this tick after save */
+    paletteViewActive: false,  /* dev: palette color viewer mode */
+    paletteViewPage: 0,        /* 0-3: which 32-color page is displayed */
+    paletteViewHovered: -1,    /* palette index of last-touched pad, or -1 */
 
 };
