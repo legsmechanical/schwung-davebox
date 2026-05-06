@@ -3,7 +3,7 @@ import {
     NUM_STEPS, NUM_TRACKS, LED_OFF,
     TRACK_COLORS, TRACK_DIM_COLORS, TRACK_PAD_BASE, SCENE_BTN_FLASH_TICKS,
     PAD_MODE_DRUM, BANKS,
-    POLL_INTERVAL, CC_SCRATCH_PALETTE_BASE, OOB_SCRATCH_PALETTE, BEAT_MARKER_PALETTE, TAP_TEMPO_FLASH_TICKS, PARAM_LED_BANKS
+    POLL_INTERVAL, CC_SCRATCH_PALETTE_BASE, TAP_TEMPO_FLASH_TICKS, PARAM_LED_BANKS
 } from '/data/UserData/schwung/modules/tools/seq8/ui_constants.mjs';
 import { trackClipHasContent } from '/data/UserData/schwung/modules/tools/seq8/ui_scene.mjs';
 import {
@@ -116,22 +116,21 @@ export function updateStepLEDs() {
         for (let i = 0; i < 16; i++) {
             const absStep = base + i;
             let color;
-            if (absStep >= len)                    color = OOB_SCRATCH_PALETTE;
+            if (absStep >= len)                    color = DarkGrey;
             else if (S.playing && absStep === cs)    color = White;
-            else if (ls[absStep] === '1')          color = TRACK_COLORS[t];
-            else                                   color = (S.beatMarkersEnabled && i % 4 === 0) ? BEAT_MARKER_PALETTE : LED_OFF;
+            else if (ls[absStep] === '1')          color = 119;
+            else                                   color = (S.beatMarkersEnabled && i % 4 === 0) ? TRACK_DIM_COLORS[t] : LED_OFF;
             setLED(16 + i, color);
         }
-        /* Gate span overlay: dim track color across steps covered by held step's gate */
+        /* Gate span overlay: fixed index 56 across steps covered by held step's gate */
         if (S.heldStep >= 0 && S.heldStepNotes.length > 0) {
             const _sTps  = S.drumLaneTPS[t] || 24;
             const _sSpan = Math.floor(S.stepEditGate / _sTps);
-            const _sDim  = TRACK_DIM_COLORS[t];
             for (let i = 0; i < 16; i++) {
                 const absStep = base + i;
                 if (absStep >= len) continue;
                 const offset = (absStep - S.heldStep + len) % len;
-                if (offset <= _sSpan) setLED(16 + i, _sDim);
+                if (offset <= _sSpan) setLED(16 + i, 56);
             }
         }
         /* Gate overlay: K1 (Dur) touched in drum step edit — White=full, DarkGrey=partial */
@@ -162,29 +161,28 @@ export function updateStepLEDs() {
         const absStep = base + i;
         let color;
         if (absStep >= len) {
-            color = OOB_SCRATCH_PALETTE;
-        } else if (S.playing && absStep === cs) {
-            color = White;
-        } else if (steps[absStep] === 1) {
-            color = TRACK_COLORS[S.activeTrack];
-        } else if (steps[absStep] === 2) {
             color = DarkGrey;
+        } else if (S.playing && absStep === cs) {
+            color = TRACK_COLORS[S.activeTrack];
+        } else if (steps[absStep] === 1) {
+            color = White;
+        } else if (steps[absStep] === 2) {
+            color = 119;
         } else {
-            color = (S.beatMarkersEnabled && i % 4 === 0) ? BEAT_MARKER_PALETTE : LED_OFF;
+            color = (S.beatMarkersEnabled && i % 4 === 0) ? TRACK_DIM_COLORS[S.activeTrack] : LED_OFF;
         }
         setLED(16 + i, color);
     }
 
-    /* Gate span overlay: dim track color across all steps covered by the held step's gate. */
+    /* Gate span overlay: fixed index 56 across all steps covered by the held step's gate. */
     if (S.heldStep >= 0 && S.heldStepNotes.length > 0) {
         const _spanTps  = S.clipTPS[S.activeTrack][effectiveClip(S.activeTrack)] || 24;
         const spanFull  = Math.floor(S.stepEditGate / _spanTps);
-        const dimClr    = TRACK_DIM_COLORS[S.activeTrack];
         for (let i = 0; i < 16; i++) {
             const absStep = base + i;
             if (absStep >= len) continue;
             const offset = (absStep - S.heldStep + len) % len;
-            if (offset <= spanFull) setLED(16 + i, dimClr);
+            if (offset <= spanFull) setLED(16 + i, 56);
         }
     }
 

@@ -6,10 +6,8 @@
  */
 
 import {
-    Red, Blue, VividYellow, Green,
-    DeepRed, DarkBlue, Mustard, DeepGreen,
-    HotMagenta, DeepMagenta, Cyan, PurpleBlue,
-    Bright, BurntOrange, White, SkyBlue, DeepBlue
+    Red, Blue, Green, DarkBlue, Mustard, DeepGreen,
+    BrightGreen, BrightPink, RoyalBlue, DarkOlive, DeepWine
 } from '/data/UserData/schwung/shared/constants.mjs';
 
 /* ------------------------------------------------------------------ */
@@ -46,10 +44,10 @@ export const SEQ8_NAV_FLAGS        = FLAG_JUMP_TO_OVERTAKE | FLAG_JUMP_TO_TOOLS;
 export const NUM_STEPS           = 256;  /* steps per clip (DSP array size) */
 
 /* Track colors: bright and dim pairs (Move uses fixed palette indices). */
-export const TRACK_COLORS     = [Red,    Blue,     VividYellow, Green,
-                                 HotMagenta, Cyan,      Bright,   SkyBlue];
-export const TRACK_DIM_COLORS = [DeepRed, DarkBlue, Mustard,    DeepGreen,
-                                 DeepMagenta, PurpleBlue, BurntOrange, DeepBlue];
+export const TRACK_COLORS     = [Red,    Blue,      BrightGreen, Green,
+                                 BrightPink, RoyalBlue, Mustard,     DeepGreen];
+export const TRACK_DIM_COLORS = [68,     DarkBlue,  DarkOlive,   86,
+                                 DeepWine, 96,        70,          86];
 export const SCENE_LETTERS    = 'ABCDEFGHIJKLMNOP';
 
 /* Move pad rows (bottom-to-top): 68-75 · 76-83 · 84-91 · 92-99 */
