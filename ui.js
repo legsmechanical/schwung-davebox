@@ -2113,6 +2113,7 @@ function drawUI() {
         }
         const banner = 'd' + dA + 'V' + dE + 'BOx';
         print(43, 2, banner, 0);
+        drawMetroIndicator();
         drawTrackRow(34);
         for (let t = 0; t < NUM_TRACKS; t++)
             pixelPrint(t * 16 + 5, 46, SCENE_LETTERS[S.trackActiveClip[t]], 1);
