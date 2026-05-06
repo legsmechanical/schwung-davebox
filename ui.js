@@ -2106,12 +2106,12 @@ function drawUI() {
         let dA, dE;
         if (S.playing) {
             const rel = S.tickCount - S.transportStartTick;
-            dA = (Math.floor(rel / 24) % 2 === 0) ? 'A' : '@';
-            dE = (Math.floor(rel / 12) % 2 === 0) ? '3' : 'E';
+            dA = (Math.floor(rel / 96) % 2 === 0) ? 'A' : '@';
+            dE = (Math.floor(rel / 48) % 2 === 0) ? '3' : 'E';
         } else {
             dA = 'A'; dE = 'E';
         }
-        const banner = 'D' + dA + 'V' + dE + 'BOX';
+        const banner = 'd' + dA + 'V' + dE + 'BOx';
         print(43, 2, banner, 0);
         drawTrackRow(34);
         for (let t = 0; t < NUM_TRACKS; t++)
