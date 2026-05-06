@@ -4406,6 +4406,8 @@ function _onCC_knobs(d1, d2) {
      * pm.sens > 1 = accumulate that many ticks before firing one unit change.
      * pm.lock = true: fire once then block until touch release (S.knobLocked). */
     if (d1 >= 71 && d1 <= 78) {
+        /* Step edit overlay is exclusive — swallow all bank param changes while a step is held. */
+        if (S.heldStep >= 0) return;
         const knobIdx = d1 - 71;
         S.knobTouched          = knobIdx;
         S.knobTurnedTick[knobIdx] = S.tickCount;
