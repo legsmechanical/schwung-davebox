@@ -2044,7 +2044,11 @@ function drawPerfModeOled() {
     if (S.perfHoldPadHeld || S.perfStickyLengths.size > 0) header += ' \xb7 HOLD';
     fill_rect(0, 0, 128, 13, 1);
     print(4, 4, header, 0);
-    if (headerRight) print(128 - headerRight.length * 6 - 4, 4, headerRight, 0);
+    if (headerRight) {
+        const hrX = 128 - headerRight.length * 6 - 4;
+        if (S.perfRecalledSlot >= 0) print(hrX, 4, headerRight, 0);
+        else pixelPrint(hrX, 4, headerRight, 0);
+    }
     /* Brief full-name popup on mod activate */
     if (S.perfModPopupEndTick >= 0 && S.tickCount <= S.perfModPopupEndTick && S.perfModPopupName) {
         const px = Math.floor((128 - S.perfModPopupName.length * 6) / 2);
