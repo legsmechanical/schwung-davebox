@@ -63,7 +63,10 @@ export function drawGlobalMenu() {
     if (S.confirmClearSession) { drawClearSessionConfirm();  return; }
     clear_screen();
     const _inTrackSection = S.globalMenuState.selectedIndex < 5;
-    drawMenuHeader(_inTrackSection ? 'Track ' + (S.activeTrack + 1) : 'GLOBAL');
+    const _hTitle = _inTrackSection ? 'Track ' + (S.activeTrack + 1) : 'GLOBAL';
+    fill_rect(0, 0, 128, 12, 1);
+    print(2, 2, _hTitle, 0);
+    fill_rect(0, 12, 128, 1, 1);
     drawMenuList({
         items: S.globalMenuItems,
         selectedIndex: S.globalMenuState.selectedIndex,
