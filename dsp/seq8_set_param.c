@@ -3510,7 +3510,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             /* tN_drum_record_note_on "pitch vel"
              * Routes to the drum lane whose midi_note matches pitch.
              * Inserts a step hit at the lane's current playback position.
-             * Gate is GATE_TICKS (fixed); no note-off tracking needed for drums. */
+             * Gate initially GATE_TICKS; updated to actual hold time on drum_record_note_off. */
             if (!tr->recording) return;
             {
                 int ac = (int)tr->active_clip;
@@ -3561,10 +3561,50 @@ static void set_param(void *instance, const char *key, const char *val) {
                         dlc->steps[step]               = 1;
                         dlc->active                    = 1;
                         clip_migrate_to_notes(dlc);
-                        /* Save deferred to recording=0 or next step operation */
+                        /* Store pending state so drum_record_note_off can close the gate */
+                        tr->drum_rec_pending_tick[lane]   = (uint32_t)step * TICKS_PER_STEP
+                                                            + tr->drum_tick_in_step[lane];
+                        tr->drum_rec_pending_step[lane]   = step;
+                        tr->drum_rec_pending_active[lane] = 1;
                     }
                     if (tr->pfx.route == ROUTE_MOVE)
                         pfx_note_on(inst, tr, (uint8_t)pitch, (uint8_t)vel);
+                }
+            }
+            return;
+        }
+
+        if (!strcmp(sub, "drum_record_note_off")) {
+            /* tN_drum_record_note_off "pitch"
+             * Closes the gate for the last drum_record_note_on on the matching lane,
+             * computing actual hold duration from elapsed render ticks. */
+            if (!tr->recording) return;
+            {
+                int pitch2 = clamp_i(my_atoi(val), 0, 127);
+                int ac2    = (int)tr->active_clip;
+                drum_clip_t *dc2 = &tr->drum_clips[ac2];
+                int lane2  = -1;
+                { int l2; for (l2 = 0; l2 < DRUM_LANES; l2++) {
+                    if (dc2->lanes[l2].midi_note == (uint8_t)pitch2) { lane2 = l2; break; }
+                }}
+                if (lane2 >= 0 && tr->drum_rec_pending_active[lane2]) {
+                    clip_t   *dlc2     = &dc2->lanes[lane2].clip;
+                    uint16_t  step2    = tr->drum_rec_pending_step[lane2];
+                    uint32_t  tps2     = TICKS_PER_STEP;
+                    uint32_t  on_tick  = tr->drum_rec_pending_tick[lane2];
+                    uint32_t  off_tick = (uint32_t)tr->drum_current_step[lane2] * tps2
+                                        + tr->drum_tick_in_step[lane2];
+                    uint32_t  clip_ticks = (uint32_t)dlc2->length * tps2;
+                    uint32_t  gate;
+                    if (off_tick >= on_tick) gate = off_tick - on_tick;
+                    else                     gate = clip_ticks - on_tick + off_tick;
+                    if (gate < 1)          gate = 1;
+                    if (gate > clip_ticks) gate = clip_ticks;
+                    if (step2 < dlc2->length) {
+                        dlc2->step_gate[step2] = (uint16_t)gate;
+                        clip_migrate_to_notes(dlc2);
+                    }
+                    tr->drum_rec_pending_active[lane2] = 0;
                 }
             }
             return;

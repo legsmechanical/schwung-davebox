@@ -512,6 +512,8 @@ const NOTE_SESSION_HOLD_TICKS = 40;  /* ~200ms at 196Hz */
 
 const pendingLiveNotes = Array.from({length: NUM_TRACKS}, () => []);  /* buffered live notes flushed each tick */
 const pendingDrumNoteOffs = Array.from({length: NUM_TRACKS}, () => []);  /* drum tap note-offs deferred 1 tick to avoid coalescing with note-on */
+const _drumRecNoteOns  = [];  /* { track, laneNote, vel } — queued drum recording note-ons */
+const _drumRecNoteOffs = [];  /* { track, laneNote } — queued drum recording note-offs */
 
 
 /* ------------------------------------------------------------------ */
@@ -903,8 +905,10 @@ function disarmRecord() {
     S.countInStartTick    = -1;
     S.countInQuarterTicks = 0;
     _recordingNoteTrack.clear();
-    S._recNoteOns.length  = 0;
-    S._recNoteOffs.length = 0;
+    S._recNoteOns.length   = 0;
+    S._recNoteOffs.length  = 0;
+    _drumRecNoteOns.length  = 0;
+    _drumRecNoteOffs.length = 0;
     S.pendingPrerollNote  = null;
     if (t >= 0) {
         const _dat = S.trackActiveClip[t];
@@ -3179,8 +3183,10 @@ globalThis.tick = function () {
              * Also flush stale JS note buffers since DSP called finalize_pending_notes. */
             if (S.recordArmed && !S.recordCountingIn && S.recordArmedTrack >= 0) {
                 _recordingNoteTrack.clear();
-                S._recNoteOns.length  = 0;
-                S._recNoteOffs.length = 0;
+                S._recNoteOns.length   = 0;
+                S._recNoteOffs.length  = 0;
+                _drumRecNoteOns.length  = 0;
+                _drumRecNoteOffs.length = 0;
                 host_module_set_param('t' + S.recordArmedTrack + '_recording', '1');
             }
             invalidateLEDCache();
@@ -3502,24 +3508,44 @@ globalThis.tick = function () {
             const pairs = S._recNoteOns.map(function(n) { return n.pitch + ' ' + n.vel; }).join(' ');
             host_module_set_param('t' + rt + '_record_note_on', pairs);
             S._recNoteOns.length = 0;
+        } else if (_drumRecNoteOns.length > 0) {
+            const dn = _drumRecNoteOns.shift();
+            host_module_set_param('t' + dn.track + '_drum_record_note_on', dn.laneNote + ' ' + dn.vel);
         } else if (S._recNoteOffs.length > 0) {
             const rt     = S._recNoteOffs[0].rt;
             const pitches = S._recNoteOffs.map(function(n) { return n.pitch; }).join(' ');
             host_module_set_param('t' + rt + '_record_note_off', pitches);
             S._recNoteOffs.length = 0;
+        } else if (_drumRecNoteOffs.length > 0) {
+            const dn = _drumRecNoteOffs.shift();
+            host_module_set_param('t' + dn.track + '_drum_record_note_off', String(dn.laneNote));
         } else if (S.pendingPrerollNote !== null && S.pendingPrerollNote.ready && S.playing) {
-            /* Pre-roll fires here (else branch = no other recording set_param this tick, no coalescing).
+            /* Pre-roll fires here — no other recording set_param this tick, no coalescing.
              * Wait until step 0 has played: require >= 1 full step since transport start. */
-            const pr  = S.pendingPrerollNote;
-            const tps = (S.clipTPS[pr.track] && S.clipTPS[pr.track][pr.clip]) || 24;
-            if ((S.tickCount - S.transportStartTick) >= tps) {
-                S.pendingPrerollNote = null;
-                if (S.clipSteps[pr.track][pr.clip][0] === 0) {
-                    host_module_set_param('t' + pr.track + '_c' + pr.clip + '_step_0_toggle', pr.pitch + ' ' + pr.vel);
-                    S.clipSteps[pr.track][pr.clip][0] = 1;
-                    S.clipNonEmpty[pr.track][pr.clip] = true;
-                    invalidateLEDCache();
-                    forceRedraw();
+            const pr = S.pendingPrerollNote;
+            if (pr.isDrum) {
+                const tps = S.drumLaneTPS[pr.track] || 24;
+                if ((S.tickCount - S.transportStartTick) >= tps) {
+                    S.pendingPrerollNote = null;
+                    if (S.drumLaneSteps[pr.track][pr.lane][0] === '0') {
+                        host_module_set_param('t' + pr.track + '_l' + pr.lane + '_step_0_toggle', String(pr.vel));
+                        S.drumLaneSteps[pr.track][pr.lane][0] = '1';
+                        S.drumLaneHasNotes[pr.track][pr.lane] = true;
+                        invalidateLEDCache();
+                        forceRedraw();
+                    }
+                }
+            } else {
+                const tps = (S.clipTPS[pr.track] && S.clipTPS[pr.track][pr.clip]) || 24;
+                if ((S.tickCount - S.transportStartTick) >= tps) {
+                    S.pendingPrerollNote = null;
+                    if (S.clipSteps[pr.track][pr.clip][0] === 0) {
+                        host_module_set_param('t' + pr.track + '_c' + pr.clip + '_step_0_toggle', pr.pitch + ' ' + pr.vel);
+                        S.clipSteps[pr.track][pr.clip][0] = 1;
+                        S.clipNonEmpty[pr.track][pr.clip] = true;
+                        invalidateLEDCache();
+                        forceRedraw();
+                    }
                 }
             }
         } else {
@@ -5404,8 +5430,7 @@ function _onPadPressTrackView(status, d1, d2) {
                 }
                 /* Record hit at zone velocity if armed */
                 if (S.recordArmed && !S.recordCountingIn && t === S.recordArmedTrack) {
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + t + '_drum_record_note_on', laneNote + ' ' + zoneVel);
+                    _drumRecNoteOns.push({ track: t, laneNote: laneNote, vel: zoneVel });
                     S.pendingDrumLaneResync      = 3;
                     S.pendingDrumLaneResyncTrack = t;
                     S.pendingDrumLaneResyncLane  = lane_vp;
@@ -5498,26 +5523,21 @@ function _onPadPressTrackView(status, d1, d2) {
                     S.liveActiveNotes.add(laneNote);
                     /* Record step hit if armed */
                     if (S.recordArmed && !S.recordCountingIn && t === S.recordArmedTrack) {
-                        if (typeof host_module_set_param === 'function') {
-                            const tvo = S.trackVelOverride[t];
-                            const recVel = tvo > 0 ? tvo : vel;
-                            host_module_set_param('t' + t + '_drum_record_note_on', laneNote + ' ' + recVel);
-                        }
+                        const tvo = S.trackVelOverride[t];
+                        const recVel = tvo > 0 ? tvo : vel;
+                        _drumRecNoteOns.push({ track: t, laneNote: laneNote, vel: recVel });
                         S.pendingDrumLaneResync      = 3;
                         S.pendingDrumLaneResyncTrack = t;
                         S.pendingDrumLaneResyncLane  = lane;
                     }
-                    /* Pre-roll capture: last beat of count-in → write step 0 directly */
+                    /* Pre-roll capture: last beat of count-in → deferred to step 0 after transport starts */
                     if (S.recordArmed && S.recordCountingIn && t === S.recordArmedTrack &&
                             S.countInQuarterTicks > 0 &&
-                            (S.tickCount - S.countInStartTick) >= S.countInQuarterTicks * 3 &&
-                            S.drumLaneSteps[t][lane][0] === '0' &&
-                            typeof host_module_set_param === 'function') {
+                            (S.tickCount - S.countInStartTick) >= S.countInQuarterTicks * 3) {
                         const tvo = S.trackVelOverride[t];
                         const recVel = tvo > 0 ? tvo : vel;
-                        host_module_set_param('t' + t + '_l' + lane + '_step_0_toggle', String(recVel));
-                        S.drumLaneSteps[t][lane][0] = '1';
-                        S.drumLaneHasNotes[t][lane] = true;
+                        S.pendingPrerollNote = { track: t, lane: lane, laneNote: laneNote,
+                                                 vel: recVel, isDrum: true, ready: false };
                     }
                     /* Rpt1: defer lane switch to tick (onMidiMessage set_params coalesce) */
                     if (S.drumPerformMode[t] === 1 && (S.drumRepeatHeldPad[t] >= 0 || S.drumRepeatLatched[t])) {
@@ -6512,8 +6532,11 @@ function _onPadRelease(status, d1, d2) {
         const pitch = padPitch[padIdx] >= 0 ? padPitch[padIdx] : S.padNoteMap[padIdx];
         S.liveActiveNotes.delete(pitch);
         padPitch[padIdx] = -1;
-        if (S.pendingPrerollNote !== null && S.pendingPrerollNote.pitch === pitch)
-            S.pendingPrerollNote.ready = true;
+        if (S.pendingPrerollNote !== null) {
+            const _pr = S.pendingPrerollNote;
+            if ((_pr.isDrum && _pr.laneNote === pitch) || (!_pr.isDrum && _pr.pitch === pitch))
+                _pr.ready = true;
+        }
         if (!S.sessionView) {
             const t = S.activeTrack;
             if (S.trackPadMode[t] === PAD_MODE_DRUM &&
@@ -6523,7 +6546,15 @@ function _onPadRelease(status, d1, d2) {
                 liveSendNote(t, 0x80, pitch, 0);
         }
         padPressTick[padIdx] = -1;
-        if (S.recordArmed && !S.recordCountingIn) recordNoteOff(pitch);
+        if (S.recordArmed && !S.recordCountingIn) {
+            const _t = S.activeTrack;
+            if (S.trackPadMode[_t] === PAD_MODE_DRUM) {
+                if (_t === S.recordArmedTrack)
+                    _drumRecNoteOffs.push({ track: _t, laneNote: pitch });
+            } else {
+                recordNoteOff(pitch);
+            }
+        }
     }
 }
 
@@ -6726,8 +6757,8 @@ globalThis.onMidiMessageExternal = function (data) {
             if (!routeIsMove) liveSendNote(t, 0x90, d1, vel);
             const isSeqEcho = routeIsMove && S.seqActiveNotes.has(d1);
             const isRec = !isSeqEcho && S.recordArmed && !S.recordCountingIn && t === S.recordArmedTrack;
-            if (isRec && typeof host_module_set_param === 'function') {
-                host_module_set_param('t' + t + '_drum_record_note_on', d1 + ' ' + vel);
+            if (isRec) {
+                _drumRecNoteOns.push({ track: t, laneNote: d1, vel: vel });
                 const recLane = S.drumLaneNote[t].indexOf(d1);
                 if (recLane >= 0) {
                     S.pendingDrumLaneResync      = 3;
@@ -6735,11 +6766,13 @@ globalThis.onMidiMessageExternal = function (data) {
                     S.pendingDrumLaneResyncLane  = recLane;
                 }
             }
-            extHeldNotes.set(d1, { track: t, recording: false });
+            extHeldNotes.set(d1, { track: t, recording: isRec });
         } else if (msgType === 0x80 || (msgType === 0x90 && d2 === 0)) {
             const info = extHeldNotes.get(d1);
             const noteTrack = info ? info.track : t;
             if (S.trackRoute[noteTrack] !== 1) liveSendNote(noteTrack, 0x80, d1, 0);
+            if (info && info.recording && S.recordArmed && !S.recordCountingIn)
+                _drumRecNoteOffs.push({ track: noteTrack, laneNote: d1 });
             extHeldNotes.delete(d1);
         } else if (msgType === 0xB0 || msgType === 0xD0 || msgType === 0xA0 || msgType === 0xE0) {
             if (!routeIsMove) liveSendNote(t, msgType, d1, d2);

@@ -437,6 +437,10 @@ typedef struct {
     /* Per-lane render-state tick counters (not persisted; reset on transport play/clip launch). */
     uint16_t drum_current_step[DRUM_LANES];
     uint32_t drum_tick_in_step[DRUM_LANES];
+    /* Per-lane recording pending state (runtime only, not persisted). */
+    uint32_t drum_rec_pending_tick[DRUM_LANES];
+    uint16_t drum_rec_pending_step[DRUM_LANES];
+    uint8_t  drum_rec_pending_active[DRUM_LANES];
     /* Per-lane mute/solo bitmasks (persisted). bit l = lane l. */
     uint32_t drum_lane_mute;
     uint32_t drum_lane_solo;
@@ -3508,6 +3512,11 @@ static void drum_track_init(seq8_track_t *tr) {
             clip_init(&lane->clip);
             lane->midi_note = (uint8_t)(DRUM_BASE_NOTE + l);
         }
+    }
+    for (l = 0; l < DRUM_LANES; l++) {
+        tr->drum_rec_pending_tick[l]   = 0;
+        tr->drum_rec_pending_step[l]   = 0;
+        tr->drum_rec_pending_active[l] = 0;
     }
 }
 
