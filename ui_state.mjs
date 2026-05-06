@@ -253,6 +253,11 @@ export const S = {
     lastTarpStyle: new Array(8).fill(1),
     padLayoutChromatic: new Array(8).fill(false),
     drumInpQuant: new Array(8).fill(0),   /* per-track drum input quantize index 0-8 */
+    clipAdaptiveMode: Array.from({length: 8}, () => new Array(16).fill(false)),
+    clipLengthManuallySet: Array.from({length: 8}, () => new Array(16).fill(false)),
+    drumLaneLengthManuallySet: new Array(8).fill(false),
+    recordScheduledStop: false,
+    recordScheduledStopTarget: -1,
     pendingPrerollNote: null,    /* { track, clip, pitch, vel } — deferred to tick() to avoid coalescing */
     sessionViewMomentary: false, /* true while NoteSession is held and switched view temporarily */
     sessionStepHeld: -1,       /* step button (0-15) held in session view awaiting tap/hold decision */

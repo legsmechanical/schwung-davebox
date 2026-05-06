@@ -619,6 +619,8 @@ function clearClip(t, ac, keepPlaying) {
             S.drumLaneHasNotes[t][l] = false;
         }
         S.drumClipNonEmpty[t][ac] = false;
+        S.clipLengthManuallySet[t][ac] = false;
+        S.drumLaneLengthManuallySet[t]  = false;
         if (ac === S.trackActiveClip[t]) S.seqActiveNotes.clear();
         return;
     }
@@ -629,6 +631,7 @@ function clearClip(t, ac, keepPlaying) {
     const len = S.clipLength[t][ac];
     for (let s = 0; s < len; s++) S.clipSteps[t][ac][s] = 0;
     S.clipNonEmpty[t][ac] = false;
+    S.clipLengthManuallySet[t][ac] = false;
     if (ac === S.trackActiveClip[t]) {
         S.seqActiveNotes.clear(); S.seqLastStep = -1; S.seqNoteOnClipTick = -1;
         resetPerClipBankParamsToDefault(t);
@@ -647,6 +650,8 @@ function hardResetClip(t, ac) {
             S.drumLaneHasNotes[t][l] = false;
         }
         S.drumClipNonEmpty[t][ac] = false;
+        S.clipLengthManuallySet[t][ac] = false;
+        S.drumLaneLengthManuallySet[t]  = false;
         if (ac === S.trackActiveClip[t]) {
             S.drumLaneLength[t] = 16;
             S.drumLaneTPS[t]    = 24;
@@ -661,6 +666,7 @@ function hardResetClip(t, ac) {
     S.clipLength[t][ac] = defaultLen;
     S.clipNonEmpty[t][ac] = false;
     S.clipTPS[t][ac] = 24;
+    S.clipLengthManuallySet[t][ac] = false;
     if (ac === S.trackActiveClip[t]) {
         S.trackCurrentPage[t] = 0;
         S.seqActiveNotes.clear(); S.seqLastStep = -1; S.seqNoteOnClipTick = -1;
@@ -891,6 +897,12 @@ function disarmRecord() {
     S._recNoteOns.length  = 0;
     S._recNoteOffs.length = 0;
     S.pendingPrerollNote  = null;
+    if (t >= 0) {
+        const _dat = S.trackActiveClip[t];
+        S.clipAdaptiveMode[t][_dat] = false;
+    }
+    S.recordScheduledStop       = false;
+    S.recordScheduledStopTarget = -1;
     if (typeof host_module_set_param === 'function') {
         host_module_set_param('record_count_in_cancel', '1');
         if (t >= 0) host_module_set_param('t' + t + '_recording', '0');
@@ -1548,6 +1560,13 @@ function pollDSP() {
                     host_module_set_param('t' + _rT + '_launch_clip', String(_rAc));
                 S.trackQueuedClip[_rT] = _rAc;
             }
+            /* Adaptive mode for count-in path: enter if clip was empty with no manual length */
+            if (!S.clipAdaptiveMode[_rT][_rAc]) {
+                const _isDrumAdapt = S.trackPadMode[_rT] === PAD_MODE_DRUM;
+                if (_isDrumAdapt ? (!S.drumClipNonEmpty[_rT][_rAc] && !S.drumLaneLengthManuallySet[_rT])
+                                 : (!S.clipNonEmpty[_rT][_rAc] && !S.clipLengthManuallySet[_rT][_rAc]))
+                    S.clipAdaptiveMode[_rT][_rAc] = true;
+            }
         }
     }
     if (S.playingPrev  && !S.playing) disarmRecord();
@@ -1865,10 +1884,12 @@ function applyBankParam(t, bankIdx, knobIdx, val) {
             host_module_set_param('t' + t + '_l' + lane + '_pfx_set', pm.dspKey + ' ' + strVal);
             return;
         }
+        if (pm.dspKey === 'clip_length' && S.recordArmed && !S.recordCountingIn && S.recordArmedTrack === t) return;
         host_module_set_param('t' + t + '_' + pm.dspKey, strVal);
         if (pm.dspKey === 'clip_length') {
             const ac = S.trackActiveClip[t];
             S.clipLength[t][ac] = val;
+            S.clipLengthManuallySet[t][ac] = true;
             const maxPage = Math.max(0, Math.ceil(val / 16) - 1);
             if (S.trackCurrentPage[t] > maxPage) S.trackCurrentPage[t] = maxPage;
         }
@@ -3072,7 +3093,7 @@ globalThis.tick = function () {
             /* reapplyPalette resets CC LED hardware states; force-resend transport LEDs
              * so input_filter.mjs buttonCache doesn't silently suppress them. */
             setButtonLED(MovePlay,   S.playing ? Green : LED_OFF, true);
-            setButtonLED(MoveRec,    S.recordArmed ? Red : LED_OFF, true);
+            setButtonLED(MoveRec,    (S.recordArmed || S.recordScheduledStop) ? Red : LED_OFF, true);
             setButtonLED(MoveSample, S.dspMergeState >= 2 ? Green : S.dspMergeState === 1 ? Red : LED_OFF, true);
         }
     }
@@ -3369,7 +3390,11 @@ globalThis.tick = function () {
 
         /* Transport LEDs */
         setButtonLED(MovePlay, S.playing ? Green : LED_OFF);
-        setButtonLED(MoveRec,  S.recordArmed ? Red : LED_OFF);
+        if (S.recordScheduledStop) {
+            setButtonLED(MoveRec, Math.floor(S.tickCount / 8) % 2 === 0 ? Red : LED_OFF);
+        } else {
+            setButtonLED(MoveRec, S.recordArmed ? Red : LED_OFF);
+        }
         setButtonLED(MoveSample, S.dspMergeState >= 2 ? Green : S.dspMergeState === 1 ? Red : LED_OFF);
         /* Loop LED: flash White at 1/8 rate while Perf Mode view is locked (Session
          * View only) or drum repeat latched; dim DarkGrey while Loop is held; off otherwise. */
@@ -3453,6 +3478,48 @@ globalThis.tick = function () {
                     S.clipNonEmpty[pr.track][pr.clip] = true;
                     invalidateLEDCache();
                     forceRedraw();
+                }
+            }
+        } else {
+            /* No note event this tick — safe to send a length set_param without coalescing. */
+            const _art = S.recordArmedTrack >= 0 ? S.recordArmedTrack : S.activeTrack;
+            const _arac = S.trackActiveClip[_art];
+            const _arDrum = S.trackPadMode[_art] === PAD_MODE_DRUM;
+            if (S.recordScheduledStop) {
+                /* Scheduled stop: lock clip at page boundary and disarm */
+                const _sStp = _arDrum ? S.drumCurrentStep[_art] : S.trackCurrentStep[_art];
+                if (_sStp >= 0 && _sStp >= S.recordScheduledStopTarget - 1) {
+                    const _lockLen = S.recordScheduledStopTarget;
+                    if (_arDrum) {
+                        S.drumLaneLength[_art] = _lockLen;
+                        host_module_set_param('t' + _art + '_all_lanes_length', String(_lockLen));
+                    } else {
+                        S.clipLength[_art][_arac] = _lockLen;
+                        host_module_set_param('t' + _art + '_c' + _arac + '_length', String(_lockLen));
+                    }
+                    S.clipAdaptiveMode[_art][_arac] = false;
+                    S.recordScheduledStop       = false;
+                    S.recordScheduledStopTarget = -1;
+                    disarmRecord();
+                }
+            } else if (S.clipAdaptiveMode[_art][_arac]) {
+                /* Adaptive extend: grow clip by one page when approaching boundary */
+                if (_arDrum) {
+                    const _adCur = S.drumLaneLength[_art];
+                    const _adStp = S.drumCurrentStep[_art];
+                    if (_adStp >= 0 && _adCur > 0 && _adCur < 256 && _adStp >= _adCur - 4) {
+                        const _adNew = _adCur + 16;
+                        S.drumLaneLength[_art] = _adNew;
+                        host_module_set_param('t' + _art + '_all_lanes_length', String(_adNew));
+                    }
+                } else {
+                    const _adCur = S.clipLength[_art][_arac];
+                    const _adStp = S.trackCurrentStep[_art];
+                    if (_adStp >= 0 && _adCur > 0 && _adCur < 256 && _adStp >= _adCur - 4) {
+                        const _adNew = _adCur + 16;
+                        S.clipLength[_art][_arac] = _adNew;
+                        host_module_set_param('t' + _art + '_c' + _arac + '_length', String(_adNew));
+                    }
                 }
             }
         }
@@ -3728,13 +3795,16 @@ function _onCC_jog(d1, d2) {
                     /* Track View + Loop held: adjust length ±1 step */
                     S.loopJogActive = true;
                     const _t  = S.activeTrack;
-                    if (S.trackPadMode[_t] === PAD_MODE_DRUM) {
+                    if (S.recordArmed && !S.recordCountingIn) {
+                        /* Block length changes during active recording */
+                    } else if (S.trackPadMode[_t] === PAD_MODE_DRUM) {
                         /* Drum: adjust active lane length */
                         const _lane = S.activeDrumLane[_t];
                         const _cur  = S.drumLaneLength[_t];
                         const _nv   = Math.max(1, Math.min(256, _cur + delta));
                         if (_nv !== _cur) {
                             S.drumLaneLength[_t] = _nv;
+                            S.drumLaneLengthManuallySet[_t] = true;
                             const _maxPage = Math.max(0, Math.ceil(_nv / 16) - 1);
                             if (S.drumStepPage[_t] > _maxPage) S.drumStepPage[_t] = _maxPage;
                             if (typeof host_module_set_param === 'function')
@@ -3747,6 +3817,7 @@ function _onCC_jog(d1, d2) {
                     const _nv  = Math.max(1, Math.min(256, _cur + delta));
                     if (_nv !== _cur) {
                         S.clipLength[_t][_ac] = _nv;
+                        S.clipLengthManuallySet[_t][_ac] = true;
                         const _maxPage = Math.max(0, Math.ceil(_nv / 16) - 1);
                         if (S.trackCurrentPage[_t] > _maxPage) S.trackCurrentPage[_t] = _maxPage;
                         if (typeof host_module_set_param === 'function')
@@ -4091,7 +4162,17 @@ function _onCC_transport(d1, d2) {
     /* Record button (CC 86): toggle arm/disarm */
     if (d1 === MoveRec && d2 === 127) {
         if (S.recordArmed) {
-            disarmRecord();
+            const _recT  = S.recordArmedTrack >= 0 ? S.recordArmedTrack : S.activeTrack;
+            const _recAc = S.trackActiveClip[_recT];
+            if (S.clipAdaptiveMode[_recT][_recAc] && !S.recordScheduledStop && S.playing) {
+                /* Schedule stop at end of current page */
+                const _recDrum = S.trackPadMode[_recT] === PAD_MODE_DRUM;
+                const _recStp  = _recDrum ? S.drumCurrentStep[_recT] : S.trackCurrentStep[_recT];
+                S.recordScheduledStop       = true;
+                S.recordScheduledStopTarget = (Math.floor(_recStp / 16) + 1) * 16;
+            } else {
+                disarmRecord();
+            }
         } else if (!S.playing) {
             /* Stopped → DSP-side 1-bar count-in; transport+recording fire from render thread */
             const rawBpm = typeof host_module_get_param === 'function'
@@ -4108,6 +4189,7 @@ function _onCC_transport(d1, d2) {
                 host_module_set_param('record_count_in', String(S.activeTrack));
             S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
             setButtonLED(MoveRec, Red);
+            /* Adaptive mode: entered when count-in finishes (transport start edge in tick) */
         } else {
             /* Playing → arm immediately with no count-in */
             const rawBpmLive = typeof host_module_get_param === 'function'
@@ -4120,6 +4202,12 @@ function _onCC_transport(d1, d2) {
             if (typeof host_module_set_param === 'function')
                 host_module_set_param('t' + S.activeTrack + '_recording', '1');
             S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
+            /* Adaptive mode: arm into empty clip with no manual length set */
+            { const _at = S.activeTrack, _ac = S.trackActiveClip[_at];
+              const _isDrum = S.trackPadMode[_at] === PAD_MODE_DRUM;
+              if (_isDrum ? (!S.drumClipNonEmpty[_at][_ac] && !S.drumLaneLengthManuallySet[_at])
+                          : (!S.clipNonEmpty[_at][_ac] && !S.clipLengthManuallySet[_at][_ac]))
+                  S.clipAdaptiveMode[_at][_ac] = true; }
         }
     }
 
@@ -4624,12 +4712,14 @@ function _onCC_knobs(d1, d2) {
             }
             if (knobIdx === 4) {
                 /* K5 = Len (lane length, sens=8) */
+                if (S.recordArmed && !S.recordCountingIn) { S.screenDirty = true; return; }
                 S.knobAccum[knobIdx]++;
                 if (S.knobAccum[knobIdx] >= 8) {
                     S.knobAccum[knobIdx] = 0;
                     const nv = Math.max(1, Math.min(256, S.drumLaneLength[t] + dir));
                     if (nv !== S.drumLaneLength[t]) {
                         S.drumLaneLength[t] = nv;
+                        S.drumLaneLengthManuallySet[t] = true;
                         const maxPage = Math.max(0, Math.ceil(nv / 16) - 1);
                         if (S.drumStepPage[t] > maxPage) S.drumStepPage[t] = maxPage;
                         if (typeof host_module_set_param === 'function')
@@ -5783,18 +5873,22 @@ function _onStepButtons(d1, d2) {
         }
         /* S.deleteHeld (non-mute/shift) in Session View: swallow */
     } else if (S.loopHeld) {
-        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
+        if (S.recordArmed && !S.recordCountingIn) {
+            /* Block length changes during active recording */
+        } else if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
             const t = S.activeTrack;
             const newLen = (idx + 1) * 16;
             if (S.activeBank === 7) {
                 /* ALL LANES: set length on all drum lanes */
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('t' + t + '_all_lanes_length', String(newLen));
+                S.drumLaneLengthManuallySet[t] = true;
                 S.pendingDrumResync = 2; S.pendingDrumResyncTrack = t;
             } else {
                 /* Drum: set active lane clip length */
                 const lane = S.activeDrumLane[t];
                 S.drumLaneLength[t] = newLen;
+                S.drumLaneLengthManuallySet[t] = true;
                 const maxPage = Math.max(0, Math.ceil(newLen / 16) - 1);
                 if (S.drumStepPage[t] > maxPage) S.drumStepPage[t] = maxPage;
                 if (typeof host_module_set_param === 'function')
@@ -5804,6 +5898,7 @@ function _onStepButtons(d1, d2) {
         const ac      = effectiveClip(S.activeTrack);
         const newLen  = (idx + 1) * 16;
         S.clipLength[S.activeTrack][ac] = newLen;
+        S.clipLengthManuallySet[S.activeTrack][ac] = true;
         const maxPage = Math.max(0, Math.ceil(newLen / 16) - 1);
         if (S.trackCurrentPage[S.activeTrack] > maxPage)
             S.trackCurrentPage[S.activeTrack] = maxPage;
