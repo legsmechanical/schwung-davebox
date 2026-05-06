@@ -2696,8 +2696,12 @@ function syncClipsTargeted(infoStr) {
     const parts = infoStr.split(' ');
     if (parts.length < 3) { syncClipsFromDsp(); return; }
     const isDrum = parts[0] === 'd';
-    for (let i = 1; i + 1 < parts.length; i += 2) {
+    let i = 1;
+    /* Parse melodic/drum pairs, stopping at any 'DR' token */
+    while (i + 1 < parts.length) {
+        if (parts[i] === 'DR') break;
         const t = parseInt(parts[i], 10), c = parseInt(parts[i + 1], 10);
+        i += 2;
         if (t < 0 || t >= NUM_TRACKS || c < 0 || c >= NUM_CLIPS) continue;
         if (isDrum) {
             syncDrumClipContent(t);
@@ -2719,6 +2723,21 @@ function syncClipsTargeted(infoStr) {
                 S.clipTPS[t][c] = TPS_VALUES.indexOf(tpsVal) >= 0 ? tpsVal : 24;
             }
             if (c === S.trackActiveClip[t]) refreshPerClipBankParams(t);
+        }
+    }
+    /* Parse 'DR rowN' tokens — resync drum clip content for all tracks at those rows */
+    while (i + 1 < parts.length) {
+        if (parts[i] !== 'DR') { i += 2; continue; }
+        const rowIdx = parseInt(parts[i + 1], 10);
+        i += 2;
+        if (rowIdx < 0 || rowIdx >= NUM_CLIPS) continue;
+        for (let t2 = 0; t2 < NUM_TRACKS; t2++) {
+            syncDrumClipContent(t2);
+            if (rowIdx === S.trackActiveClip[t2]) {
+                syncDrumLanesMeta(t2);
+                syncDrumLaneSteps(t2, S.activeDrumLane[t2]);
+                refreshDrumLaneBankParams(t2, S.activeDrumLane[t2]);
+            }
         }
     }
     S.screenDirty = true;

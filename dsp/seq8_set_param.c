@@ -1162,11 +1162,30 @@ static void set_param(void *instance, const char *key, const char *val) {
                            inst->undo_clip_tracks, inst->undo_clip_indices,
                            inst->undo_clip_count);
         inst->undo_valid = 0;
+        /* Also restore drum rows if snapshotted alongside melodic row undo */
+        if (inst->drum_row_undo_valid) {
+            int _s;
+            /* Capture redo */
+            for (_s = 0; _s < (int)inst->drum_row_undo_valid; _s++)
+                drum_row_snap(inst, (int)inst->drum_row_undo_clips[_s], inst->drum_row_redo_lanes[_s]);
+            memcpy(inst->drum_row_redo_clips, inst->drum_row_undo_clips, inst->drum_row_undo_valid);
+            inst->drum_row_redo_valid = inst->drum_row_undo_valid;
+            /* Restore */
+            for (_s = 0; _s < (int)inst->drum_row_undo_valid; _s++)
+                drum_row_restore(inst, (int)inst->drum_row_undo_clips[_s], inst->drum_row_undo_lanes[_s]);
+            inst->drum_row_undo_valid = 0;
+        }
         {
             int _i, _off = snprintf(inst->last_restore_info, sizeof(inst->last_restore_info), "m");
             for (_i = 0; _i < (int)inst->redo_clip_count; _i++)
                 _off += snprintf(inst->last_restore_info + _off, sizeof(inst->last_restore_info) - (size_t)_off,
                                  " %d %d", (int)inst->redo_clip_tracks[_i], (int)inst->redo_clip_indices[_i]);
+            if (inst->drum_row_redo_valid) {
+                int _s;
+                for (_s = 0; _s < (int)inst->drum_row_redo_valid; _s++)
+                    _off += snprintf(inst->last_restore_info + _off, sizeof(inst->last_restore_info) - (size_t)_off,
+                                     " DR %d", (int)inst->drum_row_redo_clips[_s]);
+            }
         }
         return;
     }
@@ -1226,11 +1245,30 @@ static void set_param(void *instance, const char *key, const char *val) {
                            inst->redo_clip_tracks, inst->redo_clip_indices,
                            inst->redo_clip_count);
         inst->redo_valid = 0;
+        /* Also restore drum rows if snapshotted alongside melodic row redo */
+        if (inst->drum_row_redo_valid) {
+            int _s;
+            /* Capture new undo */
+            for (_s = 0; _s < (int)inst->drum_row_redo_valid; _s++)
+                drum_row_snap(inst, (int)inst->drum_row_redo_clips[_s], inst->drum_row_undo_lanes[_s]);
+            memcpy(inst->drum_row_undo_clips, inst->drum_row_redo_clips, inst->drum_row_redo_valid);
+            inst->drum_row_undo_valid = inst->drum_row_redo_valid;
+            /* Restore */
+            for (_s = 0; _s < (int)inst->drum_row_redo_valid; _s++)
+                drum_row_restore(inst, (int)inst->drum_row_redo_clips[_s], inst->drum_row_redo_lanes[_s]);
+            inst->drum_row_redo_valid = 0;
+        }
         {
             int _i, _off = snprintf(inst->last_restore_info, sizeof(inst->last_restore_info), "m");
             for (_i = 0; _i < (int)inst->undo_clip_count; _i++)
                 _off += snprintf(inst->last_restore_info + _off, sizeof(inst->last_restore_info) - (size_t)_off,
                                  " %d %d", (int)inst->undo_clip_tracks[_i], (int)inst->undo_clip_indices[_i]);
+            if (inst->drum_row_undo_valid) {
+                int _s;
+                for (_s = 0; _s < (int)inst->drum_row_undo_valid; _s++)
+                    _off += snprintf(inst->last_restore_info + _off, sizeof(inst->last_restore_info) - (size_t)_off,
+                                     " DR %d", (int)inst->drum_row_undo_clips[_s]);
+            }
         }
         return;
     }

@@ -595,6 +595,15 @@ typedef struct {
     drum_rec_snap_lane_t drum_undo_lanes[DRUM_LANES];
     drum_rec_snap_lane_t drum_redo_lanes[DRUM_LANES];
 
+    /* Drum row undo/redo — active alongside undo_valid for row_copy/cut/clear.
+     * valid=1: one row (copy/clear); valid=2: two rows (cut, [0]=dst [1]=src). */
+    uint8_t drum_row_undo_valid;
+    uint8_t drum_row_redo_valid;
+    uint8_t drum_row_undo_clips[2];
+    uint8_t drum_row_redo_clips[2];
+    drum_rec_snap_lane_t drum_row_undo_lanes[2][NUM_TRACKS][DRUM_LANES];
+    drum_rec_snap_lane_t drum_row_redo_lanes[2][NUM_TRACKS][DRUM_LANES];
+
     /* Global MIDI Looper.
      * State machine: IDLE -> ARMED (waiting for boundary) -> CAPTURING ->
      * LOOPING. Stop drops back to IDLE.
@@ -3811,6 +3820,49 @@ static void undo_begin_single(seq8_instance_t *inst, int t, int c) {
     inst->drum_undo_valid = 0;
 }
 
+static void drum_row_snap(seq8_instance_t *inst, int row,
+                          drum_rec_snap_lane_t dst[NUM_TRACKS][DRUM_LANES]) {
+    int t, l;
+    for (t = 0; t < NUM_TRACKS; t++) {
+        drum_clip_t *dc = &inst->tracks[t].drum_clips[row];
+        for (l = 0; l < DRUM_LANES; l++) {
+            const clip_t *src = &dc->lanes[l].clip;
+            drum_rec_snap_lane_t *d = &dst[t][l];
+            memcpy(d->steps,            src->steps,            SEQ_STEPS);
+            memcpy(d->step_notes,       src->step_notes,       SEQ_STEPS * 8);
+            memcpy(d->step_note_count,  src->step_note_count,  SEQ_STEPS);
+            memcpy(d->step_vel,         src->step_vel,         SEQ_STEPS);
+            memcpy(d->step_gate,        src->step_gate,        SEQ_STEPS * sizeof(uint16_t));
+            memcpy(d->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
+            d->length     = src->length;
+            d->active     = src->active;
+            d->pfx_params = src->pfx_params;
+        }
+    }
+}
+
+static void drum_row_restore(seq8_instance_t *inst, int row,
+                             const drum_rec_snap_lane_t src[NUM_TRACKS][DRUM_LANES]) {
+    int t, l;
+    for (t = 0; t < NUM_TRACKS; t++) {
+        drum_clip_t *dc = &inst->tracks[t].drum_clips[row];
+        for (l = 0; l < DRUM_LANES; l++) {
+            clip_t *dst = &dc->lanes[l].clip;
+            const drum_rec_snap_lane_t *s = &src[t][l];
+            memcpy(dst->steps,            s->steps,            SEQ_STEPS);
+            memcpy(dst->step_notes,       s->step_notes,       SEQ_STEPS * 8);
+            memcpy(dst->step_note_count,  s->step_note_count,  SEQ_STEPS);
+            memcpy(dst->step_vel,         s->step_vel,         SEQ_STEPS);
+            memcpy(dst->step_gate,        s->step_gate,        SEQ_STEPS * sizeof(uint16_t));
+            memcpy(dst->note_tick_offset, s->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
+            dst->length     = s->length;
+            dst->active     = s->active;
+            dst->pfx_params = s->pfx_params;
+            clip_migrate_to_notes(dst);
+        }
+    }
+}
+
 static void undo_begin_row(seq8_instance_t *inst, int row_c) {
     int t;
     inst->undo_clip_count = NUM_TRACKS;
@@ -3822,6 +3874,10 @@ static void undo_begin_row(seq8_instance_t *inst, int row_c) {
     inst->undo_valid = 1;
     inst->redo_valid = 0;
     inst->drum_undo_valid = 0;
+    drum_row_snap(inst, row_c, inst->drum_row_undo_lanes[0]);
+    inst->drum_row_undo_clips[0] = (uint8_t)row_c;
+    inst->drum_row_undo_valid = 1;
+    inst->drum_row_redo_valid = 0;
 }
 
 /* Snapshot two clips (src + dst) for cut operations — restores both on undo. */
@@ -3853,6 +3909,12 @@ static void undo_begin_row_pair(seq8_instance_t *inst, int srcRow, int dstRow) {
     inst->undo_valid = 1;
     inst->redo_valid = 0;
     inst->drum_undo_valid = 0;
+    drum_row_snap(inst, dstRow, inst->drum_row_undo_lanes[0]);
+    inst->drum_row_undo_clips[0] = (uint8_t)dstRow;
+    drum_row_snap(inst, srcRow, inst->drum_row_undo_lanes[1]);
+    inst->drum_row_undo_clips[1] = (uint8_t)srcRow;
+    inst->drum_row_undo_valid = 2;
+    inst->drum_row_redo_valid = 0;
 }
 
 static void undo_begin_drum_clip(seq8_instance_t *inst, int t, int c) {
