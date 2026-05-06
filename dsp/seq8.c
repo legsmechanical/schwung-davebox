@@ -4595,6 +4595,8 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         return snprintf(out, out_len, "%d", inst ? (int)inst->metro_on : 1);
     if (!strcmp(key, "metro_vol"))
         return snprintf(out, out_len, "%d", inst ? (int)inst->metro_vol : 80);
+    if (!strcmp(key, "metro_beat_count"))
+        return snprintf(out, out_len, "%d", inst ? (int)inst->metro_beat_count : 0);
     if (!strcmp(key, "launch_quant"))
         return snprintf(out, out_len, "%d", inst ? (int)inst->launch_quant : 0);
     if (!strcmp(key, "swing_amt"))

@@ -621,7 +621,12 @@ function clearClip(t, ac, keepPlaying) {
         S.drumClipNonEmpty[t][ac] = false;
         S.clipLengthManuallySet[t][ac] = false;
         S.drumLaneLengthManuallySet[t]  = false;
-        if (ac === S.trackActiveClip[t]) S.seqActiveNotes.clear();
+        if (ac === S.trackActiveClip[t]) {
+            S.seqActiveNotes.clear();
+            S.drumLaneLength[t] = 16;
+        }
+        S.pendingClearLengthTrack = t;
+        S.pendingClearLengthClip  = ac;
         return;
     }
     const cmd = (keepPlaying && S.trackClipPlaying[t] && ac === S.trackActiveClip[t])
@@ -632,6 +637,9 @@ function clearClip(t, ac, keepPlaying) {
     for (let s = 0; s < len; s++) S.clipSteps[t][ac][s] = 0;
     S.clipNonEmpty[t][ac] = false;
     S.clipLengthManuallySet[t][ac] = false;
+    S.clipLength[t][ac] = 16;
+    S.pendingClearLengthTrack = t;
+    S.pendingClearLengthClip  = ac;
     if (ac === S.trackActiveClip[t]) {
         S.seqActiveNotes.clear(); S.seqLastStep = -1; S.seqNoteOnClipTick = -1;
         resetPerClipBankParamsToDefault(t);
@@ -900,9 +908,14 @@ function disarmRecord() {
     if (t >= 0) {
         const _dat = S.trackActiveClip[t];
         S.clipAdaptiveMode[t][_dat] = false;
+        if (S.trackPadMode[t] === PAD_MODE_DRUM) {
+            S.pendingDrumResync      = 2;
+            S.pendingDrumResyncTrack = t;
+        }
     }
     S.recordScheduledStop       = false;
     S.recordScheduledStopTarget = -1;
+    S.pendingScheduledDisarm    = false;
     if (typeof host_module_set_param === 'function') {
         host_module_set_param('record_count_in_cancel', '1');
         if (t >= 0) host_module_set_param('t' + t + '_recording', '0');
@@ -1440,12 +1453,6 @@ function pollDSP() {
     }
     S.flashEighth    = (v[50] === '1');
     S.flashSixteenth = (v[51] === '1');
-    const _beatCount = parseInt(v[52], 10) | 0;
-    if (_beatCount !== S.metroPrevBeat) {
-        S.metroPrevBeat = _beatCount;
-        playMetronomeClick();
-        if (S.recordCountingIn) S.countInBeatStartTick = S.tickCount;
-    }
     if (v.length >= 54) S.masterPos      = (parseInt(v[53], 10) | 0) >>> 0;
     if (v.length >= 55) S.dspLooperState  = parseInt(v[54], 10) | 0;
     const _prevMergeState = S.dspMergeState;
@@ -3189,6 +3196,7 @@ globalThis.tick = function () {
     if (S.pendingDrumResync > 0) {
         S.pendingDrumResync--;
         if (S.pendingDrumResync === 0) {
+            syncDrumClipContent(S.pendingDrumResyncTrack);
             syncDrumLanesMeta(S.pendingDrumResyncTrack);
             syncDrumLaneSteps(S.pendingDrumResyncTrack, S.activeDrumLane[S.pendingDrumResyncTrack]);
             forceRedraw();
@@ -3222,6 +3230,22 @@ globalThis.tick = function () {
             if (prac === S.trackActiveClip[prt]) refreshPerClipBankParams(prt);
             forceRedraw();
         }
+    }
+
+    if (S.pendingClearLengthTrack >= 0) {
+        const _clt = S.pendingClearLengthTrack;
+        const _clc = S.pendingClearLengthClip;
+        S.pendingClearLengthTrack = -1;
+        S.pendingClearLengthClip  = -1;
+        const _isDrumCl = S.trackPadMode[_clt] === PAD_MODE_DRUM;
+        if (_isDrumCl) {
+            if (_clc === S.trackActiveClip[_clt])
+                host_module_set_param('t' + _clt + '_all_lanes_length', '16');
+        } else {
+            host_module_set_param('t' + _clt + '_c' + _clc + '_length', '16');
+        }
+        if (_clc === S.trackActiveClip[_clt]) refreshPerClipBankParams(_clt);
+        forceRedraw();
     }
 
     /* Refresh step LEDs while drum repeat is recording into the active lane */
@@ -3324,6 +3348,19 @@ globalThis.tick = function () {
         }
 
         if ((S.tickCount % POLL_INTERVAL) === 0) { pollDSP(); S.screenDirty = true; }
+
+        /* Metro beat detection: checked every tick via dedicated get_param for minimal jitter */
+        if (S.metronomeOn > 0) {
+            const _mbcRaw = host_module_get_param('metro_beat_count');
+            if (_mbcRaw !== null && _mbcRaw !== undefined) {
+                const _mbc = parseInt(_mbcRaw, 10) | 0;
+                if (_mbc !== S.metroPrevBeat) {
+                    S.metroPrevBeat = _mbc;
+                    playMetronomeClick();
+                    if (S.recordCountingIn) S.countInBeatStartTick = S.tickCount;
+                }
+            }
+        }
 
         /* Step hold threshold: once elapsed, close the tap window so release won't toggle.
          * Also auto-assign empty step now so knobs work immediately in step edit. */
@@ -3485,8 +3522,12 @@ globalThis.tick = function () {
             const _art = S.recordArmedTrack >= 0 ? S.recordArmedTrack : S.activeTrack;
             const _arac = S.trackActiveClip[_art];
             const _arDrum = S.trackPadMode[_art] === PAD_MODE_DRUM;
-            if (S.recordScheduledStop) {
-                /* Scheduled stop: lock clip at page boundary and disarm */
+            if (S.pendingScheduledDisarm) {
+                /* Tick 2: send tN_recording=0 alone (length was locked last tick) */
+                S.pendingScheduledDisarm = false;
+                disarmRecord();
+            } else if (S.recordScheduledStop) {
+                /* Tick 1: lock clip length at page boundary; disarm deferred to next tick */
                 const _sStp = _arDrum ? S.drumCurrentStep[_art] : S.trackCurrentStep[_art];
                 if (_sStp >= 0 && _sStp >= S.recordScheduledStopTarget - 1) {
                     const _lockLen = S.recordScheduledStopTarget;
@@ -3498,9 +3539,9 @@ globalThis.tick = function () {
                         host_module_set_param('t' + _art + '_c' + _arac + '_length', String(_lockLen));
                     }
                     S.clipAdaptiveMode[_art][_arac] = false;
-                    S.recordScheduledStop       = false;
-                    S.recordScheduledStopTarget = -1;
-                    disarmRecord();
+                    S.recordScheduledStop           = false;
+                    S.recordScheduledStopTarget     = -1;
+                    S.pendingScheduledDisarm        = true;
                 }
             } else if (S.clipAdaptiveMode[_art][_arac]) {
                 /* Adaptive extend: grow clip by one page when approaching boundary */
@@ -4138,6 +4179,25 @@ function _onCC_transport(d1, d2) {
                     }
                 } else {
                     host_module_set_param('transport', 'deactivate_all');
+                    /* Unlatch all latched play states — queued one-per-tick to avoid coalescing */
+                    for (let _ut = 0; _ut < NUM_TRACKS; _ut++) {
+                        if (S.drumRepeatLatched[_ut]) {
+                            S.drumRepeatLatched[_ut] = false;
+                            S.drumRepeatHeldPad[_ut] = -1;
+                            S.drumRepeatHeldPadsStack[_ut].length = 0;
+                            S.pendingDefaultSetParams.push({ key: 't' + _ut + '_drum_repeat_stop', val: '1' });
+                        }
+                        if (S.drumRepeat2LatchedLanes[_ut].size > 0) {
+                            S.drumRepeat2LatchedLanes[_ut].forEach(function(lane) {
+                                S.pendingDefaultSetParams.push({ key: 't' + _ut + '_drum_repeat2_lane_off', val: String(lane) });
+                            });
+                            S.drumRepeat2LatchedLanes[_ut].clear();
+                        }
+                        if (S.bankParams[_ut] && S.bankParams[_ut][5] && S.bankParams[_ut][5][7]) {
+                            S.bankParams[_ut][5][7] = 0;
+                            S.pendingDefaultSetParams.push({ key: 't' + _ut + '_tarp_latch', val: '0' });
+                        }
+                    }
                 }
             }
         } else if (S.muteHeld) {
@@ -5437,10 +5497,10 @@ function _onPadPressTrackView(status, d1, d2) {
                         S.pendingDrumLaneResyncTrack = t;
                         S.pendingDrumLaneResyncLane  = lane;
                     }
-                    /* Pre-roll capture: last 1/8 beat of count-in → force hit at step 0 */
+                    /* Pre-roll capture: last beat of count-in → write step 0 directly */
                     if (S.recordArmed && S.recordCountingIn && t === S.recordArmedTrack &&
                             S.countInQuarterTicks > 0 &&
-                            (S.tickCount - S.countInStartTick) >= Math.round(S.countInQuarterTicks * 7 / 2) &&
+                            (S.tickCount - S.countInStartTick) >= S.countInQuarterTicks * 3 &&
                             S.drumLaneSteps[t][lane][0] === '0' &&
                             typeof host_module_set_param === 'function') {
                         const tvo = S.trackVelOverride[t];
@@ -5537,11 +5597,11 @@ function _onPadPressTrackView(status, d1, d2) {
             S.lastPadVelocity = effectiveVelocity(d2);
             S.liveActiveNotes.add(pitch);
             liveSendNote(S.activeTrack, 0x90, pitch, effectiveVelocity(d2));
-            /* Pre-roll capture: note in last 1/16th of count-in → step 0 */
+            /* Pre-roll capture: note in last beat of count-in → step 0 */
             if (S.recordArmed && S.recordCountingIn &&
                     S.activeTrack === S.recordArmedTrack &&
                     S.countInQuarterTicks > 0 &&
-                    (S.tickCount - S.countInStartTick) >= Math.round(S.countInQuarterTicks * 7 / 2) &&
+                    (S.tickCount - S.countInStartTick) >= S.countInQuarterTicks * 3 &&
                     typeof host_module_set_param === 'function') {
                 const rt   = S.recordArmedTrack;
                 const ac_r = S.trackActiveClip[rt];

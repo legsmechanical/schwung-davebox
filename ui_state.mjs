@@ -258,7 +258,10 @@ export const S = {
     drumLaneLengthManuallySet: new Array(8).fill(false),
     recordScheduledStop: false,
     recordScheduledStopTarget: -1,
+    pendingScheduledDisarm: false,
     pendingPrerollNote: null,    /* { track, clip, pitch, vel } — deferred to tick() to avoid coalescing */
+    pendingClearLengthTrack: -1, /* deferred length-reset after clip clear (avoids coalescing with clear cmd) */
+    pendingClearLengthClip: -1,
     sessionViewMomentary: false, /* true while NoteSession is held and switched view temporarily */
     sessionStepHeld: -1,       /* step button (0-15) held in session view awaiting tap/hold decision */
     sessionStepHeldCtx: 0,     /* 1=perf preset, 2=mute snapshot */

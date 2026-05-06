@@ -5,6 +5,21 @@ import {
 } from '/data/UserData/schwung/shared/menu_layout.mjs';
 import { formatItemValue } from '/data/UserData/schwung/shared/menu_items.mjs';
 
+function pixelPrintMcu(x, y, text, scale, color) {
+    const charW = 5 * scale + scale;
+    for (let ci = 0; ci < text.length; ci++) {
+        const g = MCUFONT[text[ci]];
+        if (!g) continue;
+        for (let row = 0; row < 5; row++) {
+            const bits = g[row];
+            for (let col = 0; col < 5; col++) {
+                if (bits & (1 << (4 - col)))
+                    fill_rect(x + ci * charW + col * scale, y + row * scale, scale, scale, color);
+            }
+        }
+    }
+}
+
 function pixelPrintLargeC(cx, y, text, scale, color) {
     const charW  = 5 * scale + scale;
     const totalW = text.length * charW - scale;
@@ -63,9 +78,9 @@ export function drawGlobalMenu() {
     if (S.confirmClearSession) { drawClearSessionConfirm();  return; }
     clear_screen();
     const _inTrackSection = S.globalMenuState.selectedIndex < 5;
-    const _hTitle = _inTrackSection ? 'Track ' + (S.activeTrack + 1) : 'GLOBAL';
-    fill_rect(0, 0, 128, 12, 1);
-    print(2, 2, _hTitle, 0);
+    const _hTitle = _inTrackSection ? 'Track ' + (S.activeTrack + 1) : 'Global';
+    fill_rect(0, 1, 128, 10, 1);
+    pixelPrintMcu(2, 4, _hTitle, 1, 0);
     fill_rect(0, 12, 128, 1, 1);
     drawMenuList({
         items: S.globalMenuItems,
