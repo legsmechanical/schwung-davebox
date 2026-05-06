@@ -319,6 +319,7 @@ export const BANKS = [
 export const ACTION_POPUP_TICKS = 98; /* ~500ms at 196Hz */
 export const POLL_INTERVAL = 4;
 export const CC_SCRATCH_PALETTE_BASE = 51;
+export const OOB_SCRATCH_PALETTE     = 50;  /* scratch index for 75%-white OOB step LEDs */
 export const TAP_TEMPO_FLASH_TICKS = 20;   /* ~100ms at 196Hz */
 export const TAP_TEMPO_RESET_MS    = 2000; /* inactivity reset threshold */
 export const PARAM_LED_BANKS = [1, 2, 3, 4, 5];
