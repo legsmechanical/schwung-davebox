@@ -1534,7 +1534,22 @@ function pollDSP() {
     S.countInDspPrev = countInDspActive;
 
     /* Transport transitions */
-    if (!S.playingPrev && S.playing)  S.transportStartTick = S.tickCount;
+    if (!S.playingPrev && S.playing) {
+        S.transportStartTick = S.tickCount;
+        /* Auto-launch focused clip if record is armed and clip is inactive */
+        if (S.recordArmed) {
+            const _rT  = S.recordArmedTrack >= 0 ? S.recordArmedTrack : S.activeTrack;
+            const _rAc = S.trackActiveClip[_rT];
+            if (S.clipNonEmpty[_rT][_rAc] &&
+                    !S.trackClipPlaying[_rT] &&
+                    !S.trackWillRelaunch[_rT] &&
+                    S.trackQueuedClip[_rT] !== _rAc) {
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + _rT + '_launch_clip', String(_rAc));
+                S.trackQueuedClip[_rT] = _rAc;
+            }
+        }
+    }
     if (S.playingPrev  && !S.playing) disarmRecord();
     S.playingPrev = S.playing;
 
