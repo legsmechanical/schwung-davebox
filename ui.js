@@ -3855,6 +3855,7 @@ function _onCC_buttons(d1, d2) {
             S.sessionStepHeldCtx = 0;
         } else {
             /* Loop released — Rpt2: unlatch all if no pad was touched during hold */
+            S.loopJogActive = false;
             const _lrt = S.activeTrack;
             if (S.drumPerformMode[_lrt] === 2 && !S.rpt2LoopPadUsed &&
                     S.drumRepeat2LatchedLanes[_lrt].size > 0) {
