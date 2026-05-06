@@ -2128,15 +2128,15 @@ function drawUI() {
         }
         /* DAVEBOX banner — white bar, letters animated when transport running */
         fill_rect(0, 0, 128, 12, 1);
-        let dA, dE;
+        let dA, dE, dO;
         if (S.playing) {
-            const rel = S.tickCount - S.transportStartTick;
-            dA = (Math.floor(rel / 96) % 2 === 0) ? 'A' : '@';
-            dE = (Math.floor(rel / 48) % 2 === 0) ? '3' : 'E';
+            dA = (Math.floor(S.masterPos /  96) % 2 === 0) ? 'A' : '@';
+            dE = (Math.floor(S.masterPos /  48) % 2 === 0) ? '3' : 'E';
+            dO = (Math.floor(S.masterPos / 192) % 2 === 0) ? 'O' : 'o';
         } else {
-            dA = 'A'; dE = 'E';
+            dA = 'A'; dE = 'E'; dO = 'O';
         }
-        const banner = 'd' + dA + 'V' + dE + 'BOx';
+        const banner = 'd' + dA + 'V' + dE + 'B' + dO + 'x';
         print(43, 2, banner, 0);
         drawMetroIndicator();
         drawTrackRow(34);
@@ -5765,12 +5765,12 @@ function _onStepButtons(d1, d2) {
                 computePadNoteMap();
                 showActionPopup(S.padLayoutChromatic[t] ? 'CHROMATIC' : 'IN-SCALE');
             }
-        } else if (idx === 9 && isDrum) {
-            /* Step 10 (drum): toggle ALL lane VelIn between Live and 127 */
+        } else if (idx === 9) {
+            /* Step 10: toggle VelIn between Live and 127 */
             const curVel = S.trackVelOverride[t];
             const nextVel = curVel === 0 ? 127 : 0;
             applyTrackConfig(t, 'track_vel_override', nextVel);
-            showActionPopup('ALL LANES', nextVel === 0 ? 'VEL LIVE' : 'VEL 127');
+            showActionPopup(isDrum ? 'ALL LANES' : 'VEL IN', nextVel === 0 ? 'VEL LIVE' : 'VEL 127');
         } else if (idx === 10 && !isDrum) {
             /* Step 11: toggle TRACK ARP style on/off (melodic only) */
             const curStyle = S.bankParams[t][5][0] | 0;
