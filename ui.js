@@ -1262,7 +1262,7 @@ function drainLedInit() {
     if (S.ledInitIndex >= S.ledInitQueue.length) {
         S.ledInitComplete = true;
         setPaletteEntryRGB(OOB_SCRATCH_PALETTE, 128, 128, 128);
-        setPaletteEntryRGB(BEAT_MARKER_PALETTE, 64, 64, 64);
+        setPaletteEntryRGB(BEAT_MARKER_PALETTE, 26, 26, 26);
         reapplyPalette();
     }
 }
