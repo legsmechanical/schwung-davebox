@@ -429,7 +429,7 @@ export function updateTrackLEDs() {
             const chromatic = S.padLayoutChromatic[S.activeTrack];
             color = (sounding || inHeld) ? White
                   : (chromatic && !inScale) ? LED_OFF
-                  : (S.padNoteMap[i] % 12 === S.padKey ? rootColor : (chromatic ? LightGrey : DarkGrey));
+                  : (S.padNoteMap[i] % 12 === S.padKey ? rootColor : DarkGrey);
             cachedSetLED(TRACK_PAD_BASE + i, color);
         }
         }

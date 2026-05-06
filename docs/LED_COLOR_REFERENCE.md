@@ -165,7 +165,7 @@ Overrides all step LEDs after saving a preset slot.
 | Note is sounding (live or seq) or held in step edit | `White` |
 | Chromatic layout and note is not in scale | `LED_OFF` |
 | Root note (matches key) | `TRACK_COLORS[t]` (track bright) |
-| In-scale note, chromatic layout | `LightGrey` |
+| In-scale note, chromatic layout | `DarkGrey` |
 | In-scale note, isomorphic layout | `DarkGrey` |
 
 ### 3b. Drum track — lane selectors (left 4 columns) (`ui_leds.mjs:L354`)
