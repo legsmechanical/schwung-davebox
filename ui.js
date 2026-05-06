@@ -4222,6 +4222,12 @@ function _onCC_transport(d1, d2) {
     /* Record button (CC 86): toggle arm/disarm */
     if (d1 === MoveRec && d2 === 127) {
         if (S.recordArmed) {
+            if (S.recordCountingIn) {
+                /* Record pressed during count-in → cancel queued transport+record */
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('record_count_in_cancel', '1');
+                disarmRecord();
+            } else {
             const _recT  = S.recordArmedTrack >= 0 ? S.recordArmedTrack : S.activeTrack;
             const _recAc = S.trackActiveClip[_recT];
             if (S.clipAdaptiveMode[_recT][_recAc] && !S.recordScheduledStop && S.playing) {
@@ -4233,6 +4239,7 @@ function _onCC_transport(d1, d2) {
             } else {
                 disarmRecord();
             }
+            } /* end else (not counting in) */
         } else if (!S.playing) {
             /* Stopped → DSP-side 1-bar count-in; transport+recording fire from render thread */
             const rawBpm = typeof host_module_get_param === 'function'
