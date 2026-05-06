@@ -1261,7 +1261,7 @@ function drainLedInit() {
     S.ledInitIndex = end;
     if (S.ledInitIndex >= S.ledInitQueue.length) {
         S.ledInitComplete = true;
-        setPaletteEntryRGB(OOB_SCRATCH_PALETTE, 191, 191, 191);
+        setPaletteEntryRGB(OOB_SCRATCH_PALETTE, 128, 128, 128);
         reapplyPalette();
     }
 }

@@ -68,7 +68,7 @@ export function updateStepLEDs() {
             for (let p = 0; p < 16; p++) {
                 let color;
                 if (p >= totalPages) {
-                    color = OOB_SCRATCH_PALETTE;
+                    color = LED_OFF;
                 } else {
                     const base = p * 16;
                     const end  = Math.min(base + 16, len);
@@ -87,7 +87,7 @@ export function updateStepLEDs() {
             for (let p = 0; p < 16; p++) {
                 let color;
                 if (p >= totalPages) {
-                    color = OOB_SCRATCH_PALETTE;
+                    color = LED_OFF;
                 } else {
                     const base = p * 16;
                     const end  = Math.min(base + 16, len);
@@ -116,7 +116,7 @@ export function updateStepLEDs() {
         for (let i = 0; i < 16; i++) {
             const absStep = base + i;
             let color;
-            if (absStep >= len)                    color = White;
+            if (absStep >= len)                    color = OOB_SCRATCH_PALETTE;
             else if (S.playing && absStep === cs)    color = White;
             else if (ls[absStep] === '1')          color = TRACK_COLORS[t];
             else                                   color = (S.beatMarkersEnabled && i % 4 === 0) ? LightGrey : LED_OFF;
@@ -162,7 +162,7 @@ export function updateStepLEDs() {
         const absStep = base + i;
         let color;
         if (absStep >= len) {
-            color = White;
+            color = OOB_SCRATCH_PALETTE;
         } else if (S.playing && absStep === cs) {
             color = White;
         } else if (steps[absStep] === 1) {
