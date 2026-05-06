@@ -5544,6 +5544,28 @@ function _onPadPress(status, d1, d2) {
         }
 }
 
+function _doShiftStepCommon(idx) {
+    const t      = S.activeTrack;
+    const isDrum = S.trackPadMode[t] === PAD_MODE_DRUM;
+    if (idx === 1) {
+        openGlobalMenu();
+        S.globalMenuState.selectedIndex = 6;
+    } else if (idx === 4) {
+        openTapTempo();
+    } else if (idx === 5) {
+        S.metronomeOn = (S.metronomeOn === 1) ? 3 : 1;
+        if (typeof host_module_set_param === 'function')
+            host_module_set_param('metro_on', String(S.metronomeOn));
+        showActionPopup(['Off', 'Cnt-In', 'Play', 'Always'][S.metronomeOn]);
+    } else if (idx === 6) {
+        openGlobalMenu();
+        S.globalMenuState.selectedIndex = 12;
+    } else if (idx === 8) {
+        openGlobalMenu();
+        S.globalMenuState.selectedIndex = 8;
+    }
+}
+
 function _onStepButtons(d1, d2) {
     if (S.tapTempoOpen) return;
     S.stepOpTick = S.tickCount;
@@ -5577,11 +5599,14 @@ function _onStepButtons(d1, d2) {
             S.sessionStepHeld         = idx;
             S.sessionStepHeldCtx      = 2;  /* mute */
             return;
-        } else if (!S.deleteHeld && !S.shiftHeld) {
+        } else if (S.shiftHeld) {
+            _doShiftStepCommon(idx);
+            forceRedraw();
+        } else if (!S.deleteHeld) {
             if (typeof host_module_set_param === 'function')
                 host_module_set_param('launch_scene', String(idx));
         }
-        /* S.deleteHeld/S.shiftHeld (non-S.muteHeld) in Session View: swallow step buttons */
+        /* S.deleteHeld (non-mute/shift) in Session View: swallow */
     } else if (S.loopHeld) {
         if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
             const t = S.activeTrack;
@@ -5643,28 +5668,12 @@ function _onStepButtons(d1, d2) {
         forceRedraw();
         }
     } else if (S.shiftHeld) {
-        /* Shift+step shortcuts (Track View) */
+        /* Shift+step shortcuts */
+        _doShiftStepCommon(idx);
         const t      = S.activeTrack;
         const isDrum = S.trackPadMode[t] === PAD_MODE_DRUM;
-        if (idx === 1) {
-            /* Step 2: open global menu at BPM */
-            openGlobalMenu();
-            S.globalMenuState.selectedIndex = 6;
-        } else if (idx === 4) {
-            /* Step 5: tap tempo */
-            openTapTempo();
-        } else if (idx === 5) {
-            /* Step 6: metro toggle — count-in only (1) ↔ always (3) */
-            S.metronomeOn = (S.metronomeOn === 1) ? 3 : 1;
-            if (typeof host_module_set_param === 'function')
-                host_module_set_param('metro_on', String(S.metronomeOn));
-            showActionPopup(['Off', 'Cnt-In', 'Play', 'Always'][S.metronomeOn]);
-        } else if (idx === 6) {
-            /* Step 7: open global menu at Swing Amt */
-            openGlobalMenu();
-            S.globalMenuState.selectedIndex = 12;
-        } else if (idx === 7) {
-            /* Step 8: drum=cycle perform mode; melodic=toggle chromatic pad layout */
+        if (idx === 7) {
+            /* Step 8 (Track View only): drum=cycle perform mode; melodic=toggle chromatic */
             if (isDrum) {
                 if (S.drumPerformMode[t] === 1) {
                     host_module_set_param('t' + t + '_drum_repeat_stop', '1');
@@ -5687,10 +5696,6 @@ function _onStepButtons(d1, d2) {
                 computePadNoteMap();
                 showActionPopup(S.padLayoutChromatic[t] ? 'CHROMATIC' : 'IN-SCALE');
             }
-        } else if (idx === 8) {
-            /* Step 9: open global menu at Key */
-            openGlobalMenu();
-            S.globalMenuState.selectedIndex = 8;
         } else if (idx === 9 && isDrum) {
             /* Step 10 (drum): toggle ALL lane VelIn between Live and 127 */
             const curVel = S.trackVelOverride[t];
