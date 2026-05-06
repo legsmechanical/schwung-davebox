@@ -1,0 +1,14 @@
+{
+    "id": "palette-viewer",
+    "name": "Palette Viewer",
+    "version": "0.1.0",
+    "abbrev": "PALV",
+    "description": "Dev tool: inspect Move hardware LED palette",
+    "api_version": 2,
+    "ui": "ui.js",
+    "component_type": "tool",
+    "tool_config": {
+        "interactive": true,
+        "skip_file_browser": true
+    }
+}

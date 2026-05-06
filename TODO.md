@@ -1,12 +1,6 @@
 # SEQ8 Upcoming Tasks
 
-## Cleanup (do after LED respec)
-
-- **Remove palette color viewer**: strip `S.paletteViewActive`, `S.paletteViewPage`, `S.paletteViewHovered`, `_PNAMES`, the `drawUI` palette block, the jog-click enter/exit handlers, the jog-turn page handler, the `_onPadPressTrackView` intercept, and the `updateTrackLEDs` early-return block. All guarded by `S.paletteViewActive` so easy to find.
-
 ## Bugs to fix
-
-- **Count-in pre-roll capture (broken)**: Notes played during the last part of count-in should land on step 1 with no double-hit. Currently: (1) double hits at the start of recording, (2) steps are being recorded but not displayed. Feature was implemented last session — needs debugging. See `pendingPrerollNote` logic and `countInStartTick`/`countInQuarterTicks` in ui.js.
 
 3. **Scale-aware key/scale changes** — transpose all clip notes on Key/Scale change. Design TBD.
 4. **Step/note editing fixes** — see pending fixes in planning doc.

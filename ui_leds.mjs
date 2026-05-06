@@ -296,16 +296,6 @@ export function updateTrackLEDs() {
         }
     }
 
-    if (S.paletteViewActive) {
-        const base = S.paletteViewPage * 32;
-        for (let i = 0; i < 32; i++) cachedSetLED(TRACK_PAD_BASE + i, base + i);
-        for (let k = 0; k < 8; k++) cachedSetButtonLED(71 + k, LED_OFF);
-        for (let s = 0; s < 4; s++) cachedSetButtonLED(40 + s, LED_OFF);
-        /* Step buttons mirror the hovered palette color */
-        const stepColor = S.paletteViewHovered >= 0 ? S.paletteViewHovered : LED_OFF;
-        for (let i = 0; i < 16; i++) setLED(16 + i, stepColor);
-        return;
-    }
 
     if (S.tapTempoOpen) {
         for (let i = 0; i < 32; i++) {
