@@ -489,7 +489,7 @@ function fmtCCLabel(cc) {
  * Stored separately from S.heldStep so a second button press doesn't cause the
  * first button's release to exit step edit prematurely. */
 
-const STEP_HOLD_TICKS      = 40;   /* ~200ms at 196Hz: below = tap, at/above = hold */
+const STEP_HOLD_TICKS      = 19;   /* ~200ms at ~94Hz (device actual): below = tap, at/above = hold */
 const STEP_SAVE_HOLD_TICKS = 150;  /* ~0.75s at 196Hz */
 const STEP_SAVE_FLASH_TICKS = 40;  /* ~200ms double-blink on step button LEDs after save */
 
@@ -2385,11 +2385,13 @@ function drawUI() {
                 print(RHS_X[i], 23, RHS_LABELS[i], hi ? 0 : 1);
                 pixelPrintC(RHS_X[i] + 11, 36, RHS_VALS[i], hi ? 0 : 1);
             }
-        } else {
+            return;
+        } else if (S.stepWasEmpty) {
             print(4, 22, 'STEP EDIT', 1);
             print(4, 34, '(empty)', 1);
+            return;
         }
-        return;
+        /* non-empty step, notes still loading at hold threshold — fall through to bank/header */
     }
 
     /* Loop view: own priority state so screen is fully cleared first */
