@@ -46,7 +46,7 @@ export const NUM_STEPS           = 256;  /* steps per clip (DSP array size) */
 /* Track colors: bright and dim pairs (Move uses fixed palette indices). */
 export const TRACK_COLORS     = [Red,    Blue,      BrightGreen, Green,
                                  BrightPink, RoyalBlue, Mustard,     DeepGreen];
-export const TRACK_DIM_COLORS = [68,     DarkBlue,  DarkOlive,   86,
+export const TRACK_DIM_COLORS = [66,     DarkBlue,  DarkOlive,   86,
                                  DeepWine, 96,        70,          86];
 export const SCENE_LETTERS    = 'ABCDEFGHIJKLMNOP';
 

@@ -32,7 +32,7 @@
 ### Track colors (per-track, indices 0–7)
 | Track | Bright (`TRACK_COLORS`) | Dim (`TRACK_DIM_COLORS`) |
 |-------|------------------------|--------------------------|
-| 0 | Red (127) | 68 *(unnamed — brick-red dim; no constant in shared/constants.mjs)* |
+| 0 | Red (127) | 66 `VeryDarkRed` (#1A0404) |
 | 1 | Blue (125) | DarkBlue (95) |
 | 2 | BrightGreen (8) | DarkOlive (78) |
 | 3 | Green (126) | 86 *(unnamed — dark forest dim)* |
