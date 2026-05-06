@@ -2391,7 +2391,7 @@ function drawUI() {
         const lane = S.activeDrumLane[t];
         syncDrumRepeatState(t, lane);
         drawBankHeading('>> RPT GROOVE');
-        pixelPrint(S.shiftHeld ? 94 : 106, 0, S.shiftHeld ? 'Nudge' : 'Vel', 0);
+        pixelPrint(S.shiftHeld ? 94 : 106, 2, S.shiftHeld ? 'NUDGE' : 'VEL', 0);
         for (let k = 0; k < 8; k++) {
             const colX = 4 + (k % 4) * 30;
             const rowY = k < 4 ? 12 : 36;
