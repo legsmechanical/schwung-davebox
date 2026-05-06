@@ -49,6 +49,7 @@ export const S = {
     perfModPopupName: '',
     perfModPopupEndTick: -1,
     perfViewLocked: false,
+    loopJogActive: false,    /* true while jog is turned with loop held (step view vs pages view) */
     loopPressTick: -1,
     loopLastTapEndTick: -999,
     padKey: 9,

@@ -2881,7 +2881,7 @@ globalThis.tick = function () {
         /* Clear any held-modifier state that may have got stuck on suspend
          * (key-up events fire after overtake exits, so onMidiMessage never sees them). */
         S.shiftHeld = false; S.deleteHeld = false; S.muteHeld = false;
-        S.copyHeld  = false; S.loopHeld  = false;
+        S.copyHeld  = false; S.loopHeld  = false; S.loopJogActive = false;
         S.heldStep  = -1;    S.heldStepBtn = -1; S.heldStepNotes = [];
         S.stepWasEmpty = false; S.stepWasHeld = false;
         /* Check if the active set changed while we were parked. */
@@ -3622,6 +3622,7 @@ function _onCC_jog(d1, d2) {
                     }
                 } else if (S.loopHeld) {
                     /* Track View + Loop held: adjust length ±1 step */
+                    S.loopJogActive = true;
                     const _t  = S.activeTrack;
                     if (S.trackPadMode[_t] === PAD_MODE_DRUM) {
                         /* Drum: adjust active lane length */
@@ -3778,6 +3779,7 @@ function _onCC_buttons(d1, d2) {
             if (wasTap) {
                 S.perfViewLocked    = false;
                 S.loopHeld          = false;
+                S.loopJogActive     = false;
                 S.perfStack         = [];
                 S.perfStickyLengths = new Set();
                 S.perfHoldPadHeld   = false;
@@ -3800,7 +3802,8 @@ function _onCC_buttons(d1, d2) {
         }
 
         /* Hold release: exit Perf Mode. Sticky lengths/hold pad auto-lock if still active. */
-        S.loopHeld     = false;
+        S.loopHeld      = false;
+        S.loopJogActive = false;
         S.perfModsHeld = 0;
         if (S.perfStickyLengths.size > 0 || S.perfHoldPadHeld) {
             S.perfViewLocked = true;
@@ -4945,6 +4948,7 @@ function _switchViewCleanup() {
         S.perfHoldPadHeld   = false;
         S.perfViewLocked    = false;
         S.loopHeld          = false;
+        S.loopJogActive     = false;
         S.perfModsHeld      = 0;
         sendPerfMods();
         if (_hadLoop && typeof host_module_set_param === 'function')
