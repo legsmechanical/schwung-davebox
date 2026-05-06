@@ -700,9 +700,13 @@ function copyRow(srcRow, dstRow) {
         S.clipLength[t][dstRow] = S.clipLength[t][srcRow];
         S.clipNonEmpty[t][dstRow] = S.clipNonEmpty[t][srcRow];
         S.clipTPS[t][dstRow] = S.clipTPS[t][srcRow];
+        S.drumClipNonEmpty[t][dstRow] = S.drumClipNonEmpty[t][srcRow];
         if (dstRow === S.trackActiveClip[t]) {
             S.seqActiveNotes.clear(); S.seqLastStep = -1;
             refreshPerClipBankParams(t);
+            if (S.trackPadMode[t] === PAD_MODE_DRUM) {
+                S.pendingDrumResync = 2; S.pendingDrumResyncTrack = t;
+            }
         }
     }
 }
@@ -718,17 +722,25 @@ function cutRow(srcRow, dstRow) {
         S.clipLength[t][dstRow] = S.clipLength[t][srcRow];
         S.clipNonEmpty[t][dstRow] = S.clipNonEmpty[t][srcRow];
         S.clipTPS[t][dstRow] = S.clipTPS[t][srcRow];
+        S.drumClipNonEmpty[t][dstRow] = S.drumClipNonEmpty[t][srcRow];
         if (dstRow === S.trackActiveClip[t]) {
             S.seqActiveNotes.clear(); S.seqLastStep = -1;
             refreshPerClipBankParams(t);
+            if (S.trackPadMode[t] === PAD_MODE_DRUM) {
+                S.pendingDrumResync = 2; S.pendingDrumResyncTrack = t;
+            }
         }
         for (let s = 0; s < NUM_STEPS; s++) S.clipSteps[t][srcRow][s] = 0;
         S.clipLength[t][srcRow] = 16;
         S.clipNonEmpty[t][srcRow] = false;
         S.clipTPS[t][srcRow] = 24;
+        S.drumClipNonEmpty[t][srcRow] = false;
         if (srcRow === S.trackActiveClip[t]) {
             S.seqActiveNotes.clear(); S.seqLastStep = -1; S.seqNoteOnClipTick = -1;
             resetPerClipBankParamsToDefault(t);
+            if (S.trackPadMode[t] === PAD_MODE_DRUM) {
+                S.pendingDrumResync = 2; S.pendingDrumResyncTrack = t;
+            }
         }
     }
 }
@@ -836,9 +848,13 @@ function clearRow(rowIdx) {
         const len = S.clipLength[t][rowIdx];
         for (let s = 0; s < len; s++) S.clipSteps[t][rowIdx][s] = 0;
         S.clipNonEmpty[t][rowIdx] = false;
+        S.drumClipNonEmpty[t][rowIdx] = false;
         if (rowIdx === S.trackActiveClip[t]) {
             S.seqActiveNotes.clear(); S.seqLastStep = -1;
             resetPerClipBankParamsToDefault(t);
+            if (S.trackPadMode[t] === PAD_MODE_DRUM) {
+                S.pendingDrumResync = 2; S.pendingDrumResyncTrack = t;
+            }
         }
     }
 }

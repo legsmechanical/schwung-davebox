@@ -829,6 +829,29 @@ static void set_param(void *instance, const char *key, const char *val) {
             if ((int)inst->tracks[t].active_clip == dstRow)
                 pfx_sync_from_clip(&inst->tracks[t]);
         }
+        /* Copy drum clips for all tracks */
+        for (t = 0; t < NUM_TRACKS; t++) {
+            drum_clip_t *dsrc = &inst->tracks[t].drum_clips[srcRow];
+            drum_clip_t *ddst = &inst->tracks[t].drum_clips[dstRow];
+            int l;
+            for (l = 0; l < DRUM_LANES; l++) {
+                uint8_t dst_midi_note = ddst->lanes[l].midi_note;
+                clip_t *sc = &dsrc->lanes[l].clip;
+                clip_t *dc = &ddst->lanes[l].clip;
+                memcpy(dc->steps,            sc->steps,            SEQ_STEPS);
+                memcpy(dc->step_notes,       sc->step_notes,       SEQ_STEPS * 8);
+                memcpy(dc->step_note_count,  sc->step_note_count,  SEQ_STEPS);
+                memcpy(dc->step_vel,         sc->step_vel,         SEQ_STEPS);
+                memcpy(dc->step_gate,        sc->step_gate,        SEQ_STEPS * sizeof(uint16_t));
+                memcpy(dc->note_tick_offset, sc->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
+                dc->length         = sc->length;
+                dc->ticks_per_step = sc->ticks_per_step;
+                dc->active         = sc->active;
+                ddst->lanes[l].midi_note = dst_midi_note;
+                clip_migrate_to_notes(dc);
+            }
+        }
+        inst->state_dirty = 1;
         return;
     }
 
@@ -913,6 +936,33 @@ static void set_param(void *instance, const char *key, const char *val) {
             tr->rec_pending_count = 0;
             tr->recording = 0;
             if (tr->queued_clip == srcRow) tr->queued_clip = -1;
+        }
+        /* Copy drum clips src→dst then clear src for all tracks */
+        for (t = 0; t < NUM_TRACKS; t++) {
+            seq8_track_t *tr = &inst->tracks[t];
+            drum_clip_t *dsrc = &tr->drum_clips[srcRow];
+            drum_clip_t *ddst = &tr->drum_clips[dstRow];
+            int l;
+            for (l = 0; l < DRUM_LANES; l++) {
+                uint8_t dst_midi_note = ddst->lanes[l].midi_note;
+                uint8_t src_midi_note = dsrc->lanes[l].midi_note;
+                clip_t *sc = &dsrc->lanes[l].clip;
+                clip_t *dc = &ddst->lanes[l].clip;
+                memcpy(dc->steps,            sc->steps,            SEQ_STEPS);
+                memcpy(dc->step_notes,       sc->step_notes,       SEQ_STEPS * 8);
+                memcpy(dc->step_note_count,  sc->step_note_count,  SEQ_STEPS);
+                memcpy(dc->step_vel,         sc->step_vel,         SEQ_STEPS);
+                memcpy(dc->step_gate,        sc->step_gate,        SEQ_STEPS * sizeof(uint16_t));
+                memcpy(dc->note_tick_offset, sc->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
+                dc->length         = sc->length;
+                dc->ticks_per_step = sc->ticks_per_step;
+                dc->active         = sc->active;
+                ddst->lanes[l].midi_note = dst_midi_note;
+                clip_migrate_to_notes(dc);
+                pfx_note_off_imm(inst, tr, src_midi_note);
+                clip_init(sc);
+                dsrc->lanes[l].midi_note = src_midi_note;
+            }
         }
         inst->state_dirty = 1;
         return;
@@ -1039,6 +1089,18 @@ static void set_param(void *instance, const char *key, const char *val) {
                 tr->recording         = 0;
             } else if (tr->queued_clip == rowIdx) {
                 tr->queued_clip = -1;
+            }
+        }
+        /* Clear drum clips at rowIdx for all tracks */
+        for (t = 0; t < NUM_TRACKS; t++) {
+            seq8_track_t *tr = &inst->tracks[t];
+            drum_clip_t *dc = &tr->drum_clips[rowIdx];
+            int l;
+            for (l = 0; l < DRUM_LANES; l++) {
+                uint8_t midi_note = dc->lanes[l].midi_note;
+                pfx_note_off_imm(inst, tr, midi_note);
+                clip_init(&dc->lanes[l].clip);
+                dc->lanes[l].midi_note = midi_note;
             }
         }
         inst->state_dirty = 1;
