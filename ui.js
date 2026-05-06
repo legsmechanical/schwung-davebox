@@ -2843,6 +2843,12 @@ globalThis.tick = function () {
     }
     if (!isSuspended && S._wasSuspended) {
         installFlagsWrap();
+        /* Clear any held-modifier state that may have got stuck on suspend
+         * (key-up events fire after overtake exits, so onMidiMessage never sees them). */
+        S.shiftHeld = false; S.deleteHeld = false; S.muteHeld = false;
+        S.copyHeld  = false; S.loopHeld  = false;
+        S.heldStep  = -1;    S.heldStepBtn = -1; S.heldStepNotes = [];
+        S.stepWasEmpty = false; S.stepWasHeld = false;
         /* Check if the active set changed while we were parked. */
         const _resumeUuid = readActiveSetUuid();
         const _dspUuid = (typeof host_module_get_param === 'function')
