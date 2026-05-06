@@ -74,7 +74,7 @@ import {
     fmtArpStyle, fmtArpRate, fmtArpSteps, fmtArpOct, fmtVelOverride,
     col4, parseActionRaw, MCUFONT, pixelPrint, pixelPrintC,
     BANKS, ACTION_POPUP_TICKS, PAD_MODE_DRUM,
-    POLL_INTERVAL, CC_SCRATCH_PALETTE_BASE, OOB_SCRATCH_PALETTE, TAP_TEMPO_FLASH_TICKS, TAP_TEMPO_RESET_MS,
+    POLL_INTERVAL, CC_SCRATCH_PALETTE_BASE, OOB_SCRATCH_PALETTE, BEAT_MARKER_PALETTE, TAP_TEMPO_FLASH_TICKS, TAP_TEMPO_RESET_MS,
     PARAM_LED_BANKS
 } from '/data/UserData/schwung/modules/tools/seq8/ui_constants.mjs';
 
@@ -1262,6 +1262,7 @@ function drainLedInit() {
     if (S.ledInitIndex >= S.ledInitQueue.length) {
         S.ledInitComplete = true;
         setPaletteEntryRGB(OOB_SCRATCH_PALETTE, 128, 128, 128);
+        setPaletteEntryRGB(BEAT_MARKER_PALETTE, 64, 64, 64);
         reapplyPalette();
     }
 }

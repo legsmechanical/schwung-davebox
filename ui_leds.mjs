@@ -3,7 +3,7 @@ import {
     NUM_STEPS, NUM_TRACKS, LED_OFF,
     TRACK_COLORS, TRACK_DIM_COLORS, TRACK_PAD_BASE, SCENE_BTN_FLASH_TICKS,
     PAD_MODE_DRUM, BANKS,
-    POLL_INTERVAL, CC_SCRATCH_PALETTE_BASE, OOB_SCRATCH_PALETTE, TAP_TEMPO_FLASH_TICKS, PARAM_LED_BANKS
+    POLL_INTERVAL, CC_SCRATCH_PALETTE_BASE, OOB_SCRATCH_PALETTE, BEAT_MARKER_PALETTE, TAP_TEMPO_FLASH_TICKS, PARAM_LED_BANKS
 } from '/data/UserData/schwung/modules/tools/seq8/ui_constants.mjs';
 import { trackClipHasContent } from '/data/UserData/schwung/modules/tools/seq8/ui_scene.mjs';
 import {
@@ -119,7 +119,7 @@ export function updateStepLEDs() {
             if (absStep >= len)                    color = OOB_SCRATCH_PALETTE;
             else if (S.playing && absStep === cs)    color = White;
             else if (ls[absStep] === '1')          color = TRACK_COLORS[t];
-            else                                   color = (S.beatMarkersEnabled && i % 4 === 0) ? LightGrey : LED_OFF;
+            else                                   color = (S.beatMarkersEnabled && i % 4 === 0) ? BEAT_MARKER_PALETTE : LED_OFF;
             setLED(16 + i, color);
         }
         /* Gate span overlay: dim track color across steps covered by held step's gate */
@@ -170,7 +170,7 @@ export function updateStepLEDs() {
         } else if (steps[absStep] === 2) {
             color = DarkGrey;
         } else {
-            color = (S.beatMarkersEnabled && i % 4 === 0) ? LightGrey : LED_OFF;
+            color = (S.beatMarkersEnabled && i % 4 === 0) ? BEAT_MARKER_PALETTE : LED_OFF;
         }
         setLED(16 + i, color);
     }
