@@ -3293,6 +3293,25 @@ globalThis.tick = function () {
                     }
                 }
                 S.screenDirty = true;
+            } else if (!S.stepWasEmpty && S.heldStepNotes.length === 0) {
+                /* Non-empty step — notes not yet read (get_param null at press time).
+                 * Read now from tick context where get_param works. */
+                const ac_h2 = effectiveClip(S.activeTrack);
+                const raw_h2 = typeof host_module_get_param === 'function'
+                    ? host_module_get_param('t' + S.activeTrack + '_c' + ac_h2 + '_step_' + S.heldStep + '_notes') : null;
+                S.heldStepNotes = (raw_h2 && raw_h2.trim().length > 0)
+                    ? raw_h2.trim().split(' ').map(Number).filter(function(n) { return n >= 0 && n <= 127; })
+                    : [];
+                const rv2 = typeof host_module_get_param === 'function'
+                    ? host_module_get_param('t' + S.activeTrack + '_c' + ac_h2 + '_step_' + S.heldStep + '_vel') : null;
+                const rg2 = typeof host_module_get_param === 'function'
+                    ? host_module_get_param('t' + S.activeTrack + '_c' + ac_h2 + '_step_' + S.heldStep + '_gate') : null;
+                const rn2 = typeof host_module_get_param === 'function'
+                    ? host_module_get_param('t' + S.activeTrack + '_c' + ac_h2 + '_step_' + S.heldStep + '_nudge') : null;
+                S.stepEditVel   = rv2 !== null ? parseInt(rv2, 10) : 100;
+                S.stepEditGate  = rg2 !== null ? parseInt(rg2, 10) : 12;
+                S.stepEditNudge = rn2 !== null ? parseInt(rn2, 10) : 0;
+                S.screenDirty = true;
             } else if (S.stepWasEmpty && S.heldStepNotes.length === 0) {
                 /* Empty step held past threshold: wait for pad input, no auto-assign */
                 S.screenDirty = true;
@@ -5926,34 +5945,29 @@ function _onStepButtons(d1, d2) {
             S.heldStepBtn  = idx;
             S.heldStep     = absP;
             const pref_p = 't' + S.activeTrack + '_c' + ac_p + '_step_' + absP;
-            const raw_p  = typeof host_module_get_param === 'function'
-                ? host_module_get_param(pref_p + '_notes') : null;
-            S.heldStepNotes = (raw_p && raw_p.trim().length > 0)
-                ? raw_p.trim().split(' ').map(Number).filter(function(n) { return n >= 0 && n <= 127; })
-                : [];
-            if (S.heldStepNotes.length === 0) {
-                S.stepWasEmpty = true;
+            /* get_param returns null in MIDI context — use clipSteps mirror to detect
+             * truly empty (0) vs has-data (1=active, 2=inactive). Notes/vel/gate
+             * are deferred to hold threshold where get_param works. */
+            const _stepState = S.clipSteps[S.activeTrack][ac_p][absP];
+            if (_stepState === 0) {
+                S.stepWasEmpty  = true;
+                S.heldStepNotes = [];
                 if (S.activeBank === 6) {
-                    /* CC step-edit: no note required — enter edit immediately */
                     S.ccStepEditActive = true;
                 } else {
-                    /* Empty step: defer note assignment — tap assigns lastPlayedNote,
-                     * hold waits for pad input */
                     S.stepEditVel   = 100;
                     S.stepEditGate  = 12;
                     S.stepEditNudge = 0;
                 }
             } else {
-                S.stepWasEmpty = false;
+                S.stepWasEmpty  = false;
+                S.heldStepNotes = [];   /* populated at hold threshold from tick context */
                 if (S.activeBank === 6) {
                     S.ccStepEditActive = true;
                 } else {
-                    const rv = typeof host_module_get_param === 'function' ? host_module_get_param(pref_p + '_vel') : null;
-                    const rg = typeof host_module_get_param === 'function' ? host_module_get_param(pref_p + '_gate') : null;
-                    const rn = typeof host_module_get_param === 'function' ? host_module_get_param(pref_p + '_nudge') : null;
-                    S.stepEditVel   = rv !== null ? parseInt(rv, 10) : 100;
-                    S.stepEditGate  = rg !== null ? parseInt(rg, 10) : 12;
-                    S.stepEditNudge = rn !== null ? parseInt(rn, 10) : 0;
+                    S.stepEditVel   = 100;
+                    S.stepEditGate  = 12;
+                    S.stepEditNudge = 0;
                 }
             }
             forceRedraw();
@@ -6185,13 +6199,18 @@ function _onPadRelease(status, d1, d2) {
                 } else {
                     const wasOn = S.clipSteps[S.activeTrack][ac_t][absIdx] === 1;
                     if (!wasOn) {
-                        if (S.heldStepNotes.length === 0) {
+                        /* clipSteps=2 means inactive-data: tap-to-reactivate.
+                         * heldStepNotes may be empty (get_param null at press time) —
+                         * use clipSteps to decide rather than assigning a new note. */
+                        if (S.heldStepNotes.length > 0 || S.clipSteps[S.activeTrack][ac_t][absIdx] === 2) {
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + S.activeTrack + '_c' + ac_t + '_step_' + absIdx, '1');
+                        } else {
+                            /* truly empty inactive step — shouldn't reach here since stepWasEmpty
+                             * would be true, but handle gracefully */
                             const assignNote2 = S.lastPlayedNote >= 0 ? S.lastPlayedNote : defaultStepNote();
                             if (typeof host_module_set_param === 'function')
                                 host_module_set_param('t' + S.activeTrack + '_c' + ac_t + '_step_' + absIdx + '_toggle', assignNote2 + ' ' + effectiveVelocity(S.lastPadVelocity));
-                        } else {
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + S.activeTrack + '_c' + ac_t + '_step_' + absIdx, '1');
                         }
                         S.clipSteps[S.activeTrack][ac_t][absIdx] = 1;
                         S.clipNonEmpty[S.activeTrack][ac_t] = true;
@@ -6200,7 +6219,7 @@ function _onPadRelease(status, d1, d2) {
                         /* Deactivating: preserve note data */
                         if (typeof host_module_set_param === 'function')
                             host_module_set_param('t' + S.activeTrack + '_c' + ac_t + '_step_' + absIdx, '0');
-                        S.clipSteps[S.activeTrack][ac_t][absIdx] = S.heldStepNotes.length > 0 ? 2 : 0;
+                        S.clipSteps[S.activeTrack][ac_t][absIdx] = 2; /* has notes — preserve */
                         if (S.clipNonEmpty[S.activeTrack][ac_t]) S.clipNonEmpty[S.activeTrack][ac_t] = clipHasContent(S.activeTrack, ac_t);
                         refreshSeqNotesIfCurrent(S.activeTrack, ac_t, absIdx);
                     }
