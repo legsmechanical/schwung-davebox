@@ -259,7 +259,8 @@ export const S = {
     recordScheduledStop: false,
     recordScheduledStopTarget: -1,
     pendingScheduledDisarm: false,
-    pendingPrerollNote: null,    /* { track, clip, pitch, vel } — deferred to tick() to avoid coalescing */
+    pendingPrerollNote: null,    /* { track, clip/lane, pitch/laneNote, vel, pressedAtTick, countInStart } */
+    pendingPrerollGate: null,    /* { isDrum, track, lane/clip, gate } — sent the tick after _step_0_toggle */
     pendingClearLengthTrack: -1, /* deferred length-reset after clip clear (avoids coalescing with clear cmd) */
     pendingClearLengthClip: -1,
     sessionViewMomentary: false, /* true while NoteSession is held and switched view temporarily */
