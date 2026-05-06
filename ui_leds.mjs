@@ -303,7 +303,7 @@ export function updateTrackLEDs() {
         for (let s = 0; s < 4; s++) cachedSetButtonLED(40 + s, LED_OFF);
         /* Step buttons mirror the hovered palette color */
         const stepColor = S.paletteViewHovered >= 0 ? S.paletteViewHovered : LED_OFF;
-        for (let i = 0; i < 16; i++) setButtonLED(16 + i, stepColor, true);
+        for (let i = 0; i < 16; i++) setLED(16 + i, stepColor);
         return;
     }
 
