@@ -117,8 +117,8 @@ export function updateStepLEDs() {
             const absStep = base + i;
             let color;
             if (absStep >= len)                    color = DarkGrey;
-            else if (S.playing && absStep === cs)    color = White;
-            else if (ls[absStep] === '1')          color = 119;
+            else if (S.playing && absStep === cs)    color = TRACK_COLORS[t];
+            else if (ls[absStep] === '1')          color = White;
             else                                   color = (S.beatMarkersEnabled && i % 4 === 0) ? TRACK_DIM_COLORS[t] : LED_OFF;
             setLED(16 + i, color);
         }

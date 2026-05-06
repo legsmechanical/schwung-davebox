@@ -76,8 +76,8 @@ Indices 49 (`BEAT_MARKER_PALETTE`) and 50 (`OOB_SCRATCH_PALETTE`) are **no longe
 | Condition | Color |
 |-----------|-------|
 | Step out-of-bounds | `DarkGrey` (124) |
-| Playing and step == current playhead | `White` (120) |
-| Step has hit (value `'1'`) | raw `119` (DarkGrey dup) |
+| Playing and step == current playhead | `TRACK_COLORS[t]` (track bright) |
+| Step has hit (value `'1'`) | `White` (120) |
 | Beat marker step (beat marks on) | `TRACK_DIM_COLORS[t]` (track dim) |
 | Empty step | `LED_OFF` |
 
