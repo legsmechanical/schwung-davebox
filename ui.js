@@ -2226,7 +2226,7 @@ function drawUI() {
                 const tps   = S.drumLaneTPS[t] || 24;
                 const LABELS = ['Dur', 'Vel', 'Ndg'];
                 const VALS   = [
-                    (S.stepEditGate / tps).toFixed(2),
+                    (S.stepEditGate / tps).toFixed(1),
                     String(S.stepEditVel),
                     (S.stepEditNudge >= 0 ? '+' : '') + String(S.stepEditNudge)
                 ];
@@ -2258,7 +2258,7 @@ function drawUI() {
             /* Dur / Vel / Ndg */
             const RHS_LABELS = ['Dur', 'Vel', 'Ndg'];
             const RHS_VALS   = [
-                (S.stepEditGate / (S.clipTPS[S.activeTrack][ac] || 24)).toFixed(2),
+                (S.stepEditGate / (S.clipTPS[S.activeTrack][ac] || 24)).toFixed(1),
                 String(S.stepEditVel),
                 (S.stepEditNudge >= 0 ? '+' : '') + String(S.stepEditNudge)
             ];
