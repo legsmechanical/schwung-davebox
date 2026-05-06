@@ -68,7 +68,7 @@ export function updateStepLEDs() {
             for (let p = 0; p < 16; p++) {
                 let color;
                 if (p >= totalPages) {
-                    color = DarkGrey;
+                    color = White;
                 } else {
                     const base = p * 16;
                     const end  = Math.min(base + 16, len);
@@ -87,7 +87,7 @@ export function updateStepLEDs() {
             for (let p = 0; p < 16; p++) {
                 let color;
                 if (p >= totalPages) {
-                    color = DarkGrey;
+                    color = White;
                 } else {
                     const base = p * 16;
                     const end  = Math.min(base + 16, len);
