@@ -3034,6 +3034,14 @@ globalThis.tick = function () {
         if (S.pendingUndoSync === 0) {
             const _info = host_module_get_param('last_restore');
             syncClipsTargeted(_info);
+            /* apply_clip_restore clears tr->recording on the DSP side; re-establish it.
+             * Also flush stale JS note buffers since DSP called finalize_pending_notes. */
+            if (S.recordArmed && !S.recordCountingIn && S.recordArmedTrack >= 0) {
+                _recordingNoteTrack.clear();
+                S._recNoteOns.length  = 0;
+                S._recNoteOffs.length = 0;
+                host_module_set_param('t' + S.recordArmedTrack + '_recording', '1');
+            }
             invalidateLEDCache();
             forceRedraw();
         }
