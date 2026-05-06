@@ -855,6 +855,7 @@ function disarmRecord() {
     _recordingNoteTrack.clear();
     S._recNoteOns.length  = 0;
     S._recNoteOffs.length = 0;
+    S.pendingPrerollNote  = null;
     if (typeof host_module_set_param === 'function') {
         host_module_set_param('record_count_in_cancel', '1');
         if (t >= 0) host_module_set_param('t' + t + '_recording', '0');
@@ -2963,18 +2964,6 @@ globalThis.tick = function () {
         S.pendingRepeatLane = -1;
     }
 
-    /* Deferred melodic pre-roll: wait for note-off AND recording active so step 0 has already
-     * fired on the first pass — note appears after and plays on the second loop (no double-trigger) */
-    if (S.pendingPrerollNote !== null && S.pendingPrerollNote.ready &&
-            !S.recordCountingIn && S.playing) {
-        const pr = S.pendingPrerollNote;
-        S.pendingPrerollNote = null;
-        if (S.clipSteps[pr.track][pr.clip][0] === 0 && typeof host_module_set_param === 'function') {
-            host_module_set_param('t' + pr.track + '_c' + pr.clip + '_step_0_toggle', pr.pitch + ' ' + pr.vel);
-            S.clipSteps[pr.track][pr.clip][0] = 1;
-            S.clipNonEmpty[pr.track][pr.clip] = true;
-        }
-    }
 
     /* Set change detected in init(): send UUID so DSP constructs path and loads. */
     if (S.pendingSetLoad && typeof host_module_set_param === 'function') {
@@ -3329,6 +3318,21 @@ globalThis.tick = function () {
             const pitches = S._recNoteOffs.map(function(n) { return n.pitch; }).join(' ');
             host_module_set_param('t' + rt + '_record_note_off', pitches);
             S._recNoteOffs.length = 0;
+        } else if (S.pendingPrerollNote !== null && S.pendingPrerollNote.ready && S.playing) {
+            /* Pre-roll fires here (else branch = no other recording set_param this tick, no coalescing).
+             * Wait until step 0 has played: require >= 1 full step since transport start. */
+            const pr  = S.pendingPrerollNote;
+            const tps = (S.clipTPS[pr.track] && S.clipTPS[pr.track][pr.clip]) || 24;
+            if ((S.tickCount - S.transportStartTick) >= tps) {
+                S.pendingPrerollNote = null;
+                if (S.clipSteps[pr.track][pr.clip][0] === 0) {
+                    host_module_set_param('t' + pr.track + '_c' + pr.clip + '_step_0_toggle', pr.pitch + ' ' + pr.vel);
+                    S.clipSteps[pr.track][pr.clip][0] = 1;
+                    S.clipNonEmpty[pr.track][pr.clip] = true;
+                    invalidateLEDCache();
+                    forceRedraw();
+                }
+            }
         }
     }
 
