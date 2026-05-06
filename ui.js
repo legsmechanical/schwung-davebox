@@ -3293,24 +3293,8 @@ globalThis.tick = function () {
                     }
                 }
                 S.screenDirty = true;
-            } else if (S.stepWasEmpty && S.heldStepNotes.length === 0 && typeof host_module_set_param === 'function') {
-                const ac_h = effectiveClip(S.activeTrack);
-                const assignNote = S.lastPlayedNote >= 0 ? S.lastPlayedNote : defaultStepNote();
-                const assignVel  = effectiveVelocity(S.lastPadVelocity);
-                host_module_set_param('t' + S.activeTrack + '_c' + ac_h + '_step_' + S.heldStep + '_toggle', assignNote + ' ' + assignVel);
-                const raw_h = typeof host_module_get_param === 'function'
-                    ? host_module_get_param('t' + S.activeTrack + '_c' + ac_h + '_step_' + S.heldStep + '_notes') : null;
-                S.heldStepNotes = (raw_h && raw_h.trim().length > 0)
-                    ? raw_h.trim().split(' ').map(Number).filter(function(n) { return n >= 0 && n <= 127; })
-                    : [];
-                S.clipSteps[S.activeTrack][ac_h][S.heldStep] = S.heldStepNotes.length > 0 ? 1 : 0;
-                if (S.heldStepNotes.length > 0) S.clipNonEmpty[S.activeTrack][ac_h] = true;
-                const rv = host_module_get_param('t' + S.activeTrack + '_c' + ac_h + '_step_' + S.heldStep + '_vel');
-                const rg = host_module_get_param('t' + S.activeTrack + '_c' + ac_h + '_step_' + S.heldStep + '_gate');
-                const rn = host_module_get_param('t' + S.activeTrack + '_c' + ac_h + '_step_' + S.heldStep + '_nudge');
-                S.stepEditVel   = rv !== null ? parseInt(rv, 10) : 100;
-                S.stepEditGate  = rg !== null ? parseInt(rg, 10) : 12;
-                S.stepEditNudge = rn !== null ? parseInt(rn, 10) : 0;
+            } else if (S.stepWasEmpty && S.heldStepNotes.length === 0) {
+                /* Empty step held past threshold: wait for pad input, no auto-assign */
                 S.screenDirty = true;
             }
         }
@@ -5952,28 +5936,12 @@ function _onStepButtons(d1, d2) {
                 if (S.activeBank === 6) {
                     /* CC step-edit: no note required — enter edit immediately */
                     S.ccStepEditActive = true;
-                } else if (S.lastPlayedNote >= 0) {
-                    /* Known note: assign immediately so knobs work right away */
-                    const assignNote = S.lastPlayedNote;
-                    const assignVel  = effectiveVelocity(S.lastPadVelocity);
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + S.activeTrack + '_c' + ac_p + '_step_' + absP + '_toggle', assignNote + ' ' + assignVel);
-                    const raw_aa = typeof host_module_get_param === 'function'
-                        ? host_module_get_param(pref_p + '_notes') : null;
-                    S.heldStepNotes = (raw_aa && raw_aa.trim().length > 0)
-                        ? raw_aa.trim().split(' ').map(Number).filter(function(n) { return n >= 0 && n <= 127; })
-                        : [];
-                    S.clipSteps[S.activeTrack][ac_p][absP] = S.heldStepNotes.length > 0 ? 1 : 0;
-                    if (S.heldStepNotes.length > 0) S.clipNonEmpty[S.activeTrack][ac_p] = true;
-                    S.stepEditVel = assignVel; S.stepEditGate = 12; S.stepEditNudge = 0;
                 } else {
-                    /* No note played yet: flash message, don't enter step edit */
-                    S.heldStep    = -1;
-                    S.heldStepBtn = -1;
-                    S.stepWasEmpty = false;
-                    S.stepWasHeld  = false;
-                    S.noNoteFlashEndTick = S.tickCount + NO_NOTE_FLASH_TICKS;
-                    S.screenDirty = true;
+                    /* Empty step: defer note assignment — tap assigns lastPlayedNote,
+                     * hold waits for pad input */
+                    S.stepEditVel   = 100;
+                    S.stepEditGate  = 12;
+                    S.stepEditNudge = 0;
                 }
             } else {
                 S.stepWasEmpty = false;
@@ -6201,7 +6169,19 @@ function _onPadRelease(status, d1, d2) {
                 const absIdx = S.heldStep;
                 S.stepBtnPressedTick[btn] = -1;
                 if (S.stepWasEmpty) {
-                    /* Note was assigned on press — tap confirms, nothing more to do */
+                    /* Tap on empty step: assign lastPlayedNote now */
+                    if (S.lastPlayedNote >= 0) {
+                        const assignNote_t = S.lastPlayedNote;
+                        const assignVel_t  = effectiveVelocity(S.lastPadVelocity);
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + S.activeTrack + '_c' + ac_t + '_step_' + absIdx + '_toggle', assignNote_t + ' ' + assignVel_t);
+                        S.clipSteps[S.activeTrack][ac_t][absIdx] = 1;
+                        S.clipNonEmpty[S.activeTrack][ac_t] = true;
+                        refreshSeqNotesIfCurrent(S.activeTrack, ac_t, absIdx);
+                    } else {
+                        S.noNoteFlashEndTick = S.tickCount + NO_NOTE_FLASH_TICKS;
+                        S.screenDirty = true;
+                    }
                 } else {
                     const wasOn = S.clipSteps[S.activeTrack][ac_t][absIdx] === 1;
                     if (!wasOn) {
