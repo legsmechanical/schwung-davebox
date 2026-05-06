@@ -896,6 +896,7 @@ function clearRow(rowIdx) {
 function disarmRecord() {
     if (!S.recordArmed) return;
     const t = S.recordArmedTrack;
+    const _wasCountingIn   = S.recordCountingIn;
     S.recordArmed          = false;
     S.recordCountingIn     = false;
     S.recordArmedTrack     = -1;
@@ -917,8 +918,12 @@ function disarmRecord() {
     S.recordScheduledStopTarget = -1;
     S.pendingScheduledDisarm    = false;
     if (typeof host_module_set_param === 'function') {
-        host_module_set_param('record_count_in_cancel', '1');
-        if (t >= 0) host_module_set_param('t' + t + '_recording', '0');
+        if (_wasCountingIn) {
+            /* Count-in active: only cancel is needed; sending _recording 0 would coalesce it away */
+            host_module_set_param('record_count_in_cancel', '1');
+        } else {
+            if (t >= 0) host_module_set_param('t' + t + '_recording', '0');
+        }
     }
     setButtonLED(MoveRec, LED_OFF);
 }
@@ -4224,8 +4229,6 @@ function _onCC_transport(d1, d2) {
         if (S.recordArmed) {
             if (S.recordCountingIn) {
                 /* Record pressed during count-in → cancel queued transport+record */
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('record_count_in_cancel', '1');
                 disarmRecord();
             } else {
             const _recT  = S.recordArmedTrack >= 0 ? S.recordArmedTrack : S.activeTrack;
