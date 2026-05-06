@@ -1562,12 +1562,28 @@ function pollDSP() {
         S.seqNoteOnClipTick = -1;
         S.seqNoteGateTicks  = 0;
     } else if (cs !== S.seqLastStep || ac !== S.seqLastClip) {
+        const newHasNote = cs >= 0 && S.clipSteps[t][ac][cs] === 1;
+        /* Check whether the previous note's gate is still sounding before clearing */
+        let prevStillSounding = false;
+        if (!newHasNote && S.seqActiveNotes.size > 0 &&
+                S.seqNoteOnClipTick >= 0 && S.seqNoteGateTicks > 0 && ac === S.seqLastClip) {
+            const ctChk = host_module_get_param('t' + t + '_current_clip_tick');
+            if (ctChk !== null && ctChk !== undefined) {
+                const ctv      = parseInt(ctChk, 10) | 0;
+                const clipTks  = S.clipLength[t][ac] * (S.clipTPS[t][ac] || 24);
+                const elapsed  = ctv >= S.seqNoteOnClipTick
+                    ? ctv - S.seqNoteOnClipTick
+                    : clipTks - S.seqNoteOnClipTick + ctv;
+                prevStillSounding = elapsed < S.seqNoteGateTicks;
+            }
+        }
         S.seqLastStep = cs;
         S.seqLastClip = ac;
-        S.seqActiveNotes.clear();
-        S.seqNoteOnClipTick = -1;
-        S.seqNoteGateTicks  = 0;
-        if (cs >= 0 && S.clipSteps[t][ac][cs] === 1) {
+        if (newHasNote) {
+            /* New step has a note — show it, replacing any sustaining previous note */
+            S.seqActiveNotes.clear();
+            S.seqNoteOnClipTick = -1;
+            S.seqNoteGateTicks  = 0;
             const raw = host_module_get_param('t' + t + '_c' + ac + '_step_' + cs + '_notes');
             if (raw && raw.trim().length > 0) {
                 raw.trim().split(' ').forEach(function(sn) {
@@ -1579,7 +1595,13 @@ function pollDSP() {
             const gStr  = host_module_get_param('t' + t + '_c' + ac + '_step_' + cs + '_gate');
             if (ctStr !== null && ctStr !== undefined) S.seqNoteOnClipTick = parseInt(ctStr, 10) | 0;
             if (gStr  !== null && gStr  !== undefined) S.seqNoteGateTicks  = parseInt(gStr,  10) | 0;
+        } else if (!prevStillSounding) {
+            /* New step empty, previous note expired — clear */
+            S.seqActiveNotes.clear();
+            S.seqNoteOnClipTick = -1;
+            S.seqNoteGateTicks  = 0;
         }
+        /* else: prevStillSounding — keep old notes + gate tracking across empty step */
     } else if (S.seqActiveNotes.size > 0 && S.seqNoteOnClipTick >= 0 && S.seqNoteGateTicks > 0) {
         const ctStr = host_module_get_param('t' + t + '_current_clip_tick');
         if (ctStr !== null && ctStr !== undefined) {
@@ -1588,7 +1610,11 @@ function pollDSP() {
             const elapsed = ct >= S.seqNoteOnClipTick
                 ? ct - S.seqNoteOnClipTick
                 : clipTicks - S.seqNoteOnClipTick + ct;
-            if (elapsed >= S.seqNoteGateTicks) S.seqActiveNotes.clear();
+            if (elapsed >= S.seqNoteGateTicks) {
+                S.seqActiveNotes.clear();
+                S.seqNoteOnClipTick = -1;
+                S.seqNoteGateTicks  = 0;
+            }
         }
     }
 
