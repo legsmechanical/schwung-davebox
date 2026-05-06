@@ -54,55 +54,6 @@ export function updateStepLEDs() {
     if (!S.ledInitComplete) return;
     const ac = effectiveClip(S.activeTrack);
 
-    /* Loop-held pages view: 16 step buttons represent 16 possible 16-step pages.
-     * Pages with notes → pulse; empty pages within clip → solid track color; OOB → DarkGrey. */
-    if (S.loopHeld) {
-        const t = S.activeTrack;
-        const trackColor = TRACK_COLORS[t];
-        const pulsOn = S.playing ? S.flashSixteenth : (Math.floor(S.tickCount / 24) % 2);
-        if (S.trackPadMode[t] === PAD_MODE_DRUM) {
-            const lane = S.activeDrumLane[t];
-            const len  = S.drumLaneLength[t];
-            const ls   = S.drumLaneSteps[t][lane];
-            const totalPages = Math.ceil(len / 16);
-            for (let p = 0; p < 16; p++) {
-                let color;
-                if (p >= totalPages) {
-                    color = White;
-                } else {
-                    const base = p * 16;
-                    const end  = Math.min(base + 16, len);
-                    let hasNotes = false;
-                    for (let s = base; s < end; s++) {
-                        if (ls[s] !== '0') { hasNotes = true; break; }
-                    }
-                    color = hasNotes ? (pulsOn ? trackColor : LED_OFF) : trackColor;
-                }
-                setLED(16 + p, color);
-            }
-        } else {
-            const len   = S.clipLength[t][ac];
-            const steps = S.clipSteps[t][ac];
-            const totalPages = Math.ceil(len / 16);
-            for (let p = 0; p < 16; p++) {
-                let color;
-                if (p >= totalPages) {
-                    color = White;
-                } else {
-                    const base = p * 16;
-                    const end  = Math.min(base + 16, len);
-                    let hasNotes = false;
-                    for (let s = base; s < end; s++) {
-                        if (steps[s] !== 0) { hasNotes = true; break; }
-                    }
-                    color = hasNotes ? (pulsOn ? trackColor : LED_OFF) : trackColor;
-                }
-                setLED(16 + p, color);
-            }
-        }
-        return;
-    }
-
     /* Drum mode: step buttons show active lane's steps — identical visualization to melodic */
     if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
         const t    = S.activeTrack;
