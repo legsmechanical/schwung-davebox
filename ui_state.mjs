@@ -226,6 +226,7 @@ export const S = {
     countInQuarterTicks: 0,
     countInDspPrev: false,
     playingPrev: false,
+    transportStartTick: 0,
     _recNoteOns: [],
     _recNoteOffs: [],
     recordBpm: 120,

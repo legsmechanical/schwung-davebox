@@ -1492,10 +1492,9 @@ function pollDSP() {
     }
     S.countInDspPrev = countInDspActive;
 
-    /* Stop transition: transport just stopped — clear recording state */
-    if (S.playingPrev && !S.playing) {
-        disarmRecord();
-    }
+    /* Transport transitions */
+    if (!S.playingPrev && S.playing)  S.transportStartTick = S.tickCount;
+    if (S.playingPrev  && !S.playing) disarmRecord();
     S.playingPrev = S.playing;
 
     /* Refresh step LEDs while recording or holding a step (nudge may move note across boundary) */
@@ -2102,9 +2101,18 @@ function drawUI() {
             }
             return;
         }
-        const base = S.sceneRow;
-        print(4, 10, 'SESSION  GRP ' + (Math.floor(S.sceneRow / 4) + 1), 1);
-        print(4, 22, SCENE_LETTERS[base] + '-' + SCENE_LETTERS[base + 3], 1);
+        /* DAVEBOX banner — white bar, letters animated when transport running */
+        fill_rect(0, 0, 128, 12, 1);
+        let dA, dE;
+        if (S.playing) {
+            const rel = S.tickCount - S.transportStartTick;
+            dA = (Math.floor(rel / 24) % 2 === 0) ? 'A' : '@';
+            dE = (Math.floor(rel / 12) % 2 === 0) ? '3' : 'E';
+        } else {
+            dA = 'A'; dE = 'E';
+        }
+        const banner = 'D' + dA + 'V' + dE + 'BOX';
+        print(43, 2, banner, 0);
         drawTrackRow(34);
         for (let t = 0; t < NUM_TRACKS; t++)
             pixelPrint(t * 16 + 5, 46, SCENE_LETTERS[S.trackActiveClip[t]], 1);
