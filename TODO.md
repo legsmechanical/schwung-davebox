@@ -1,5 +1,8 @@
 # SEQ8 Upcoming Tasks
 
+## Bugs to fix
+
+- **Count-in pre-roll capture (broken)**: Notes played during the last part of count-in should land on step 1 with no double-hit. Currently: (1) double hits at the start of recording, (2) steps are being recorded but not displayed. Feature was implemented last session — needs debugging. See `pendingPrerollNote` logic and `countInStartTick`/`countInQuarterTicks` in ui.js.
 
 3. **Scale-aware key/scale changes** — transpose all clip notes on Key/Scale change. Design TBD.
 4. **Step/note editing fixes** — see pending fixes in planning doc.
