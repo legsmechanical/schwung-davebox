@@ -2242,7 +2242,7 @@ function drawUI() {
     const inTimeout = S.bankSelectTick >= 0 || S.jogTouched;
 
     /* Count-in overlay: highest priority while waiting for bar to elapse */
-    if (S.recordArmed && S.recordCountingIn && !S.sessionView) {
+    if (S.recordArmed && S.recordCountingIn && !S.sessionView && S.heldStep < 0) {
         const ac_r       = S.trackActiveClip[S.recordArmedTrack];
         const totalPages = Math.max(1, Math.ceil(S.clipLength[S.recordArmedTrack][ac_r] / 16));
         print(4, 10, 'TR' + (S.recordArmedTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac_r] +
@@ -2715,10 +2715,12 @@ function restoreUiSidecar(applyDefaultsNow) {
     } else {
         S.scaleAware   = 1;
         S.metronomeVol = 100;
+        S.trackPadMode[0] = PAD_MODE_DRUM;
         if (applyDefaultsNow) {
             S.pendingDefaultSetParams = [
                 { key: 'scale_aware', val: '1' },
-                { key: 'metro_vol',   val: '100' }
+                { key: 'metro_vol',   val: '100' },
+                { key: 't0_pad_mode', val: String(PAD_MODE_DRUM) }
             ];
         }
     }
@@ -5458,6 +5460,18 @@ function _onPadPressTrackView(status, d1, d2) {
                     }
                     forceRedraw();
                 }
+                return;
+            }
+        }
+        /* Shift + left drum pad: silently select lane without playing a note */
+        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.shiftHeld && !S.muteHeld && !S.copyHeld && !S.deleteHeld) {
+            const _sl_lane = drumPadToLane(padIdx);
+            if (_sl_lane >= 0 && _sl_lane < DRUM_LANES) {
+                const t = S.activeTrack;
+                S.activeDrumLane[t] = _sl_lane;
+                syncDrumLaneSteps(t, _sl_lane);
+                refreshDrumLaneBankParams(t, _sl_lane);
+                forceRedraw();
                 return;
             }
         }

@@ -132,11 +132,14 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
         return;
     }
     if (!strcmp(key, "pfx_noteFx_reset")) {
-        fx->octave_shift    = 0; cp->octave_shift    = 0;
-        fx->note_offset     = 0; cp->note_offset     = 0;
-        fx->gate_time       = 100; cp->gate_time       = 100;
-        fx->velocity_offset = 0; cp->velocity_offset = 0;
-        fx->quantize        = 0; cp->quantize        = 0;
+        fx->octave_shift     = 0; cp->octave_shift     = 0;
+        fx->note_offset      = 0; cp->note_offset      = 0;
+        fx->gate_time        = 100; cp->gate_time      = 100;
+        fx->velocity_offset  = 0; cp->velocity_offset  = 0;
+        fx->quantize         = 0; cp->quantize         = 0;
+        fx->note_random      = 0; cp->note_random      = 0;
+        fx->note_random_mode = 2; cp->note_random_mode = 2;
+        fx->note_random_walk = 0;
         return;
     }
     if (!strcmp(key, "pfx_harm_reset")) {
@@ -152,7 +155,8 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
         fx->repeat_times    = 0; cp->repeat_times    = 0;
         fx->fb_velocity     = 0; cp->fb_velocity     = 0;
         fx->fb_note         = 0; cp->fb_note         = 0;
-        fx->fb_note_random  = 0; cp->fb_note_random  = 0;
+        fx->fb_note_random      = 0; cp->fb_note_random      = 0;
+        fx->fb_note_random_mode = 2; cp->fb_note_random_mode = 2;
         fx->fb_gate_time    = 0; cp->fb_gate_time    = 0;
         fx->fb_clock        = 0; cp->fb_clock        = 0;
         return;
