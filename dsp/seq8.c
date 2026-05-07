@@ -4212,7 +4212,10 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
         inst->tracks[t].pfx.looper_on = 1;
         inst->tracks[t].pfx.track_idx = (uint8_t)t;
         /* Default routing: tracks 1-4 → Move (ch 1-4), tracks 5-8 → Schwung (ch 5-8) */
-        if (t < 4) inst->tracks[t].pfx.route = ROUTE_MOVE;
+        if (t < 4) {
+            inst->tracks[t].pfx.route = ROUTE_MOVE;
+            { int _rl; for (_rl = 0; _rl < DRUM_LANES; _rl++) inst->tracks[t].drum_lane_pfx[_rl].route = ROUTE_MOVE; }
+        }
     }
 
     inst->tick_threshold = (uint32_t)(inst->sample_rate * 60.0f);

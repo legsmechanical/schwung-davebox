@@ -557,6 +557,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 for (c2 = 0; c2 < NUM_CLIPS; c2++)
                     clip_init(&tr2->clips[c2]);
                 drum_track_init(tr2, t2);
+                { int _rl; for (_rl = 0; _rl < DRUM_LANES; _rl++) tr2->drum_lane_pfx[_rl].route = tr2->pfx.route; }
                 drum_repeat_init_defaults(tr2);
             }
         }
