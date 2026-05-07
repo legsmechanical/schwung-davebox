@@ -851,7 +851,6 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
         if (tr2->tarp.octaves != 0)                    fprintf(fp, ",\"t%d_taoc\":%d",    t, (int)tr2->tarp.octaves);
         if (tr2->tarp.gate_pct != 50)                  fprintf(fp, ",\"t%d_tagt\":%d",    t, (int)tr2->tarp.gate_pct);
         if (tr2->tarp.steps_mode != 0)                 fprintf(fp, ",\"t%d_tasm\":%d",    t, (int)tr2->tarp.steps_mode);
-        if (tr2->tarp_latch)                           fprintf(fp, ",\"t%d_talc\":1",     t);
         if (!tr2->tarp_sync)                           fprintf(fp, ",\"t%d_tasy\":0",     t);
         if (!tr2->tarp.retrigger)                      fprintf(fp, ",\"t%d_targ\":0",     t);
         {
@@ -1249,8 +1248,6 @@ static void seq8_load_state(seq8_instance_t *inst) {
         tr2->tarp.gate_pct = (uint16_t)clamp_i(json_get_int(buf, key, 50), 1, 200);
         snprintf(key, sizeof(key), "t%d_tasm", t);
         tr2->tarp.steps_mode = (uint8_t)clamp_i(json_get_int(buf, key, 0), 0, 2);
-        snprintf(key, sizeof(key), "t%d_talc", t);
-        tr2->tarp_latch = (uint8_t)(json_get_int(buf, key, 0) ? 1 : 0);
         snprintf(key, sizeof(key), "t%d_tasy", t);
         tr2->tarp_sync = (uint8_t)(json_get_int(buf, key, 1) ? 1 : 0);
         snprintf(key, sizeof(key), "t%d_targ", t);

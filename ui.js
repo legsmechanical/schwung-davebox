@@ -2926,6 +2926,7 @@ globalThis.init = function () {
 };
 
 var _lastRemapTrack = -1, _lastRemapRoute = -1, _lastRemapChannel = -1, _lastRemapMidiIn = -2;
+var _lastSessionView = false;
 
 globalThis.tick = function () {
     S.tickCount++;
@@ -2938,11 +2939,29 @@ globalThis.tick = function () {
         const _rm = S.midiInChannel;
         if (_rt !== _lastRemapTrack || _rr !== _lastRemapRoute ||
                 _rc !== _lastRemapChannel || _rm !== _lastRemapMidiIn) {
+            /* Reset TARP latch on the track being left */
+            if (_rt !== _lastRemapTrack && _lastRemapTrack >= 0 &&
+                    (S.bankParams[_lastRemapTrack][5][7] | 0)) {
+                S.bankParams[_lastRemapTrack][5][7] = 0;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + _lastRemapTrack + '_tarp_latch', '0');
+            }
             applyExtMidiRemap();
             _lastRemapTrack = _rt; _lastRemapRoute = _rr;
             _lastRemapChannel = _rc; _lastRemapMidiIn = _rm;
         }
     }
+
+    /* Reset TARP latch when entering session view */
+    if (S.sessionView && !_lastSessionView) {
+        const _t = S.activeTrack;
+        if (S.bankParams[_t][5][7] | 0) {
+            S.bankParams[_t][5][7] = 0;
+            if (typeof host_module_set_param === 'function')
+                host_module_set_param('t' + _t + '_tarp_latch', '0');
+        }
+    }
+    _lastSessionView = S.sessionView;
 
     /* Suspend detection: host swaps clear_screen to a no-op while we're parked.
      * Save state on the transition edge; let tick run normally (display is no-oped by host). */
