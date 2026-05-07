@@ -770,6 +770,7 @@ static void clip_build_steps_from_notes(clip_t *cl);
 static void silence_track_notes_v2(seq8_instance_t *inst, seq8_track_t *tr);
 static void clip_pfx_params_init(clip_pfx_params_t *p);
 static void pfx_sync_from_clip(seq8_track_t *tr);
+static void drum_pfx_apply_params(drum_pfx_t *px, const drum_pfx_params_t *p);
 
 /* ------------------------------------------------------------------ */
 /* Utility                                                              */
@@ -876,7 +877,7 @@ static void ensure_parent_dir(const char *path) {
 
 static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
     int t, c;
-    fprintf(fp, "{\"v\":25,\"playing\":%d", inst->playing);
+    fprintf(fp, "{\"v\":26,\"playing\":%d", inst->playing);
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
     for (t = 0; t < NUM_TRACKS; t++)
@@ -1008,6 +1009,19 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
                             (int)n->vel, (int)n->gate);
                 }
                 if (wrote) fputc('"', fp);
+                /* Per-lane drum pfx params (sparse — only non-default) */
+                {
+                    const drum_pfx_params_t *dp = &dl->pfx_params;
+                    if (dp->gate_time       != 100) fprintf(fp, ",\"t%dc%dl%d_dpg\":%d",   t, c, l, dp->gate_time);
+                    if (dp->velocity_offset != 0)   fprintf(fp, ",\"t%dc%dl%d_dpvo\":%d",  t, c, l, dp->velocity_offset);
+                    if (dp->quantize        != 0)   fprintf(fp, ",\"t%dc%dl%d_dpq\":%d",   t, c, l, dp->quantize);
+                    if (dp->delay_time_idx  != DEFAULT_DELAY_TIME_IDX) fprintf(fp, ",\"t%dc%dl%d_dpdt\":%d", t, c, l, dp->delay_time_idx);
+                    if (dp->delay_level     != 0)   fprintf(fp, ",\"t%dc%dl%d_dpdl\":%d",  t, c, l, dp->delay_level);
+                    if (dp->repeat_times    != 0)   fprintf(fp, ",\"t%dc%dl%d_dpdr\":%d",  t, c, l, dp->repeat_times);
+                    if (dp->fb_velocity     != 0)   fprintf(fp, ",\"t%dc%dl%d_dpfbv\":%d", t, c, l, dp->fb_velocity);
+                    if (dp->fb_gate_time    != 0)   fprintf(fp, ",\"t%dc%dl%d_dpfbg\":%d", t, c, l, dp->fb_gate_time);
+                    if (dp->fb_clock        != 0)   fprintf(fp, ",\"t%dc%dl%d_dpfbc\":%d", t, c, l, dp->fb_clock);
+                }
             }
         }
     }
@@ -1130,7 +1144,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
     /* Version gate: only v=24 accepted (dev build; wipe on version mismatch). */
     {
         int sv = json_get_int(buf, "v", -1);
-        if (sv != 25) {
+        if (sv != 26) {
             free(buf);
             remove(inst->state_path);
             seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
@@ -1473,6 +1487,29 @@ static void seq8_load_state(seq8_instance_t *inst) {
                                              (uint8_t)clamp_i(vel_val, 0, 127));
                         }
                     }
+                }
+                /* Per-lane drum pfx params (sparse — missing = default) */
+                {
+                    drum_pfx_params_t *dp = &dl->pfx_params;
+                    snprintf(key, sizeof(key), "t%dc%dl%d_dpg",   t, c, l);
+                    dp->gate_time       = clamp_i(json_get_int(buf, key, 100), 0, 400);
+                    snprintf(key, sizeof(key), "t%dc%dl%d_dpvo",  t, c, l);
+                    dp->velocity_offset = clamp_i(json_get_int(buf, key, 0), -127, 127);
+                    snprintf(key, sizeof(key), "t%dc%dl%d_dpq",   t, c, l);
+                    dp->quantize        = clamp_i(json_get_int(buf, key, 0), 0, 100);
+                    snprintf(key, sizeof(key), "t%dc%dl%d_dpdt",  t, c, l);
+                    dp->delay_time_idx  = clamp_i(json_get_int(buf, key, DEFAULT_DELAY_TIME_IDX), 0, NUM_CLOCK_VALUES - 1);
+                    snprintf(key, sizeof(key), "t%dc%dl%d_dpdl",  t, c, l);
+                    dp->delay_level     = clamp_i(json_get_int(buf, key, 0), 0, 127);
+                    snprintf(key, sizeof(key), "t%dc%dl%d_dpdr",  t, c, l);
+                    dp->repeat_times    = clamp_i(json_get_int(buf, key, 0), 0, MAX_REPEATS);
+                    snprintf(key, sizeof(key), "t%dc%dl%d_dpfbv", t, c, l);
+                    dp->fb_velocity     = clamp_i(json_get_int(buf, key, 0), -127, 127);
+                    snprintf(key, sizeof(key), "t%dc%dl%d_dpfbg", t, c, l);
+                    dp->fb_gate_time    = clamp_i(json_get_int(buf, key, 0), 0, 10);
+                    snprintf(key, sizeof(key), "t%dc%dl%d_dpfbc", t, c, l);
+                    dp->fb_clock        = clamp_i(json_get_int(buf, key, 0), -100, 100);
+                    drum_pfx_apply_params(&inst->tracks[t].drum_lane_pfx[l], dp);
                 }
             }
         }
