@@ -2523,7 +2523,7 @@ function drawUI() {
             const ndg  = S.drumRepeatNudge[t][lane][k];
             const disp = S.shiftHeld
                 ? (ndg === 0 ? ' 0%' : (ndg > 0 ? '+' : '') + ndg + '%')
-                : (vs === 100 ? 'Live' : vs + '%');
+                : vs + '%';
             print(colX, rowY + 12, col4(disp), hi ? 0 : 1);
         }
         } else if (S.shiftHeld && S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM &&
