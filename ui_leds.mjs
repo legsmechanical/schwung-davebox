@@ -166,8 +166,6 @@ export function updateStepLEDs() {
             color = TRACK_COLORS[S.activeTrack];
         } else if (steps[absStep] === 1) {
             color = White;
-        } else if (steps[absStep] === 2) {
-            color = 119;
         } else {
             color = (S.beatMarkersEnabled && i % 4 === 0) ? TRACK_DIM_COLORS[S.activeTrack] : LED_OFF;
         }
@@ -234,12 +232,10 @@ export function updateSessionLEDs() {
             const isWillRelaunch = S.trackWillRelaunch[t] && isActiveClip;
             const isDrumTrack = S.trackPadMode[t] === PAD_MODE_DRUM;
             const hasContent  = isDrumTrack ? S.drumClipNonEmpty[t][sceneIdx] : S.clipNonEmpty[t][sceneIdx];
-            const hasActive   = isDrumTrack
-                ? S.drumClipNonEmpty[t][sceneIdx]
-                : clipHasActiveNotes(t, sceneIdx);
+            const hasActive   = hasContent;
             let color;
             if (!hasContent) {
-                color = isActiveClip ? LightGrey : LED_OFF;
+                color = isActiveClip ? DarkGrey : LED_OFF;
             } else if (!hasActive) {
                 color = DarkGrey;
             } else if (isPlaying && isPendingStop) {

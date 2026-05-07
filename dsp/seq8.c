@@ -282,8 +282,7 @@ typedef struct {
     uint8_t  vel;                /* velocity 0..127 */
     uint8_t  active;             /* 1=in use, 0=tombstoned */
     uint8_t  suppress_until_wrap; /* 1=skip playback until clip wraps (recording suppressor) */
-    uint8_t  step_muted;         /* 1=from an inactive step; present in notes[] but suppressed from MIDI */
-    uint8_t  pad[1];
+    uint8_t  pad[2];
 } note_t; /* 12 bytes */
 
 /* ------------------------------------------------------------------ */
@@ -830,7 +829,7 @@ static void ensure_parent_dir(const char *path) {
 
 static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
     int t, c;
-    fprintf(fp, "{\"v\":24,\"playing\":%d", inst->playing);
+    fprintf(fp, "{\"v\":25,\"playing\":%d", inst->playing);
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
     for (t = 0; t < NUM_TRACKS; t++)
@@ -925,10 +924,9 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
                         fprintf(fp, ",\"t%dc%d_n\":\"", t, c);
                         wrote = 1;
                     }
-                    fprintf(fp, "%u:%d:%d:%d:%d;",
+                    fprintf(fp, "%u:%d:%d:%d;",
                             (unsigned)n->tick, (int)n->pitch,
-                            (int)n->vel, (int)n->gate,
-                            (int)n->step_muted);
+                            (int)n->vel, (int)n->gate);
                 }
                 if (wrote) fputc('"', fp);
             }
@@ -958,9 +956,9 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
                     note_t *n = &dlc->notes[ni];
                     if (!n->active) continue;
                     if (!wrote) { fprintf(fp, ",\"t%dc%dl%d_n\":\"", t, c, l); wrote = 1; }
-                    fprintf(fp, "%u:%d:%d:%d:%d;",
+                    fprintf(fp, "%u:%d:%d:%d;",
                             (unsigned)n->tick, (int)n->pitch,
-                            (int)n->vel, (int)n->gate, (int)n->step_muted);
+                            (int)n->vel, (int)n->gate);
                 }
                 if (wrote) fputc('"', fp);
             }
@@ -1085,7 +1083,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
     /* Version gate: only v=24 accepted (dev build; wipe on version mismatch). */
     {
         int sv = json_get_int(buf, "v", -1);
-        if (sv != 24) {
+        if (sv != 25) {
             free(buf);
             remove(inst->state_path);
             seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
@@ -1163,20 +1161,13 @@ static void seq8_load_state(seq8_instance_t *inst) {
                         p++;
                         int gate_val = 0;
                         while (*p >= '0' && *p <= '9') gate_val = gate_val*10 + (*p++ - '0');
-                        int sm_val = 0;
-                        if (*p == ':') {
-                            p++;
-                            while (*p >= '0' && *p <= '9') sm_val = sm_val*10 + (*p++ - '0');
-                        }
                         if (*p == ';') p++;
                         if ((uint32_t)tick_val < max_tick) {
                             int gmax_ld = SEQ_STEPS * cl->ticks_per_step; if (gmax_ld > 65535) gmax_ld = 65535;
-                            int ni_idx = clip_insert_note(cl, (uint32_t)tick_val,
+                            clip_insert_note(cl, (uint32_t)tick_val,
                                              (uint16_t)clamp_i(gate_val, 1, gmax_ld),
                                              (uint8_t)clamp_i(pitch_val, 0, 127),
                                              (uint8_t)clamp_i(vel_val, 0, 127));
-                            if (ni_idx >= 0 && sm_val)
-                                cl->notes[ni_idx].step_muted = 1;
                         }
                     }
                 }
@@ -1425,21 +1416,14 @@ static void seq8_load_state(seq8_instance_t *inst) {
                         p++;
                         int gate_val = 0;
                         while (*p >= '0' && *p <= '9') gate_val = gate_val*10 + (*p++ - '0');
-                        int sm_val = 0;
-                        if (*p == ':') {
-                            p++;
-                            while (*p >= '0' && *p <= '9') sm_val = sm_val*10 + (*p++ - '0');
-                        }
                         if (*p == ';') p++;
                         if ((uint32_t)tick_val < max_tick) {
                             int gmax_ld = SEQ_STEPS * dlc->ticks_per_step;
                             if (gmax_ld > 65535) gmax_ld = 65535;
-                            int ni_idx = clip_insert_note(dlc, (uint32_t)tick_val,
+                            clip_insert_note(dlc, (uint32_t)tick_val,
                                              (uint16_t)clamp_i(gate_val, 1, gmax_ld),
                                              (uint8_t)clamp_i(pitch_val, 0, 127),
                                              (uint8_t)clamp_i(vel_val, 0, 127));
-                            if (ni_idx >= 0 && sm_val)
-                                dlc->notes[ni_idx].step_muted = 1;
                         }
                     }
                 }
@@ -3565,7 +3549,7 @@ static void clip_occ_update(clip_t *cl) {
     memset(cl->occ_cache, 0, sizeof(cl->occ_cache));
     uint16_t i;
     for (i = 0; i < cl->note_count; i++) {
-        if (!cl->notes[i].active || cl->notes[i].step_muted) continue;
+        if (!cl->notes[i].active) continue;
         uint16_t s = note_step(cl->notes[i].tick, cl->length, cl->ticks_per_step);
         cl->occ_cache[s >> 3] |= (uint8_t)(1u << (s & 7));
     }
@@ -3624,8 +3608,8 @@ static int clip_insert_note(clip_t *cl, uint32_t tick, uint16_t gate,
     cl->notes[idx].pitch             = pitch;
     cl->notes[idx].vel               = vel;
     cl->notes[idx].suppress_until_wrap = 0;
-    cl->notes[idx].step_muted        = 0;
     cl->notes[idx].pad[0]            = 0;
+    cl->notes[idx].pad[1]            = 0;
     cl->notes[idx].active            = 1;   /* activate last */
     cl->note_count++;
     cl->occ_dirty = 1;
@@ -3660,10 +3644,8 @@ static void clip_build_steps_from_notes(clip_t *cl) {
         cl->note_tick_offset[sidx][idx] =
             (int16_t)((int32_t)n->tick - (int32_t)sidx * cl->ticks_per_step);
         cl->step_note_count[sidx]++;
-        if (!n->step_muted) {
-            cl->steps[sidx] = 1;
-            cl->active = 1;
-        }
+        cl->steps[sidx] = 1;
+        cl->active = 1;
     }
 }
 
@@ -3677,15 +3659,13 @@ static void clip_migrate_to_notes(clip_t *cl) {
     int clip_ticks = (int)cl->length * tps;
     for (s = 0; s < (int)cl->length; s++) {
         if (cl->step_note_count[s] == 0) continue;
-        uint8_t muted = cl->steps[s] ? 0 : 1;
         for (ni = 0; ni < (int)cl->step_note_count[s]; ni++) {
             int32_t abs_tick = (int32_t)s * tps
                                + (int32_t)cl->note_tick_offset[s][ni];
             if (abs_tick < 0) abs_tick += clip_ticks;
             if (abs_tick >= clip_ticks) abs_tick = clip_ticks - 1;
-            int idx = clip_insert_note(cl, (uint32_t)abs_tick, cl->step_gate[s],
-                                       cl->step_notes[s][ni], cl->step_vel[s]);
-            if (idx >= 0) cl->notes[idx].step_muted = muted;
+            clip_insert_note(cl, (uint32_t)abs_tick, cl->step_gate[s],
+                             cl->step_notes[s][ni], cl->step_vel[s]);
             if (cl->note_count >= MAX_NOTES_PER_CLIP) return;
         }
     }
@@ -4939,11 +4919,7 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                     note_t *n = &cl->notes[ni3];
                     if (!n->active) continue;
                     uint16_t sn = note_step(n->tick, cl->length, cl->ticks_per_step);
-                    if (sn >= SEQ_STEPS) continue;
-                    if (!n->step_muted)
-                        out[sn] = '1';
-                    else if (out[sn] == '0')
-                        out[sn] = '2';
+                    if (sn < SEQ_STEPS) out[sn] = '1';
                 }
                 out[SEQ_STEPS] = '\0';
                 return SEQ_STEPS;
@@ -5354,7 +5330,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                         uint16_t ni2;
                         for (ni2 = 0; ni2 < dlc->note_count; ni2++) {
                             note_t *n = &dlc->notes[ni2];
-                            if (!n->active || n->suppress_until_wrap || n->step_muted) continue;
+                            if (!n->active || n->suppress_until_wrap) continue;
                             if (effective_note_tick(n, dlc, tr->pfx.quantize) != cct) continue;
                             { int pp; for (pp = 0; pp < (int)tr->play_pending_count; pp++) {
                                 if (tr->play_pending[pp].pitch == lane_note) {
@@ -5383,7 +5359,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                     uint16_t ni2;
                     for (ni2 = 0; ni2 < cl->note_count; ni2++) {
                         note_t *n = &cl->notes[ni2];
-                        if (!n->active || n->suppress_until_wrap || n->step_muted) continue;
+                        if (!n->active || n->suppress_until_wrap) continue;
                         if (effective_note_tick(n, cl, tr->pfx.quantize) != cct) continue;
                         { int pp; for (pp = 0; pp < (int)tr->play_pending_count; pp++) {
                             if (tr->play_pending[pp].pitch == n->pitch) {

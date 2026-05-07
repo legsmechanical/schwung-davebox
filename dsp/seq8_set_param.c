@@ -1398,23 +1398,6 @@ static void set_param(void *instance, const char *key, const char *val) {
                 while (*q >= '0' && *q <= '9') { sidx = sidx * 10 + (*q++ - '0'); }
                 if (sidx < 0 || sidx >= SEQ_STEPS) return;
 
-                if (*q == '\0') {
-                    /* tN_cC_step_S — legacy on/off: reactivate/deactivate without touching notes.
-                     * Safety: deny activation if step has no notes (prevents invariant violation). */
-                    if (val[0] == '1') {
-                        if (cl->step_note_count[sidx] > 0) cl->steps[sidx] = 1;
-                    } else {
-                        cl->steps[sidx] = 0;
-                    }
-                    {
-                        int i, any = 0;
-                        for (i = 0; i < SEQ_STEPS; i++) if (cl->steps[i]) { any = 1; break; }
-                        cl->active = (uint8_t)any;
-                    }
-                    clip_migrate_to_notes(cl);
-                    return;
-                }
-
                 if (!strcmp(q, "_toggle")) {
                     /* tN_cC_step_S_toggle val="note [velocity [0..127]]"
                      * If note present: remove it. If absent and room: add it.

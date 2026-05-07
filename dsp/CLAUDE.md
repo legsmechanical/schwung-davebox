@@ -34,9 +34,9 @@ ssh ableton@move.local "tail -f /data/UserData/schwung/seq8.log"
 
 ## State format
 
-Version v=23 (only v=23 accepted). v<23 → deleted + clean start.
+Version v=25 (only v=25 accepted). v≠25 → deleted + clean start.
 
-Note format: `tick:pitch:vel:gate:sm;`
+Note format: `tick:pitch:vel:gate;`
 
 Key prefixes:
 - SEQ ARP: `_arst` / `_arrt` / `_aroc` / `_argt` / `_arsm` / `_artg`
