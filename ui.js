@@ -98,9 +98,9 @@ function drawBankHeading(name) {
 }
 
 function drawBankHeadingInverted(name) {
-    fill_rect(0, 0, 128, 10, 0);
+    fill_rect(0, 0, 128, 9, 0);
     fill_rect(0, 0, 128, 1, 1);
-    fill_rect(0, 9, 128, 1, 1);
+    fill_rect(0, 8, 128, 1, 1);
     print(4, 1, name, 1);
 }
 
