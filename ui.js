@@ -70,7 +70,7 @@ import {
     TRACK_COLORS, TRACK_DIM_COLORS, SCENE_LETTERS, TRACK_PAD_BASE, TOP_PAD_BASE,
     TPS_VALUES, NOTE_KEYS, SCALE_NAMES, SCALE_DISPLAY, DELAY_LABELS,
     fmtSign, fmtStretch, fmtLen, fmtRes, fmtPct, fmtNote, fmtPages, fmtUnis,
-    fmtDly, fmtBool, fmtRoute, fmtPlain, fmtNA,
+    fmtDly, fmtBool, fmtRoute, fmtPlain, fmtNA, fmtGateMod,
     fmtArpStyle, fmtArpRate, fmtArpSteps, fmtArpOct, fmtVelOverride,
     col4, parseActionRaw, MCUFONT, pixelPrint, pixelPrintC,
     BANKS, ACTION_POPUP_TICKS, PAD_MODE_DRUM,
