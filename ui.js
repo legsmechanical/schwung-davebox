@@ -3477,7 +3477,7 @@ globalThis.tick = function () {
         } else {
             setButtonLED(MoveRec, S.recordArmed ? Red : LED_OFF);
         }
-        setButtonLED(MoveSample, S.dspMergeState >= 2 ? Green : S.dspMergeState === 1 ? Red : LED_OFF);
+        setButtonLED(MoveSample, S.dspMergeState >= 2 ? Green : S.dspMergeState === 1 ? Red : DarkGrey);
         /* Loop LED: flash White at 1/8 rate while Perf Mode view is locked (Session
          * View only) or drum repeat latched; VividYellow for latch mode; dim available
          * indicator (16) otherwise (always functional in both views). */
