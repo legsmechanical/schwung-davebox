@@ -3477,9 +3477,10 @@ globalThis.tick = function () {
         } else {
             setButtonLED(MoveRec, S.recordArmed ? Red : LED_OFF);
         }
-        setButtonLED(MoveSample, S.dspMergeState >= 2 ? Green : S.dspMergeState === 1 ? Red : LED_OFF);
+        setButtonLED(MoveSample, S.dspMergeState >= 2 ? Green : S.dspMergeState === 1 ? Red : DarkGrey);
         /* Loop LED: flash White at 1/8 rate while Perf Mode view is locked (Session
-         * View only) or drum repeat latched; dim DarkGrey while Loop is held; off otherwise. */
+         * View only) or drum repeat latched; VividYellow for latch mode; DarkGrey while
+         * Loop is held in Session View or always in Track View (always functional); off otherwise. */
         {
             let loopColor = LED_OFF;
             const _lt = S.activeTrack;
@@ -3490,7 +3491,7 @@ globalThis.tick = function () {
                 loopColor = flashAtRate(48) ? White : LED_OFF;
             } else if (S.sessionView && S.perfLatchMode) {
                 loopColor = VividYellow;
-            } else if (S.sessionView && S.loopHeld) {
+            } else {
                 loopColor = DarkGrey;
             }
             setButtonLED(MoveLoop, loopColor);
@@ -3499,8 +3500,18 @@ globalThis.tick = function () {
             const _muted      = S.trackMuted[S.activeTrack];
             const _soloed     = S.trackSoloed[S.activeTrack];
             const _muteBlink  = Math.floor(S.tickCount / 24) % 2;
-            setButtonLED(MoveMute, _muted ? 124 : (_soloed ? (_muteBlink ? 124 : 0) : 16));
+            setButtonLED(MoveMute, _muted ? 124 : (_soloed ? (_muteBlink ? 124 : 0) : DarkGrey));
         }
+        /* Contextual button LEDs: DarkGrey on any button that is actionable in the current mode. */
+        setButtonLED(MoveShift,       DarkGrey);
+        setButtonLED(MoveNoteSession, DarkGrey);
+        setButtonLED(MoveUndo,        DarkGrey);
+        setButtonLED(MoveDelete,      DarkGrey);
+        setButtonLED(MoveCopy,        DarkGrey);
+        setButtonLED(MoveUp,          DarkGrey);
+        setButtonLED(MoveDown,        DarkGrey);
+        setButtonLED(MoveLeft,  S.sessionView ? LED_OFF : DarkGrey);
+        setButtonLED(MoveRight, S.sessionView ? LED_OFF : DarkGrey);
 
         if (S.sessionView) {
             updateSessionLEDs();
