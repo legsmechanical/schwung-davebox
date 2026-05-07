@@ -511,6 +511,20 @@ export function updateTrackLEDs() {
         }
         cachedSetButtonLED(71 + k, ledVal);
     }
+    /* Shift-flash: knobs with a Shift-modified function blink DarkGrey/OFF while Shift is held. */
+    if (S.shiftHeld && !S.sessionView) {
+        const _sf = (Math.floor(S.tickCount / 24) % 2) ? DarkGrey : LED_OFF;
+        const _isDrum = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
+        for (let k = 0; k < 8; k++) {
+            let hasShift = false;
+            if      (S.activeBank === 0 && k === 3)             hasShift = true; // K4 zoom
+            else if (S.activeBank === 1 && k === 2 && !_isDrum) hasShift = true; // K3 Rnd algo
+            else if (S.activeBank === 3 && k === 7 && !_isDrum) hasShift = true; // K8 Rnd algo
+            else if (S.activeBank === 5 && _isDrum)             hasShift = true; // K1-8 nudge
+            else if (S.activeBank === 6)                        hasShift = true; // K1-8 CC assign
+            if (hasShift) cachedSetButtonLED(71 + k, _sf);
+        }
+    }
 
     /* Hold-save double-blink: override step button LEDs in any view */
     if (S.stepSaveFlashEndTick >= 0 && S.tickCount < S.stepSaveFlashEndTick &&

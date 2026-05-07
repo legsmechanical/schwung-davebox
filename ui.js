@@ -3512,6 +3512,16 @@ globalThis.tick = function () {
         setButtonLED(MoveDown,        DarkGrey);
         setButtonLED(MoveLeft,  S.sessionView ? LED_OFF : DarkGrey);
         setButtonLED(MoveRight, S.sessionView ? LED_OFF : DarkGrey);
+        /* Shift-flash: buttons with a Shift-modified function blink DarkGrey/OFF while Shift is held. */
+        if (S.shiftHeld) {
+            const _sf = (Math.floor(S.tickCount / 24) % 2) ? DarkGrey : LED_OFF;
+            setButtonLED(MoveNoteSession, _sf);
+            setButtonLED(MoveSample,      _sf);
+            setButtonLED(MoveUndo,        _sf);
+            setButtonLED(MoveCopy,        _sf);
+            if (S.sessionView)  setButtonLED(MoveLoop, _sf);
+            if (!S.sessionView) setButtonLED(MoveMute, _sf);
+        }
 
         if (S.sessionView) {
             updateSessionLEDs();
