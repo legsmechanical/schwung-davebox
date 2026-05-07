@@ -3662,7 +3662,7 @@ globalThis.tick = function () {
 
         /* Loop jog OOB view: revert to pages view after ~500ms of inactivity */
         if (S.loopJogActive && S.loopHeld && S.loopJogLastTick !== undefined) {
-            if ((S.tickCount - S.loopJogLastTick) > 47) {
+            if ((S.tickCount - S.loopJogLastTick) > 70) {
                 S.loopJogActive = false;
                 S.screenDirty = true;
             }
