@@ -1098,13 +1098,13 @@ function drawBakeConfirm() {
         _btn(86, bY, bW, bH, S.confirmBakeWrapSel === 2, 'CANCEL', 1);
     } else if (S.confirmBakeIsMultiLoop) {
         drawMenuHeader('BAKE FX?');
-        print(4, 20, 'Bake N loops of', 1);
-        print(4, 29, 'effects chain:', 1);
-        const mH = 11;
-        _btn(14, 33, 100, mH, S.confirmBakeSel === 0, 'CANCEL', 31);
-        _btn(4,  47, 36,  mH, S.confirmBakeSel === 1, '1x', 12);
-        _btn(46, 47, 36,  mH, S.confirmBakeSel === 2, '2x', 12);
-        _btn(88, 47, 36,  mH, S.confirmBakeSel === 3, '4x', 12);
+        print(4, 14, 'Bake N loops of FX', 1);
+        print(4, 23, 'chain to clip?', 1);
+        const bH = 12, bY = 38;
+        _btn(2,  bY, 27, bH, S.confirmBakeSel === 1, '1x',     9);
+        _btn(31, bY, 27, bH, S.confirmBakeSel === 2, '2x',     9);
+        _btn(60, bY, 27, bH, S.confirmBakeSel === 3, '4x',     9);
+        _btn(89, bY, 37, bH, S.confirmBakeSel === 0, 'CANCEL', 3);
     } else if (!S.confirmBakeIsDrum) {
         drawMenuHeader('BAKE FX?');
         print(4, 16, 'Apply effects chain', 1);
@@ -1117,7 +1117,6 @@ function drawBakeConfirm() {
         const modeLabel = S.confirmBakeDrumMode === 1 ? 'LANE' : 'CLIP';
         drawMenuHeader('BAKE DRUMS?');
         print(4, 13, modeLabel + ' — loop count:', 1);
-        if (S.confirmBakeDrumMode === 1) print(4, 22, 'No Pitch / HARMZ FX', 1);
         const mH = 11;
         _btn(14, 33, 100, mH, S.confirmBakeDrumLoopSel === 0, 'CANCEL', 31);
         _btn(4,  47, 36,  mH, S.confirmBakeDrumLoopSel === 1, '1x', 12);
@@ -1125,11 +1124,8 @@ function drawBakeConfirm() {
         _btn(88, 47, 36,  mH, S.confirmBakeDrumLoopSel === 3, '4x', 12);
     } else {
         drawMenuHeader('BAKE DRUMS?');
-        print(4, 16, 'Bake effects chain', 1);
-        print(4, 25, 'to drum lanes.', 1);
-        if (S.confirmBakeSel === 1) {
-            print(4, 36, 'No Pitch / HARMZ FX', 1);
-        }
+        print(4, 16, 'Bake FX to clip', 1);
+        print(4, 25, '(all lanes) or lane?', 1);
         /* 3 buttons: CLIP(0) | LANE(1) | CANCEL(2, default) */
         const bW = 38, bH = 13, bY = 50;
         _btn(4,  bY, bW, bH, S.confirmBakeSel === 0, 'CLIP',   7);
