@@ -2314,11 +2314,9 @@ function drawUI() {
             return;
         }
         if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
-            /* Drum step edit: 3-column Dur/Vel/Ndg; lane note in top bar */
+            /* Drum step edit: 3-column Dur/Vel/Ndg */
             const t    = S.activeTrack;
             const lane = S.activeDrumLane[t];
-            const note = S.drumLaneNote[t][lane];
-            print(4, 10, midiNoteName(note) + '  ' + note, 1);
             if (S.heldStepNotes.length > 0) {
                 const tps   = S.drumLaneTPS[t] || 24;
                 const LABELS = ['Dur', 'Vel', 'Ndg'];
