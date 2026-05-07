@@ -296,8 +296,8 @@ export const BANKS = [
         p('Oct',  'Octave Range',  'tarp_octaves',    'track', -4,  4,   0,  fmtArpOct,   16),
         p('Gate', 'Arp Gate',      'tarp_gate',       'track', 1,   200, 50, fmtPct,       4),
         p('Stps', 'Steps Mode',    'tarp_steps_mode', 'track', 0,   2,   0,  fmtArpSteps, 16),
-        _X,
-        p('Sync', 'Sync to Clock', 'tarp_sync',       'track', 0,   1,   0,  fmtBool,     16),
+        p('Rtrg', 'Retrigger',    'tarp_retrigger',  'track', 0,   1,   1,  fmtBool,     16),
+        p('Sync', 'Sync to Clock', 'tarp_sync',       'track', 0,   1,   1,  fmtBool,     16),
         p('Ltch', 'Latch',         'tarp_latch',      'track', 0,   1,   0,  fmtBool,     16),
     ]},
     /* 6 — CC PARAM (pad 98) — per-track CC assignments; custom handling, no DSP-wired knobs */

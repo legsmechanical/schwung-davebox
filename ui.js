@@ -6616,8 +6616,8 @@ globalThis.onMidiMessageInternal = function (data) {
                             d1 + ' 1 ' + _tv);
                         S.trackCCAutoBits[S.activeTrack][S.trackActiveClip[S.activeTrack]] |= (1 << d1);
                     }
-                    /* SEQ ARP K5 / TRACK ARP K6 touch: switch pads to vel-slider editor immediately. */
-                    if ((S.activeBank === 4 && d1 === 4) || (S.activeBank === 5 && d1 === 5)) forceRedraw();
+                    /* SEQ ARP K5 / TRACK ARP K5 touch: switch pads to vel-slider editor immediately. */
+                    if ((S.activeBank === 4 && d1 === 4) || (S.activeBank === 5 && d1 === 4)) forceRedraw();
                 }
                 if (d1 === MoveMainTouch && !S.globalMenuOpen && !S.shiftHeld) { S.jogTouched = true; forceRedraw(); }
             } else if (d2 < 64) {
@@ -6645,8 +6645,8 @@ globalThis.onMidiMessageInternal = function (data) {
                     if (S.activeBank === 6 && S.recordArmed && !S.recordCountingIn &&
                             S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM)
                         host_module_set_param('t' + S.activeTrack + '_cc_touch', d1 + ' 0 0');
-                    /* SEQ ARP K5 / TRACK ARP K6 release: refresh pads (vel-slider editor → normal pads). */
-                    if ((S.activeBank === 4 && d1 === 4) || (S.activeBank === 5 && d1 === 5)) forceRedraw();
+                    /* SEQ ARP K5 / TRACK ARP K5 release: refresh pads (vel-slider editor → normal pads). */
+                    if ((S.activeBank === 4 && d1 === 4) || (S.activeBank === 5 && d1 === 4)) forceRedraw();
                     /* Rnd dialog: commit selected algorithm on physical release */
                     if (S.rndDialogMode >= 0) {
                         const _rt = S.activeTrack, _rb = S.activeBank;
@@ -6686,7 +6686,7 @@ globalThis.onMidiMessageInternal = function (data) {
                         S.bankParams[S.activeTrack][S.activeBank][d1] = 0;
                     }
                 }
-                if ((S.activeBank === 4 && d1 === 4) || (S.activeBank === 5 && d1 === 5)) forceRedraw();
+                if ((S.activeBank === 4 && d1 === 4) || (S.activeBank === 5 && d1 === 4)) forceRedraw();
                 /* Rnd dialog: commit selected algorithm on physical release (0x80 path) */
                 if (S.rndDialogMode >= 0) {
                     const _rt = S.activeTrack, _rb = S.activeBank;

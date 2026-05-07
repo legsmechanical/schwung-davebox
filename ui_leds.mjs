@@ -326,9 +326,9 @@ export function updateTrackLEDs() {
         return;
     }
 
-    /* TRACK ARP K6 (Steps Mode) touched + Steps Mode != Off: same vel-level editor */
-    if (!S.sessionView && S.activeBank === 5 && S.knobTouched === 5 &&
-            (S.bankParams[S.activeTrack][5][5] | 0) !== 0) {
+    /* TRACK ARP K5 (Steps Mode) touched + Steps Mode != Off: same vel-level editor */
+    if (!S.sessionView && S.activeBank === 5 && S.knobTouched === 4 &&
+            (S.bankParams[S.activeTrack][5][4] | 0) !== 0) {
         const t  = S.activeTrack;
         const sv = S.tarpStepVel[t];
         const tc = TRACK_COLORS[t];

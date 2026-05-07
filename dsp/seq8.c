@@ -852,7 +852,8 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
         if (tr2->tarp.gate_pct != 50)                  fprintf(fp, ",\"t%d_tagt\":%d",    t, (int)tr2->tarp.gate_pct);
         if (tr2->tarp.steps_mode != 0)                 fprintf(fp, ",\"t%d_tasm\":%d",    t, (int)tr2->tarp.steps_mode);
         if (tr2->tarp_latch)                           fprintf(fp, ",\"t%d_talc\":1",     t);
-        if (tr2->tarp_sync)                            fprintf(fp, ",\"t%d_tasy\":1",     t);
+        if (!tr2->tarp_sync)                           fprintf(fp, ",\"t%d_tasy\":0",     t);
+        if (!tr2->tarp.retrigger)                      fprintf(fp, ",\"t%d_targ\":0",     t);
         {
             int _i;
             for (_i = 0; _i < 8; _i++)
@@ -1251,7 +1252,9 @@ static void seq8_load_state(seq8_instance_t *inst) {
         snprintf(key, sizeof(key), "t%d_talc", t);
         tr2->tarp_latch = (uint8_t)(json_get_int(buf, key, 0) ? 1 : 0);
         snprintf(key, sizeof(key), "t%d_tasy", t);
-        tr2->tarp_sync = (uint8_t)(json_get_int(buf, key, 0) ? 1 : 0);
+        tr2->tarp_sync = (uint8_t)(json_get_int(buf, key, 1) ? 1 : 0);
+        snprintf(key, sizeof(key), "t%d_targ", t);
+        tr2->tarp.retrigger = (uint8_t)(json_get_int(buf, key, 1) ? 1 : 0);
         {
             int _i;
             for (_i = 0; _i < 8; _i++) {
@@ -2987,6 +2990,7 @@ static void arp_tick(seq8_instance_t *inst, seq8_track_t *tr) {
 static void tarp_init_defaults(seq8_track_t *tr) {
     tr->tarp_on    = 0;
     tr->tarp_latch = 0;
+    tr->tarp_sync  = 1;
     arp_init_defaults(&tr->tarp);
     tr->tarp.style = 0; /* 0=Off; style drives tarp_on */
 }
@@ -4537,6 +4541,7 @@ static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
     if (!strcmp(key, "tarp_steps_mode")) return snprintf(out, out_len, "%d", (int)tr->tarp.steps_mode);
     if (!strcmp(key, "tarp_latch"))         return snprintf(out, out_len, "%d", (int)tr->tarp_latch);
     if (!strcmp(key, "tarp_sync"))          return snprintf(out, out_len, "%d", (int)tr->tarp_sync);
+    if (!strcmp(key, "tarp_retrigger"))     return snprintf(out, out_len, "%d", (int)tr->tarp.retrigger);
     if (!strcmp(key, "track_vel_override")) return snprintf(out, out_len, "%d", (int)tr->track_vel_override);
     /* Batch read: TRACK ARP step_vel[0..7] */
     if (!strcmp(key, "tarp_sv"))
