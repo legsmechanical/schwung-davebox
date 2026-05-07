@@ -280,7 +280,7 @@ export function updateTrackLEDs() {
                     else if (i === 14 || i === 15)          on = true;
                 }
             }
-            const color = on ? White : LED_OFF;
+            const color = on ? LightGrey : LED_OFF;
             if (force) {
                 lastSentButtonLED[16 + i] = color;
                 setButtonLED(16 + i, color, true);
