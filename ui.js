@@ -3477,7 +3477,7 @@ globalThis.tick = function () {
         } else {
             setButtonLED(MoveRec, S.recordArmed ? Red : LED_OFF);
         }
-        setButtonLED(MoveSample, S.dspMergeState >= 2 ? Green : S.dspMergeState === 1 ? Red : 16);
+        setButtonLED(MoveSample, S.dspMergeState >= 2 ? Green : S.dspMergeState === 1 ? Red : LED_OFF);
         /* Loop LED: flash White at 1/8 rate while Perf Mode view is locked (Session
          * View only) or drum repeat latched; VividYellow for latch mode; dim available
          * indicator (16) otherwise (always functional in both views). */
@@ -3512,11 +3512,13 @@ globalThis.tick = function () {
         setButtonLED(MoveDown,        16);
         setButtonLED(MoveLeft,  S.sessionView ? LED_OFF : 16);
         setButtonLED(MoveRight, S.sessionView ? LED_OFF : 16);
-        /* Shift-flash: buttons with a Shift-modified function blink 16/OFF while Shift is held. */
+        /* Shift-flash: buttons with a Shift-modified function blink 16/OFF while Shift is held.
+         * Sample uses DarkGrey/OFF since index 16 (RoyalBlue) shows wrong on that button. */
         if (S.shiftHeld) {
-            const _sf = (Math.floor(S.tickCount / 24) % 2) ? 16 : LED_OFF;
+            const _sf  = (Math.floor(S.tickCount / 24) % 2) ? 16 : LED_OFF;
+            const _sfs = (Math.floor(S.tickCount / 24) % 2) ? DarkGrey : LED_OFF;
             setButtonLED(MoveNoteSession, _sf);
-            setButtonLED(MoveSample,      _sf);
+            setButtonLED(MoveSample,      _sfs);
             setButtonLED(MoveUndo,        _sf);
             setButtonLED(MoveCopy,        _sf);
             if (S.sessionView)  setButtonLED(MoveLoop, _sf);
