@@ -2518,7 +2518,7 @@ function drawUI() {
         const vals = S.bankParams[t][1];
         const nfxLabels = ['Gate', 'Vel', 'Qnt'];
         const nfxVals   = [fmtPct(vals[0]), fmtSign(vals[1]), fmtPct(vals[2])];
-        drawBankHeading('>> NOTE/NOTEFX');
+        drawBankHeading('>> NOTE FX');
         for (let k = 0; k < 3; k++) {
             const colX = 4 + k * 30;
             const hi   = (S.knobTouched === k);
@@ -2632,7 +2632,7 @@ function drawUI() {
         const oct       = Math.floor(note / 12) - 2;
         const name      = NOTE_KEYS[note % 12];
         const bankGroup = pg === 0 ? 'Bank: A' : 'Bank: B';
-        const bankName  = S.activeBank === 0 ? 'DRUM LANE >>' : S.activeBank === 1 ? '>> NOTE/NOTEFX' : S.activeBank === 5 ? 'REPEAT GROOVE' : S.activeBank === 6 ? BANKS[6].name : S.activeBank === 7 ? 'ALL LANES' : BANKS[S.activeBank] ? '>> ' + BANKS[S.activeBank].name : '?';
+        const bankName  = S.activeBank === 0 ? 'DRUM LANE >>' : S.activeBank === 1 ? '>> NOTE FX' : S.activeBank === 5 ? 'REPEAT GROOVE' : S.activeBank === 6 ? BANKS[6].name : S.activeBank === 7 ? 'ALL LANES' : BANKS[S.activeBank] ? '>> ' + BANKS[S.activeBank].name : '?';
         (S.activeBank === 5 || S.activeBank === 6 ? drawBankHeadingInverted : drawBankHeading)(bankName);
         pixelPrint(4, 10, bankGroup + '  Pad: ' + name + oct + ' (' + note + ')', 1);
         const laneBit = 1 << lane;
