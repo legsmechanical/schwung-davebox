@@ -3,8 +3,6 @@
 ## Bugs to fix
 
 3. **Scale-aware key/scale changes** — transpose all clip notes on Key/Scale change. Design TBD.
-4. **Step/note editing fixes** — see pending fixes in planning doc.
-6. **Full instance reset**
 7. **State snapshots** (16 slots)
 9. **MIDI clock sync**
 10. **Track conversion** (`tN_convert_to_drum`/`tN_convert_to_melodic`): Global Menu Mode item or dedicated dialog.

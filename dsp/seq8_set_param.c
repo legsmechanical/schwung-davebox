@@ -674,6 +674,27 @@ static void set_param(void *instance, const char *key, const char *val) {
         }
         return;
     }
+    if (!strcmp(key, "bake_scene")) {
+        /* val = "C N" — C: clip index, N: loop count for melodic tracks (1/2/4) */
+        int sc = 0, sn = 1;
+        int t;
+        sscanf(val, "%d %d", &sc, &sn);
+        if (sc >= 0 && sc < NUM_CLIPS) {
+            sn = clamp_i(sn, 1, 4);
+            undo_begin_scene_bake(inst, sc);
+            inst->undo_locked = 1;
+            for (t = 0; t < NUM_TRACKS; t++) {
+                if (inst->tracks[t].pad_mode == PAD_MODE_DRUM)
+                    bake_drum_clip(inst, t, sc);
+                else
+                    bake_clip(inst, t, sc, sn);
+            }
+            inst->undo_locked = 0;
+            inst->state_dirty = 1;
+            seq8_ilog(inst, "SEQ8 bake_scene");
+        }
+        return;
+    }
     if (!strcmp(key, "perf_mods")) {
         inst->perf_mods_active = (uint32_t)(unsigned int)my_atoi(val);
         return;

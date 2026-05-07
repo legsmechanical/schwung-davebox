@@ -1119,6 +1119,29 @@ function drawBakeConfirm() {
 }
 
 
+function drawBakeSceneConfirm() {
+    clear_screen();
+    function _btn(x, y, w, h, sel, label, labelOff) {
+        if (sel) {
+            fill_rect(x, y, w, h, 1);
+            print(x + labelOff, y + 3, label, 0);
+        } else {
+            fill_rect(x, y, w, 1, 1);
+            fill_rect(x, y + h - 1, w, 1, 1);
+            fill_rect(x, y, 1, h, 1);
+            fill_rect(x + w - 1, y, 1, h, 1);
+            print(x + labelOff, y + 3, label, 1);
+        }
+    }
+    drawMenuHeader('BAKE SCENE?');
+    print(4, 22, 'Loop count:', 1);
+    const mH = 11;
+    _btn(14, 33, 100, mH, S.confirmBakeSceneSel === 0, 'CANCEL', 31);
+    _btn(4,  47, 36,  mH, S.confirmBakeSceneSel === 1, '1x', 12);
+    _btn(46, 47, 36,  mH, S.confirmBakeSceneSel === 2, '2x', 12);
+    _btn(88, 47, 36,  mH, S.confirmBakeSceneSel === 3, '4x', 12);
+}
+
 function clipHasContent(t, c) {
     const s = S.clipSteps[t][c];
     for (let i = 0; i < NUM_STEPS; i++) if (s[i]) return true;
@@ -2196,6 +2219,7 @@ function drawPerfModeOled() {
 
 function drawUI() {
     if (S.sessionOverlayHeld) { drawSessionOverview(); return; }
+    if (S.confirmBakeScene) { drawBakeSceneConfirm(); return; }
     if (S.confirmBake) { drawBakeConfirm(); return; }
     if (S.globalMenuOpen || S.tapTempoOpen) { drawGlobalMenu(); return; }
     /* Perf Mode OLED takeover (Session View + Loop held or locked) */
@@ -3246,6 +3270,37 @@ globalThis.tick = function () {
             forceRedraw();
         }
     }
+    if (S.pendingSceneBakeResync > 0) {
+        S.pendingSceneBakeResync--;
+        if (S.pendingSceneBakeResync === 0) {
+            const sc = S.pendingSceneBakeClip;
+            for (let _t = 0; _t < NUM_TRACKS; _t++) {
+                if (S.trackPadMode[_t] === PAD_MODE_DRUM) {
+                    if (S.trackActiveClip[_t] === sc) {
+                        syncDrumClipContent(_t);
+                        syncDrumLanesMeta(_t);
+                        syncDrumLaneSteps(_t, S.activeDrumLane[_t]);
+                    }
+                } else {
+                    const bulk = host_module_get_param('t' + _t + '_c' + sc + '_steps');
+                    if (bulk && bulk.length >= NUM_STEPS) {
+                        for (let rs = 0; rs < NUM_STEPS; rs++)
+                            S.clipSteps[_t][sc][rs] = bulk[rs] === '1' ? 1 : (bulk[rs] === '2' ? 2 : 0);
+                        S.clipNonEmpty[_t][sc] = clipHasContent(_t, sc);
+                    }
+                    const _plen = host_module_get_param('t' + _t + '_c' + sc + '_length');
+                    if (_plen !== null && _plen !== undefined) S.clipLength[_t][sc] = parseInt(_plen, 10) || 16;
+                    const _ptps = host_module_get_param('t' + _t + '_c' + sc + '_tps');
+                    if (_ptps !== null && _ptps !== undefined) {
+                        const _tv = parseInt(_ptps, 10);
+                        S.clipTPS[_t][sc] = TPS_VALUES.indexOf(_tv) >= 0 ? _tv : 24;
+                    }
+                    if (sc === S.trackActiveClip[_t]) refreshPerClipBankParams(_t);
+                }
+            }
+            forceRedraw();
+        }
+    }
 
     if (S.pendingClearLengthTrack >= 0) {
         const _clt = S.pendingClearLengthTrack;
@@ -3689,6 +3744,21 @@ globalThis.tick = function () {
 /* ------------------------------------------------------------------ */
 
 function _onCC_jog(d1, d2) {
+    /* Scene bake confirm: jog click confirms/cancels */
+    if (d1 === 3 && d2 === 127 && S.confirmBakeScene) {
+        if (S.confirmBakeSceneSel > 0) {
+            const _loops = [1, 2, 4][S.confirmBakeSceneSel - 1];
+            host_module_set_param('bake_scene', S.confirmBakeSceneClip + ' ' + _loops);
+            S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
+            showActionPopup('SCENE', 'BAKED');
+            S.pendingSceneBakeResync = 2;
+            S.pendingSceneBakeClip   = S.confirmBakeSceneClip;
+        }
+        S.confirmBakeScene = false;
+        S.screenDirty      = true;
+        return;
+    }
+
     /* Bake confirm: jog click confirms/cancels when dialog is open */
     if (d1 === 3 && d2 === 127 && S.confirmBake) {
         if (S.confirmBakeIsMultiLoop) {
@@ -3841,6 +3911,14 @@ function _onCC_jog(d1, d2) {
 
     if (d1 === MoveMainKnob) {
 
+        if (S.confirmBakeScene) {
+            const delta = decodeDelta(d2);
+            if (delta !== 0) {
+                S.confirmBakeSceneSel = (S.confirmBakeSceneSel + (delta > 0 ? 1 : 3)) % 4;
+                S.screenDirty = true;
+            }
+            return;
+        }
         if (S.confirmBake) {
             const delta = decodeDelta(d2);
             if (delta !== 0) {
@@ -4381,15 +4459,28 @@ function _onCC_transport(d1, d2) {
         }
     }
 
-    /* Sample (CC 118, no modifier): cancel bake dialog, stop merge, or open Bake confirm */
+    /* Sample press (no modifier): track held state; cancel dialogs/merge immediately on press */
     if (d1 === MoveSample && d2 === 127 && !S.shiftHeld) {
-        if (S.confirmBake) {
-            S.confirmBake = false;
+        S.sampleHeld           = true;
+        S.sampleUsedAsModifier = false;
+        if (S.confirmBakeScene) {
+            S.confirmBakeScene     = false;
+            S.sampleUsedAsModifier = true;
+            forceRedraw();
+        } else if (S.confirmBake) {
+            S.confirmBake          = false;
+            S.sampleUsedAsModifier = true;
             forceRedraw();
         } else if (S.dspMergeState !== 0) {
             host_module_set_param('merge_stop', '1');
+            S.sampleUsedAsModifier = true;
             /* LED stays green until DSP finalizes at page boundary */
-        } else {
+        }
+    }
+    /* Sample release (no modifier): open per-track bake if not used as modifier */
+    if (d1 === MoveSample && d2 === 0 && !S.shiftHeld) {
+        S.sampleHeld = false;
+        if (!S.sampleUsedAsModifier) {
             const _bt = S.activeTrack, _bc = S.trackActiveClip[_bt];
             const _isDrum = S.trackPadMode[_bt] === PAD_MODE_DRUM;
             const _hasRnd = !_isDrum && (
@@ -4594,6 +4685,12 @@ function _onCC_side(d1, d2) {
                 forceRedraw();
                 showActionPopup('SEQUENCE', 'CLEARED');
             }
+        } else if (S.sampleHeld && S.sessionView) {
+            S.sampleUsedAsModifier  = true;
+            S.confirmBakeScene      = true;
+            S.confirmBakeSceneSel   = 0;
+            S.confirmBakeSceneClip  = clipIdx;
+            S.screenDirty           = true;
         } else if (S.sessionView) {
             S.sceneBtnFlashTick[idx] = S.tickCount;
             if (typeof host_module_set_param === 'function')

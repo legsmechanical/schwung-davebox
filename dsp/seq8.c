@@ -605,6 +605,7 @@ typedef struct {
     uint8_t drum_row_redo_valid;
     uint8_t drum_row_undo_clips[2];
     uint8_t drum_row_redo_clips[2];
+    uint8_t undo_locked; /* set during scene bake to block individual undo_begin calls */
     drum_rec_snap_lane_t drum_row_undo_lanes[2][NUM_TRACKS][DRUM_LANES];
     drum_rec_snap_lane_t drum_row_redo_lanes[2][NUM_TRACKS][DRUM_LANES];
 
@@ -3818,6 +3819,7 @@ static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
 /* ------------------------------------------------------------------ */
 
 static void undo_begin_single(seq8_instance_t *inst, int t, int c) {
+    if (inst->undo_locked) return;
     inst->undo_clip_count    = 1;
     inst->undo_clip_tracks[0]  = (uint8_t)t;
     inst->undo_clip_indices[0] = (uint8_t)c;
@@ -3924,7 +3926,30 @@ static void undo_begin_row_pair(seq8_instance_t *inst, int srcRow, int dstRow) {
     inst->drum_row_redo_valid = 0;
 }
 
+/* Snapshot all 8 tracks at a given clip for scene bake undo.
+ * Melodic clips go into undo_clips[]; drum clips via drum_row_snap. */
+static void undo_begin_scene_bake(seq8_instance_t *inst, int clip) {
+    int t, mc = 0;
+    for (t = 0; t < NUM_TRACKS; t++) {
+        if (inst->tracks[t].pad_mode != PAD_MODE_DRUM) {
+            inst->undo_clip_tracks[mc]  = (uint8_t)t;
+            inst->undo_clip_indices[mc] = (uint8_t)clip;
+            memcpy(&inst->undo_clips[mc], &inst->tracks[t].clips[clip], sizeof(clip_t));
+            mc++;
+        }
+    }
+    inst->undo_clip_count    = (uint8_t)mc;
+    inst->undo_valid         = 1;
+    inst->redo_valid         = 0;
+    inst->drum_undo_valid    = 0;
+    drum_row_snap(inst, clip, inst->drum_row_undo_lanes[0]);
+    inst->drum_row_undo_clips[0] = (uint8_t)clip;
+    inst->drum_row_undo_valid    = 1;
+    inst->drum_row_redo_valid    = 0;
+}
+
 static void undo_begin_drum_clip(seq8_instance_t *inst, int t, int c) {
+    if (inst->undo_locked) return;
     int l;
     drum_clip_t *dc = &inst->tracks[t].drum_clips[c];
     for (l = 0; l < DRUM_LANES; l++) {
