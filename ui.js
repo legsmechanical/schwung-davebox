@@ -1328,8 +1328,8 @@ function refreshDrumLaneBankParams(t, lane) {
             S.bankParams[t][1][0] = parseInt(v[0], 10) | 0;  /* oct */
             S.bankParams[t][1][1] = parseInt(v[1], 10) | 0;  /* ofs */
             S.bankParams[t][1][2] = v.length >= 33 ? (parseInt(v[32], 10) | 0) : 0; /* rnd */
-            S.noteFXRandomMode[t]  = v.length >= 34 ? (parseInt(v[33], 10) | 0) : 0;
-            S.midiDlyRandomMode[t] = v.length >= 35 ? (parseInt(v[34], 10) | 0) : 0;
+            S.noteFXRandomMode[t]  = v.length >= 34 ? (parseInt(v[33], 10) | 0) : 2;
+            S.midiDlyRandomMode[t] = v.length >= 35 ? (parseInt(v[34], 10) | 0) : 2;
             S.bankParams[t][1][3] = parseInt(v[2], 10) | 0;  /* gate */
             S.bankParams[t][1][4] = parseInt(v[3], 10) | 0;  /* vel */
             S.bankParams[t][1][5] = parseInt(v[4], 10) | 0;  /* qnt */
@@ -1375,8 +1375,8 @@ function refreshPerClipBankParams(t) {
     S.bankParams[t][1][0] = parseInt(v[0], 10) | 0;  /* oct */
     S.bankParams[t][1][1] = parseInt(v[1], 10) | 0;  /* ofs */
     S.bankParams[t][1][2] = v.length >= 33 ? (parseInt(v[32], 10) | 0) : 0; /* rnd */
-    S.noteFXRandomMode[t]  = v.length >= 34 ? (parseInt(v[33], 10) | 0) : 0;
-    S.midiDlyRandomMode[t] = v.length >= 35 ? (parseInt(v[34], 10) | 0) : 0;
+    S.noteFXRandomMode[t]  = v.length >= 34 ? (parseInt(v[33], 10) | 0) : 2;
+    S.midiDlyRandomMode[t] = v.length >= 35 ? (parseInt(v[34], 10) | 0) : 2;
     S.bankParams[t][1][3] = parseInt(v[2], 10) | 0;  /* gate */
     S.bankParams[t][1][4] = parseInt(v[3], 10) | 0;  /* vel */
     S.bankParams[t][1][5] = parseInt(v[4], 10) | 0;  /* qnt */
@@ -2505,11 +2505,13 @@ function drawUI() {
         syncDrumRepeatState(t, lane);
         drawBankHeadingInverted('REPEAT GROOVE');
         pixelPrint(S.shiftHeld ? 94 : 106, 2, S.shiftHeld ? 'NUDGE' : 'VEL', 0);
+        const _gLen = S.drumRepeatGateLen[t][lane];
         for (let k = 0; k < 8; k++) {
             const colX = 4 + (k % 4) * 30;
             const rowY = k < 4 ? 12 : 36;
             const hi   = (S.knobTouched === k);
             if (hi) fill_rect(colX, rowY, 24, 24, 1);
+            if (k >= _gLen) continue;
             const gateOn = !!(S.drumRepeatGate[t][lane] & (1 << k));
             if (gateOn) {
                 fill_rect(colX, rowY + 1, 24, 4, hi ? 0 : 1);
@@ -3757,7 +3759,8 @@ function _onCC_jog(d1, d2) {
                 /* Rpt/Rpt2 mode: Delete+jog = reset current lane groove params */
                 const _rt = S.activeTrack;
                 const _rl = S.activeDrumLane[_rt];
-                S.drumRepeatGate[_rt][_rl] = 0xFF;
+                S.drumRepeatGate[_rt][_rl]    = 0xFF;
+                S.drumRepeatGateLen[_rt][_rl] = 8;
                 for (let _s = 0; _s < 8; _s++) {
                     S.drumRepeatVelScale[_rt][_rl][_s] = 100;
                     S.drumRepeatNudge[_rt][_rl][_s]    = 0;

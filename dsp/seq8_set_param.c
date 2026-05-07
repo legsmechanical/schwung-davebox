@@ -2803,7 +2803,8 @@ static void set_param(void *instance, const char *key, const char *val) {
             }
             /* tN_lL_repeat_groove_reset — reset all groove params for this lane */
             if (!strcmp(p2, "_repeat_groove_reset")) {
-                tr->drum_repeat_gate[lane_idx] = 0xFF;
+                tr->drum_repeat_gate[lane_idx]     = 0xFF;
+                tr->drum_repeat_gate_len[lane_idx] = 8;
                 { int s; for (s = 0; s < 8; s++) {
                     tr->drum_repeat_vel_scale[lane_idx][s] = 100;
                     tr->drum_repeat_nudge[lane_idx][s]     = 0;
