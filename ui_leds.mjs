@@ -513,7 +513,7 @@ export function updateTrackLEDs() {
     }
     /* Shift-flash: knobs with a Shift-modified function blink DarkGrey/OFF while Shift is held. */
     if (S.shiftHeld && !S.sessionView) {
-        const _sf = (Math.floor(S.tickCount / 24) % 2) ? DarkGrey : LED_OFF;
+        const _sf = (Math.floor(S.tickCount / 24) % 2) ? 16 : LED_OFF;
         const _isDrum = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
         for (let k = 0; k < 8; k++) {
             let hasShift = false;

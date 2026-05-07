@@ -3477,10 +3477,10 @@ globalThis.tick = function () {
         } else {
             setButtonLED(MoveRec, S.recordArmed ? Red : LED_OFF);
         }
-        setButtonLED(MoveSample, S.dspMergeState >= 2 ? Green : S.dspMergeState === 1 ? Red : DarkGrey);
+        setButtonLED(MoveSample, S.dspMergeState >= 2 ? Green : S.dspMergeState === 1 ? Red : 16);
         /* Loop LED: flash White at 1/8 rate while Perf Mode view is locked (Session
-         * View only) or drum repeat latched; VividYellow for latch mode; DarkGrey while
-         * Loop is held in Session View or always in Track View (always functional); off otherwise. */
+         * View only) or drum repeat latched; VividYellow for latch mode; dim available
+         * indicator (16) otherwise (always functional in both views). */
         {
             let loopColor = LED_OFF;
             const _lt = S.activeTrack;
@@ -3492,7 +3492,7 @@ globalThis.tick = function () {
             } else if (S.sessionView && S.perfLatchMode) {
                 loopColor = VividYellow;
             } else {
-                loopColor = DarkGrey;
+                loopColor = 16;
             }
             setButtonLED(MoveLoop, loopColor);
         }
@@ -3500,21 +3500,21 @@ globalThis.tick = function () {
             const _muted      = S.trackMuted[S.activeTrack];
             const _soloed     = S.trackSoloed[S.activeTrack];
             const _muteBlink  = Math.floor(S.tickCount / 24) % 2;
-            setButtonLED(MoveMute, _muted ? 124 : (_soloed ? (_muteBlink ? 124 : 0) : DarkGrey));
+            setButtonLED(MoveMute, _muted ? 124 : (_soloed ? (_muteBlink ? 124 : 0) : 16));
         }
-        /* Contextual button LEDs: DarkGrey on any button that is actionable in the current mode. */
-        setButtonLED(MoveShift,       DarkGrey);
-        setButtonLED(MoveNoteSession, DarkGrey);
-        setButtonLED(MoveUndo,        DarkGrey);
-        setButtonLED(MoveDelete,      DarkGrey);
-        setButtonLED(MoveCopy,        DarkGrey);
-        setButtonLED(MoveUp,          DarkGrey);
-        setButtonLED(MoveDown,        DarkGrey);
-        setButtonLED(MoveLeft,  S.sessionView ? LED_OFF : DarkGrey);
-        setButtonLED(MoveRight, S.sessionView ? LED_OFF : DarkGrey);
-        /* Shift-flash: buttons with a Shift-modified function blink DarkGrey/OFF while Shift is held. */
+        /* Contextual button LEDs: dim available indicator (16) on actionable buttons. */
+        setButtonLED(MoveShift,       16);
+        setButtonLED(MoveNoteSession, 16);
+        setButtonLED(MoveUndo,        16);
+        setButtonLED(MoveDelete,      16);
+        setButtonLED(MoveCopy,        16);
+        setButtonLED(MoveUp,          16);
+        setButtonLED(MoveDown,        16);
+        setButtonLED(MoveLeft,  S.sessionView ? LED_OFF : 16);
+        setButtonLED(MoveRight, S.sessionView ? LED_OFF : 16);
+        /* Shift-flash: buttons with a Shift-modified function blink 16/OFF while Shift is held. */
         if (S.shiftHeld) {
-            const _sf = (Math.floor(S.tickCount / 24) % 2) ? DarkGrey : LED_OFF;
+            const _sf = (Math.floor(S.tickCount / 24) % 2) ? 16 : LED_OFF;
             setButtonLED(MoveNoteSession, _sf);
             setButtonLED(MoveSample,      _sf);
             setButtonLED(MoveUndo,        _sf);
