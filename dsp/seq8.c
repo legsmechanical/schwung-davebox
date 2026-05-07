@@ -3860,15 +3860,25 @@ static void drum_pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
         p->fb_gate_time   = 0;
         p->fb_clock       = 0;
     }
-    if (!strcmp(key, "gate_time"))       p->gate_time       = clamp_i(my_atoi(val), 0, 400);
-    if (!strcmp(key, "velocity_offset")) p->velocity_offset = clamp_i(my_atoi(val), -127, 127);
-    if (!strcmp(key, "quantize"))        p->quantize        = clamp_i(my_atoi(val), 0, 100);
-    if (!strcmp(key, "delay_time_idx"))  p->delay_time_idx  = clamp_i(my_atoi(val), 0, 16);
-    if (!strcmp(key, "delay_level"))     p->delay_level     = clamp_i(my_atoi(val), 0, 127);
-    if (!strcmp(key, "repeat_times"))    p->repeat_times    = clamp_i(my_atoi(val), 0, 16);
-    if (!strcmp(key, "fb_velocity"))     p->fb_velocity     = clamp_i(my_atoi(val), -127, 127);
-    if (!strcmp(key, "fb_gate_time"))    p->fb_gate_time    = clamp_i(my_atoi(val), 0, 10);
-    if (!strcmp(key, "fb_clock"))        p->fb_clock        = clamp_i(my_atoi(val), -100, 100);
+    /* Accept canonical names and melodic key aliases from applyBankParam dispatch */
+    if (!strcmp(key, "gate_time")     || !strcmp(key, "noteFX_gate"))
+        p->gate_time       = clamp_i(my_atoi(val), 0, 400);
+    if (!strcmp(key, "velocity_offset") || !strcmp(key, "noteFX_velocity"))
+        p->velocity_offset = clamp_i(my_atoi(val), -127, 127);
+    if (!strcmp(key, "quantize"))
+        p->quantize        = clamp_i(my_atoi(val), 0, 100);
+    if (!strcmp(key, "delay_time_idx") || !strcmp(key, "delay_time"))
+        p->delay_time_idx  = clamp_i(my_atoi(val), 0, 16);
+    if (!strcmp(key, "delay_level"))
+        p->delay_level     = clamp_i(my_atoi(val), 0, 127);
+    if (!strcmp(key, "repeat_times")   || !strcmp(key, "delay_repeats"))
+        p->repeat_times    = clamp_i(my_atoi(val), 0, 16);
+    if (!strcmp(key, "fb_velocity")    || !strcmp(key, "delay_vel_fb"))
+        p->fb_velocity     = clamp_i(my_atoi(val), -127, 127);
+    if (!strcmp(key, "fb_gate_time")   || !strcmp(key, "delay_gate_fb"))
+        p->fb_gate_time    = clamp_i(my_atoi(val), 0, 10);
+    if (!strcmp(key, "fb_clock")       || !strcmp(key, "delay_clock_fb"))
+        p->fb_clock        = clamp_i(my_atoi(val), -100, 100);
     /* Silence and sync note-offs when delay is cleared */
     if (!strcmp(key, "pfx_delay_reset") || !strcmp(key, "pfx_reset") ||
             !strcmp(key, "delay_level") || !strcmp(key, "repeat_times")) {
