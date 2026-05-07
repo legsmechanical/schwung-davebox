@@ -243,6 +243,8 @@ export const S = {
     pendingStepsReread: 0,
     pendingStepsRereadTrack: 0,
     pendingStepsRereadClip: 0,
+    pendingChordToStep: null,   /* pitches[] captured at step-press when pads already held */
+    pendingChordPhase2: null,   /* {t,ac,step,pitches} — set_notes after _toggle activates step */
     pendingAllLanesStretchCheck: -1,   /* track index, -1 = none pending */
     pendingDrumResync: 0,
     pendingDrumResyncTrack: 0,
