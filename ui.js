@@ -1751,6 +1751,11 @@ function resetSingleFxBank(t, bankIdx) {
 /* Read all wired params for bankIdx on track t from DSP into S.bankParams. */
 function readBankParams(t, bankIdx) {
     if (typeof host_module_get_param !== 'function') return;
+    /* Drum pfx banks (0, 1, 3): read via per-lane snapshot, not melodic keys */
+    if (S.trackPadMode[t] === PAD_MODE_DRUM && (bankIdx === 0 || bankIdx === 1 || bankIdx === 3)) {
+        refreshDrumLaneBankParams(t, S.activeDrumLane[t]);
+        return;
+    }
     /* ARP OUT bank: seq_arp_* are set-only; read via per-clip pfx_snapshot */
     if (bankIdx === 4) {
         const ac   = S.trackActiveClip[t];
