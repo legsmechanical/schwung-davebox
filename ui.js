@@ -2735,7 +2735,7 @@ function syncClipsFromDsp() {
             const bulk = host_module_get_param('t' + t + '_c' + c + '_steps');
             if (bulk && bulk.length >= NUM_STEPS) {
                 for (let s = 0; s < NUM_STEPS; s++)
-                    S.clipSteps[t][c][s] = bulk[s] === '1' ? 1 : (bulk[s] === '2' ? 2 : 0);
+                    S.clipSteps[t][c][s] = bulk[s] === '1' ? 1 : 0;
                 S.clipNonEmpty[t][c] = clipHasContent(t, c);
             }
             const len = host_module_get_param('t' + t + '_c' + c + '_length');
@@ -2812,7 +2812,7 @@ function syncClipsTargeted(infoStr) {
             const bulk = host_module_get_param('t' + t + '_c' + c + '_steps');
             if (bulk && bulk.length >= NUM_STEPS) {
                 for (let s = 0; s < NUM_STEPS; s++)
-                    S.clipSteps[t][c][s] = bulk[s] === '1' ? 1 : (bulk[s] === '2' ? 2 : 0);
+                    S.clipSteps[t][c][s] = bulk[s] === '1' ? 1 : 0;
                 S.clipNonEmpty[t][c] = clipHasContent(t, c);
             }
             const len = host_module_get_param('t' + t + '_c' + c + '_length');
@@ -6509,32 +6509,9 @@ function _onPadRelease(status, d1, d2) {
                         S.screenDirty = true;
                     }
                 } else {
-                    const wasOn = S.clipSteps[S.activeTrack][ac_t][absIdx] === 1;
-                    if (!wasOn) {
-                        /* clipSteps=2 means inactive-data: tap-to-reactivate.
-                         * heldStepNotes may be empty (get_param null at press time) —
-                         * use clipSteps to decide rather than assigning a new note. */
-                        if (S.heldStepNotes.length > 0 || S.clipSteps[S.activeTrack][ac_t][absIdx] === 2) {
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + S.activeTrack + '_c' + ac_t + '_step_' + absIdx, '1');
-                        } else {
-                            /* truly empty inactive step — shouldn't reach here since stepWasEmpty
-                             * would be true, but handle gracefully */
-                            const assignNote2 = S.lastPlayedNote >= 0 ? S.lastPlayedNote : defaultStepNote();
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + S.activeTrack + '_c' + ac_t + '_step_' + absIdx + '_toggle', assignNote2 + ' ' + effectiveVelocity(S.lastPadVelocity));
-                        }
-                        S.clipSteps[S.activeTrack][ac_t][absIdx] = 1;
-                        S.clipNonEmpty[S.activeTrack][ac_t] = true;
-                        refreshSeqNotesIfCurrent(S.activeTrack, ac_t, absIdx);
-                    } else {
-                        /* Deactivating: preserve note data */
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + S.activeTrack + '_c' + ac_t + '_step_' + absIdx, '0');
-                        S.clipSteps[S.activeTrack][ac_t][absIdx] = 2; /* has notes — preserve */
-                        if (S.clipNonEmpty[S.activeTrack][ac_t]) S.clipNonEmpty[S.activeTrack][ac_t] = clipHasContent(S.activeTrack, ac_t);
-                        refreshSeqNotesIfCurrent(S.activeTrack, ac_t, absIdx);
-                    }
+                    /* Step had data — tap clears it entirely */
+                    clearStep(S.activeTrack, ac_t, absIdx);
+                    refreshSeqNotesIfCurrent(S.activeTrack, ac_t, absIdx);
                 }
             }
             /* On long-hold release: if nudge moved notes past the step midpoint,
