@@ -2743,6 +2743,12 @@ static void set_param(void *instance, const char *key, const char *val) {
                 inst->state_dirty = 1;
                 return;
             }
+            /* tN_lL_repeat_gate_set "mask" — directly set gate bitmask 0-255 */
+            if (!strcmp(p2, "_repeat_gate_set")) {
+                tr->drum_repeat_gate[lane_idx] = (uint8_t)clamp_i(my_atoi(val), 0, 255);
+                inst->state_dirty = 1;
+                return;
+            }
             /* tN_lL_repeat_vel_scale "step pct" — set velocity scaling 0-200 for step */
             if (!strcmp(p2, "_repeat_vel_scale")) {
                 const char *sp_r = val;

@@ -5377,6 +5377,12 @@ function _onPadPressTrackView(status, d1, d2) {
                     S.drumRepeatNudge[t][lane][step]    = 0;
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + t + '_l' + lane + '_repeat_defaults', String(step));
+                } else if (S.loopHeld) {
+                    /* Loop + gate pad: fill steps 0..step (set loop length) */
+                    const _fillMask = (1 << (step + 1)) - 1;
+                    S.drumRepeatGate[t][lane] = _fillMask;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_l' + lane + '_repeat_gate_set', String(_fillMask));
                 } else {
                     /* Tap: toggle gate bit */
                     S.drumRepeatGate[t][lane] = (S.drumRepeatGate[t][lane] ^ (1 << step)) & 0xFF;
@@ -5411,6 +5417,12 @@ function _onPadPressTrackView(status, d1, d2) {
                     S.drumRepeatNudge[t][lane][step]    = 0;
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + t + '_l' + lane + '_repeat_defaults', String(step));
+                } else if (S.loopHeld) {
+                    /* Loop + gate pad: fill steps 0..step (set loop length) */
+                    const _fillMask = (1 << (step + 1)) - 1;
+                    S.drumRepeatGate[t][lane] = _fillMask;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + t + '_l' + lane + '_repeat_gate_set', String(_fillMask));
                 } else {
                     S.drumRepeatGate[t][lane] = (S.drumRepeatGate[t][lane] ^ (1 << step)) & 0xFF;
                     if (typeof host_module_set_param === 'function')
