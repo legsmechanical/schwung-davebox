@@ -2450,8 +2450,9 @@ function drawUI() {
             const len  = S.drumLaneLength[t];
             const tpsIdx = Math.max(0, TPS_VALUES.indexOf(S.drumLaneTPS[t]));
             const sqfl   = S.clipSeqFollow[t][ac] ? 1 : 0;
-            const _dlNote = S.drumLaneNote[t][lane];
-            const drumLaneLabels = ['Stch', 'Shft', 'Ndg', 'Res', 'Len', 'SqFl', 'Oct', 'Note'];
+            const _dlNote  = S.drumLaneNote[t][lane];
+            const _noteStr = midiNoteName(_dlNote) + ' ' + _dlNote;
+            const drumLaneLabels = ['Stch', 'Shft', 'Ndg', 'Res', 'Len', 'SqFl', null, null];
             const drumLaneVals  = [
                 fmtStretch(S.bankParams[t][0][0]),
                 fmtSign(S.bankParams[t][0][1]),
@@ -2459,11 +2460,10 @@ function drawUI() {
                 fmtRes(tpsIdx),
                 fmtLen(len),
                 fmtBool(sqfl),
-                String(Math.floor(_dlNote / 12) - 2),
-                midiNoteName(_dlNote) + _dlNote,
+                null, null,
             ];
             drawBankHeading('DRUM LANE >>');
-            for (let k = 0; k < 8; k++) {
+            for (let k = 0; k < 6; k++) {
                 if (!drumLaneLabels[k]) continue;
                 const colX = 4 + (k % 4) * 30;
                 const rowY = k < 4 ? 12 : 36;
@@ -2472,6 +2472,21 @@ function drawUI() {
                 print(colX, rowY,      col4(drumLaneLabels[k]), hi ? 0 : 1);
                 print(colX, rowY + 12, col4(drumLaneVals[k]),   hi ? 0 : 1);
             }
+            /* K7+K8: merged Oct/Note box (same as old NOTE/NOTEFX rendering) */
+            const hiLane = (S.knobTouched === 6 || S.knobTouched === 7);
+            const LX = 64, LY = 36, LW = 54, LH = 24;
+            if (hiLane) {
+                fill_rect(LX, LY, LW, LH, 1);
+            } else {
+                fill_rect(LX,      LY,        LW, 1,  1);
+                fill_rect(LX,      LY+LH-1,   LW, 1,  1);
+                fill_rect(LX,      LY,        1,  LH, 1);
+                fill_rect(LX+LW-1, LY,        1,  LH, 1);
+            }
+            const _lc = hiLane ? 0 : 1;
+            print(LX + Math.floor((LW/2 - 18) / 2),                         LY + 1,  'Oct',  _lc);
+            print(LX + Math.floor(LW/2) + Math.floor((LW/2 - 24) / 2),      LY + 1,  'Note', _lc);
+            print(LX + Math.floor((LW - _noteStr.length * 6) / 2), LY + 13, _noteStr, _lc);
         } else if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 7) {
             /* ALL LANES bank overview */
             const t = S.activeTrack;
