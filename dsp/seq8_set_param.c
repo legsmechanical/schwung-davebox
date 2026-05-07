@@ -1397,18 +1397,21 @@ static void set_param(void *instance, const char *key, const char *val) {
 
         /* tN_route: set MIDI routing for this track */
         if (!strcmp(sub, "route")) {
-            if (!strcmp(val, "schwung"))
-                tr->pfx.route = ROUTE_SCHWUNG;
-            else if (!strcmp(val, "move"))
-                tr->pfx.route = ROUTE_MOVE;
-            else if (!strcmp(val, "external"))
-                tr->pfx.route = ROUTE_EXTERNAL;
+            uint8_t rt;
+            if (!strcmp(val, "schwung"))      rt = ROUTE_SCHWUNG;
+            else if (!strcmp(val, "move"))    rt = ROUTE_MOVE;
+            else if (!strcmp(val, "external")) rt = ROUTE_EXTERNAL;
+            else return;
+            tr->pfx.route = rt;
+            { int _rl; for (_rl = 0; _rl < DRUM_LANES; _rl++) tr->drum_lane_pfx[_rl].route = rt; }
             return;
         }
 
         /* tN_track_looper: include/exclude this track from the global MIDI looper */
         if (!strcmp(sub, "track_looper")) {
-            tr->pfx.looper_on = (uint8_t)(my_atoi(val) ? 1 : 0);
+            uint8_t lo = (uint8_t)(my_atoi(val) ? 1 : 0);
+            tr->pfx.looper_on = lo;
+            { int _ll; for (_ll = 0; _ll < DRUM_LANES; _ll++) tr->drum_lane_pfx[_ll].looper_on = lo; }
             return;
         }
 
