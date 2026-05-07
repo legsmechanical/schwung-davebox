@@ -235,7 +235,7 @@ export function updateSessionLEDs() {
             const hasActive   = hasContent;
             let color;
             if (!hasContent) {
-                color = isActiveClip ? LightGrey : LED_OFF;
+                color = isActiveClip ? DarkGrey : LED_OFF;
             } else if (!hasActive) {
                 color = DarkGrey;
             } else if (isPlaying && isPendingStop) {
