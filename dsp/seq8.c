@@ -852,7 +852,7 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
         if (tr2->tarp.gate_pct != 50)                  fprintf(fp, ",\"t%d_tagt\":%d",    t, (int)tr2->tarp.gate_pct);
         if (tr2->tarp.steps_mode != 0)                 fprintf(fp, ",\"t%d_tasm\":%d",    t, (int)tr2->tarp.steps_mode);
         if (!tr2->tarp_sync)                           fprintf(fp, ",\"t%d_tasy\":0",     t);
-        if (!tr2->tarp.retrigger)                      fprintf(fp, ",\"t%d_targ\":0",     t);
+        if (tr2->tarp.retrigger)                       fprintf(fp, ",\"t%d_targ\":1",     t);
         {
             int _i;
             for (_i = 0; _i < 8; _i++)
@@ -1251,7 +1251,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
         snprintf(key, sizeof(key), "t%d_tasy", t);
         tr2->tarp_sync = (uint8_t)(json_get_int(buf, key, 1) ? 1 : 0);
         snprintf(key, sizeof(key), "t%d_targ", t);
-        tr2->tarp.retrigger = (uint8_t)(json_get_int(buf, key, 1) ? 1 : 0);
+        tr2->tarp.retrigger = (uint8_t)(json_get_int(buf, key, 0) ? 1 : 0);
         {
             int _i;
             for (_i = 0; _i < 8; _i++) {
@@ -2989,7 +2989,8 @@ static void tarp_init_defaults(seq8_track_t *tr) {
     tr->tarp_latch = 0;
     tr->tarp_sync  = 1;
     arp_init_defaults(&tr->tarp);
-    tr->tarp.style = 0; /* 0=Off; style drives tarp_on */
+    tr->tarp.style     = 0; /* 0=Off; style drives tarp_on */
+    tr->tarp.retrigger = 0; /* TARP default off; arp_init_defaults sets 1 */
 }
 
 static void drum_repeat_init_defaults(seq8_track_t *tr) {
@@ -3011,8 +3012,18 @@ static void tarp_silence(seq8_instance_t *inst, seq8_track_t *tr) {
         pfx_note_off_imm(inst, tr, a->sounding_pitch);
         a->sounding_active = 0;
     }
-    arp_clear_runtime(a);
-    tr->tarp_physical = 0; /* reset physical-key counter on any full silence */
+    if (tr->tarp_latch) {
+        /* Preserve held buffer so TARP resumes on next transport start */
+        a->sounding_pitch     = 0;
+        a->gate_remaining     = 0;
+        a->ticks_until_next   = 0;
+        a->pending_first_note = 0;
+        a->pending_retrigger  = 0;
+        a->master_anchor      = 0;
+    } else {
+        arp_clear_runtime(a);
+        tr->tarp_physical = 0;
+    }
 }
 
 /* Resolve effective input velocity for a track.
