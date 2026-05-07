@@ -1103,6 +1103,17 @@ function drawBakeConfirm() {
         print(4, 34, 'clear the settings.', 1);
         _btn(6,  46, 46, 13, S.confirmBakeSel === 1, 'No',  17);
         _btn(74, 46, 46, 13, S.confirmBakeSel === 0, 'Yes', 14);
+    } else if (S.confirmBakeDrumLoopOpen) {
+        /* Step 2: loop count selection */
+        const modeLabel = S.confirmBakeDrumMode === 1 ? 'LANE' : 'CLIP';
+        drawMenuHeader('BAKE DRUMS?');
+        print(4, 13, modeLabel + ' — loop count:', 1);
+        if (S.confirmBakeDrumMode === 1) print(4, 22, 'No Pitch / HARMZ FX', 1);
+        const mH = 11;
+        _btn(14, 33, 100, mH, S.confirmBakeDrumLoopSel === 0, 'CANCEL', 31);
+        _btn(4,  47, 36,  mH, S.confirmBakeDrumLoopSel === 1, '1x', 12);
+        _btn(46, 47, 36,  mH, S.confirmBakeDrumLoopSel === 2, '2x', 12);
+        _btn(88, 47, 36,  mH, S.confirmBakeDrumLoopSel === 3, '4x', 12);
     } else {
         drawMenuHeader('BAKE DRUMS?');
         print(4, 16, 'Bake effects chain', 1);
@@ -3782,19 +3793,32 @@ function _onCC_jog(d1, d2) {
                 S.pendingStepsRereadTrack = S.confirmBakeTrack;
                 S.pendingStepsRereadClip  = S.confirmBakeClip;
             }
-        } else {
-            /* drum: 0=CLIP, 1=LANE, 2=CANCEL */
-            if (S.confirmBakeSel < 2) {
-                const bakeMode = S.confirmBakeSel === 0 ? 2 : 1;
+        } else if (S.confirmBakeDrumLoopOpen) {
+            /* drum step 2: loop count — 0=CANCEL, 1-3 = 1x/2x/4x */
+            if (S.confirmBakeDrumLoopSel > 0) {
+                const _loops = [1, 2, 4][S.confirmBakeDrumLoopSel - 1];
                 host_module_set_param('bake',
-                    S.confirmBakeTrack + ' ' + S.confirmBakeClip + ' ' + bakeMode);
+                    S.confirmBakeTrack + ' ' + S.confirmBakeClip + ' ' + S.confirmBakeDrumMode + ' ' + _loops);
                 S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
-                showActionPopup('BAKED');
+                showActionPopup('BAKED', _loops + 'x');
                 S.pendingBankRefresh = S.confirmBakeTrack;
                 if (S.confirmBakeClip === S.trackActiveClip[S.confirmBakeTrack]) {
                     S.pendingDrumResync      = 2;
                     S.pendingDrumResyncTrack = S.confirmBakeTrack;
                 }
+            }
+            S.confirmBakeDrumLoopOpen = false;
+            S.confirmBake = false;
+            S.screenDirty = true;
+            return;
+        } else {
+            /* drum step 1: 0=CLIP, 1=LANE, 2=CANCEL */
+            if (S.confirmBakeSel < 2) {
+                S.confirmBakeDrumMode     = S.confirmBakeSel === 0 ? 2 : 1;
+                S.confirmBakeDrumLoopOpen = true;
+                S.confirmBakeDrumLoopSel  = 0;
+                S.screenDirty = true;
+                return;
             }
         }
         S.confirmBake = false;
@@ -3915,6 +3939,14 @@ function _onCC_jog(d1, d2) {
             const delta = decodeDelta(d2);
             if (delta !== 0) {
                 S.confirmBakeSceneSel = (S.confirmBakeSceneSel + (delta > 0 ? 1 : 3)) % 4;
+                S.screenDirty = true;
+            }
+            return;
+        }
+        if (S.confirmBake && S.confirmBakeIsDrum && S.confirmBakeDrumLoopOpen) {
+            const delta = decodeDelta(d2);
+            if (delta !== 0) {
+                S.confirmBakeDrumLoopSel = (S.confirmBakeDrumLoopSel + (delta > 0 ? 1 : 3)) % 4;
                 S.screenDirty = true;
             }
             return;
@@ -4468,8 +4500,9 @@ function _onCC_transport(d1, d2) {
             S.sampleUsedAsModifier = true;
             forceRedraw();
         } else if (S.confirmBake) {
-            S.confirmBake          = false;
-            S.sampleUsedAsModifier = true;
+            S.confirmBake             = false;
+            S.confirmBakeDrumLoopOpen = false;
+            S.sampleUsedAsModifier    = true;
             forceRedraw();
         } else if (S.dspMergeState !== 0) {
             host_module_set_param('merge_stop', '1');

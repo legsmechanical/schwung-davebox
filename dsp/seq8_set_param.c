@@ -668,8 +668,8 @@ static void set_param(void *instance, const char *key, const char *val) {
         int bt = 0, bc = 0, bm = 0, bn = 1;
         sscanf(val, "%d %d %d %d", &bt, &bc, &bm, &bn);
         if (bt >= 0 && bt < NUM_TRACKS && bc >= 0 && bc < NUM_CLIPS) {
-            if (bm == 1)      bake_drum_lane(inst, bt, bc);
-            else if (bm == 2) bake_drum_clip(inst, bt, bc);
+            if (bm == 1)      bake_drum_lane(inst, bt, bc, clamp_i(bn, 1, 4));
+            else if (bm == 2) bake_drum_clip(inst, bt, bc, clamp_i(bn, 1, 4));
             else              bake_clip(inst, bt, bc, clamp_i(bn, 1, 4));
         }
         return;
@@ -685,7 +685,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             inst->undo_locked = 1;
             for (t = 0; t < NUM_TRACKS; t++) {
                 if (inst->tracks[t].pad_mode == PAD_MODE_DRUM)
-                    bake_drum_clip(inst, t, sc);
+                    bake_drum_clip(inst, t, sc, sn);
                 else
                     bake_clip(inst, t, sc, sn);
             }
