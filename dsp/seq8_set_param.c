@@ -668,13 +668,13 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
     if (!strcmp(key, "bake")) {
-        /* val = "T C [M] [N]" — M: 0=melodic, 1=drum lane, 2=drum clip; N: loop count 1/2/4 */
-        int bt = 0, bc = 0, bm = 0, bn = 1;
-        sscanf(val, "%d %d %d %d", &bt, &bc, &bm, &bn);
+        /* val = "T C [M] [N] [L] [W]" — M: 0=melodic, 1=drum lane, 2=drum clip; N: loops 1/2/4; L: lane (mode 1); W: 1=wrap tails */
+        int bt = 0, bc = 0, bm = 0, bn = 1, bl = 0, bw = 0;
+        sscanf(val, "%d %d %d %d %d %d", &bt, &bc, &bm, &bn, &bl, &bw);
         if (bt >= 0 && bt < NUM_TRACKS && bc >= 0 && bc < NUM_CLIPS) {
-            if (bm == 1)      bake_drum_lane(inst, bt, bc, clamp_i(bn, 1, 4));
-            else if (bm == 2) bake_drum_clip(inst, bt, bc, clamp_i(bn, 1, 4));
-            else              bake_clip(inst, bt, bc, clamp_i(bn, 1, 4));
+            if (bm == 1)      bake_drum_lane(inst, bt, bc, clamp_i(bl, 0, DRUM_LANES-1), clamp_i(bn, 1, 4), bw ? 1 : 0);
+            else if (bm == 2) bake_drum_clip(inst, bt, bc, clamp_i(bn, 1, 4), bw ? 1 : 0);
+            else              bake_clip(inst, bt, bc, clamp_i(bn, 1, 4), bw ? 1 : 0);
         }
         return;
     }
@@ -689,9 +689,9 @@ static void set_param(void *instance, const char *key, const char *val) {
             inst->undo_locked = 1;
             for (t = 0; t < NUM_TRACKS; t++) {
                 if (inst->tracks[t].pad_mode == PAD_MODE_DRUM)
-                    bake_drum_clip(inst, t, sc, sn);
+                    bake_drum_clip(inst, t, sc, sn, 0);
                 else
-                    bake_clip(inst, t, sc, sn);
+                    bake_clip(inst, t, sc, sn, 0);
             }
             inst->undo_locked = 0;
             inst->state_dirty = 1;
@@ -1029,9 +1029,12 @@ static void set_param(void *instance, const char *key, const char *val) {
                 dc->length        = sc->length;
                 dc->ticks_per_step = sc->ticks_per_step;
                 dc->active        = sc->active;
+                dst->lanes[l].pfx_params = src->lanes[l].pfx_params;
                 dst->lanes[l].midi_note = dst_midi_note;
                 clip_migrate_to_notes(dc);
             }
+            if (dstC == (int)inst->tracks[dstT].active_clip)
+                pfx_sync_from_clip(&inst->tracks[dstT]);
             inst->state_dirty = 1;
         }
         return;
@@ -1072,12 +1075,18 @@ static void set_param(void *instance, const char *key, const char *val) {
                 dc->length        = sc->length;
                 dc->ticks_per_step = sc->ticks_per_step;
                 dc->active        = sc->active;
+                dst->lanes[l].pfx_params = src->lanes[l].pfx_params;
                 dst->lanes[l].midi_note = dst_midi_note;
                 clip_migrate_to_notes(dc);
                 pfx_note_off_imm(inst, srcTr, src_midi_note);
                 clip_init(sc);
+                drum_pfx_params_init(&src->lanes[l].pfx_params);
                 src->lanes[l].midi_note = src_midi_note;
             }
+            if (dstC == (int)dstTr->active_clip)
+                pfx_sync_from_clip(dstTr);
+            if (srcC == (int)srcTr->active_clip)
+                pfx_sync_from_clip(srcTr);
             inst->state_dirty = 1;
         }
         return;
@@ -2564,7 +2573,9 @@ static void set_param(void *instance, const char *key, const char *val) {
                     dst->clip.ticks_per_step = dlc->ticks_per_step;
                     dst->clip.active        = dlc->active;
                     dst->midi_note          = dst_midi_note;
+                    dst->pfx_params         = dlane->pfx_params;
                     clip_migrate_to_notes(&dst->clip);
+                    drum_pfx_apply_params(&tr->drum_lane_pfx[dstLane], &dst->pfx_params);
                     /* Copy repeat groove params */
                     tr->drum_repeat_gate[dstLane] = tr->drum_repeat_gate[lane_idx];
                     memcpy(tr->drum_repeat_vel_scale[dstLane], tr->drum_repeat_vel_scale[lane_idx], 8);

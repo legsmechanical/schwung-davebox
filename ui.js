@@ -1087,10 +1087,19 @@ function drawBakeConfirm() {
             print(x + labelOff, y + 3, label, 1);
         }
     }
-    if (S.confirmBakeIsMultiLoop) {
+    if (S.confirmBakeWrapPhase) {
+        drawMenuHeader('WRAP TAILS?');
+        print(4, 16, 'Wrap delay echoes', 1);
+        print(4, 25, 'past clip end back', 1);
+        print(4, 34, 'to the beginning?', 1);
+        const bW = 38, bH = 13, bY = 50;
+        _btn(4,  bY, bW, bH, S.confirmBakeWrapSel === 0, 'YES',    9);
+        _btn(45, bY, bW, bH, S.confirmBakeWrapSel === 1, 'NO',    14);
+        _btn(86, bY, bW, bH, S.confirmBakeWrapSel === 2, 'CANCEL', 1);
+    } else if (S.confirmBakeIsMultiLoop) {
         drawMenuHeader('BAKE FX?');
-        print(4, 13, 'Rnd pitch active.', 1);
-        print(4, 22, 'Capture N loops:', 1);
+        print(4, 20, 'Bake N loops of', 1);
+        print(4, 29, 'effects chain:', 1);
         const mH = 11;
         _btn(14, 33, 100, mH, S.confirmBakeSel === 0, 'CANCEL', 31);
         _btn(4,  47, 36,  mH, S.confirmBakeSel === 1, '1x', 12);
@@ -3789,16 +3798,46 @@ function _onCC_jog(d1, d2) {
 
     /* Bake confirm: jog click confirms/cancels when dialog is open */
     if (d1 === 3 && d2 === 127 && S.confirmBake) {
+        if (S.confirmBakeWrapPhase) {
+            /* Wrap dialog: 0=YES, 1=NO, 2=CANCEL */
+            if (S.confirmBakeWrapSel < 2) {
+                const _wrap = S.confirmBakeWrapSel === 0 ? 1 : 0;
+                const _loops = S.confirmBakeLoops;
+                if (S.confirmBakeIsDrum) {
+                    const _laneArg = S.confirmBakeDrumMode === 1 ? ' ' + S.activeDrumLane[S.confirmBakeTrack] : ' 0';
+                    host_module_set_param('bake',
+                        S.confirmBakeTrack + ' ' + S.confirmBakeClip + ' ' + S.confirmBakeDrumMode + ' ' + _loops + _laneArg + ' ' + _wrap);
+                    S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
+                    showActionPopup('BAKED', _loops + 'x');
+                    S.pendingBankRefresh = S.confirmBakeTrack;
+                    if (S.confirmBakeClip === S.trackActiveClip[S.confirmBakeTrack]) {
+                        S.pendingDrumResync      = 2;
+                        S.pendingDrumResyncTrack = S.confirmBakeTrack;
+                    }
+                } else {
+                    host_module_set_param('bake', S.confirmBakeTrack + ' ' + S.confirmBakeClip + ' 0 ' + _loops + ' 0 ' + _wrap);
+                    S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
+                    showActionPopup('BAKED', _loops + 'x');
+                    S.pendingBankRefresh      = S.confirmBakeTrack;
+                    S.pendingStepsReread      = 2;
+                    S.pendingStepsRereadTrack = S.confirmBakeTrack;
+                    S.pendingStepsRereadClip  = S.confirmBakeClip;
+                }
+            }
+            S.confirmBakeWrapPhase    = false;
+            S.confirmBakeDrumLoopOpen = false;
+            S.confirmBake  = false;
+            S.screenDirty  = true;
+            return;
+        }
         if (S.confirmBakeIsMultiLoop) {
             if (S.confirmBakeSel > 0) {
-                const _loops = [1, 2, 4][S.confirmBakeSel - 1];
-                host_module_set_param('bake', S.confirmBakeTrack + ' ' + S.confirmBakeClip + ' 0 ' + _loops);
-                S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
-                showActionPopup('BAKED', _loops + 'x');
-                S.pendingBankRefresh      = S.confirmBakeTrack;
-                S.pendingStepsReread      = 2;
-                S.pendingStepsRereadTrack = S.confirmBakeTrack;
-                S.pendingStepsRereadClip  = S.confirmBakeClip;
+                /* advance to wrap dialog */
+                S.confirmBakeLoops     = [1, 2, 4][S.confirmBakeSel - 1];
+                S.confirmBakeWrapPhase = true;
+                S.confirmBakeWrapSel   = 1; /* default: NO */
+                S.screenDirty = true;
+                return;
             }
         } else if (!S.confirmBakeIsDrum) {
             if (S.confirmBakeSel === 0) {
@@ -3811,18 +3850,13 @@ function _onCC_jog(d1, d2) {
                 S.pendingStepsRereadClip  = S.confirmBakeClip;
             }
         } else if (S.confirmBakeDrumLoopOpen) {
-            /* drum step 2: loop count — 0=CANCEL, 1-3 = 1x/2x/4x */
+            /* drum step 2: loop count — 0=CANCEL, 1-3 = 1x/2x/4x → wrap dialog */
             if (S.confirmBakeDrumLoopSel > 0) {
-                const _loops = [1, 2, 4][S.confirmBakeDrumLoopSel - 1];
-                host_module_set_param('bake',
-                    S.confirmBakeTrack + ' ' + S.confirmBakeClip + ' ' + S.confirmBakeDrumMode + ' ' + _loops);
-                S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
-                showActionPopup('BAKED', _loops + 'x');
-                S.pendingBankRefresh = S.confirmBakeTrack;
-                if (S.confirmBakeClip === S.trackActiveClip[S.confirmBakeTrack]) {
-                    S.pendingDrumResync      = 2;
-                    S.pendingDrumResyncTrack = S.confirmBakeTrack;
-                }
+                S.confirmBakeLoops     = [1, 2, 4][S.confirmBakeDrumLoopSel - 1];
+                S.confirmBakeWrapPhase = true;
+                S.confirmBakeWrapSel   = 1; /* default: NO */
+                S.screenDirty = true;
+                return;
             }
             S.confirmBakeDrumLoopOpen = false;
             S.confirmBake = false;
@@ -3956,6 +3990,14 @@ function _onCC_jog(d1, d2) {
             const delta = decodeDelta(d2);
             if (delta !== 0) {
                 S.confirmBakeSceneSel = (S.confirmBakeSceneSel + (delta > 0 ? 1 : 3)) % 4;
+                S.screenDirty = true;
+            }
+            return;
+        }
+        if (S.confirmBake && S.confirmBakeWrapPhase) {
+            const delta = decodeDelta(d2);
+            if (delta !== 0) {
+                S.confirmBakeWrapSel = (S.confirmBakeWrapSel + (delta > 0 ? 1 : 2)) % 3;
                 S.screenDirty = true;
             }
             return;
@@ -4145,7 +4187,8 @@ function _onCC_buttons(d1, d2) {
                 closeTapTempo();
                 forceRedraw();
             } else if (S.confirmBake) {
-                S.confirmBake = false;
+                S.confirmBake          = false;
+                S.confirmBakeWrapPhase = false;
                 forceRedraw();
             } else if (S.globalMenuOpen && S.confirmClearSession) {
                 S.confirmClearSession = false;
@@ -4324,7 +4367,8 @@ function _onCC_transport(d1, d2) {
             closeTapTempo();
             forceRedraw();
         } else if (S.confirmBake) {
-            S.confirmBake = false;
+            S.confirmBake          = false;
+            S.confirmBakeWrapPhase = false;
             forceRedraw();
         } else if (S.globalMenuOpen && S.confirmClearSession) {
             S.confirmClearSession = false;
@@ -4519,6 +4563,7 @@ function _onCC_transport(d1, d2) {
         } else if (S.confirmBake) {
             S.confirmBake             = false;
             S.confirmBakeDrumLoopOpen = false;
+            S.confirmBakeWrapPhase    = false;
             S.sampleUsedAsModifier    = true;
             forceRedraw();
         } else if (S.dspMergeState !== 0) {
@@ -4533,15 +4578,14 @@ function _onCC_transport(d1, d2) {
         if (!S.sampleUsedAsModifier) {
             const _bt = S.activeTrack, _bc = S.trackActiveClip[_bt];
             const _isDrum = S.trackPadMode[_bt] === PAD_MODE_DRUM;
-            const _hasRnd = !_isDrum && (
-                (S.bankParams[_bt][1][2] > 0) ||   /* NOTE FX Rnd */
-                (S.bankParams[_bt][3][7] > 0));     /* MIDI DLY Rnd */
-            S.confirmBake            = true;
-            S.confirmBakeIsDrum      = _isDrum;
-            S.confirmBakeIsMultiLoop = _hasRnd;
-            S.confirmBakeSel         = _isDrum ? 2 : (_hasRnd ? 0 : 1);
-            S.confirmBakeTrack       = _bt;
-            S.confirmBakeClip        = _bc;
+            S.confirmBake             = true;
+            S.confirmBakeIsDrum       = _isDrum;
+            S.confirmBakeIsMultiLoop  = !_isDrum;
+            S.confirmBakeSel          = _isDrum ? 2 : 0;
+            S.confirmBakeTrack        = _bt;
+            S.confirmBakeClip         = _bc;
+            S.confirmBakeDrumLoopOpen = false;
+            S.confirmBakeWrapPhase    = false;
             S.screenDirty            = true;
         }
     }
