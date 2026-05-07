@@ -403,7 +403,7 @@ export function updateTrackLEDs() {
                             color = DarkGrey;
                         } else {
                             const isOn = !!(S.drumRepeatGate[t][selLane] & (1 << maskStep));
-                            color = isOn ? tc : LED_OFF;
+                            color = isOn ? tc : DarkGrey;
                         }
                     }
                 } else if (S.drumPerformMode[t] === 2) {
@@ -418,7 +418,7 @@ export function updateTrackLEDs() {
                             color = DarkGrey;
                         } else {
                             const isOn = !!(S.drumRepeatGate[t][selLane] & (1 << maskStep));
-                            color = isOn ? tc : LED_OFF;
+                            color = isOn ? tc : DarkGrey;
                         }
                     }
                 } else {
