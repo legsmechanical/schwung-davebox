@@ -395,7 +395,8 @@ export function updateTrackLEDs() {
                     /* Repeat mode: right 4×4 — rows 0-1 = rate pads, rows 2-3 = gate mask */
                     if (row < 2) {
                         const isHeld = S.drumRepeatHeldPad[t] === i;
-                        color = isHeld ? White : LightGrey;
+                        const isActive = isHeld || S.drumRepeatLatched[t];
+                        color = isActive ? White : DarkGrey;
                     } else {
                         const maskStep = (row - 2) * 4 + (col - 4);
                         const gLen = S.drumRepeatGateLen[t][selLane];
@@ -403,7 +404,7 @@ export function updateTrackLEDs() {
                             color = DarkGrey;
                         } else {
                             const isOn = !!(S.drumRepeatGate[t][selLane] & (1 << maskStep));
-                            color = isOn ? tc : DarkGrey;
+                            color = isOn ? tc : LED_OFF;
                         }
                     }
                 } else if (S.drumPerformMode[t] === 2) {
@@ -418,7 +419,7 @@ export function updateTrackLEDs() {
                             color = DarkGrey;
                         } else {
                             const isOn = !!(S.drumRepeatGate[t][selLane] & (1 << maskStep));
-                            color = isOn ? tc : DarkGrey;
+                            color = isOn ? tc : LED_OFF;
                         }
                     }
                 } else {
