@@ -395,8 +395,7 @@ export function updateTrackLEDs() {
                     /* Repeat mode: right 4×4 — rows 0-1 = rate pads, rows 2-3 = gate mask */
                     if (row < 2) {
                         const isHeld = S.drumRepeatHeldPad[t] === i;
-                        const isActive = isHeld || S.drumRepeatLatched[t];
-                        color = isActive ? White : DarkGrey;
+                        color = isHeld ? White : DarkGrey;
                     } else {
                         const maskStep = (row - 2) * 4 + (col - 4);
                         const gLen = S.drumRepeatGateLen[t][selLane];
