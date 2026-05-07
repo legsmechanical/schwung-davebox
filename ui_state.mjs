@@ -93,6 +93,7 @@ export const S = {
     drumRepeat2RatePerLane: Array.from({length: 8}, () => new Array(32).fill(0)),
     rpt2LoopPadUsed: false,
     drumRepeatGate: Array.from({length: 8}, () => new Array(32).fill(0xFF)),
+    drumRepeatGateLen: Array.from({length: 8}, () => new Array(32).fill(8)),
     drumRepeatVelScale: Array.from({length: 8}, () =>
     Array.from({length: 32}, () => new Array(8).fill(100))),
     drumRepeatNudge: Array.from({length: 8}, () =>

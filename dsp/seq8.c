@@ -455,6 +455,7 @@ typedef struct {
     uint8_t      track_vel_override; /* TRACK K5: 0=Global, 1-127=absolute, 128=Live */
     /* Drum Repeat: gate mask, vel scale, nudge (per-lane, persisted) */
     uint8_t drum_repeat_gate[DRUM_LANES];         /* 8-step bitmask; bit s=step s; default 0xFF */
+    uint8_t drum_repeat_gate_len[DRUM_LANES];     /* gate cycle length 1-8; default 8 */
     uint8_t drum_repeat_vel_scale[DRUM_LANES][8]; /* 0..200, default 100 */
     int8_t  drum_repeat_nudge[DRUM_LANES][8];     /* -50..50 pct, default 0 */
     /* Repeat engine (runtime, not persisted) */
@@ -1011,6 +1012,8 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
           for (l = 0; l < DRUM_LANES; l++) {
               if (tr_r->drum_repeat_gate[l] != 0xFF)
                   fprintf(fp, ",\"t%dl%drg\":%d", t, l, (int)tr_r->drum_repeat_gate[l]);
+              if (tr_r->drum_repeat_gate_len[l] != 8)
+                  fprintf(fp, ",\"t%dl%drgl\":%d", t, l, (int)tr_r->drum_repeat_gate_len[l]);
               for (s = 0; s < 8; s++) {
                   if (tr_r->drum_repeat_vel_scale[l][s] != 100)
                       fprintf(fp, ",\"t%dl%drvs%d\":%d", t, l, s, (int)tr_r->drum_repeat_vel_scale[l][s]);
@@ -1225,6 +1228,8 @@ static void seq8_load_state(seq8_instance_t *inst) {
           for (l = 0; l < DRUM_LANES; l++) {
               snprintf(key, sizeof(key), "t%dl%drg", t, l);
               tr_r->drum_repeat_gate[l] = (uint8_t)(json_get_int(buf, key, 255) & 0xFF);
+              snprintf(key, sizeof(key), "t%dl%drgl", t, l);
+              tr_r->drum_repeat_gate_len[l] = (uint8_t)clamp_i(json_get_int(buf, key, 8), 1, 8);
               for (s = 0; s < 8; s++) {
                   snprintf(key, sizeof(key), "t%dl%drvs%d", t, l, s);
                   tr_r->drum_repeat_vel_scale[l][s] = (uint8_t)clamp_i(json_get_int(buf, key, 100), 0, 200);
@@ -2996,7 +3001,8 @@ static void tarp_init_defaults(seq8_track_t *tr) {
 static void drum_repeat_init_defaults(seq8_track_t *tr) {
     int l, s;
     for (l = 0; l < DRUM_LANES; l++) {
-        tr->drum_repeat_gate[l] = 0xFF;
+        tr->drum_repeat_gate[l]     = 0xFF;
+        tr->drum_repeat_gate_len[l] = 8;
         for (s = 0; s < 8; s++) {
             tr->drum_repeat_vel_scale[l][s] = 100;
             tr->drum_repeat_nudge[l][s]     = 0;
@@ -3115,7 +3121,7 @@ static void drum_repeat_tick(seq8_instance_t *inst, seq8_track_t *tr) {
     tr->drum_repeat_phase++;
     if (tr->drum_repeat_phase >= (uint32_t)rate) {
         tr->drum_repeat_phase = 0;
-        tr->drum_repeat_step  = (tr->drum_repeat_step + 1) % 8;
+        tr->drum_repeat_step  = (tr->drum_repeat_step + 1) % tr->drum_repeat_gate_len[lane];
     }
 }
 
@@ -3203,7 +3209,7 @@ advance_l:
         tr->drum_repeat2_phase[l]++;
         if (tr->drum_repeat2_phase[l] >= (uint32_t)rate) {
             tr->drum_repeat2_phase[l] = 0;
-            tr->drum_repeat2_step[l]  = (tr->drum_repeat2_step[l] + 1) % 8;
+            tr->drum_repeat2_step[l]  = (tr->drum_repeat2_step[l] + 1) % tr->drum_repeat_gate_len[l];
         }
     }
 }
@@ -4839,6 +4845,8 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                     pos += snprintf(out + pos, out_len - pos, " %d", (int)tr->drum_repeat_vel_scale[lidx][s]);
                 for (s = 0; s < 8 && pos < out_len - 4; s++)
                     pos += snprintf(out + pos, out_len - pos, " %d", (int)(int8_t)tr->drum_repeat_nudge[lidx][s]);
+                if (pos < out_len - 4)
+                    pos += snprintf(out + pos, out_len - pos, " %d", (int)tr->drum_repeat_gate_len[lidx]);
                 return pos;
             }
             /* _repeat_debug: live engine state + nudge for all 8 steps */

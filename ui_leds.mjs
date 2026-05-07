@@ -398,8 +398,13 @@ export function updateTrackLEDs() {
                         color = isHeld ? White : LightGrey;
                     } else {
                         const maskStep = (row - 2) * 4 + (col - 4);
-                        const isOn = !!(S.drumRepeatGate[t][selLane] & (1 << maskStep));
-                        color = isOn ? tc : LED_OFF;
+                        const gLen = S.drumRepeatGateLen[t][selLane];
+                        if (maskStep >= gLen) {
+                            color = DarkGrey;
+                        } else {
+                            const isOn = !!(S.drumRepeatGate[t][selLane] & (1 << maskStep));
+                            color = isOn ? tc : LED_OFF;
+                        }
                     }
                 } else if (S.drumPerformMode[t] === 2) {
                     /* Rpt2 mode: right 4×4 — Cyan theme for visual distinction */
@@ -408,8 +413,13 @@ export function updateTrackLEDs() {
                         color = (rateIdx === S.drumRepeat2RatePerLane[t][selLane]) ? Cyan : PurpleBlue;
                     } else {
                         const maskStep = (row - 2) * 4 + (col - 4);
-                        const isOn = !!(S.drumRepeatGate[t][selLane] & (1 << maskStep));
-                        color = isOn ? tc : LED_OFF;
+                        const gLen = S.drumRepeatGateLen[t][selLane];
+                        if (maskStep >= gLen) {
+                            color = DarkGrey;
+                        } else {
+                            const isOn = !!(S.drumRepeatGate[t][selLane] & (1 << maskStep));
+                            color = isOn ? tc : LED_OFF;
+                        }
                     }
                 } else {
                     const zone = row * 4 + (col - 4);

@@ -1357,6 +1357,7 @@ function syncDrumRepeatState(t, lane) {
     S.drumRepeatGate[t][lane] = parseInt(v[0], 10) & 0xFF;
     for (let s = 0; s < 8; s++) S.drumRepeatVelScale[t][lane][s] = parseInt(v[1 + s], 10) | 0;
     for (let s = 0; s < 8; s++) S.drumRepeatNudge[t][lane][s]    = parseInt(v[9 + s], 10) | 0;
+    if (v.length >= 19) S.drumRepeatGateLen[t][lane] = parseInt(v[18], 10) || 8;
 }
 
 function refreshPerClipBankParams(t) {
@@ -5378,11 +5379,13 @@ function _onPadPressTrackView(status, d1, d2) {
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + t + '_l' + lane + '_repeat_defaults', String(step));
                 } else if (S.loopHeld) {
-                    /* Loop + gate pad: fill steps 0..step (set loop length) */
-                    const _fillMask = (1 << (step + 1)) - 1;
-                    S.drumRepeatGate[t][lane] = _fillMask;
+                    /* Loop + gate pad: set gate cycle length and fill mask to steps 0..step */
+                    const gLen = step + 1;
+                    const fillMask = (1 << gLen) - 1;
+                    S.drumRepeatGate[t][lane] = fillMask;
+                    S.drumRepeatGateLen[t][lane] = gLen;
                     if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + t + '_l' + lane + '_repeat_gate_set', String(_fillMask));
+                        host_module_set_param('t' + t + '_l' + lane + '_repeat_gate_and_len', fillMask + ' ' + gLen);
                 } else {
                     /* Tap: toggle gate bit */
                     S.drumRepeatGate[t][lane] = (S.drumRepeatGate[t][lane] ^ (1 << step)) & 0xFF;
@@ -5418,11 +5421,13 @@ function _onPadPressTrackView(status, d1, d2) {
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + t + '_l' + lane + '_repeat_defaults', String(step));
                 } else if (S.loopHeld) {
-                    /* Loop + gate pad: fill steps 0..step (set loop length) */
-                    const _fillMask = (1 << (step + 1)) - 1;
-                    S.drumRepeatGate[t][lane] = _fillMask;
+                    /* Loop + gate pad: set gate cycle length and fill mask to steps 0..step */
+                    const gLen = step + 1;
+                    const fillMask = (1 << gLen) - 1;
+                    S.drumRepeatGate[t][lane] = fillMask;
+                    S.drumRepeatGateLen[t][lane] = gLen;
                     if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + t + '_l' + lane + '_repeat_gate_set', String(_fillMask));
+                        host_module_set_param('t' + t + '_l' + lane + '_repeat_gate_and_len', fillMask + ' ' + gLen);
                 } else {
                     S.drumRepeatGate[t][lane] = (S.drumRepeatGate[t][lane] ^ (1 << step)) & 0xFF;
                     if (typeof host_module_set_param === 'function')
