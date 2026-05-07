@@ -260,7 +260,7 @@ export const BANKS = [
         _X, _X,
     ]},
     /* 2 — HARMZ (pad 94) */
-    { name: 'HARMZ', knobs: [
+    { name: 'HARMONY', knobs: [
         p('Unis', 'Unison',     'harm_unison',    'track', 0,   2,  0, fmtUnis, 4),
         p('Oct',  'Octaver',    'harm_octaver',   'track', -4,  4,  0, fmtSign, 16),
         p('Hrm1', 'Harmony 1',  'harm_interval1', 'track', -24, 24, 0, fmtSign, 8),
@@ -268,7 +268,7 @@ export const BANKS = [
         _X, _X, _X, _X,
     ]},
     /* 3 — MIDI DLY (pad 95) */
-    { name: 'MIDI DLY', knobs: [
+    { name: 'DELAY', knobs: [
         p('Rate', 'Delay Time',     'delay_time',         'track', 0,    16, 10, fmtDly,   10),
         p('Lvl',  'Delay Level',    'delay_level',        'track', 0,    127, 0, fmtPlain),
         p('Rep',  'Repeats',        'delay_repeats',      'track', 0,    16,  0, fmtPlain, 16),
@@ -279,7 +279,7 @@ export const BANKS = [
         p('Rnd',  'Pitch Random',   'delay_pitch_random', 'track', 0,   24,   0, fmtPitchRnd, 4),
     ]},
     /* 4 — ARP OUT (pad 96) */
-    { name: 'ARP OUT', knobs: [
+    { name: 'SEQUENCE ARP', knobs: [
         p('Styl', 'Arp Style',    'seq_arp_style',      'track', 0,    9,   0, fmtArpStyle, 16),
         p('Rate', 'Arp Rate',     'seq_arp_rate',       'track', 0,    9,   1, fmtArpRate,  16),
         p('Oct',  'Octave Range', 'seq_arp_octaves',    'track', -4,   4,   0, fmtArpOct,   16),

@@ -97,6 +97,13 @@ function drawBankHeading(name) {
     print(4, 1, name, 0);
 }
 
+function drawBankHeadingInverted(name) {
+    fill_rect(0, 0, 128, 9, 0);
+    fill_rect(0, 0, 128, 1, 1);
+    fill_rect(0, 8, 128, 1, 1);
+    print(4, 1, name, 1);
+}
+
 
 function drawMetroIndicator() {
     const METRO_LABELS = [null, 'Count', 'Rec', 'Rec/Ply'];
@@ -2493,7 +2500,7 @@ function drawUI() {
         const t    = S.activeTrack;
         const lane = S.activeDrumLane[t];
         syncDrumRepeatState(t, lane);
-        drawBankHeading('>> RPT GROOVE');
+        drawBankHeadingInverted('>> RPT GROOVE');
         pixelPrint(S.shiftHeld ? 94 : 106, 2, S.shiftHeld ? 'NUDGE' : 'VEL', 0);
         for (let k = 0; k < 8; k++) {
             const colX = 4 + (k % 4) * 30;
@@ -2539,7 +2546,7 @@ function drawUI() {
         } else if (bank === 6) {
         /* CC PARAM bank overview: label = assigned CC, value = current value */
         const t = S.activeTrack;
-        drawBankHeading((S.trackPadMode[t] === PAD_MODE_DRUM ? '>> ' : '') + BANKS[6].name);
+        drawBankHeadingInverted((S.trackPadMode[t] === PAD_MODE_DRUM ? '>> ' : '') + BANKS[6].name);
         for (let k = 0; k < 8; k++) {
             const colX = 4 + (k % 4) * 30;
             const rowY = k < 4 ? 12 : 36;
@@ -2553,7 +2560,7 @@ function drawUI() {
         const knobs = BANKS[bank].knobs;
         const vals  = S.bankParams[S.activeTrack][bank];
         const _isDrum = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
-        drawBankHeading((_isDrum ? '>> ' : '') + BANKS[bank].name);
+        (bank === 5 ? drawBankHeadingInverted : drawBankHeading)((_isDrum ? '>> ' : '') + BANKS[bank].name);
         for (let k = 0; k < 8; k++) {
             const colX = 4 + (k % 4) * 30;
             const rowY = k < 4 ? 12 : 36;
@@ -2574,7 +2581,7 @@ function drawUI() {
         const name      = NOTE_KEYS[note % 12];
         const bankGroup = pg === 0 ? 'Bank: A' : 'Bank: B';
         const bankName  = S.activeBank === 0 ? 'DRUM LANE >>' : S.activeBank === 1 ? '>> NOTE/NOTEFX' : S.activeBank === 5 ? '>> RPT GROOVE' : S.activeBank === 7 ? 'ALL LANES' : BANKS[S.activeBank] ? '>> ' + BANKS[S.activeBank].name : '?';
-        drawBankHeading(bankName);
+        (S.activeBank === 5 || S.activeBank === 6 ? drawBankHeadingInverted : drawBankHeading)(bankName);
         pixelPrint(4, 10, bankGroup + '  Pad: ' + name + oct + ' (' + note + ')', 1);
         const laneBit = 1 << lane;
         if (S.drumLaneSolo[t] & laneBit) {
@@ -2597,7 +2604,7 @@ function drawUI() {
         const keyScl  = NOTE_KEYS[S.padKey] + ' ' + (SCALE_DISPLAY[S.padScale] || '?');
         const CHAR_W  = 6;
         const keySclX = 128 - 4 - keyScl.length * CHAR_W;
-        drawBankHeading(BANKS[S.activeBank].name + recTag);
+        (S.activeBank === 5 || S.activeBank === 6 ? drawBankHeadingInverted : drawBankHeading)(BANKS[S.activeBank].name + recTag);
         pixelPrint(4, 10, octStr, 1);
         pixelPrint(keySclX, 10, keyScl, 1);
         if (S.scaleAware) fill_rect(keySclX, 15, keyScl.length * CHAR_W, 1, 1);
