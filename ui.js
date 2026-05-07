@@ -98,10 +98,15 @@ function drawBankHeading(name) {
 }
 
 function drawBankHeadingInverted(name) {
-    fill_rect(0, 0, 128, 9, 0);
+    fill_rect(0, 0, 128, 10, 0);
     fill_rect(0, 0, 128, 1, 1);
-    fill_rect(0, 8, 128, 1, 1);
+    fill_rect(0, 9, 128, 1, 1);
     print(4, 1, name, 1);
+}
+
+function drawStepEditHeader() {
+    pixelPrint(37, 1, 'STEP EDIT', 1);
+    fill_rect(0, 9, 128, 1, 1);
 }
 
 
@@ -2292,6 +2297,7 @@ function drawUI() {
 
     /* Step edit: show assigned notes and step identity */
     if (S.heldStep >= 0) {
+        drawStepEditHeader();
         if (S.activeBank === 6 && S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM) {
             /* CC step-edit: 8 knobs set CC values at this step's tick */
             const _t6s = S.activeTrack;
@@ -2329,8 +2335,7 @@ function drawUI() {
                     print(COL_X[i], 40, VALS[i], hi ? 0 : 1);
                 }
             } else {
-                print(4, 22, 'STEP EDIT', 1);
-                print(4, 34, '(empty)', 1);
+                print(4, 30, '(empty)', 1);
             }
             return;
         }
@@ -2362,8 +2367,7 @@ function drawUI() {
             }
             return;
         } else if (S.stepWasEmpty) {
-            print(4, 22, 'STEP EDIT', 1);
-            print(4, 34, '(empty)', 1);
+            print(4, 30, '(empty)', 1);
             return;
         }
         /* non-empty step, notes still loading at hold threshold — fall through to bank/header */
@@ -2500,7 +2504,7 @@ function drawUI() {
         const t    = S.activeTrack;
         const lane = S.activeDrumLane[t];
         syncDrumRepeatState(t, lane);
-        drawBankHeadingInverted('>> RPT GROOVE');
+        drawBankHeadingInverted('REPEAT GROOVE');
         pixelPrint(S.shiftHeld ? 94 : 106, 2, S.shiftHeld ? 'NUDGE' : 'VEL', 0);
         for (let k = 0; k < 8; k++) {
             const colX = 4 + (k % 4) * 30;
@@ -2546,7 +2550,7 @@ function drawUI() {
         } else if (bank === 6) {
         /* CC PARAM bank overview: label = assigned CC, value = current value */
         const t = S.activeTrack;
-        drawBankHeadingInverted((S.trackPadMode[t] === PAD_MODE_DRUM ? '>> ' : '') + BANKS[6].name);
+        drawBankHeadingInverted(BANKS[6].name);
         for (let k = 0; k < 8; k++) {
             const colX = 4 + (k % 4) * 30;
             const rowY = k < 4 ? 12 : 36;
@@ -2580,7 +2584,7 @@ function drawUI() {
         const oct       = Math.floor(note / 12) - 2;
         const name      = NOTE_KEYS[note % 12];
         const bankGroup = pg === 0 ? 'Bank: A' : 'Bank: B';
-        const bankName  = S.activeBank === 0 ? 'DRUM LANE >>' : S.activeBank === 1 ? '>> NOTE/NOTEFX' : S.activeBank === 5 ? '>> RPT GROOVE' : S.activeBank === 7 ? 'ALL LANES' : BANKS[S.activeBank] ? '>> ' + BANKS[S.activeBank].name : '?';
+        const bankName  = S.activeBank === 0 ? 'DRUM LANE >>' : S.activeBank === 1 ? '>> NOTE/NOTEFX' : S.activeBank === 5 ? 'REPEAT GROOVE' : S.activeBank === 6 ? BANKS[6].name : S.activeBank === 7 ? 'ALL LANES' : BANKS[S.activeBank] ? '>> ' + BANKS[S.activeBank].name : '?';
         (S.activeBank === 5 || S.activeBank === 6 ? drawBankHeadingInverted : drawBankHeading)(bankName);
         pixelPrint(4, 10, bankGroup + '  Pad: ' + name + oct + ' (' + note + ')', 1);
         const laneBit = 1 << lane;

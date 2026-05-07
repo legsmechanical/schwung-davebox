@@ -301,7 +301,7 @@ export const BANKS = [
         p('Ltch', 'Latch',         'tarp_latch',      'track', 0,   1,   0,  fmtBool,     16),
     ]},
     /* 6 — CC PARAM (pad 98) — per-track CC assignments; custom handling, no DSP-wired knobs */
-    { name: 'CC PARAM', knobs: [_X, _X, _X, _X, _X, _X, _X, _X] },
+    { name: 'CC AUTOMATION', knobs: [_X, _X, _X, _X, _X, _X, _X, _X] },
     /* 7 — ALL LANES (drum pad 92) — macro controls across all 32 drum lanes */
     { name: 'ALL LANES', knobs: [
         p('Stch', 'Beat Stretch', 'beat_stretch', 'action', 0, 0,  0,  fmtStretch, 16, '_factor', true),
