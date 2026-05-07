@@ -438,9 +438,12 @@ static void set_param(void *instance, const char *key, const char *val) {
         double bpm = (double)my_atoi(val);
         if (bpm < 40.0 || bpm > 250.0) return;
         inst->tick_delta = (uint32_t)((double)MOVE_FRAMES_PER_BLOCK * bpm * (double)PPQN);
-        int tb;
-        for (tb = 0; tb < NUM_TRACKS; tb++)
+        int tb, tbl;
+        for (tb = 0; tb < NUM_TRACKS; tb++) {
             inst->tracks[tb].pfx.cached_bpm = bpm;
+            for (tbl = 0; tbl < DRUM_LANES; tbl++)
+                inst->tracks[tb].drum_lane_pfx[tbl].cached_bpm = bpm;
+        }
         return;
     }
 
@@ -2528,13 +2531,13 @@ static void set_param(void *instance, const char *key, const char *val) {
                 if (!strcmp(pfx_key, "pfx_reset") || !strcmp(pfx_key, "pfx_noteFx_reset") ||
                     !strcmp(pfx_key, "pfx_harm_reset") || !strcmp(pfx_key, "pfx_delay_reset"))
                     undo_begin_single(inst, tidx, (int)tr->active_clip);
-                pfx_set(inst, tr, &dlane->clip.pfx_params, pfx_key, sp);
+                drum_pfx_set(inst, tr, &dlane->pfx_params, &tr->drum_lane_pfx[lane_idx], pfx_key, sp);
                 inst->state_dirty = 1;
                 return;
             }
             if (!strcmp(p2, "_pfx_reset")) {
                 undo_begin_single(inst, tidx, (int)tr->active_clip);
-                pfx_set(inst, tr, &dlane->clip.pfx_params, "pfx_reset", "1");
+                drum_pfx_set(inst, tr, &dlane->pfx_params, &tr->drum_lane_pfx[lane_idx], "pfx_reset", "1");
                 inst->state_dirty = 1;
                 return;
             }
@@ -2594,7 +2597,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                     tr->drum_repeat_gate[lane_idx] = 0xFF;
                     memset(tr->drum_repeat_vel_scale[lane_idx], 100, 8);
                     memset(tr->drum_repeat_nudge[lane_idx],     0,   8);
-                    pfx_note_off_imm(inst, tr, src_midi_note);
+                    drum_lane_note_off_imm(inst, tr, src_midi_note);
                     clip_init(dlc);
                     dlane->midi_note = src_midi_note;
                     inst->state_dirty = 1;
@@ -2623,7 +2626,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                         /* Has note: toggle active/inactive */
                         int was_on = dlc->steps[sidx];
                         dlc->steps[sidx] = was_on ? 0 : 1;
-                        if (was_on) pfx_note_off_imm(inst, tr, dlane->midi_note);
+                        if (was_on) drum_lane_note_off_imm(inst, tr, dlane->midi_note);
                     }
                     { int i, any = 0;
                       for (i = 0; i < SEQ_STEPS; i++) if (dlc->steps[i]) { any = 1; break; }
