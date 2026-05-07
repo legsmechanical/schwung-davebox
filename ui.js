@@ -2422,27 +2422,41 @@ function drawUI() {
 
     /* Loop view: own priority state so screen is fully cleared first */
     if (S.loopHeld) {
+        const _loopL2 = 'STEP BTN=by page';
+        const _loopL3 = 'JOG TURN=by step';
+        const _loopX2 = Math.floor((128 - _loopL2.length * 6) / 2);
+        const _loopX3 = Math.floor((128 - _loopL3.length * 6) / 2);
+        function _drawLoopSteps(steps) {
+            const _l4  = 'Steps: ' + steps + '/256';
+            const _l4x = Math.floor((128 - _l4.length * 6) / 2);
+            const _nvX = _l4x + 7 * 6;
+            const _nvW = (_l4.length - 7) * 6;
+            fill_rect(_nvX - 1, 50, _nvW + 2, 14, 1);
+            print(_l4x, 52, 'Steps: ', 1);
+            print(_nvX, 52, steps + '/256', 0);
+        }
         if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
-            const t    = S.activeTrack;
-            const lane = S.activeDrumLane[t];
-            const len  = S.drumLaneLength[t];
+            const t   = S.activeTrack;
+            const len = S.drumLaneLength[t];
             if (S.activeBank === 7) {
-                print(4, 10, 'TR' + (t + 1) + '  ALL LANES', 1);
-                print(4, 22, 'STEP BTN=set length', 1);
+                const _allBlink = Math.floor(S.tickCount / 24) % 2 === 0;
+                const _l1 = 'Clip length-' + (_allBlink ? 'ALL' : '   ') + ' lanes';
+                print(Math.floor((128 - 21 * 6) / 2), 4, _l1, 1);
             } else {
-                print(4, 10, 'TR' + (t + 1) + ' \xb7 LN ' + (lane + 1) + '  DRUM', 1);
-                print(4, 22, 'LEN: ' + len + ' STEPS', 1);
+                print(Math.floor((128 - 11 * 6) / 2), 4, 'Lane length', 1);
             }
-            print(4, 34, 'Jog=\xb11  Btn=set page', 1);
-            drawTrackRow(46);
+            fill_rect(0, 15, 128, 1, 1);
+            print(_loopX2, 22, _loopL2, 1);
+            print(_loopX3, 34, _loopL3, 1);
+            _drawLoopSteps(len);
         } else {
             const ac_l    = effectiveClip(S.activeTrack);
             const steps_l = S.clipLength[S.activeTrack][ac_l];
-            const pages_l = Math.max(1, Math.ceil(steps_l / 16));
-            print(4, 10, 'TR' + (S.activeTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac_l] + '  LOOP', 1);
-            print(4, 22, 'LEN: ' + steps_l + ' STEPS', 1);
-            print(4, 34, pages_l + ' OF 16 PAGES', 1);
-            drawTrackRow(46);
+            print(Math.floor((128 - 11 * 6) / 2), 4, 'Clip Length', 1);
+            fill_rect(0, 15, 128, 1, 1);
+            print(_loopX2, 22, _loopL2, 1);
+            print(_loopX3, 34, _loopL3, 1);
+            _drawLoopSteps(steps_l);
         }
         return;
     }
@@ -2512,7 +2526,8 @@ function drawUI() {
                 DIQ_LABELS[S.drumInpQuant[t]] || 'Off',
                 null, null,
             ];
-            drawBankHeading('ALL LANES');
+            fill_rect(0, 0, 128, 9, 1);
+            print(4, 1, (Math.floor(S.tickCount / 24) % 2 === 0 ? 'ALL' : '   ') + ' LANES', 0);
             for (let k = 0; k < 8; k++) {
                 if (!allLabels[k]) continue;
                 const colX = 4 + (k % 4) * 30;
@@ -3644,6 +3659,22 @@ globalThis.tick = function () {
         } else {
             S.lastSoloBlink = null;
         }
+
+        /* Loop jog OOB view: revert to pages view after ~500ms of inactivity */
+        if (S.loopJogActive && S.loopHeld && S.loopJogLastTick !== undefined) {
+            if ((S.tickCount - S.loopJogLastTick) > 47) {
+                S.loopJogActive = false;
+                S.screenDirty = true;
+            }
+        }
+
+        /* ALL LANES blink: mark dirty when "ALL" blink toggles (bank header + loop-held overlay) */
+        if (S.activeBank === 7 && S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
+            const _ab = Math.floor(S.tickCount / 24) % 2;
+            if (_ab !== S.lastAllLanesBlink) { S.lastAllLanesBlink = _ab; S.screenDirty = true; }
+        } else {
+            S.lastAllLanesBlink = null;
+        }
     }
     /* Flush buffered recording events — one batched set_param per tick to survive coalescing.
      * Note-ons take priority; note-offs wait until the next tick if both are pending. */
@@ -4087,7 +4118,6 @@ function _onCC_jog(d1, d2) {
                     }
                 } else if (S.loopHeld) {
                     /* Track View + Loop held: adjust length ±1 step */
-                    S.loopJogActive = true;
                     const _t  = S.activeTrack;
                     if (S.recordArmed && !S.recordCountingIn) {
                         /* Block length changes during active recording */
@@ -4100,7 +4130,14 @@ function _onCC_jog(d1, d2) {
                             S.drumLaneLength[_t] = _nv;
                             S.drumLaneLengthManuallySet[_t] = true;
                             const _maxPage = Math.max(0, Math.ceil(_nv / 16) - 1);
-                            if (S.drumStepPage[_t] > _maxPage) S.drumStepPage[_t] = _maxPage;
+                            if (S.activeBank !== 7) {
+                                /* Show OOB step view: navigate to boundary page */
+                                S.loopJogActive = true;
+                                S.loopJogLastTick = S.tickCount;
+                                S.drumStepPage[_t] = _maxPage;
+                            } else {
+                                if (S.drumStepPage[_t] > _maxPage) S.drumStepPage[_t] = _maxPage;
+                            }
                             if (typeof host_module_set_param === 'function')
                                 host_module_set_param('t' + _t + '_l' + _lane + '_clip_length', String(_nv));
                             forceRedraw();
@@ -4112,8 +4149,10 @@ function _onCC_jog(d1, d2) {
                     if (_nv !== _cur) {
                         S.clipLength[_t][_ac] = _nv;
                         S.clipLengthManuallySet[_t][_ac] = true;
-                        const _maxPage = Math.max(0, Math.ceil(_nv / 16) - 1);
-                        if (S.trackCurrentPage[_t] > _maxPage) S.trackCurrentPage[_t] = _maxPage;
+                        /* Show OOB step view: navigate to boundary page */
+                        S.loopJogActive = true;
+                        S.loopJogLastTick = S.tickCount;
+                        S.trackCurrentPage[_t] = Math.max(0, Math.ceil(_nv / 16) - 1);
                         if (typeof host_module_set_param === 'function')
                             host_module_set_param('t' + _t + '_clip_length', String(_nv));
                         forceRedraw();
