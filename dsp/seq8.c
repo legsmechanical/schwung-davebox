@@ -90,7 +90,8 @@ static const uint16_t TPS_VALUES[6] = {12, 24, 48, 96, 192, 384};
 #define MAX_REPEATS         16
 #define UNISON_STAGGER      220          /* ~5 ms at 44100 Hz */
 #define NUM_CLOCK_VALUES       17
-#define DEFAULT_DELAY_TIME_IDX 10   /* 1/8D = 360 clocks at 480 PPQN */
+#define DEFAULT_DELAY_TIME_IDX      10   /* 1/8D = 360 clocks at 480 PPQN */
+#define DEFAULT_DRUM_DELAY_TIME_IDX  5   /* 1/16 */
 #define MAX_DELAY_SAMPLES   (30ULL * 44100)
 
 /* 1 SEQ8 tick = 480/96 = 5 clocks at 480 PPQN (NoteTwist's resolution) */
@@ -1015,7 +1016,7 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
                     if (dp->gate_time       != 100) fprintf(fp, ",\"t%dc%dl%d_dpg\":%d",   t, c, l, dp->gate_time);
                     if (dp->velocity_offset != 0)   fprintf(fp, ",\"t%dc%dl%d_dpvo\":%d",  t, c, l, dp->velocity_offset);
                     if (dp->quantize        != 0)   fprintf(fp, ",\"t%dc%dl%d_dpq\":%d",   t, c, l, dp->quantize);
-                    if (dp->delay_time_idx  != DEFAULT_DELAY_TIME_IDX) fprintf(fp, ",\"t%dc%dl%d_dpdt\":%d", t, c, l, dp->delay_time_idx);
+                    if (dp->delay_time_idx  != DEFAULT_DRUM_DELAY_TIME_IDX) fprintf(fp, ",\"t%dc%dl%d_dpdt\":%d", t, c, l, dp->delay_time_idx);
                     if (dp->delay_level     != 0)   fprintf(fp, ",\"t%dc%dl%d_dpdl\":%d",  t, c, l, dp->delay_level);
                     if (dp->repeat_times    != 0)   fprintf(fp, ",\"t%dc%dl%d_dpdr\":%d",  t, c, l, dp->repeat_times);
                     if (dp->fb_velocity     != 0)   fprintf(fp, ",\"t%dc%dl%d_dpfbv\":%d", t, c, l, dp->fb_velocity);
@@ -1498,7 +1499,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
                     snprintf(key, sizeof(key), "t%dc%dl%d_dpq",   t, c, l);
                     dp->quantize        = clamp_i(json_get_int(buf, key, 0), 0, 100);
                     snprintf(key, sizeof(key), "t%dc%dl%d_dpdt",  t, c, l);
-                    dp->delay_time_idx  = clamp_i(json_get_int(buf, key, DEFAULT_DELAY_TIME_IDX), 0, NUM_CLOCK_VALUES - 1);
+                    dp->delay_time_idx  = clamp_i(json_get_int(buf, key, DEFAULT_DRUM_DELAY_TIME_IDX), 0, NUM_CLOCK_VALUES - 1);
                     snprintf(key, sizeof(key), "t%dc%dl%d_dpdl",  t, c, l);
                     dp->delay_level     = clamp_i(json_get_int(buf, key, 0), 0, 127);
                     snprintf(key, sizeof(key), "t%dc%dl%d_dpdr",  t, c, l);
@@ -3806,7 +3807,7 @@ static void drum_pfx_params_init(drum_pfx_params_t *p) {
     p->gate_time       = 100;
     p->velocity_offset = 0;
     p->quantize        = 0;
-    p->delay_time_idx  = DEFAULT_DELAY_TIME_IDX;
+    p->delay_time_idx  = DEFAULT_DRUM_DELAY_TIME_IDX;
     p->delay_level     = 0;
     p->repeat_times    = 0;
     p->fb_velocity     = 0;
@@ -3817,7 +3818,7 @@ static void drum_pfx_params_init(drum_pfx_params_t *p) {
 static void drum_pfx_init_defaults(drum_pfx_t *px, uint8_t t_idx, uint8_t l_idx) {
     memset(px, 0, sizeof(*px));
     px->gate_time   = 100;
-    px->delay_time_idx = DEFAULT_DELAY_TIME_IDX;
+    px->delay_time_idx = DEFAULT_DRUM_DELAY_TIME_IDX;
     px->cached_bpm  = (double)BPM_DEFAULT;
     px->rng         = 12345;
     px->route       = ROUTE_SCHWUNG;
@@ -3853,7 +3854,7 @@ static void drum_pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
         p->quantize        = 0;
     }
     if (!strcmp(key, "pfx_reset") || !strcmp(key, "pfx_delay_reset")) {
-        p->delay_time_idx = DEFAULT_DELAY_TIME_IDX;
+        p->delay_time_idx = DEFAULT_DRUM_DELAY_TIME_IDX;
         p->delay_level    = 0;
         p->repeat_times   = 0;
         p->fb_velocity    = 0;
