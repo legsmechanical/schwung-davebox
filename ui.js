@@ -4143,12 +4143,6 @@ function _onCC_buttons(d1, d2) {
                     }
                     S.rpt2LoopPadUsed = true;
                 }
-            } else if (S.drumRepeatLatched[_lrt]) {
-                S.drumRepeatLatched[_lrt]  = false;
-                S.drumRepeatHeldPad[_lrt]  = -1;
-                S.drumRepeatHeldPadsStack[_lrt].length = 0;
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('t' + _lrt + '_drum_repeat_stop', '1');
             } else if (S.drumRepeatHeldPad[_lrt] >= 0) {
                 S.drumRepeatLatched[_lrt] = true;
             }
