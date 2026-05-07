@@ -407,10 +407,10 @@ export function updateTrackLEDs() {
                         }
                     }
                 } else if (S.drumPerformMode[t] === 2) {
-                    /* Rpt2 mode: right 4×4 */
+                    /* Rpt2 mode: right 4×4 — Cyan theme for visual distinction */
                     if (row < 2) {
                         const rateIdx = row * 4 + (col - 4);
-                        color = (rateIdx === S.drumRepeat2RatePerLane[t][selLane]) ? White : DarkGrey;
+                        color = (rateIdx === S.drumRepeat2RatePerLane[t][selLane]) ? Cyan : PurpleBlue;
                     } else {
                         const maskStep = (row - 2) * 4 + (col - 4);
                         const gLen = S.drumRepeatGateLen[t][selLane];
