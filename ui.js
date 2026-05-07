@@ -4094,14 +4094,20 @@ function _onCC_buttons(d1, d2) {
         if (S.loopHeld) {
             /* Latch or clear drum repeat on the active track */
             const _lrt = S.activeTrack;
-            /* TARP latch shortcut: Loop tap while holding a pad with TARP active */
-            if (S.trackPadMode[_lrt] !== PAD_MODE_DRUM &&
-                    S.liveActiveNotes.size > 0 &&
-                    (S.bankParams[_lrt][5][0] | 0) !== 0) {
-                const _newLatch = (S.bankParams[_lrt][5][7] | 0) ? 0 : 1;
-                S.bankParams[_lrt][5][7] = _newLatch;
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('t' + _lrt + '_tarp_latch', String(_newLatch));
+            /* TARP latch shortcut: Loop press while holding a pad on a melodic track */
+            if (S.trackPadMode[_lrt] !== PAD_MODE_DRUM && S.liveActiveNotes.size > 0) {
+                const _latchNow = (S.bankParams[_lrt][5][7] | 0) !== 0;
+                if (_latchNow) {
+                    /* Latch ON: holding any pad + loop turns it off */
+                    S.bankParams[_lrt][5][7] = 0;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + _lrt + '_tarp_latch', '0');
+                } else if ((S.bankParams[_lrt][5][0] | 0) !== 0) {
+                    /* Latch OFF: turn it on (only when TARP style is set) */
+                    S.bankParams[_lrt][5][7] = 1;
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + _lrt + '_tarp_latch', '1');
+                }
             }
             if (S.drumPerformMode[_lrt] === 2) {
                 S.rpt2LoopPadUsed = false;
