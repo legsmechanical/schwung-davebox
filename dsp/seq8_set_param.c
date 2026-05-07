@@ -553,7 +553,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 tr2->drum_repeat2_active = 0;
                 for (c2 = 0; c2 < NUM_CLIPS; c2++)
                     clip_init(&tr2->clips[c2]);
-                drum_track_init(tr2);
+                drum_track_init(tr2, t2);
                 drum_repeat_init_defaults(tr2);
             }
         }
@@ -1140,7 +1140,8 @@ static void set_param(void *instance, const char *key, const char *val) {
             drum_clip_t *dc = &inst->tracks[t].drum_clips[c];
             /* Capture redo */
             for (i = 0; i < DRUM_LANES; i++) {
-                const clip_t *src = &dc->lanes[i].clip;
+                const drum_lane_t *lane = &dc->lanes[i];
+                const clip_t *src = &lane->clip;
                 drum_rec_snap_lane_t *dst = &inst->drum_redo_lanes[i];
                 memcpy(dst->steps,            src->steps,            SEQ_STEPS);
                 memcpy(dst->step_notes,       src->step_notes,       SEQ_STEPS * 8);
@@ -1148,16 +1149,17 @@ static void set_param(void *instance, const char *key, const char *val) {
                 memcpy(dst->step_vel,         src->step_vel,         SEQ_STEPS);
                 memcpy(dst->step_gate,        src->step_gate,        SEQ_STEPS * sizeof(uint16_t));
                 memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
-                dst->length = src->length;
-                dst->active = src->active;
-                dst->pfx_params = src->pfx_params;
+                dst->length     = src->length;
+                dst->active     = src->active;
+                dst->pfx_params = lane->pfx_params;
             }
             inst->drum_redo_track = (uint8_t)t;
             inst->drum_redo_clip  = (uint8_t)c;
             inst->drum_redo_valid = 1;
             /* Restore */
             for (i = 0; i < DRUM_LANES; i++) {
-                clip_t *dst = &dc->lanes[i].clip;
+                drum_lane_t *lane = &dc->lanes[i];
+                clip_t *dst = &lane->clip;
                 const drum_rec_snap_lane_t *src = &inst->drum_undo_lanes[i];
                 memcpy(dst->steps,            src->steps,            SEQ_STEPS);
                 memcpy(dst->step_notes,       src->step_notes,       SEQ_STEPS * 8);
@@ -1165,9 +1167,9 @@ static void set_param(void *instance, const char *key, const char *val) {
                 memcpy(dst->step_vel,         src->step_vel,         SEQ_STEPS);
                 memcpy(dst->step_gate,        src->step_gate,        SEQ_STEPS * sizeof(uint16_t));
                 memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
-                dst->length = src->length;
-                dst->active = src->active;
-                dst->pfx_params = src->pfx_params;
+                dst->length        = src->length;
+                dst->active        = src->active;
+                lane->pfx_params   = src->pfx_params;
                 clip_migrate_to_notes(dst);
             }
             inst->drum_undo_valid = 0;
@@ -1223,7 +1225,8 @@ static void set_param(void *instance, const char *key, const char *val) {
             drum_clip_t *dc = &inst->tracks[t].drum_clips[c];
             /* Capture new undo */
             for (i = 0; i < DRUM_LANES; i++) {
-                const clip_t *src = &dc->lanes[i].clip;
+                const drum_lane_t *lane = &dc->lanes[i];
+                const clip_t *src = &lane->clip;
                 drum_rec_snap_lane_t *dst = &inst->drum_undo_lanes[i];
                 memcpy(dst->steps,            src->steps,            SEQ_STEPS);
                 memcpy(dst->step_notes,       src->step_notes,       SEQ_STEPS * 8);
@@ -1231,16 +1234,17 @@ static void set_param(void *instance, const char *key, const char *val) {
                 memcpy(dst->step_vel,         src->step_vel,         SEQ_STEPS);
                 memcpy(dst->step_gate,        src->step_gate,        SEQ_STEPS * sizeof(uint16_t));
                 memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
-                dst->length = src->length;
-                dst->active = src->active;
-                dst->pfx_params = src->pfx_params;
+                dst->length     = src->length;
+                dst->active     = src->active;
+                dst->pfx_params = lane->pfx_params;
             }
             inst->drum_undo_track = (uint8_t)t;
             inst->drum_undo_clip  = (uint8_t)c;
             inst->drum_undo_valid = 1;
             /* Restore redo */
             for (i = 0; i < DRUM_LANES; i++) {
-                clip_t *dst = &dc->lanes[i].clip;
+                drum_lane_t *lane = &dc->lanes[i];
+                clip_t *dst = &lane->clip;
                 const drum_rec_snap_lane_t *src = &inst->drum_redo_lanes[i];
                 memcpy(dst->steps,            src->steps,            SEQ_STEPS);
                 memcpy(dst->step_notes,       src->step_notes,       SEQ_STEPS * 8);
@@ -1248,9 +1252,9 @@ static void set_param(void *instance, const char *key, const char *val) {
                 memcpy(dst->step_vel,         src->step_vel,         SEQ_STEPS);
                 memcpy(dst->step_gate,        src->step_gate,        SEQ_STEPS * sizeof(uint16_t));
                 memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
-                dst->length = src->length;
-                dst->active = src->active;
-                dst->pfx_params = src->pfx_params;
+                dst->length       = src->length;
+                dst->active       = src->active;
+                lane->pfx_params  = src->pfx_params;
                 clip_migrate_to_notes(dst);
             }
             inst->drum_redo_valid = 0;

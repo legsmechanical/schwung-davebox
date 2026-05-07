@@ -324,6 +324,49 @@ typedef struct {
 } clip_pfx_params_t;
 
 /* ------------------------------------------------------------------ */
+/* Per-lane drum play-effect params (9 fields, ~36 bytes)              */
+/* No harmony, pitch shifts, or SEQ ARP — drum lanes are monophonic.  */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    int gate_time;          /* 0..400 percent; default 100 */
+    int velocity_offset;    /* -127..+127 */
+    int quantize;           /* 0..100 */
+    int delay_time_idx;     /* 0..16, index into CLOCK_VALUES */
+    int delay_level;        /* 0..127 */
+    int repeat_times;       /* 0..16 */
+    int fb_velocity;        /* -127..+127 */
+    int fb_gate_time;       /* 0..10: 0=Off, 1..10=fixed gate (1/64..1bar) */
+    int fb_clock;           /* -100..+100 */
+} drum_pfx_params_t;
+
+#define DRUM_PFX_MAX_EVENTS 64
+
+/* Per-lane drum pfx runtime state: slimmed play_fx_t for monophonic lanes.
+ * One instance per drum lane; 32 per track in seq8_track_t.drum_lane_pfx[]. */
+typedef struct {
+    int gate_time;          /* mirrored from drum_pfx_params_t via drum_pfx_apply_params */
+    int velocity_offset;
+    int quantize;
+    int delay_time_idx;
+    int delay_level;
+    int repeat_times;
+    int fb_velocity;
+    int fb_gate_time;
+    int fb_clock;
+    uint64_t     sample_counter;
+    double       cached_bpm;
+    uint32_t     rng;
+    pfx_event_t  events[DRUM_PFX_MAX_EVENTS];
+    int          event_count;
+    pfx_active_t active_note;  /* single active note — monophonic per lane */
+    uint8_t      route;
+    uint8_t      looper_on;
+    uint8_t      track_idx;
+    uint8_t      lane_idx;
+} drum_pfx_t;
+
+/* ------------------------------------------------------------------ */
 /* Clip and track structs                                               */
 /* ------------------------------------------------------------------ */
 
@@ -364,10 +407,11 @@ typedef struct {
  * are no container-wide params. pfx applies at render time so harmonize/delay can
  * sound other pitches beyond midi_note. */
 typedef struct {
-    clip_t  clip;       /* full clip_t — notes[], step arrays, length, tps, pfx_params */
-    uint8_t midi_note;  /* base pitch written into every note at step-entry/record time */
+    clip_t  clip;             /* full clip_t — notes[], step arrays, length, tps */
+    drum_pfx_params_t pfx_params; /* per-lane drum pfx storage (replaces clip.pfx_params for drum) */
+    uint8_t midi_note;        /* base pitch written into every note at step-entry/record time */
     uint8_t _pad[3];
-} drum_lane_t;          /* sizeof(clip_t) + 4 ≈ 13.7 KB */
+} drum_lane_t;
 
 /* A drum clip is a container of 32 independent monophonic lanes. It appears and
  * behaves like a melodic clip for launch, cut/copy/paste, session view, and undo,
@@ -387,8 +431,8 @@ typedef struct {
     int16_t  note_tick_offset[SEQ_STEPS][8];
     uint16_t length;
     uint8_t  active;
-    clip_pfx_params_t pfx_params;
-} drum_rec_snap_lane_t;  /* ~7.4 KB/lane × 32 = ~237 KB/slot */
+    drum_pfx_params_t pfx_params;
+} drum_rec_snap_lane_t;
 
 typedef struct {
     uint8_t   channel;              /* MIDI channel 0-3 */
@@ -422,7 +466,7 @@ typedef struct {
     struct { uint8_t pitch; uint32_t tick_at_on; } rec_pending[10];
     uint8_t  rec_pending_count;
     /* Note-centric playback: per-note gate countdown (render state, not persisted) */
-    struct { uint8_t pitch; uint16_t ticks_remaining; } play_pending[32];
+    struct { uint8_t pitch; uint16_t ticks_remaining; uint8_t lane_idx; } play_pending[32];
     uint8_t  play_pending_count;
     /* Per-track tick position within current step; wraps at cl->ticks_per_step */
     uint32_t tick_in_step;
@@ -433,6 +477,8 @@ typedef struct {
      * Active when pad_mode == PAD_MODE_DRUM. active_clip/queued_clip/clip_playing
      * apply to drum_clips[] exactly as they do to clips[] in melodic mode. */
     drum_clip_t drum_clips[NUM_CLIPS];
+    /* Per-lane pfx runtime state (monophonic delay chains, not persisted as live runtime). */
+    drum_pfx_t drum_lane_pfx[DRUM_LANES];
     /* Per-lane render-state tick counters (not persisted; reset on transport play/clip launch). */
     uint16_t drum_current_step[DRUM_LANES];
     uint32_t drum_tick_in_step[DRUM_LANES];
@@ -3443,6 +3489,44 @@ static void clip_pfx_params_init(clip_pfx_params_t *p) {
     for (i = 0; i < 8; i++) p->seq_arp_step_vel[i] = 4;
 }
 
+static void drum_pfx_params_init(drum_pfx_params_t *p) {
+    p->gate_time       = 100;
+    p->velocity_offset = 0;
+    p->quantize        = 0;
+    p->delay_time_idx  = DEFAULT_DELAY_TIME_IDX;
+    p->delay_level     = 0;
+    p->repeat_times    = 0;
+    p->fb_velocity     = 0;
+    p->fb_gate_time    = 0;
+    p->fb_clock        = 0;
+}
+
+static void drum_pfx_init_defaults(drum_pfx_t *px, uint8_t t_idx, uint8_t l_idx) {
+    memset(px, 0, sizeof(*px));
+    px->gate_time   = 100;
+    px->delay_time_idx = DEFAULT_DELAY_TIME_IDX;
+    px->cached_bpm  = (double)BPM_DEFAULT;
+    px->rng         = 12345;
+    px->route       = ROUTE_SCHWUNG;
+    px->looper_on   = 1;
+    px->track_idx   = t_idx;
+    px->lane_idx    = l_idx;
+}
+
+/* Copy per-lane drum pfx params into the lane's runtime drum_pfx_t surface.
+ * Call this whenever the active clip changes (analogous to pfx_apply_params). */
+static void drum_pfx_apply_params(drum_pfx_t *px, const drum_pfx_params_t *p) {
+    px->gate_time       = p->gate_time;
+    px->velocity_offset = p->velocity_offset;
+    px->quantize        = p->quantize;
+    px->delay_time_idx  = p->delay_time_idx;
+    px->delay_level     = p->delay_level;
+    px->repeat_times    = p->repeat_times;
+    px->fb_velocity     = p->fb_velocity;
+    px->fb_gate_time    = p->fb_gate_time;
+    px->fb_clock        = p->fb_clock;
+}
+
 /* Copy per-clip pfx params from active clip into tr->pfx (the render surface).
  * Call this whenever active_clip changes so the render path always sees the
  * correct clip's params via tr->pfx. */
@@ -3507,12 +3591,13 @@ static void clip_init(clip_t *cl) {
     cl->occ_dirty = 0;
 }
 
-static void drum_track_init(seq8_track_t *tr) {
+static void drum_track_init(seq8_track_t *tr, int track_idx) {
     int c, l;
     for (c = 0; c < NUM_CLIPS; c++) {
         for (l = 0; l < DRUM_LANES; l++) {
             drum_lane_t *lane = &tr->drum_clips[c].lanes[l];
             clip_init(&lane->clip);
+            drum_pfx_params_init(&lane->pfx_params);
             lane->midi_note = (uint8_t)(DRUM_BASE_NOTE + l);
         }
     }
@@ -3520,6 +3605,7 @@ static void drum_track_init(seq8_track_t *tr) {
         tr->drum_rec_pending_tick[l]   = 0;
         tr->drum_rec_pending_step[l]   = 0;
         tr->drum_rec_pending_active[l] = 0;
+        drum_pfx_init_defaults(&tr->drum_lane_pfx[l], (uint8_t)track_idx, (uint8_t)l);
     }
 }
 
@@ -3753,7 +3839,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
         inst->tracks[t].pad_mode    = PAD_MODE_MELODIC_SCALE;
         for (c = 0; c < NUM_CLIPS; c++)
             clip_init(&inst->tracks[t].clips[c]);
-        drum_track_init(&inst->tracks[t]);
+        drum_track_init(&inst->tracks[t], t);
         pfx_init_defaults(&inst->tracks[t].pfx);
         tarp_init_defaults(&inst->tracks[t]);
         drum_repeat_init_defaults(&inst->tracks[t]);
@@ -3835,7 +3921,8 @@ static void drum_row_snap(seq8_instance_t *inst, int row,
     for (t = 0; t < NUM_TRACKS; t++) {
         drum_clip_t *dc = &inst->tracks[t].drum_clips[row];
         for (l = 0; l < DRUM_LANES; l++) {
-            const clip_t *src = &dc->lanes[l].clip;
+            const drum_lane_t *lane = &dc->lanes[l];
+            const clip_t *src = &lane->clip;
             drum_rec_snap_lane_t *d = &dst[t][l];
             memcpy(d->steps,            src->steps,            SEQ_STEPS);
             memcpy(d->step_notes,       src->step_notes,       SEQ_STEPS * 8);
@@ -3845,7 +3932,7 @@ static void drum_row_snap(seq8_instance_t *inst, int row,
             memcpy(d->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
             d->length     = src->length;
             d->active     = src->active;
-            d->pfx_params = src->pfx_params;
+            d->pfx_params = lane->pfx_params;
         }
     }
 }
@@ -3856,7 +3943,8 @@ static void drum_row_restore(seq8_instance_t *inst, int row,
     for (t = 0; t < NUM_TRACKS; t++) {
         drum_clip_t *dc = &inst->tracks[t].drum_clips[row];
         for (l = 0; l < DRUM_LANES; l++) {
-            clip_t *dst = &dc->lanes[l].clip;
+            drum_lane_t *lane = &dc->lanes[l];
+            clip_t *dst = &lane->clip;
             const drum_rec_snap_lane_t *s = &src[t][l];
             memcpy(dst->steps,            s->steps,            SEQ_STEPS);
             memcpy(dst->step_notes,       s->step_notes,       SEQ_STEPS * 8);
@@ -3864,9 +3952,9 @@ static void drum_row_restore(seq8_instance_t *inst, int row,
             memcpy(dst->step_vel,         s->step_vel,         SEQ_STEPS);
             memcpy(dst->step_gate,        s->step_gate,        SEQ_STEPS * sizeof(uint16_t));
             memcpy(dst->note_tick_offset, s->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
-            dst->length     = s->length;
-            dst->active     = s->active;
-            dst->pfx_params = s->pfx_params;
+            dst->length       = s->length;
+            dst->active       = s->active;
+            lane->pfx_params  = s->pfx_params;
             clip_migrate_to_notes(dst);
         }
     }
@@ -3953,7 +4041,8 @@ static void undo_begin_drum_clip(seq8_instance_t *inst, int t, int c) {
     int l;
     drum_clip_t *dc = &inst->tracks[t].drum_clips[c];
     for (l = 0; l < DRUM_LANES; l++) {
-        const clip_t *src = &dc->lanes[l].clip;
+        const drum_lane_t *lane = &dc->lanes[l];
+        const clip_t *src = &lane->clip;
         drum_rec_snap_lane_t *dst = &inst->drum_undo_lanes[l];
         memcpy(dst->steps,            src->steps,            SEQ_STEPS);
         memcpy(dst->step_notes,       src->step_notes,       SEQ_STEPS * 8);
@@ -3961,9 +4050,9 @@ static void undo_begin_drum_clip(seq8_instance_t *inst, int t, int c) {
         memcpy(dst->step_vel,         src->step_vel,         SEQ_STEPS);
         memcpy(dst->step_gate,        src->step_gate,        SEQ_STEPS * sizeof(uint16_t));
         memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
-        dst->length = src->length;
-        dst->active = src->active;
-        dst->pfx_params = src->pfx_params;
+        dst->length     = src->length;
+        dst->active     = src->active;
+        dst->pfx_params = lane->pfx_params;
     }
     inst->drum_undo_valid = 1;
     inst->drum_undo_track = (uint8_t)t;
