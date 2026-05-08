@@ -3606,7 +3606,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                               int qt  = (int)DRUM_INQ_TICKS[diq];
                               int tis = (int)tr->drum_tick_in_step[lane];
                               int sn  = (tis + qt / 2) / qt * qt;
-                              off = (int16_t)clamp_i(sn, 0, (int)TICKS_PER_STEP - 1);
+                              off = (int16_t)(sn % (int)TICKS_PER_STEP);
                           } else if (inst->inp_quant) {
                               off = 0;
                           } else {
@@ -3617,14 +3617,21 @@ static void set_param(void *instance, const char *key, const char *val) {
                         dlc->steps[step]               = 1;
                         dlc->active                    = 1;
                         clip_migrate_to_notes(dlc);
+                        /* Suppress sequencer replay of freshly recorded note until clip wraps — prevents double-trigger */
+                        { uint16_t ni3;
+                          uint32_t rec_tick = (uint32_t)step * dlc->ticks_per_step
+                                              + (uint32_t)dlc->note_tick_offset[step][0];
+                          for (ni3 = 0; ni3 < dlc->note_count; ni3++) {
+                              if (dlc->notes[ni3].tick == rec_tick)
+                                  dlc->notes[ni3].suppress_until_wrap = 1;
+                          }
+                        }
                         /* Store pending state so drum_record_note_off can close the gate */
                         tr->drum_rec_pending_tick[lane]   = (uint32_t)step * TICKS_PER_STEP
                                                             + tr->drum_tick_in_step[lane];
                         tr->drum_rec_pending_step[lane]   = step;
                         tr->drum_rec_pending_active[lane] = 1;
                     }
-                    if (tr->pfx.route == ROUTE_MOVE)
-                        pfx_note_on(inst, tr, (uint8_t)pitch, (uint8_t)vel);
                 }
             }
             return;

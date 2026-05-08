@@ -1975,11 +1975,12 @@ function liveSendNote(t, type, pitch, vel, rawVel) {
         if (typeof move_midi_external_send === 'function')
             move_midi_external_send([cin, status, pitch, vel]);
     } else if (route === 1) {
-        /* When recording is active, record_note_on/off DSP handlers do live monitoring
-         * inline — skip buffering here to avoid coalescing with those set_params. */
+        /* Suppress note-ons during recording — melodic: record_note_on DSP handler does live
+         * monitoring inline; drum: fired directly from the press handler via live_notes set_param.
+         * Note-offs always pass through so sounds stop when pads are released. */
         const activelyRecording = S.recordArmed && !S.recordCountingIn && S.recordArmedTrack === t;
-        if (!activelyRecording) {
-            const isOff = (type === 0x80) || (type === 0x90 && vel === 0);
+        const isOff = (type === 0x80) || (type === 0x90 && vel === 0);
+        if (!activelyRecording || isOff) {
             pendingLiveNotes[t].push(isOff ? { isOff: true, pitch } : { isOff: false, pitch, vel });
         }
     } else {
@@ -5754,6 +5755,8 @@ function _onPadPressTrackView(status, d1, d2) {
                 /* Record hit at zone velocity if armed */
                 if (S.recordArmed && !S.recordCountingIn && t === S.recordArmedTrack) {
                     _drumRecNoteOns.push({ track: t, laneNote: laneNote, vel: zoneVel });
+                    if (S.trackRoute[t] === 1)
+                        host_module_set_param('t' + t + '_live_notes', 'on ' + laneNote + ' ' + zoneVel);
                     S.pendingDrumLaneResync      = 3;
                     S.pendingDrumLaneResyncTrack = t;
                     S.pendingDrumLaneResyncLane  = lane_vp;
@@ -5849,6 +5852,8 @@ function _onPadPressTrackView(status, d1, d2) {
                         const tvo = S.trackVelOverride[t];
                         const recVel = tvo > 0 ? tvo : vel;
                         _drumRecNoteOns.push({ track: t, laneNote: laneNote, vel: recVel });
+                        if (S.trackRoute[t] === 1)
+                            host_module_set_param('t' + t + '_live_notes', 'on ' + laneNote + ' ' + recVel);
                         S.pendingDrumLaneResync      = 3;
                         S.pendingDrumLaneResyncTrack = t;
                         S.pendingDrumLaneResyncLane  = lane;
@@ -7072,6 +7077,8 @@ globalThis.onMidiMessageExternal = function (data) {
             const isRec = !isSeqEcho && S.recordArmed && !S.recordCountingIn && t === S.recordArmedTrack;
             if (isRec) {
                 _drumRecNoteOns.push({ track: t, laneNote: d1, vel: vel });
+                if (routeIsMove)
+                    host_module_set_param('t' + t + '_live_notes', 'on ' + d1 + ' ' + vel);
                 const recLane = S.drumLaneNote[t].indexOf(d1);
                 if (recLane >= 0) {
                     S.pendingDrumLaneResync      = 3;
