@@ -114,7 +114,12 @@ JS `init()` reads UUID, compares with `state_uuid` get_param. Mismatch → `stat
 
 ## Schwung patches
 
-Local patches applied to `~/schwung/` that must be re-applied after any Schwung upgrade. Current base: **v0.9.10** (`1f65169b`), branch `fix/exit-hold-v0.9.10`. Check each commit is present with `cd ~/schwung && git log --oneline | grep <sha>` before deploying a new Schwung build.
+Local patches applied to `~/schwung/` that must be re-applied after any Schwung upgrade. Current base: **v0.9.10** (`1f65169b`), branch `fix/exit-hold-v0.9.10`.
+
+**To re-apply after a Schwung upgrade:** `cd ~/schwung && git apply patches/seq8-local.patch`
+(regenerate the patch with `git diff <new-base>..HEAD -- src/ > patches/seq8-local.patch` after cherry-picking onto the new base)
+
+Check each commit is present with `cd ~/schwung && git log --oneline | grep <sha>` before deploying a new Schwung build.
 
 | PR | Commit (on v0.9.10 branch) | File | Description |
 |----|----------------------------|------|-------------|
