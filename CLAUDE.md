@@ -15,7 +15,7 @@
 - **State version bump**: Any time DSP struct layout changes or state format changes, delete ALL state files on device before deploying: `ssh root@move.local "find /data/UserData/schwung/set_state -name 'seq8-state.json' -exec rm {} \; && find /data/UserData/schwung/set_state -name 'seq8-ui-state.json' -exec rm {} \;"`. This is a dev build — backward compatibility is not important; always prefer a clean slate over migration.
 - **DSP calls / pfx code**: read `docs/SEQ8_API.md` for parameter keys, structs, and algorithm details.
 - **DSP work**: read `dsp/CLAUDE.md` for logging, build, state format keys, and deferred save details.
-- **After any Schwung upgrade**: re-apply all patches listed in the "Schwung patches" section below. Build with `cd ~/schwung && ./scripts/build.sh` then `scp ~/schwung/build/schwung-shim.so root@move.local:/usr/lib/schwung-shim.so` and restart Move.
+- **After any Schwung upgrade**: re-apply all patches listed in the "Schwung patches" section below. Build with `cd ~/schwung && ./scripts/build.sh` then `scp ~/schwung/build/schwung-shim.so root@move.local:/data/UserData/schwung/schwung-shim.so` and restart Move. **Note**: `/usr/lib/schwung-shim.so` is a symlink recreated on every boot by `schwung-heal`; always deploy to the data partition path, not the symlink.
 
 SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move — standalone 8-track MIDI sequencer. No audio. C (DSP) + JavaScript (UI). `button_passthrough: [79]` + `claims_master_knob: true` — Move firmware handles CC 79 natively (volume + overlay); `claims_master_knob` prevents Schwung host from also running its own acceleration/`mm_set_host_volume`, which caused inconsistent knob speed and MIDI output pauses.
 
@@ -120,8 +120,10 @@ Local patches applied to `~/schwung/` that must be re-applied after any Schwung 
 |----|----------------------------|------|-------------|
 | [#71](https://github.com/charlesvestal/schwung/pull/71) | `e70d7340` | `src/host/shadow_midi.c` | Defer cable-2 inject when cable-0 or cable-2 hardware is active — prevents SIGABRT in ROUTE_MOVE external MIDI monitoring |
 | [#72](https://github.com/charlesvestal/schwung/pull/72) | `5b74e6cc` + `4a95b4d6` | `src/host/shadow_midi.c` | Hold inject drain for 2 frames (~6ms) after overtake exit — prevents SIGABRT when suspending (Back) with a ROUTE_MOVE drum pattern playing |
+| (local) | `7c31d048` | `src/host/shadow_midi.c` | Defer on ANY MIDI_IN event (not just cable-0/2) — external controller + ROUTE_MOVE clip crash |
+| (local) | `8f1a9d87` | `src/host/shadow_midi.c` | Bail inject if existing events must be skipped (`saw_existing`) — prevents write at non-zero offset |
 
-Both patches are in `src/host/shadow_midi.c` in `shadow_drain_midi_inject()`. PR #71 extends the existing `DEFER_FRAMES` cable-0 gate to also cover cable-2; PR #72 adds an `exit_hold` block on the overtake_mode 1→0 transition.
+All patches are in `src/host/shadow_midi.c` in `shadow_drain_midi_inject()`. PRs #71/#72 are upstream patches; the two local commits fix a crash when an external MIDI controller is played while a ROUTE_MOVE clip is running (inject racing hardware events in MIDI_IN).
 
 ## Known limitations
 
