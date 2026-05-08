@@ -2,6 +2,8 @@
 
 ## Bugs to fix
 
+1. **Melodic step-edit: held-step pad LEDs** — when holding an active step, pads don't always light showing which notes are in it. Root cause: `clipSteps` stale (cleared by null `get_param` in `onMidiMessage`); `stepWasEmpty=true` then skips note read at hold threshold. Fix was designed (`pendingHeldStepNotesRead` deferral + merged hold-threshold branch) but reverted due to regressions — needs clean retry.
+2. **ROUTE_MOVE polyphonic live notes** — per-pitch `set_param` approach (`t{n}_live_on_{P}` / `t{n}_live_off_{P}`, commit d008911) caused hanging and missed notes on polyphonic chords; reverted (0cd7211). Needs investigation of `live_note_on`/`live_note_off` DSP handlers under polyphonic conditions before re-attempting.
 3. **Scale-aware key/scale changes** — transpose all clip notes on Key/Scale change. Design TBD.
 7. **State snapshots** (16 slots)
 9. **MIDI clock sync**
