@@ -504,7 +504,6 @@ const NOTE_SESSION_HOLD_TICKS = 40;  /* ~200ms at 196Hz */
 
 /* Real-time recording state */
 
-const pendingLiveNotes = Array.from({length: NUM_TRACKS}, () => []);  /* buffered live notes flushed each tick */
 const pendingDrumNoteOffs = Array.from({length: NUM_TRACKS}, () => []);  /* drum tap note-offs deferred 1 tick to avoid coalescing with note-on */
 const _drumRecNoteOns  = [];  /* { track, laneNote, vel } — queued drum recording note-ons */
 const _drumRecNoteOffs = [];  /* { track, laneNote } — queued drum recording note-offs */
@@ -1975,13 +1974,21 @@ function liveSendNote(t, type, pitch, vel, rawVel) {
         if (typeof move_midi_external_send === 'function')
             move_midi_external_send([cin, status, pitch, vel]);
     } else if (route === 1) {
-        /* Suppress note-ons during recording — melodic: record_note_on DSP handler does live
+        /* Per-pitch set_param keys avoid coalescing: each pitch is a distinct key so
+         * simultaneous chord notes all survive the audio-buffer boundary. Fires immediately
+         * (same callback as the pad press) rather than deferring to tick(), eliminating the
+         * ~10ms pendingLiveNotes delay.
+         * Suppress note-ons during recording — melodic: record_note_on DSP handler does live
          * monitoring inline; drum: fired directly from the press handler via live_notes set_param.
          * Note-offs always pass through so sounds stop when pads are released. */
         const activelyRecording = S.recordArmed && !S.recordCountingIn && S.recordArmedTrack === t;
         const isOff = (type === 0x80) || (type === 0x90 && vel === 0);
         if (!activelyRecording || isOff) {
-            pendingLiveNotes[t].push(isOff ? { isOff: true, pitch } : { isOff: false, pitch, vel });
+            if (isOff) {
+                host_module_set_param('t' + t + '_live_off_' + pitch, '0');
+            } else {
+                host_module_set_param('t' + t + '_live_on_' + pitch, '' + vel);
+            }
         }
     } else {
         if (typeof shadow_send_midi_to_dsp === 'function') shadow_send_midi_to_dsp([status, pitch, vel]);
@@ -3097,21 +3104,6 @@ globalThis.tick = function () {
         S.metroNoteOffTick = -1;
         if (typeof move_midi_inject_to_move === 'function')
             move_midi_inject_to_move([0x09, 0x80, 108, 0]);
-    }
-
-    /* Flush live note batches: offs first, then ons; one set_param per track so no coalescing.
-     * Defer for 1 tick after any step button event so the step set_param clears its audio
-     * block before live_notes fires — otherwise live_notes can overwrite step toggles. */
-    if (S.tickCount > S.stepOpTick + 1) {
-        for (let _t = 0; _t < NUM_TRACKS; _t++) {
-            if (pendingLiveNotes[_t].length === 0) continue;
-            const evts = pendingLiveNotes[_t];
-            pendingLiveNotes[_t] = [];
-            const parts = [];
-            for (const e of evts) if (e.isOff)  parts.push('off ' + e.pitch);
-            for (const e of evts) if (!e.isOff) parts.push('on '  + e.pitch + ' ' + e.vel);
-            host_module_set_param('t' + _t + '_live_notes', parts.join(' '));
-        }
     }
 
     /* Drain deferred drum tap note-offs */
