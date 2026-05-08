@@ -3706,19 +3706,6 @@ static void set_param(void *instance, const char *key, const char *val) {
             return;
         }
 
-        if (strncmp(sub, "live_on_", 8) == 0) {
-            uint8_t pitch = (uint8_t)clamp_i(atoi(sub + 8), 0, 127);
-            uint8_t vel   = (uint8_t)clamp_i(atoi(val),     1, 127);
-            live_note_on(inst, tr, pitch, vel);
-            return;
-        }
-
-        if (strncmp(sub, "live_off_", 9) == 0) {
-            uint8_t pitch = (uint8_t)clamp_i(atoi(sub + 9), 0, 127);
-            live_note_off(inst, tr, pitch);
-            return;
-        }
-
         if (!strcmp(sub, "clip_length")) {
             clip_t *cl = &tr->clips[tr->active_clip];
             cl->length = (uint16_t)clamp_i(my_atoi(val), 1, SEQ_STEPS);
