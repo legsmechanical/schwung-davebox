@@ -1889,11 +1889,12 @@ function applyExtMidiRemap() {
     const hasRemap = typeof host_ext_midi_remap_enable === 'function';
     if (!hasRemap) return;
     if (!isMove) {
-        if (S.extMidiRemapActive) {
-            host_ext_midi_remap_clear();
-            host_ext_midi_remap_enable(0);
-            S.extMidiRemapActive = false;
+        host_ext_midi_remap_clear();
+        for (var _i = 0; _i < 16; _i++) {
+            host_ext_midi_remap_set(_i, 254);  /* EXT_MIDI_REMAP_BLOCK */
         }
+        host_ext_midi_remap_enable(1);
+        S.extMidiRemapActive = false;
         return;
     }
     const outCh = S.trackChannel[t] - 1;  /* 0-indexed */
