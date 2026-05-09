@@ -127,8 +127,10 @@ Check each commit is present with `cd ~/schwung && git log --oneline | grep <sha
 | [#72](https://github.com/charlesvestal/schwung/pull/72) | `5b74e6cc` + `4a95b4d6` | `src/host/shadow_midi.c` | Hold inject drain for 2 frames (~6ms) after overtake exit — prevents SIGABRT when suspending (Back) with a ROUTE_MOVE drum pattern playing |
 | (local) | `7c31d048` | `src/host/shadow_midi.c` | Defer on ANY MIDI_IN event (not just cable-0/2) — external controller + ROUTE_MOVE clip crash |
 | (local) | `8f1a9d87` | `src/host/shadow_midi.c` | Bail inject if existing events must be skipped (`saw_existing`) — prevents write at non-zero offset |
+| (local) | `3ae7e206` | `src/host/shadow_midi.c` | Strengthen any-cable guard — scan all MIDI_IN slots, not just slot 0 |
+| (local) | `9ac557c5` + `b01a1e2e` | `src/schwung_shim.c`, `src/host/shadow_constants.h`, `src/shadow/shadow_ui.c` | EXT_MIDI_REMAP_BLOCK: suppress cable-2 note-ons from Move on non-ROUTE_MOVE tracks; patches sh_midi (not hardware) to avoid crash |
 
-All patches are in `src/host/shadow_midi.c` in `shadow_drain_midi_inject()`. PRs #71/#72 are upstream patches; the two local commits fix a crash when an external MIDI controller is played while a ROUTE_MOVE clip is running (inject racing hardware events in MIDI_IN).
+PRs #71/#72 are upstream patches. Local commits fix inject races and add cable-2 BLOCK support for external MIDI isolation.
 
 ## Known limitations
 
