@@ -1985,7 +1985,18 @@ function liveSendNote(t, type, pitch, vel, rawVel) {
             pendingLiveNotes[t].push(isOff ? { isOff: true, pitch } : { isOff: false, pitch, vel });
         }
     } else {
-        if (typeof shadow_send_midi_to_dsp === 'function') shadow_send_midi_to_dsp([status, pitch, vel]);
+        /* ROUTE_SCHWUNG: route note events through live_note_on so pfx chain (TARP,
+         * NOTE FX, HARMZ, MIDI DLY) applies to live input, matching ROUTE_MOVE behaviour.
+         * No activelyRecording filter — record_note_on DSP handler does not call
+         * live_note_on() inline for ROUTE_SCHWUNG, so no double-monitoring risk.
+         * Non-note events (CC, aftertouch, pitch bend) pass through raw — pendingLiveNotes
+         * only represents note on/off and would corrupt CCs into spurious note-ons. */
+        if (type === 0x90 || type === 0x80) {
+            const isOff = type === 0x80 || vel === 0;
+            pendingLiveNotes[t].push(isOff ? { isOff: true, pitch } : { isOff: false, pitch, vel });
+        } else {
+            if (typeof shadow_send_midi_to_dsp === 'function') shadow_send_midi_to_dsp([status, pitch, vel]);
+        }
     }
 }
 
