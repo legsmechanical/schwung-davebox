@@ -129,6 +129,7 @@ Check each commit is present with `cd ~/schwung && git log --oneline | grep <sha
 | (local) | `8f1a9d87` | `src/host/shadow_midi.c` | Bail inject if existing events must be skipped (`saw_existing`) — prevents write at non-zero offset |
 | (local) | `3ae7e206` | `src/host/shadow_midi.c` | Strengthen any-cable guard — scan all MIDI_IN slots, not just slot 0 |
 | (local) | `9ac557c5` + `b01a1e2e` | `src/schwung_shim.c`, `src/host/shadow_constants.h`, `src/shadow/shadow_ui.c` | EXT_MIDI_REMAP_BLOCK: suppress cable-2 note-ons from Move on non-ROUTE_MOVE tracks; patches sh_midi (not hardware) to avoid crash |
+| (local) | `743bb18f` | `src/schwung_shim.c`, `src/host/shadow_midi.c`, `src/host/shadow_midi.h` | Cable-2 passthrough: inject cable-2 as cable-0 for Move native routing + dispatch to Schwung chain slots by channel when no tool active (overtake_mode==0 or suspend_overtake==1) |
 
 PRs #71/#72 are upstream patches. Local commits fix inject races and add cable-2 BLOCK support for external MIDI isolation.
 
