@@ -114,7 +114,7 @@ JS `init()` reads UUID, compares with `state_uuid` get_param. Mismatch → `stat
 
 ## Schwung patches
 
-Local patches applied to `~/schwung/` that must be re-applied after any Schwung upgrade. Current base: **v0.9.10** (`1f65169b`), branch `fix/exit-hold-v0.9.10`.
+Local patches applied to `~/schwung/` that must be re-applied after any Schwung upgrade. Current base: **v0.9.10** (`1f65169b`), branch `fix/cable2-passthrough-no-tool`.
 
 **To re-apply after a Schwung upgrade:** `cd ~/schwung && git apply patches/seq8-local.patch`
 (regenerate the patch with `git diff <new-base>..HEAD -- src/ > patches/seq8-local.patch` after cherry-picking onto the new base)
@@ -130,6 +130,7 @@ Check each commit is present with `cd ~/schwung && git log --oneline | grep <sha
 | (local) | `3ae7e206` | `src/host/shadow_midi.c` | Strengthen any-cable guard — scan all MIDI_IN slots, not just slot 0 |
 | (local) | `9ac557c5` + `b01a1e2e` | `src/schwung_shim.c`, `src/host/shadow_constants.h`, `src/shadow/shadow_ui.c` | EXT_MIDI_REMAP_BLOCK: suppress cable-2 note-ons from Move on non-ROUTE_MOVE tracks; patches sh_midi (not hardware) to avoid crash |
 | (local) | `743bb18f` | `src/schwung_shim.c`, `src/host/shadow_midi.c`, `src/host/shadow_midi.h` | Cable-2 passthrough: inject cable-2 as cable-0 for Move native routing + dispatch to Schwung chain slots by channel when no tool active (overtake_mode==0 or suspend_overtake==1) |
+| (local) | `456c0a9e` | `src/schwung_shim.c` | Remove THRU-slot gate from cable-2 remap: `any_thru_slot_active()` was silently blocking rechannelization whenever any THRU slot existed — a requirement for Move instruments to respond to external MIDI |
 
 PRs #71/#72 are upstream patches. Local commits fix inject races and add cable-2 BLOCK support for external MIDI isolation.
 
