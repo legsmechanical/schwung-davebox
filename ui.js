@@ -1889,11 +1889,12 @@ function applyExtMidiRemap() {
     const hasRemap = typeof host_ext_midi_remap_enable === 'function';
     if (!hasRemap) return;
     if (!isMove) {
-        if (S.extMidiRemapActive) {
-            host_ext_midi_remap_clear();
-            host_ext_midi_remap_enable(0);
-            S.extMidiRemapActive = false;
+        host_ext_midi_remap_clear();
+        for (var _i = 0; _i < 16; _i++) {
+            host_ext_midi_remap_set(_i, 254);  /* EXT_MIDI_REMAP_BLOCK */
         }
+        host_ext_midi_remap_enable(1);
+        S.extMidiRemapActive = false;
         return;
     }
     const outCh = S.trackChannel[t] - 1;  /* 0-indexed */
@@ -1984,7 +1985,18 @@ function liveSendNote(t, type, pitch, vel, rawVel) {
             pendingLiveNotes[t].push(isOff ? { isOff: true, pitch } : { isOff: false, pitch, vel });
         }
     } else {
-        if (typeof shadow_send_midi_to_dsp === 'function') shadow_send_midi_to_dsp([status, pitch, vel]);
+        /* ROUTE_SCHWUNG: route note events through live_note_on so pfx chain (TARP,
+         * NOTE FX, HARMZ, MIDI DLY) applies to live input, matching ROUTE_MOVE behaviour.
+         * No activelyRecording filter — record_note_on DSP handler does not call
+         * live_note_on() inline for ROUTE_SCHWUNG, so no double-monitoring risk.
+         * Non-note events (CC, aftertouch, pitch bend) pass through raw — pendingLiveNotes
+         * only represents note on/off and would corrupt CCs into spurious note-ons. */
+        if (type === 0x90 || type === 0x80) {
+            const isOff = type === 0x80 || vel === 0;
+            pendingLiveNotes[t].push(isOff ? { isOff: true, pitch } : { isOff: false, pitch, vel });
+        } else {
+            if (typeof shadow_send_midi_to_dsp === 'function') shadow_send_midi_to_dsp([status, pitch, vel]);
+        }
     }
 }
 
@@ -3067,9 +3079,11 @@ globalThis.tick = function () {
             }));
         S.pendingSuspendSave = true;
         removeFlagsWrap();
+        if (typeof host_ext_midi_remap_enable === 'function') host_ext_midi_remap_enable(0);
     }
     if (!isSuspended && S._wasSuspended) {
         installFlagsWrap();
+        applyExtMidiRemap();
         /* Clear any held-modifier state that may have got stuck on suspend
          * (key-up events fire after overtake exits, so onMidiMessage never sees them). */
         S.shiftHeld = false; S.deleteHeld = false; S.muteHeld = false;
