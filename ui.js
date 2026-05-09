@@ -3068,9 +3068,11 @@ globalThis.tick = function () {
             }));
         S.pendingSuspendSave = true;
         removeFlagsWrap();
+        if (typeof host_ext_midi_remap_enable === 'function') host_ext_midi_remap_enable(0);
     }
     if (!isSuspended && S._wasSuspended) {
         installFlagsWrap();
+        applyExtMidiRemap();
         /* Clear any held-modifier state that may have got stuck on suspend
          * (key-up events fire after overtake exits, so onMidiMessage never sees them). */
         S.shiftHeld = false; S.deleteHeld = false; S.muteHeld = false;
