@@ -6476,7 +6476,7 @@ function _onStepButtons(d1, d2) {
             S.heldStepBtn = idx;
             S.heldStep    = absStep;
             const cur   = S.drumLaneSteps[t][lane][absStep];
-            if (cur === '1') {
+            if (cur !== '0') {
                 S.stepWasEmpty  = false;
                 S.heldStepNotes = [S.drumLaneNote[t][lane]];
                 const rv = typeof host_module_get_param === 'function'
