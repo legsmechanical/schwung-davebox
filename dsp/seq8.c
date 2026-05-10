@@ -21,6 +21,9 @@
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 
 #include "host/plugin_api_v1.h"
@@ -563,8 +566,16 @@ typedef struct {
 
     /* Metronome: clicks on quarter notes while recording/count-in is active */
     uint8_t  metro_on;              /* 0=off,1=count-in only,2=count+rec,3=always */
-    uint8_t  metro_vol;             /* 0-100, default 80 */
+    uint8_t  metro_vol;             /* 0-150, default 80 */
     uint16_t metro_beat_count;      /* monotonic counter; incremented on each quarter-note beat */
+
+    /* Metro click: DSP-side WAV playback */
+    int      metro_wav_fd;
+    void    *metro_wav_map;
+    size_t   metro_wav_map_size;
+    const int16_t *metro_wav_data;  /* points into mmap; NULL = not loaded */
+    uint32_t metro_wav_frames;
+    uint32_t metro_click_pos;       /* UINT32_MAX = not playing */
 
     /* Print mode: bake chain output into step data */
     uint8_t  printing;
@@ -1537,7 +1548,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
     inst->inp_quant      = (uint8_t)(json_get_int(buf, "iq", 0) != 0);
     inst->midi_in_channel = (uint8_t)clamp_i(json_get_int(buf, "mic", 0), 0, 16);
     inst->metro_on  = (uint8_t)clamp_i(json_get_int(buf, "metro_on", 1), 0, 3);
-    inst->metro_vol = (uint8_t)clamp_i(json_get_int(buf, "metro_vol", 80), 0, 100);
+    inst->metro_vol = (uint8_t)clamp_i(json_get_int(buf, "metro_vol", 80), 0, 150);
     inst->swing_amt = (uint8_t)clamp_i(json_get_int(buf, "_swa", 0), 0, 100);
     inst->swing_res = (uint8_t)clamp_i(json_get_int(buf, "_swr", 0), 0, 1);
     free(buf);
@@ -4174,6 +4185,63 @@ static void seq8_clear_state(seq8_instance_t *inst) {
     inst->arp_master_tick     = 0;
 }
 
+static void metro_wav_open(seq8_instance_t *inst) {
+    const char *path = "/data/UserData/schwung/modules/tools/seq8/click-seq8.wav";
+    inst->metro_wav_fd = open(path, O_RDONLY);
+    if (inst->metro_wav_fd < 0) return;
+
+    struct stat st;
+    if (fstat(inst->metro_wav_fd, &st) < 0 || st.st_size < 44) {
+        close(inst->metro_wav_fd); inst->metro_wav_fd = -1; return;
+    }
+    inst->metro_wav_map_size = (size_t)st.st_size;
+    inst->metro_wav_map = mmap(NULL, inst->metro_wav_map_size, PROT_READ, MAP_PRIVATE,
+                               inst->metro_wav_fd, 0);
+    if (inst->metro_wav_map == MAP_FAILED) {
+        inst->metro_wav_map = NULL;
+        close(inst->metro_wav_fd); inst->metro_wav_fd = -1; return;
+    }
+
+    const uint8_t *raw = (const uint8_t *)inst->metro_wav_map;
+    if (memcmp(raw, "RIFF", 4) != 0 || memcmp(raw + 8, "WAVE", 4) != 0) goto fail;
+
+    uint32_t offset = 12;
+    uint16_t nch = 0, bps = 0, audio_fmt = 0;
+    uint32_t data_off = 0, data_sz = 0;
+    int found_fmt = 0, found_data = 0;
+    while (offset + 8 <= inst->metro_wav_map_size) {
+        const uint8_t *c = raw + offset;
+        uint32_t csz = c[4] | ((uint32_t)c[5]<<8) | ((uint32_t)c[6]<<16) | ((uint32_t)c[7]<<24);
+        if (memcmp(c, "fmt ", 4) == 0 && csz >= 16) {
+            audio_fmt = (uint16_t)(c[8]  | (c[9] <<8));
+            nch       = (uint16_t)(c[10] | (c[11]<<8));
+            bps       = (uint16_t)(c[22] | (c[23]<<8));
+            found_fmt = 1;
+        } else if (memcmp(c, "data", 4) == 0) {
+            data_off   = offset + 8;
+            data_sz    = csz;
+            found_data = 1;
+            break;
+        }
+        offset += 8 + csz;
+        if (csz & 1) offset++;
+    }
+
+    if (!found_fmt || !found_data || audio_fmt != 1 || bps != 16 || nch != 1) goto fail;
+    if (data_off + data_sz > inst->metro_wav_map_size)
+        data_sz = (uint32_t)(inst->metro_wav_map_size - data_off);
+
+    inst->metro_wav_data   = (const int16_t *)(raw + data_off);
+    inst->metro_wav_frames = data_sz / 2;
+    return;
+
+fail:
+    munmap(inst->metro_wav_map, inst->metro_wav_map_size);
+    inst->metro_wav_map  = NULL;
+    close(inst->metro_wav_fd);
+    inst->metro_wav_fd = -1;
+}
+
 static void *create_instance(const char *module_dir, const char *json_defaults) {
     (void)module_dir; (void)json_defaults;
 
@@ -4190,6 +4258,12 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     inst->launch_quant = 0;   /* Now */
     inst->metro_on     = 1;    /* default: Count (count-in only) */
     inst->metro_vol    = 80;
+    inst->metro_wav_fd    = -1;
+    inst->metro_wav_map   = NULL;
+    inst->metro_wav_data  = NULL;
+    inst->metro_wav_frames = 0;
+    inst->metro_click_pos  = UINT32_MAX;
+    metro_wav_open(inst);
     inst->looper_sync            = 1;
     inst->looper_pending_silence = 0;
     memset(inst->perf_emitted_pitch, 0xFF, sizeof(inst->perf_emitted_pitch));
@@ -5717,7 +5791,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                     inst->count_in_ticks--;
                     if (inst->count_in_ticks > 0) {
                         int new_q = (int)((inst->count_in_ticks - 1) / PPQN);
-                        if (new_q != old_q) inst->metro_beat_count++;
+                        if (new_q != old_q) { inst->metro_beat_count++; inst->metro_click_pos = 0; }
                     }
                 } else {
                     inst->count_in_ticks--;
@@ -5833,10 +5907,15 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
         if (inst->metro_on >= 2 && inst->master_tick_in_step == 0 && inst->global_tick % 4 == 0) {
             if (inst->metro_on == 3) {
                 inst->metro_beat_count++;
+                inst->metro_click_pos = 0;
             } else {
                 int _tt;
                 for (_tt = 0; _tt < NUM_TRACKS; _tt++)
-                    if (inst->tracks[_tt].recording) { inst->metro_beat_count++; break; }
+                    if (inst->tracks[_tt].recording) {
+                        inst->metro_beat_count++;
+                        inst->metro_click_pos = 0;
+                        break;
+                    }
             }
         }
 
@@ -6110,6 +6189,23 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
             inst->global_tick++;
         }
         inst->arp_master_tick++;
+    }
+
+    /* Mix metro click into output */
+    if (out_lr && frames > 0 && inst->metro_wav_data
+            && inst->metro_click_pos != UINT32_MAX && inst->metro_vol > 0) {
+        float gain = inst->metro_vol / 100.0f;
+        int _ci;
+        for (_ci = 0; _ci < frames && inst->metro_click_pos < inst->metro_wav_frames; _ci++) {
+            float s = (float)inst->metro_wav_data[inst->metro_click_pos] / 32768.0f * gain;
+            int32_t v = (int32_t)(s * 32767.0f);
+            if (v > 32767) v = 32767; else if (v < -32768) v = -32768;
+            out_lr[_ci * 2]     += (int16_t)v;
+            out_lr[_ci * 2 + 1] += (int16_t)v;
+            inst->metro_click_pos++;
+        }
+        if (inst->metro_click_pos >= inst->metro_wav_frames)
+            inst->metro_click_pos = UINT32_MAX;
     }
 }
 

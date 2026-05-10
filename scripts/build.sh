@@ -37,26 +37,41 @@ cp ui_persistence.mjs "dist/${MODULE_ID}/"
 cp ui_dialogs.mjs    "dist/${MODULE_ID}/"
 cp ui_scene.mjs      "dist/${MODULE_ID}/"
 cp ui_leds.mjs       "dist/${MODULE_ID}/"
-# Convert to 16-bit mono (host_preview_play requires 16-bit; source is 24-bit stereo)
+# Convert source (24-bit stereo 44100Hz) → normalized 16-bit mono 48000Hz for DSP render_block
 python3 - <<'PYEOF'
-import wave, struct, os
+import wave, struct, audioop, warnings
+warnings.filterwarnings('ignore')   # suppress audioop deprecation on Python 3.13+
 src = "MPC Metronome Click 001.wav"
 dst = "dist/seq8/click-seq8.wav"
 with wave.open(src, 'rb') as r:
     rate, nch, sw, nf = r.getframerate(), r.getnchannels(), r.getsampwidth(), r.getnframes()
     raw = r.readframes(nf)
+# Mix down to 16-bit mono at source rate
 samples = []
 for i in range(0, len(raw), sw * nch):
     ch_vals = []
     for ch in range(nch):
         b = raw[i + ch*sw : i + ch*sw + sw]
-        v = struct.unpack('<i', b + (b'\xff' if b[2] & 0x80 else b'\x00'))[0] >> 8
+        if sw == 3:
+            v = struct.unpack('<i', b + (b'\xff' if b[2] & 0x80 else b'\x00'))[0] >> 8
+        elif sw == 2:
+            v = struct.unpack('<h', b)[0]
+        else:
+            v = 0
         ch_vals.append(v)
     samples.append(max(-32768, min(32767, sum(ch_vals) // len(ch_vals))))
+# Normalize to full scale
+peak = max(abs(s) for s in samples) if samples else 1
+if peak == 0: peak = 1
+samples = [max(-32768, min(32767, round(s * 32767 / peak))) for s in samples]
+# Resample to 48000 Hz
+raw16 = struct.pack('<' + 'h' * len(samples), *samples)
+raw48, _ = audioop.ratecv(raw16, 2, 1, rate, 48000, None)
 with wave.open(dst, 'wb') as w:
-    w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate)
-    w.writeframes(struct.pack('<' + 'h' * len(samples), *samples))
-print(f"click-seq8.wav: {len(samples)} frames @ {rate} Hz, 16-bit mono")
+    w.setnchannels(1); w.setsampwidth(2); w.setframerate(48000)
+    w.writeframes(raw48)
+frames_out = len(raw48) // 2
+print(f"click-seq8.wav: {frames_out} frames @ 48000 Hz, 16-bit mono (normalized, resampled from {rate} Hz)")
 PYEOF
 
 echo ""
