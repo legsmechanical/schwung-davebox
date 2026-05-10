@@ -2448,7 +2448,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                     wi = 0;
                     for (ni = 0; ni < (int)dlc->step_note_count[s]; ni++) {
                         int new_off = (int)dlc->note_tick_offset[s][ni] + dir;
-                        if (new_off > midpoint) {
+                        if (new_off >= midpoint) {
                             if (ncross < 512) {
                                 cross[ncross].dst     = (int16_t)((s + 1) % len);
                                 cross[ncross].dst_off = (int16_t)(new_off - tps);
@@ -3328,7 +3328,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                     wi = 0;
                     for (ni = 0; ni < (int)dlc->step_note_count[s]; ni++) {
                         int new_off = (int)dlc->note_tick_offset[s][ni] + dir;
-                        if (new_off > midpoint) {
+                        if (new_off >= midpoint) {
                             if (ncross < 512) {
                                 cross[ncross].dst     = (int16_t)((s + 1) % len);
                                 cross[ncross].dst_off = (int16_t)(new_off - tps);
