@@ -4667,6 +4667,19 @@ static int bake_stage_arp_out(play_fx_t *fx, uint32_t clip_ticks,
     return oc;
 }
 
+/* Apply NOTE FX quantize to a raw clip tick, mirroring the effective_note_tick playback formula. */
+static uint32_t bake_apply_quantize(uint32_t tick, uint16_t tps, uint16_t length, int quantize) {
+    uint32_t clip_ticks = (uint32_t)length * tps;
+    uint32_t sn = (tick + (uint32_t)(tps / 2)) / (uint32_t)tps % (uint32_t)length;
+    int32_t step_grid = (int32_t)(sn * (uint32_t)tps);
+    int32_t delta = (int32_t)tick - step_grid;
+    int32_t eff_delta = (quantize >= 100) ? 0 : delta * (100 - quantize) / 100;
+    int32_t eff = step_grid + eff_delta;
+    if (eff < 0) eff += (int32_t)clip_ticks;
+    if (eff >= (int32_t)clip_ticks) eff -= (int32_t)clip_ticks;
+    return (uint32_t)eff;
+}
+
 static void bake_clip(seq8_instance_t *inst, int t, int c, int loops, int wrap) {
     seq8_track_t *tr = &inst->tracks[t];
     clip_t *cl;
@@ -4718,8 +4731,9 @@ static void bake_clip(seq8_instance_t *inst, int t, int c, int loops, int wrap) 
             uint8_t gen[MAX_GEN_NOTES];
             int gc = pfx_build_gen_notes(inst, scale_aware, &fx, (int)nn->pitch, gen);
             int gi;
+            uint32_t eff_tick = bake_apply_quantize(nn->tick, tps, length, fx.quantize);
             for (gi = 0; gi < gc && a_count < BAKE_BUF; gi++)
-                bake_a[a_count++] = (bake_note_t){ nn->tick, (uint16_t)gate,
+                bake_a[a_count++] = (bake_note_t){ eff_tick, (uint16_t)gate,
                                                    gen[gi], (uint8_t)vel };
         }
 
@@ -4832,7 +4846,8 @@ static void bake_drum_lane(seq8_instance_t *inst, int t, int c, int lane, int lo
                 if (gate < 1) gate = 1; if (gate > 65535u) gate = 65535u;
                 int vel = (int)nn->vel + fx.velocity_offset;
                 if (vel < 1) vel = 1; if (vel > 127) vel = 127;
-                dl_a[a_count++] = (bake_note_t){ nn->tick, (uint16_t)gate,
+                uint32_t eff_tick = bake_apply_quantize(nn->tick, tps, length, fx.quantize);
+                dl_a[a_count++] = (bake_note_t){ eff_tick, (uint16_t)gate,
                                                  dl->midi_note, (uint8_t)vel };
             }
 
@@ -4964,8 +4979,9 @@ static void bake_drum_clip(seq8_instance_t *inst, int t, int c, int loops, int w
                 uint8_t gen[MAX_GEN_NOTES];
                 int gc = pfx_build_gen_notes(inst, scale_aware, &fx, (int)nn->pitch, gen);
                 int gi;
+                uint32_t eff_tick = bake_apply_quantize(nn->tick, tps, length, fx.quantize);
                 for (gi = 0; gi < gc && a_count < BAKE_BUF; gi++)
-                    dc_a[a_count++] = (bake_note_t){ nn->tick, (uint16_t)gate,
+                    dc_a[a_count++] = (bake_note_t){ eff_tick, (uint16_t)gate,
                                                      gen[gi], (uint8_t)vel };
             }
 
