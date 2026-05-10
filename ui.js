@@ -2700,12 +2700,13 @@ function drawUI() {
         const recTag  = (S.recordArmed && !S.recordCountingIn && S.recordArmedTrack === S.activeTrack)
             ? ' REC' : '';
         const oct     = S.trackOctave[S.activeTrack];
-        const octStr  = 'Oct: ' + (oct >= 0 ? '+' : '') + oct;
+        const octStr  = 'Oct:' + (oct >= 0 ? '+' : '') + oct;
         const keyScl  = NOTE_KEYS[S.padKey] + ' ' + (SCALE_DISPLAY[S.padScale] || '?');
         const CHAR_W  = 6;
         const keySclX = 128 - 4 - keyScl.length * CHAR_W;
         (S.activeBank === 5 || S.activeBank === 6 ? drawBankHeadingInverted : drawBankHeading)(BANKS[S.activeBank].name + recTag);
         pixelPrint(4, 10, octStr, 1);
+        if (S.bankParams[S.activeTrack][5][0]) pixelPrint(52, 10, 'Arp', 1);
         pixelPrint(keySclX, 10, keyScl, 1);
         if (S.scaleAware) fill_rect(keySclX, 15, keyScl.length * CHAR_W, 1, 1);
         drawMetroIndicator();
@@ -6437,7 +6438,6 @@ function _onStepButtons(d1, d2) {
             const nextStyle = curStyle !== 0 ? 0 : S.lastTarpStyle[t];
             S.bankParams[t][5][0] = nextStyle;
             applyBankParam(t, 5, 0, nextStyle);
-            showActionPopup(nextStyle === 0 ? 'Input Arp Off' : 'Input Arp On');
         } else if (idx === 14) {
             /* Step 15: double-and-fill */
             doDoubleFill();

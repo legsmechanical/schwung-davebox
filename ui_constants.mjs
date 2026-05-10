@@ -68,9 +68,9 @@ export const SCALE_NAMES = [
     'Pentatonic Major', 'Pentatonic Minor', 'Blues', 'Whole Tone', 'Diminished'
 ];
 export const SCALE_DISPLAY = [
-    'Major', 'Minor', 'Dorian', 'Phrygian', 'Lydian', 'Mixolydian',
-    'Locrian', 'H Minor', 'M Minor', 'Pent Major', 'Pent Minor',
-    'Blues', 'Whole Tone', 'Diminished'
+    'Major', 'Minor', 'Dori.', 'Phryg', 'Lyd.',  'Mixo',
+    'Locr.', 'HMin',  'MMin',  'PMaj',  'PMin',
+    'Blues', 'Whole', 'Dim.'
 ];
 export const DELAY_LABELS = ['1/64','1/64D','1/32','1/16T','1/32D','1/16','1/8T','1/16D','1/8','1/4T','1/8D','1/4','1/4D','1/2','1/2D','1/1','1/1D'];
 
