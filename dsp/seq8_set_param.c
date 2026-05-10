@@ -2166,6 +2166,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 dlc->length = (uint16_t)newlen;
                 if (tr->drum_current_step[lane_idx] >= (uint16_t)newlen)
                     tr->drum_current_step[lane_idx] = 0;
+                clip_migrate_to_notes(dlc);
                 inst->state_dirty = 1;
                 return;
             }
@@ -3400,6 +3401,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 dlc->length = (uint16_t)newlen;
                 if (tr->drum_current_step[l_al] >= (uint16_t)newlen)
                     tr->drum_current_step[l_al] = 0;
+                clip_migrate_to_notes(dlc);
             }
             inst->state_dirty = 1;
             return;
