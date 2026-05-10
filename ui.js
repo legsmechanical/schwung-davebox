@@ -6426,12 +6426,6 @@ function _onStepButtons(d1, d2) {
                 computePadNoteMap();
                 showActionPopup(S.padLayoutChromatic[t] ? 'CHROMATIC' : 'IN-SCALE');
             }
-        } else if (idx === 9) {
-            /* Step 10: toggle VelIn between Live and 127 */
-            const curVel = S.trackVelOverride[t];
-            const nextVel = curVel === 0 ? 127 : 0;
-            applyTrackConfig(t, 'track_vel_override', nextVel);
-            showActionPopup(isDrum ? 'ALL LANES' : 'VEL IN', nextVel === 0 ? 'VEL LIVE' : 'VEL 127');
         } else if (idx === 10 && !isDrum) {
             /* Step 11: toggle TRACK ARP style on/off (melodic only) */
             const curStyle = S.bankParams[t][5][0] | 0;
