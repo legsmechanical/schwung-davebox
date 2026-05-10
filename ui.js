@@ -120,13 +120,15 @@ function drawMetroIndicator() {
         pixelPrint(tx, 21, label, 1);
         fill_rect(tx + tw + 2, 22, 2, 2, 1); /* right dot */
     }
-    /* Fixed/Adaptive recording indicator (track view only, right-aligned y=21) */
+    /* Velocity / Fixed/Adaptive indicators (track view only, y=21) */
     if (!S.sessionView) {
         const t  = S.activeTrack;
         const ac = (!S.playing && S.trackQueuedClip[t] >= 0) ? S.trackQueuedClip[t] : S.trackActiveClip[t];
         const _isDrum7   = S.trackPadMode[t] === PAD_MODE_DRUM;
         const _isEmpty7  = _isDrum7 ? !S.drumClipNonEmpty[t][ac] : !S.clipNonEmpty[t][ac];
         const _manualL7  = _isDrum7 ? S.drumLaneLengthManuallySet[t] : S.clipLengthManuallySet[t][ac];
+        /* Velocity input indicator (between metro and fixed/adap) */
+        pixelPrint(67, 21, fmtVelOverride(S.trackVelOverride[t]), 1);
         if (_isEmpty7 && !_manualL7) {
             pixelPrint(103, 21, 'Adap', 1);
         } else {
