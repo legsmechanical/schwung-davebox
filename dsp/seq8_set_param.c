@@ -2250,12 +2250,6 @@ static void set_param(void *instance, const char *key, const char *val) {
                 int dir = my_atoi(val);
                 int len = (int)dlc->length;
                 int i, ni2, new_len, any;
-                uint8_t  tmp_steps[SEQ_STEPS];
-                uint8_t  tmp_notes[SEQ_STEPS][8];
-                uint8_t  tmp_nc[SEQ_STEPS];
-                uint8_t  tmp_vel[SEQ_STEPS];
-                uint16_t tmp_gate[SEQ_STEPS];
-                int16_t  tmp_tick_offset[SEQ_STEPS][8];
                 { int gmax_bs = SEQ_STEPS * dlc->ticks_per_step; if (gmax_bs > 65535) gmax_bs = 65535;
                   int off_clamp = dlc->ticks_per_step - 1;
                   if (dir == 1) {
@@ -2298,67 +2292,16 @@ static void set_param(void *instance, const char *key, const char *val) {
                       tr->stretch_blocked = 0;
                   } else {
                       if (len < 2) return;
-                      { uint8_t seen[SEQ_STEPS];
-                        memset(seen, 0, sizeof(seen));
-                        for (i = 0; i < len; i++) {
-                            if (dlc->steps[i]) {
-                                int dst = i / 2;
-                                if (seen[dst]) { tr->stretch_blocked = 1; return; }
-                                seen[dst] = 1;
-                            }
-                        }
-                      }
                       tr->stretch_blocked = 0;
                       new_len = len / 2;
-                      memset(tmp_steps, 0, sizeof(tmp_steps));
-                      for (i = 0; i < SEQ_STEPS; i++) {
-                          memset(tmp_notes[i], 0, 8);
-                          tmp_nc[i]   = 0;
-                          tmp_vel[i]  = SEQ_VEL;
-                          tmp_gate[i] = GATE_TICKS;
-                          memset(tmp_tick_offset[i], 0, 8 * sizeof(int16_t));
+                      for (i = new_len; i < len; i++) {
+                          dlc->steps[i] = 0;
+                          memset(dlc->step_notes[i], 0, 8);
+                          dlc->step_note_count[i] = 0;
+                          dlc->step_vel[i]  = (uint8_t)SEQ_VEL;
+                          dlc->step_gate[i] = (uint16_t)GATE_TICKS;
+                          memset(dlc->note_tick_offset[i], 0, 8 * sizeof(int16_t));
                       }
-                      for (i = 0; i < len; i++) {
-                          if (dlc->steps[i]) {
-                              int dst = i / 2;
-                              if (!tmp_steps[dst]) {
-                                  int ng = ((int)dlc->step_gate[i] + 1) / 2;
-                                  if (ng < 1) ng = 1;
-                                  tmp_steps[dst] = 1;
-                                  memcpy(tmp_notes[dst], dlc->step_notes[i], 8);
-                                  tmp_nc[dst]   = dlc->step_note_count[i];
-                                  tmp_vel[dst]  = dlc->step_vel[i];
-                                  tmp_gate[dst] = (uint16_t)ng;
-                                  for (ni2 = 0; ni2 < 8; ni2++) {
-                                      int nt = (int)dlc->note_tick_offset[i][ni2] / 2;
-                                      tmp_tick_offset[dst][ni2] = (int16_t)nt;
-                                  }
-                              }
-                          }
-                      }
-                      for (i = 0; i < len; i++) {
-                          if (!dlc->steps[i] && dlc->step_note_count[i] > 0) {
-                              int dst = i / 2;
-                              if (tmp_nc[dst] == 0) {
-                                  int ng = ((int)dlc->step_gate[i] + 1) / 2;
-                                  if (ng < 1) ng = 1;
-                                  memcpy(tmp_notes[dst], dlc->step_notes[i], 8);
-                                  tmp_nc[dst]   = dlc->step_note_count[i];
-                                  tmp_vel[dst]  = dlc->step_vel[i];
-                                  tmp_gate[dst] = (uint16_t)ng;
-                                  for (ni2 = 0; ni2 < 8; ni2++) {
-                                      int nt = (int)dlc->note_tick_offset[i][ni2] / 2;
-                                      tmp_tick_offset[dst][ni2] = (int16_t)nt;
-                                  }
-                              }
-                          }
-                      }
-                      memcpy(dlc->steps,           tmp_steps,       sizeof(tmp_steps));
-                      memcpy(dlc->step_notes,      tmp_notes,       sizeof(tmp_notes));
-                      memcpy(dlc->step_note_count, tmp_nc,          sizeof(tmp_nc));
-                      memcpy(dlc->step_vel,        tmp_vel,         sizeof(tmp_vel));
-                      memcpy(dlc->step_gate,       tmp_gate,        sizeof(tmp_gate));
-                      memcpy(dlc->note_tick_offset, tmp_tick_offset, sizeof(tmp_tick_offset));
                       dlc->length = (uint16_t)new_len;
                       dlc->stretch_exp--;
                   }
@@ -3087,17 +3030,6 @@ static void set_param(void *instance, const char *key, const char *val) {
                     if (len_pf * 2 > SEQ_STEPS) { inst->all_lanes_stretch_result = -1; return; }
                 } else {
                     if (len_pf < 2) { inst->all_lanes_stretch_result = -1; return; }
-                    /* Check note collision: two active steps would map to same compressed slot */
-                    int i_pf;
-                    uint8_t seen_pf[SEQ_STEPS];
-                    memset(seen_pf, 0, sizeof(seen_pf));
-                    for (i_pf = 0; i_pf < len_pf; i_pf++) {
-                        if (dlc_pf->steps[i_pf]) {
-                            int dst_pf = i_pf / 2;
-                            if (seen_pf[dst_pf]) { inst->all_lanes_stretch_result = -1; return; }
-                            seen_pf[dst_pf] = 1;
-                        }
-                    }
                 }
             }
             inst->all_lanes_stretch_result = 1;
@@ -3105,12 +3037,6 @@ static void set_param(void *instance, const char *key, const char *val) {
                 clip_t *dlc = &dc_al->lanes[l_al].clip;
                 int len = (int)dlc->length;
                 int i, ni2, new_len, any;
-                uint8_t  tmp_steps[SEQ_STEPS];
-                uint8_t  tmp_notes[SEQ_STEPS][8];
-                uint8_t  tmp_nc[SEQ_STEPS];
-                uint8_t  tmp_vel[SEQ_STEPS];
-                uint16_t tmp_gate[SEQ_STEPS];
-                int16_t  tmp_tick_offset[SEQ_STEPS][8];
                 int gmax_bs = SEQ_STEPS * dlc->ticks_per_step; if (gmax_bs > 65535) gmax_bs = 65535;
                 int off_clamp = dlc->ticks_per_step - 1;
                 if (dir == 1) {
@@ -3152,68 +3078,15 @@ static void set_param(void *instance, const char *key, const char *val) {
                     dlc->stretch_exp++;
                 } else {
                     if (len < 2) continue;
-                    { uint8_t seen[SEQ_STEPS];
-                      memset(seen, 0, sizeof(seen));
-                      int blocked = 0;
-                      for (i = 0; i < len; i++) {
-                          if (dlc->steps[i]) {
-                              int dst = i / 2;
-                              if (seen[dst]) { blocked = 1; break; }
-                              seen[dst] = 1;
-                          }
-                      }
-                      if (blocked) continue;
-                    }
                     new_len = len / 2;
-                    memset(tmp_steps, 0, sizeof(tmp_steps));
-                    for (i = 0; i < SEQ_STEPS; i++) {
-                        memset(tmp_notes[i], 0, 8);
-                        tmp_nc[i]   = 0;
-                        tmp_vel[i]  = SEQ_VEL;
-                        tmp_gate[i] = GATE_TICKS;
-                        memset(tmp_tick_offset[i], 0, 8 * sizeof(int16_t));
+                    for (i = new_len; i < len; i++) {
+                        dlc->steps[i] = 0;
+                        memset(dlc->step_notes[i], 0, 8);
+                        dlc->step_note_count[i] = 0;
+                        dlc->step_vel[i]  = (uint8_t)SEQ_VEL;
+                        dlc->step_gate[i] = (uint16_t)GATE_TICKS;
+                        memset(dlc->note_tick_offset[i], 0, 8 * sizeof(int16_t));
                     }
-                    for (i = 0; i < len; i++) {
-                        if (dlc->steps[i]) {
-                            int dst = i / 2;
-                            if (!tmp_steps[dst]) {
-                                int ng = ((int)dlc->step_gate[i] + 1) / 2;
-                                if (ng < 1) ng = 1;
-                                tmp_steps[dst] = 1;
-                                memcpy(tmp_notes[dst], dlc->step_notes[i], 8);
-                                tmp_nc[dst]   = dlc->step_note_count[i];
-                                tmp_vel[dst]  = dlc->step_vel[i];
-                                tmp_gate[dst] = (uint16_t)ng;
-                                for (ni2 = 0; ni2 < 8; ni2++) {
-                                    int nt = (int)dlc->note_tick_offset[i][ni2] / 2;
-                                    tmp_tick_offset[dst][ni2] = (int16_t)nt;
-                                }
-                            }
-                        }
-                    }
-                    for (i = 0; i < len; i++) {
-                        if (!dlc->steps[i] && dlc->step_note_count[i] > 0) {
-                            int dst = i / 2;
-                            if (tmp_nc[dst] == 0) {
-                                int ng = ((int)dlc->step_gate[i] + 1) / 2;
-                                if (ng < 1) ng = 1;
-                                memcpy(tmp_notes[dst], dlc->step_notes[i], 8);
-                                tmp_nc[dst]   = dlc->step_note_count[i];
-                                tmp_vel[dst]  = dlc->step_vel[i];
-                                tmp_gate[dst] = (uint16_t)ng;
-                                for (ni2 = 0; ni2 < 8; ni2++) {
-                                    int nt = (int)dlc->note_tick_offset[i][ni2] / 2;
-                                    tmp_tick_offset[dst][ni2] = (int16_t)nt;
-                                }
-                            }
-                        }
-                    }
-                    memcpy(dlc->steps,           tmp_steps,       sizeof(tmp_steps));
-                    memcpy(dlc->step_notes,      tmp_notes,       sizeof(tmp_notes));
-                    memcpy(dlc->step_note_count, tmp_nc,          sizeof(tmp_nc));
-                    memcpy(dlc->step_vel,        tmp_vel,         sizeof(tmp_vel));
-                    memcpy(dlc->step_gate,       tmp_gate,        sizeof(tmp_gate));
-                    memcpy(dlc->note_tick_offset, tmp_tick_offset, sizeof(tmp_tick_offset));
                     dlc->length = (uint16_t)new_len;
                     dlc->stretch_exp--;
                 }
