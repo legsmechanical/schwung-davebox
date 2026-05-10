@@ -5326,7 +5326,7 @@ function _onCC_knobs(d1, d2) {
                 }
                 return;
             }
-            /* knobIdx === 2: K3 = Qnt (all-lane quantize macro, sens=1) */
+            /* knobIdx === 2: K3 = Qnt — per-lane quantize, sens=1 */
             S.knobAccum[knobIdx]++;
             if (S.knobAccum[knobIdx] >= 1) {
                 S.knobAccum[knobIdx] = 0;
@@ -5335,7 +5335,7 @@ function _onCC_knobs(d1, d2) {
                     S.drumLaneQnt[t] = nv;
                     S.bankParams[t][1][2] = nv;
                     if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + t + '_drum_lanes_qnt', String(nv));
+                        host_module_set_param('t' + t + '_l' + lane + '_pfx_set', 'quantize ' + nv);
                 }
                 S.screenDirty = true;
             }
