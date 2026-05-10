@@ -772,6 +772,7 @@ static void silence_track_notes_v2(seq8_instance_t *inst, seq8_track_t *tr);
 static void clip_pfx_params_init(clip_pfx_params_t *p);
 static void pfx_sync_from_clip(seq8_track_t *tr);
 static void drum_pfx_apply_params(drum_pfx_t *px, const drum_pfx_params_t *p);
+static uint32_t effective_note_tick(const note_t *n, const clip_t *cl, int quantize);
 
 /* ------------------------------------------------------------------ */
 /* Utility                                                              */

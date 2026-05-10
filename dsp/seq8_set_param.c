@@ -3224,6 +3224,20 @@ static void set_param(void *instance, const char *key, const char *val) {
                     if (dlc->steps[i]) { any = 1; break; }
                 dlc->active = (uint8_t)any;
                 clip_migrate_to_notes(dlc);
+                /* Suppress notes already passed this loop pass so they don't double-fire
+                 * (stretch moves notes to later ticks; without this they fire twice). */
+                if (tr->clip_playing) {
+                    uint32_t cct = (uint32_t)tr->drum_current_step[l_al]
+                                   * (uint32_t)dlc->ticks_per_step
+                                   + tr->drum_tick_in_step[l_al];
+                    int qnt = dc_al->lanes[l_al].pfx_params.quantize;
+                    uint16_t ni2;
+                    for (ni2 = 0; ni2 < dlc->note_count; ni2++) {
+                        note_t *n = &dlc->notes[ni2];
+                        if (effective_note_tick(n, dlc, qnt) < cct)
+                            n->suppress_until_wrap = 1;
+                    }
+                }
             }
             inst->state_dirty = 1;
             return;
