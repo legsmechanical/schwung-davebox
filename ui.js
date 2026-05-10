@@ -3844,6 +3844,7 @@ globalThis.tick = function () {
 /* ------------------------------------------------------------------ */
 
 function _onCC_jog(d1, d2) {
+    if (S.shiftTrackLEDActive) { S.shiftTrackLEDActive = false; S.screenDirty = true; }
     /* Scene bake confirm: jog click confirms/cancels */
     if (d1 === 3 && d2 === 127 && S.confirmBakeScene) {
         if (S.confirmBakeSceneSel > 0) {
