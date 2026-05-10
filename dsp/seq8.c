@@ -5317,6 +5317,8 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
             return snprintf(out, out_len, "%u", tr->drum_lane_mute);
         if (!strcmp(sub, "drum_lane_solo"))
             return snprintf(out, out_len, "%u", tr->drum_lane_solo);
+        if (!strcmp(sub, "diq"))
+            return snprintf(out, out_len, "%d", (int)tr->drum_inp_quant);
         /* tN_lL_* — drum lane getters (lane_note, note_count, steps, step_S_*) */
         if (sub[0] == 'l' && sub[1] >= '0' && sub[1] <= '9') {
             int lidx = 0;
