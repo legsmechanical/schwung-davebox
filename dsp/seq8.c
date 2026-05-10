@@ -5787,10 +5787,10 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
             while (inst->tick_accum >= inst->tick_threshold && inst->count_in_ticks > 0) {
                 inst->tick_accum -= inst->tick_threshold;
                 if (inst->metro_on >= 1) {
-                    int old_q = (int)((inst->count_in_ticks - 1) / PPQN);
+                    int old_q = (int)(inst->count_in_ticks / PPQN);
                     inst->count_in_ticks--;
                     if (inst->count_in_ticks > 0) {
-                        int new_q = (int)((inst->count_in_ticks - 1) / PPQN);
+                        int new_q = (int)(inst->count_in_ticks / PPQN);
                         if (new_q != old_q) { inst->metro_beat_count++; inst->metro_click_pos = 0; }
                     }
                 } else {
