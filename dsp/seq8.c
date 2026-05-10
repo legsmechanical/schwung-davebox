@@ -5820,7 +5820,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 inst->tracks[inst->count_in_track].clip_playing = 1;
             }
         }
-        return; /* skip main sequencer while counting in (or this block after fire) */
+        goto mix_click; /* skip main sequencer but still mix any pending click audio */
     }
 
     if (inst->tick_threshold == 0) return;
@@ -6191,6 +6191,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
         inst->arp_master_tick++;
     }
 
+mix_click:
     /* Mix metro click into output */
     if (out_lr && frames > 0 && inst->metro_wav_data
             && inst->metro_click_pos != UINT32_MAX && inst->metro_vol > 0) {
