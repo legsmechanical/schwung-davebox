@@ -275,7 +275,7 @@ export function updateTrackLEDs() {
                 if (i === 1 || (i >= 4 && i <= 6) || i === 8) on = true; /* shared shortcuts */
                 if (!S.sessionView) {
                     if (i === 7)                            on = true;
-                    else if (i === 9 && isDrum)             on = true;
+                    else if (i === 9)                       on = true;
                     else if (i === 10 && !isDrum)           on = true;
                     else if (i === 14 || i === 15)          on = true;
                 }
@@ -290,6 +290,13 @@ export function updateTrackLEDs() {
         }
     }
 
+    /* Shift held on a drum track: bottom row = track-color switch hints, rest off */
+    if (!S.sessionView && S.shiftHeld && S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
+        for (let i = 0; i < 32; i++) {
+            cachedSetLED(TRACK_PAD_BASE + i, i < NUM_TRACKS ? TRACK_COLORS[i] : LED_OFF);
+        }
+        return;
+    }
 
     if (S.tapTempoOpen) {
         for (let i = 0; i < 32; i++) {

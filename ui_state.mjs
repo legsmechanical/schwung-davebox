@@ -81,6 +81,8 @@ export const S = {
     drumLaneMute: new Array(8).fill(0),
     drumLaneSolo: new Array(8).fill(0),
     drumLaneQnt: new Array(8).fill(0),
+    allLanesQntResetTick: -1,   /* tick at which to reset bankParams[t][7][3] to -1 after knob release */
+    allLanesQntResetTrack: -1,
     drumPerformMode: new Array(8).fill(0),
     drumRepeatHeldPad: new Array(8).fill(-1),
     drumRepeatHeldPadVel: new Array(8).fill(100),
@@ -182,6 +184,7 @@ export const S = {
     deleteHeld: false,
     muteHeld: false,
     muteUsedAsModifier: false,
+    captureHeld: false,
     metronomeOn: 1,
     metronomeOnLast: 1,
     metronomeVol: 100,

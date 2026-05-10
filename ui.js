@@ -113,12 +113,23 @@ function drawStepEditHeader() {
 function drawMetroIndicator() {
     const METRO_LABELS = [null, 'Count', 'Rec', 'Rec/Ply'];
     const label = METRO_LABELS[S.metronomeOn];
-    if (!label) return;
-    const tx = 8;
-    const tw = label.length * 6;
-    fill_rect(4, 22, 2, 2, 1);           /* left dot */
-    pixelPrint(tx, 21, label, 1);
-    fill_rect(tx + tw + 2, 22, 2, 2, 1); /* right dot */
+    if (label) {
+        const tx = 8;
+        const tw = label.length * 6;
+        fill_rect(4, 22, 2, 2, 1);           /* left dot */
+        pixelPrint(tx, 21, label, 1);
+        fill_rect(tx + tw + 2, 22, 2, 2, 1); /* right dot */
+    }
+    /* Fixed/Adaptive recording indicator (track view only, right-aligned y=21) */
+    if (!S.sessionView) {
+        const t  = S.activeTrack;
+        const ac = (!S.playing && S.trackQueuedClip[t] >= 0) ? S.trackQueuedClip[t] : S.trackActiveClip[t];
+        if (S.clipAdaptiveMode[t][ac]) {
+            pixelPrint(103, 21, 'Adap', 1);
+        } else {
+            pixelPrint(109, 21, 'Fix', 1);
+        }
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -3088,6 +3099,7 @@ globalThis.tick = function () {
          * (key-up events fire after overtake exits, so onMidiMessage never sees them). */
         S.shiftHeld = false; S.deleteHeld = false; S.muteHeld = false;
         S.copyHeld  = false; S.loopHeld  = false; S.loopJogActive = false;
+        S.captureHeld = false;
         S.heldStep  = -1;    S.heldStepBtn = -1; S.heldStepNotes = [];
         S.stepWasEmpty = false; S.stepWasHeld = false;
         /* Check if the active set changed while we were parked. */
@@ -3294,6 +3306,12 @@ globalThis.tick = function () {
             showActionPopup('NO ROOM');
             S.bankParams[_sat][7][0] -= (S.knobLastDir[0] || 1); /* revert display counter */
         }
+    }
+    if (S.allLanesQntResetTick >= 0 && S.tickCount >= S.allLanesQntResetTick) {
+        S.bankParams[S.allLanesQntResetTrack][7][3] = -1;
+        S.allLanesQntResetTick  = -1;
+        S.allLanesQntResetTrack = -1;
+        S.screenDirty = true;
     }
     if (S.pendingDrumResync > 0) {
         S.pendingDrumResync--;
@@ -4226,6 +4244,8 @@ function _onCC_buttons(d1, d2) {
         if (S.sessionView) invalidateLEDCache();
     }
 
+    if (d1 === MoveCapture) { S.captureHeld = d2 === 127; forceRedraw(); return; }
+
     /* Note/Session view toggle: Shift+press = open global menu (Track View only);
      * tap = switch view; hold = session overview */
     if (d1 === MoveNoteSession) {
@@ -4540,8 +4560,11 @@ function _onCC_transport(d1, d2) {
                 host_module_set_param('transport', S.playing ? 'restart' : 'play');
             }
         } else {
-            if (typeof host_module_set_param === 'function')
+            if (S.recordCountingIn) {
+                disarmRecord();
+            } else if (typeof host_module_set_param === 'function') {
                 host_module_set_param('transport', S.playing ? 'stop' : 'play');
+            }
         }
     }
 
@@ -5731,8 +5754,8 @@ function _onPadPressTrackView(status, d1, d2) {
                 return;
             }
         }
-        /* Shift + left drum pad: silently select lane without playing a note */
-        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.shiftHeld && !S.muteHeld && !S.copyHeld && !S.deleteHeld) {
+        /* Capture + drum pad: silently select lane without playing a note */
+        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.captureHeld && !S.muteHeld && !S.copyHeld && !S.deleteHeld) {
             const _sl_lane = drumPadToLane(padIdx);
             if (_sl_lane >= 0 && _sl_lane < DRUM_LANES) {
                 const t = S.activeTrack;
@@ -6408,7 +6431,7 @@ function _onStepButtons(d1, d2) {
             const nextStyle = curStyle !== 0 ? 0 : S.lastTarpStyle[t];
             S.bankParams[t][5][0] = nextStyle;
             applyBankParam(t, 5, 0, nextStyle);
-            showActionPopup(nextStyle === 0 ? 'TARP OFF' : 'TARP ON');
+            showActionPopup(nextStyle === 0 ? 'Input Arp Off' : 'Input Arp On');
         } else if (idx === 14) {
             /* Step 15: double-and-fill */
             doDoubleFill();
@@ -6421,17 +6444,19 @@ function _onStepButtons(d1, d2) {
                         host_module_set_param('t' + t + '_drum_lanes_qnt', '100');
                     S.bankParams[t][7][3] = 100;
                     S.drumLaneQnt[t] = 100;
-                    S.bankParams[t][1][5] = 100;
+                    S.bankParams[t][1][2] = 100;
                 } else {
                     const lane = S.activeDrumLane[t];
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + t + '_l' + lane + '_pfx_set', 'quantize 100');
+                    S.drumLaneQnt[t] = 100;
+                    S.bankParams[t][1][2] = 100;
                 }
             } else {
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('t' + t + '_quantize', '100');
             }
-            S.bankParams[t][1][5] = 100;
+            if (!isDrum) S.bankParams[t][1][5] = 100;
             showActionPopup('QUANT 100%');
         }
         forceRedraw();
@@ -6956,6 +6981,11 @@ globalThis.onMidiMessageInternal = function (data) {
                             S.clockShiftTouchDelta = 0;
                             S.bankParams[S.activeTrack][S.activeBank][d1] = 0;
                         }
+                        /* ALL LANES K4 (Qnt): schedule display reset to '--' after ~500ms */
+                        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.activeBank === 7 && d1 === 3) {
+                            S.allLanesQntResetTick  = S.tickCount + 47;
+                            S.allLanesQntResetTrack = S.activeTrack;
+                        }
                     }
                     /* CC bank: touch-record — stop overwriting automation on release */
                     if (S.activeBank === 6 && S.recordArmed && !S.recordCountingIn &&
@@ -7000,6 +7030,11 @@ globalThis.onMidiMessageInternal = function (data) {
                     } else if (relPm.dspKey === 'clock_shift' || relPm.dspKey === 'beat_stretch') {
                         S.clockShiftTouchDelta = 0;
                         S.bankParams[S.activeTrack][S.activeBank][d1] = 0;
+                    }
+                    /* ALL LANES K4 (Qnt): schedule display reset to '--' after ~500ms */
+                    if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.activeBank === 7 && d1 === 3) {
+                        S.allLanesQntResetTick  = S.tickCount + 47;
+                        S.allLanesQntResetTrack = S.activeTrack;
                     }
                 }
                 if ((S.activeBank === 4 && d1 === 4) || (S.activeBank === 5 && d1 === 4)) forceRedraw();
