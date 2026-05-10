@@ -103,6 +103,17 @@ export function updateStepLEDs() {
         return;
     }
 
+    /* Shift overlay: suppress step state, show only available shortcut hints */
+    if (S.shiftHeld) {
+        const isDrum = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
+        for (let i = 0; i < 16; i++) {
+            let on = i === 1 || (i >= 4 && i <= 6) || i === 8;
+            if (i === 7 || i === 9 || (i === 10 && !isDrum) || i === 14 || i === 15) on = true;
+            setLED(16 + i, on ? LightGrey : LED_OFF);
+        }
+        return;
+    }
+
     /* Drum mode: step buttons show active lane's steps — identical visualization to melodic */
     if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
         const t    = S.activeTrack;

@@ -3928,7 +3928,7 @@ function _onCC_jog(d1, d2) {
             if (S.confirmBakeSel < 2) {
                 S.confirmBakeDrumMode     = S.confirmBakeSel === 0 ? 2 : 1;
                 S.confirmBakeDrumLoopOpen = true;
-                S.confirmBakeDrumLoopSel  = 0;
+                S.confirmBakeDrumLoopSel  = 1;
                 S.screenDirty = true;
                 return;
             }
@@ -4661,7 +4661,7 @@ function _onCC_transport(d1, d2) {
             S.confirmBake             = true;
             S.confirmBakeIsDrum       = _isDrum;
             S.confirmBakeIsMultiLoop  = !_isDrum;
-            S.confirmBakeSel          = _isDrum ? 2 : 0;
+            S.confirmBakeSel          = _isDrum ? 2 : 1;
             S.confirmBakeTrack        = _bt;
             S.confirmBakeClip         = _bc;
             S.confirmBakeDrumLoopOpen = false;
@@ -4862,7 +4862,7 @@ function _onCC_side(d1, d2) {
         } else if (S.sampleHeld && S.sessionView) {
             S.sampleUsedAsModifier  = true;
             S.confirmBakeScene      = true;
-            S.confirmBakeSceneSel   = 0;
+            S.confirmBakeSceneSel   = 1;
             S.confirmBakeSceneClip  = clipIdx;
             S.screenDirty           = true;
         } else if (S.sessionView) {
@@ -6219,6 +6219,7 @@ function _onPadPress(status, d1, d2) {
                             S.activeTrack = t;
                             refreshPerClipBankParams(t);
                             S.sessionView = false;
+                            S.shiftTrackLEDActive = false;
                             invalidateLEDCache();
                             forceRedraw();
                         } else if (S.trackClipPlaying[t] && isActiveClip) {
