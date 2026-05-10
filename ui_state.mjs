@@ -33,6 +33,7 @@ export const S = {
     ledInitIndex: 0,
     ledInitComplete: false,
     shiftHeld: false,
+    shiftTrackLEDActive: false,
     loopHeld: false,
     perfSync: true,
     perfStack: [],

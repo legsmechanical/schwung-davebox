@@ -290,13 +290,6 @@ export function updateTrackLEDs() {
         }
     }
 
-    /* Shift held on a drum track: bottom row = track-color switch hints, rest off */
-    if (!S.sessionView && S.shiftHeld && S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
-        for (let i = 0; i < 32; i++) {
-            cachedSetLED(TRACK_PAD_BASE + i, i < NUM_TRACKS ? TRACK_COLORS[i] : LED_OFF);
-        }
-        return;
-    }
 
     if (S.tapTempoOpen) {
         for (let i = 0; i < 32; i++) {
@@ -530,6 +523,13 @@ export function updateTrackLEDs() {
             else if (S.activeBank === 5 && _isDrum)             hasShift = true; // K1-8 nudge
             else if (S.activeBank === 6)                        hasShift = true; // K1-8 CC assign
             if (hasShift) cachedSetButtonLED(71 + k, _sf);
+        }
+    }
+
+    /* Shift overlay: bottom row shows track-switch color hints (all track types) */
+    if (!S.sessionView && S.shiftHeld && S.shiftTrackLEDActive) {
+        for (let i = 0; i < NUM_TRACKS; i++) {
+            cachedSetLED(TRACK_PAD_BASE + i, TRACK_COLORS[i]);
         }
     }
 

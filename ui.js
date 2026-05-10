@@ -124,7 +124,10 @@ function drawMetroIndicator() {
     if (!S.sessionView) {
         const t  = S.activeTrack;
         const ac = (!S.playing && S.trackQueuedClip[t] >= 0) ? S.trackQueuedClip[t] : S.trackActiveClip[t];
-        if (S.clipAdaptiveMode[t][ac]) {
+        const _isDrum7   = S.trackPadMode[t] === PAD_MODE_DRUM;
+        const _isEmpty7  = _isDrum7 ? !S.drumClipNonEmpty[t][ac] : !S.clipNonEmpty[t][ac];
+        const _manualL7  = _isDrum7 ? S.drumLaneLengthManuallySet[t] : S.clipLengthManuallySet[t][ac];
+        if (_isEmpty7 && !_manualL7) {
             pixelPrint(103, 21, 'Adap', 1);
         } else {
             pixelPrint(109, 21, 'Fix', 1);
@@ -3099,7 +3102,7 @@ globalThis.tick = function () {
          * (key-up events fire after overtake exits, so onMidiMessage never sees them). */
         S.shiftHeld = false; S.deleteHeld = false; S.muteHeld = false;
         S.copyHeld  = false; S.loopHeld  = false; S.loopJogActive = false;
-        S.captureHeld = false;
+        S.captureHeld = false; S.shiftTrackLEDActive = false;
         S.heldStep  = -1;    S.heldStepBtn = -1; S.heldStepNotes = [];
         S.stepWasEmpty = false; S.stepWasHeld = false;
         /* Check if the active set changed while we were parked. */
@@ -4221,9 +4224,15 @@ function _onCC_jog(d1, d2) {
 function _onCC_buttons(d1, d2) {
     if (d1 === MoveShift) {
         S.shiftHeld = d2 === 127;
+        S.shiftTrackLEDActive = d2 === 127;
         if (!S.shiftHeld && S.jogTouched) S.jogTouched = false;
         if (!S.shiftHeld && S.rndDialogMode >= 0) { S.rndDialogMode = -1; S.screenDirty = true; }
         if (!S.sessionView) forceRedraw();
+    }
+
+    /* Any non-Shift CC button press while Shift overlay is active clears the overlay */
+    if (d1 !== MoveShift && d2 === 127 && S.shiftTrackLEDActive) {
+        S.shiftTrackLEDActive = false;
     }
 
     if (d1 === MoveDelete) {
@@ -6286,6 +6295,7 @@ function _doShiftStepCommon(idx) {
 
 function _onStepButtons(d1, d2) {
     if (S.tapTempoOpen) return;
+    if (d2 > 0 && S.shiftTrackLEDActive) { S.shiftTrackLEDActive = false; S.screenDirty = true; }
     S.stepOpTick = S.tickCount;
     const idx = d1 - 16;
     /* Delete+step in session view: clear perf preset or mute snapshot slot immediately. */
