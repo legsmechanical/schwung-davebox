@@ -3065,8 +3065,10 @@ static void set_param(void *instance, const char *key, const char *val) {
             int v = clamp_i(my_atoi(val), 0, 100);
             drum_clip_t *dc = &tr->drum_clips[tr->active_clip];
             int l;
-            for (l = 0; l < DRUM_LANES; l++)
-                dc->lanes[l].clip.pfx_params.quantize = (uint8_t)v;
+            for (l = 0; l < DRUM_LANES; l++) {
+                dc->lanes[l].pfx_params.quantize = v;
+                drum_pfx_apply_params(&tr->drum_lane_pfx[l], &dc->lanes[l].pfx_params);
+            }
             inst->state_dirty = 1;
             return;
         }
