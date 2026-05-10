@@ -103,13 +103,15 @@ export function updateStepLEDs() {
         return;
     }
 
-    /* Shift overlay: suppress step state, show only available shortcut hints */
+    /* Shift overlay: suppress step state; blink shortcut hints and return early to keep
+     * MIDI traffic low (avoids queue overflow that breaks hardware button LED blinking). */
     if (S.shiftHeld) {
         const isDrum = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
+        const flash  = (Math.floor(S.tickCount / 24) % 2) ? LightGrey : LED_OFF;
         for (let i = 0; i < 16; i++) {
             let on = i === 1 || (i >= 4 && i <= 6) || i === 8;
             if (i === 7 || i === 9 || (i === 10 && !isDrum) || i === 14 || i === 15) on = true;
-            setLED(16 + i, on ? LightGrey : LED_OFF);
+            setLED(16 + i, on ? flash : LED_OFF);
         }
         return;
     }
@@ -301,6 +303,15 @@ export function updateTrackLEDs() {
         }
     }
 
+    /* Step button main LEDs (notes 16-31): shift overlay in session view only.
+     * Track view is handled by updateStepLEDs (early return keeps MIDI traffic low). */
+    if (S.sessionView && S.shiftHeld) {
+        const flash = (Math.floor(S.tickCount / 24) % 2) ? LightGrey : LED_OFF;
+        for (let i = 0; i < 16; i++) {
+            const on = i === 1 || (i >= 4 && i <= 6) || i === 8; /* shared shortcuts only */
+            setLED(16 + i, on ? flash : LED_OFF);
+        }
+    }
 
     if (S.tapTempoOpen) {
         for (let i = 0; i < 32; i++) {
@@ -539,8 +550,9 @@ export function updateTrackLEDs() {
 
     /* Shift overlay: bottom row shows track-switch color hints (all track types) */
     if (!S.sessionView && S.shiftHeld && S.shiftTrackLEDActive) {
+        const _tc = (Math.floor(S.tickCount / 24) % 2);
         for (let i = 0; i < NUM_TRACKS; i++) {
-            cachedSetLED(TRACK_PAD_BASE + i, TRACK_COLORS[i]);
+            cachedSetLED(TRACK_PAD_BASE + i, _tc ? TRACK_COLORS[i] : LED_OFF);
         }
     }
 
