@@ -7091,8 +7091,6 @@ globalThis.onMidiMessageExternal = function (data) {
             const isRec = !isSeqEcho && S.recordArmed && !S.recordCountingIn && t === S.recordArmedTrack;
             if (isRec) {
                 _drumRecNoteOns.push({ track: t, laneNote: d1, vel: vel });
-                if (routeIsMove)
-                    host_module_set_param('t' + t + '_live_notes', 'on ' + d1 + ' ' + vel);
                 const recLane = S.drumLaneNote[t].indexOf(d1);
                 if (recLane >= 0) {
                     S.pendingDrumLaneResync      = 3;
