@@ -913,8 +913,10 @@ function disarmRecord() {
     S._recNoteOffs.length  = 0;
     _drumRecNoteOns.length  = 0;
     _drumRecNoteOffs.length = 0;
-    S.pendingPrerollNote  = null;
-    S.pendingPrerollGate  = null;
+    S.pendingPrerollNote          = null;
+    S.pendingPrerollNotes         = [];
+    S.pendingPrerollToggleQueue   = [];
+    S.pendingPrerollGate          = null;
     if (t >= 0) {
         const _dat = S.trackActiveClip[t];
         S.clipAdaptiveMode[t][_dat] = false;
@@ -3735,10 +3737,14 @@ globalThis.tick = function () {
                 host_module_set_param('t' + pg.track + '_l' + pg.lane + '_step_0_gate', String(pg.gate));
             else
                 host_module_set_param('t' + pg.track + '_c' + pg.clip + '_step_0_gate', String(pg.gate));
+        } else if (S.pendingPrerollToggleQueue.length > 0) {
+            const _ptq = S.pendingPrerollToggleQueue.shift();
+            host_module_set_param('t' + _ptq.track + '_c' + _ptq.clip + '_step_0_toggle', _ptq.pitch + ' ' + _ptq.vel);
+            if (_ptq.last)
+                S.pendingPrerollGate = { isDrum: false, track: _ptq.track, clip: _ptq.clip, gate: _ptq.gate };
         } else if (S.pendingPrerollNote !== null && S.playing) {
             const pr = S.pendingPrerollNote;
-            const _prPitch = pr.isDrum ? pr.laneNote : pr.pitch;
-            const _prLive  = S.liveActiveNotes.has(_prPitch);
+            const _prLive = S.liveActiveNotes.has(pr.laneNote);
             if (pr.isDrum) {
                 const tps = S.drumLaneTPS[pr.track] || 24;
                 const elapsed = S.tickCount - S.transportStartTick;
@@ -3758,23 +3764,38 @@ globalThis.tick = function () {
                         forceRedraw();
                     }
                 }
-            } else {
-                const tps = (S.clipTPS[pr.track] && S.clipTPS[pr.track][pr.clip]) || 24;
-                const elapsed = S.tickCount - S.transportStartTick;
-                if (!_prLive && elapsed >= tps) {
-                    S.pendingPrerollNote = null;
-                    if (S.clipSteps[pr.track][pr.clip][0] === 0) {
-                        const countInDur = S.transportStartTick - pr.countInStart;
-                        const dspPerJs = countInDur > 0 ? 384 / countInDur : 4;
-                        const pressedDur = (pr.releasedAtTick || S.tickCount) - pr.pressedAtTick;
-                        const gate = Math.max(1, Math.min(tps * 16, Math.round(pressedDur * dspPerJs)));
-                        host_module_set_param('t' + pr.track + '_c' + pr.clip + '_step_0_toggle', pr.pitch + ' ' + pr.vel);
+            }
+        } else if (S.pendingPrerollNotes.length > 0 && S.playing) {
+            const pns = S.pendingPrerollNotes;
+            const pr  = pns[0];
+            const _prLive = pns.some(function(n) { return S.liveActiveNotes.has(n.pitch); });
+            const tps = (S.clipTPS[pr.track] && S.clipTPS[pr.track][pr.clip]) || 24;
+            const elapsed = S.tickCount - S.transportStartTick;
+            /* Wait for all chord notes released AND one step elapsed */
+            if (!_prLive && elapsed >= tps) {
+                S.pendingPrerollNotes = [];
+                if (S.clipSteps[pr.track][pr.clip][0] === 0) {
+                    const countInDur = S.transportStartTick - pr.countInStart;
+                    const dspPerJs   = countInDur > 0 ? 384 / countInDur : 4;
+                    const lastRel    = pns.reduce(function(m, n) { return Math.max(m, n.releasedAtTick || S.tickCount); }, 0);
+                    const pressedDur = lastRel - pr.pressedAtTick;
+                    const gate       = Math.max(1, Math.min(tps * 16, Math.round(pressedDur * dspPerJs)));
+                    host_module_set_param('t' + pr.track + '_c' + pr.clip + '_step_0_toggle', pr.pitch + ' ' + pr.vel);
+                    if (pns.length === 1) {
                         S.pendingPrerollGate = { isDrum: false, track: pr.track, clip: pr.clip, gate };
-                        S.clipSteps[pr.track][pr.clip][0] = 1;
-                        S.clipNonEmpty[pr.track][pr.clip] = true;
-                        invalidateLEDCache();
-                        forceRedraw();
+                    } else {
+                        for (let _qi = 1; _qi < pns.length; _qi++) {
+                            S.pendingPrerollToggleQueue.push({
+                                track: pns[_qi].track, clip: pns[_qi].clip,
+                                pitch: pns[_qi].pitch,  vel: pns[_qi].vel,
+                                gate, last: _qi === pns.length - 1
+                            });
+                        }
                     }
+                    S.clipSteps[pr.track][pr.clip][0] = 1;
+                    S.clipNonEmpty[pr.track][pr.clip] = true;
+                    invalidateLEDCache();
+                    forceRedraw();
                 }
             }
         } else {
@@ -4606,6 +4627,8 @@ function _onCC_transport(d1, d2) {
             S.countInStartTick    = S.tickCount;
             S.countInBeatStartTick = S.tickCount;
             S.countInQuarterTicks = Math.round(196 * 60 / bpm);
+            S.pendingPrerollNotes       = [];
+            S.pendingPrerollToggleQueue = [];
             if (typeof host_module_set_param === 'function')
                 host_module_set_param('record_count_in', String(S.activeTrack));
             S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
@@ -6004,8 +6027,8 @@ function _onPadPressTrackView(status, d1, d2) {
                     typeof host_module_set_param === 'function') {
                 const rt   = S.recordArmedTrack;
                 const ac_r = S.trackActiveClip[rt];
-                S.pendingPrerollNote = { track: rt, clip: ac_r, pitch: pitch, vel: effectiveVelocity(d2), isDrum: false,
-                                         pressedAtTick: S.tickCount, countInStart: S.countInStartTick };
+                S.pendingPrerollNotes.push({ track: rt, clip: ac_r, pitch: pitch, vel: effectiveVelocity(d2),
+                                             pressedAtTick: S.tickCount, countInStart: S.countInStartTick });
             }
             /* Overdub capture: add to current step of armed track with tick offset + velocity */
             if (S.recordArmed && !S.recordCountingIn && S.activeTrack === S.recordArmedTrack)
@@ -6896,9 +6919,15 @@ function _onPadRelease(status, d1, d2) {
         const pitch = padPitch[padIdx] >= 0 ? padPitch[padIdx] : S.padNoteMap[padIdx];
         S.liveActiveNotes.delete(pitch);
         if (S.pendingPrerollNote !== null) {
-            const _prRelPitch = S.pendingPrerollNote.isDrum ? S.pendingPrerollNote.laneNote : S.pendingPrerollNote.pitch;
+            const _prRelPitch = S.pendingPrerollNote.laneNote;
             if (_prRelPitch === pitch)
                 S.pendingPrerollNote.releasedAtTick = S.tickCount;
+        }
+        for (let _pri = 0; _pri < S.pendingPrerollNotes.length; _pri++) {
+            if (S.pendingPrerollNotes[_pri].pitch === pitch) {
+                S.pendingPrerollNotes[_pri].releasedAtTick = S.tickCount;
+                break;
+            }
         }
         padPitch[padIdx] = -1;
         if (!S.sessionView) {
