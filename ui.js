@@ -290,7 +290,7 @@ function buildGlobalMenuItems() {
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('metro_vol', String(S.metronomeVol));
             },
-            min: 0, max: 100, step: 1,
+            min: 0, max: 150, step: 1,
             format: function(v) { return String(v | 0) + '%'; }
         }),
         createToggle('Beat Marks', {
@@ -608,7 +608,7 @@ function showModePopup(title, items, activeIdx) {
 
 function playMetronomeClick() {
     if (typeof host_preview_play === 'function') {
-        host_preview_play('/data/UserData/schwung/modules/tools/seq8/click-seq8.wav');
+        host_preview_play('/data/UserData/schwung/modules/tools/seq8/click-seq8.wav|' + (S.metronomeVol / 100).toFixed(3));
     } else if (typeof shadow_send_midi_to_dsp === 'function') {
         const vel = Math.max(1, Math.round(S.metronomeVol * 127 / 100));
         shadow_send_midi_to_dsp([0x90, 76, vel]);

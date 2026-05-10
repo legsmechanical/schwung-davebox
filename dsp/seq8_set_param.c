@@ -424,7 +424,7 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
     if (!strcmp(key, "metro_vol")) {
-        inst->metro_vol = (uint8_t)clamp_i(my_atoi(val), 0, 100);
+        inst->metro_vol = (uint8_t)clamp_i(my_atoi(val), 0, 150);
         return;
     }
 
