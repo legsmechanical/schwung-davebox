@@ -2,12 +2,9 @@
 
 ## Bugs to fix
 
-1. **Melodic step-edit: held-step pad LEDs** — when holding an active step, pads don't always light showing which notes are in it. Root cause: `clipSteps` stale (cleared by null `get_param` in `onMidiMessage`); `stepWasEmpty=true` then skips note read at hold threshold. Fix was designed (`pendingHeldStepNotesRead` deferral + merged hold-threshold branch) but reverted due to regressions — needs clean retry.
-2. **ROUTE_MOVE polyphonic live notes** — per-pitch `set_param` approach (`t{n}_live_on_{P}` / `t{n}_live_off_{P}`, commit d008911) caused hanging and missed notes on polyphonic chords; reverted (0cd7211). Needs investigation of `live_note_on`/`live_note_off` DSP handlers under polyphonic conditions before re-attempting.
 3. **Scale-aware key/scale changes** — transpose all clip notes on Key/Scale change. Design TBD.
 7. **State snapshots** (16 slots)
 9. **MIDI clock sync**
 10. **Track conversion** (`tN_convert_to_drum`/`tN_convert_to_melodic`): Global Menu Mode item or dedicated dialog.
 20. **Scene bake**: bake all 8 tracks at a given clip index. Needs: DSP `bake_scene` set_param handler (loop over tracks, call bake_clip/bake_drum_clip per type); JS multi-track post-bake resync; new confirm dialog. Per-clip bake functions already exist; `launch_scene` is the precedent for scene-level DSP loops.
-21. **Pad latency reduction**: patch `shadow_midi.c` to pre-inject pad note-ons (notes 68–99) into the DSP/Move synth queue before the JS callback fires, eliminating one block of latency. Requires a small C-side mirror of activeTrack+trackRoute (set via set_param) so the shim can make the fast-path decision without waiting for JS. Affects both ROUTE_SCHWUNG and ROUTE_MOVE.
-22. **Drum bake undo — pfx restore**: `undo_begin_drum_clip` snapshots notes/steps but not `pfx_params`. Undo of a bake doesn't restore the per-lane FX settings that were reset. Fix: snapshot all 32 lanes' `pfx_params` in `undo_begin_drum_clip`; call `pfx_sync_from_clip` after restore.
+22. **Drum bake undo — pfx restore**: `undo_begin_drum_clip` already snapshots `pfx_params` (seq8.c:4520) and the restore handler writes it back (seq8_set_param.c:1185, 1270), but neither path calls `pfx_sync_from_clip(tr)` so the runtime mirror stays stale until the next clip switch. Fix: call `pfx_sync_from_clip` after both restore loops, guarded on `tr->active_clip == c` (mirrors melodic `apply_clip_restore` at seq8.c:4549).
