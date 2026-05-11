@@ -3,6 +3,8 @@
     "name": "dAVEBOx",
     "version": "0.1.0",
     "abbrev": "dAVEBOx",
+    "description": "Creative 8-track MIDI sequencer with per-clip effects chains and live performance modes.",
+    "author": "legsmechanical",
     "api_version": 2,
     "ui": "ui.js",
     "dsp": "dsp.so",
