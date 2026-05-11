@@ -44,8 +44,11 @@ dAVEBOx was built by AI goblins and meticulously designed by a human who is not 
 ## Known Limitations
 
 - External MIDI input into Move-routed tracks will cause Move to crash. Use Schwung routing if you need effects on live MIDI input.
+- Pressing Back to suspend dAVEBOx while a Move-routed drum track is actively playing can crash Move. Stop transport first.
 - The hardware volume knob briefly interrupts MIDI output when turned.
 - Powering Move off from within dAVEBOx causes a brief hang.
+
+These first two limitations will be lifted once the relevant Schwung patches land upstream.
 
 ---
 
