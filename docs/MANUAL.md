@@ -110,9 +110,9 @@ While Shift is held in Track View, step buttons with available shortcuts blink t
 |---|---|
 | Step 2 | Open BPM menu |
 | Step 5 | Tap tempo |
-| Step 6 | Metro toggle (Cnt-In → Play → Always) |
+| Step 6 | Metro toggle (Cnt-In ↔ Always) |
 | Step 7 | Open Swing menu |
-| Step 8 | Drum tracks: cycle Note Repeat mode / Melodic tracks: toggle chromatic pad layout |
+| Step 8 | Drum tracks: cycle right-pad mode (Velocity / Rpt1 / Rpt2) / Melodic tracks: toggle chromatic pad layout |
 | Step 9 | Open Key menu |
 | Step 10 | VelIn toggle (Live ↔ Fixed 127) |
 | Step 11 | *(Melodic only)* Arp In on/off |
@@ -173,7 +173,7 @@ The 16 step buttons represent the current page of the active clip. Steps are eit
 - **Hold (≥ 200ms):** Opens step edit mode (see below)
 - Multiple steps can be tapped at the same time to toggle several at once
 
-Steps beyond the clip's length light white (out of bounds).
+Steps beyond the clip's length light dark grey (out of bounds).
 
 The step grid defaults to 1/16 resolution — each step is a 16th note. Set a different resolution per clip in the CLIP bank (K4), or globally adjust quantization in the Global Menu.
 
@@ -259,12 +259,12 @@ Arming live recording creates a snapshot of the clip at that moment. A single un
 Each clip carries an independent effects chain that processes notes before they reach the MIDI output. The chain runs in this order:
 
 ```
-NoteFX + Harmony → Delay → Sequence Arp
+Live input → [Arp In] → NoteFX → Harmony → Delay → Sequence Arp ← Sequenced notes
 ```
 
-Then global **Swing** is applied last.
+Arp In intercepts live pad and external MIDI input only — sequenced notes enter the chain at NoteFX. Then global **Swing** is applied last.
 
-Six banks are accessible in Track View. Jog rotate to cycle banks (clamped, no wrap). The OLED shows all 8 parameters and their values. Touching a knob highlights that parameter row. The LED below each knob lights when that parameter has been changed from its default.
+Seven banks are accessible in Track View on melodic tracks. On drum tracks, Harmony (bank 2) and Sequence Arp (bank 4) are hidden — jog skips them and their Shift+pad shortcuts are blocked. Jog rotate to cycle banks (clamped, no wrap). The OLED shows all 8 parameters and their values. Touching a knob highlights that parameter row. The LED below each knob lights when that parameter has been changed from its default.
 
 All play FX parameters are **per-clip** (except Arp In, which is per-track).
 
@@ -287,7 +287,7 @@ Timing and playback settings for the active clip.
 
 ---
 
-### 6.2 NoteFX Bank
+### 6.2 NoteFX Bank (`NOTE FX`)
 
 Non-destructive transforms applied to every note at render time.
 
@@ -298,15 +298,13 @@ Non-destructive transforms applied to every note at render time.
 | K3 | Pitch Random | 0 = off. 1–24 = max deviation in either direction. Scale-aware — random pitches stay in key. Hold Shift + turn to select algorithm: **Walk** (default — each note steps ±1 from the previous, accumulating), **Uniform** (random offset within range), **Gaussian** (offsets cluster around center). |
 | K4 | Gate Time | Scales note duration as % of original (0–400%). 100% = unchanged. Below = staccato; above = legato. |
 | K5 | Velocity | Scales note velocity |
-| K6 | Quantize | Quantization amount at render time. On drum tracks, affects the active lane only. Use ALL LANES K7 for all lanes simultaneously. |
-| K7 | Oct (Lane Note) | **Drum tracks only.** Shifts the active lane's MIDI note up/down by octave. Per-lane. OLED shows note name and number. |
-| K8 | Note (Lane Note) | **Drum tracks only.** Shifts the active lane's MIDI note up/down by semitone. Per-lane. |
+| K6 | Quantize | Melodic tracks: quantization amount at render time. **Drum tracks:** remapped to K3 and covers the active lane only — use ALL LANES K4 for all lanes simultaneously. K4–K8 are blocked on drum tracks. |
 
 > **Try this:** Set Pitch Random to Walk mode at a low value (3–5) on a melody. The sequence drifts gradually rather than jumping — coherent variation without chaos.
 
 ---
 
-### 6.3 Harmony Bank
+### 6.3 Harmony Bank (`HARMZ`) — melodic tracks only
 
 Adds harmonic voices on top of each note.
 
@@ -319,7 +317,7 @@ Adds harmonic voices on top of each note.
 
 ---
 
-### 6.4 Delay Bank
+### 6.4 Delay Bank (`MIDI DLY`)
 
 A MIDI delay that generates rhythmic echoes of each note.
 
@@ -338,7 +336,7 @@ A MIDI delay that generates rhythmic echoes of each note.
 
 ---
 
-### 6.5 Sequence Arp Bank
+### 6.5 Sequence Arp Bank (`SEQ ARP`) — melodic tracks only
 
 A step arpeggiator applied after Delay. Per-clip. Applies to both sequenced note output and live pad input.
 
@@ -356,7 +354,7 @@ When Style = Off and Steps = Mute or Skip, the step pattern acts as a standalone
 
 ---
 
-### 6.6 Arp In Bank
+### 6.6 Arp In Bank (`TRACK ARP`)
 
 A live arpeggiator for pad input and external MIDI. Per-track (not per-clip). Does not affect sequenced notes.
 
@@ -377,7 +375,7 @@ A live arpeggiator for pad input and external MIDI. Per-track (not per-clip). Do
 
 ---
 
-### 6.7 CC Automation Bank
+### 6.7 CC Automation Bank (`CC PARAM`)
 
 Melodic tracks only. Each of the 8 knobs is independently assignable to a MIDI CC number. CC assignments are per-track; automation data is per-clip at 1/32 resolution with interpolation on playback.
 
@@ -406,7 +404,7 @@ Switching a track to Drum mode (Track Config → Mode in the Global Menu) change
 
 **Velocity mode** (default): The right 4×4 is a 16-zone velocity pad. Zones map from velocity 8 (bottom-left) to velocity 127 (top-right). Used for live monitoring, step-edit velocity, and live recording.
 
-Switch modes via DRUM LANE bank K7, or jog click (cycles Velocity → Rpt1 → Rpt2 → Velocity). The OLED header shows the current mode: `Vel`, `Rpt1`, or `Rpt2`.
+Switch modes via jog click (cycles Velocity → Rpt1 → Rpt2 → Velocity). The OLED header shows the current mode: `Vel`, `Rpt1`, or `Rpt2`.
 
 ### Step Sequencing
 
@@ -426,39 +424,43 @@ Multiple lanes can be viewed and edited independently — select a lane, edit it
 | K4 (Vel) | Adjust the hit's velocity |
 | K5 (Nudge) | Shift the hit forward/backward in time (±23 ticks max) |
 
-K1 (Oct) and K2 (Pitch) are not available in drum step edit — use the NoteFX bank K7/K8 to change a lane's MIDI note assignment.
+K1 (Oct) and K2 (Pitch) are not available in drum step edit — use the DRUM LANE bank K7/K8 to change a lane's MIDI note assignment.
 
 ### Per-Lane Loop Length
 
-Each lane can have an independent loop length within the clip, enabling polyrhythmic patterns without any extra setup. Set a lane's length via the CLIP bank K5 (applies to the active lane only), or by holding Loop and jogging.
+Each lane can have an independent loop length within the clip, enabling polyrhythmic patterns without any extra setup. Set a lane's length via the DRUM LANE bank K5 (applies to the active lane only), or by holding Loop and jogging.
 
 > **Try this:** Set your kick to 16 steps, your hi-hat to 12, and a percussion lane to 10. Each loops at its own rate against a shared transport.
 
-
+### DRUM LANE Bank
 
 Per-lane settings for the active lane.
 
 | Knob | Parameter | Notes |
 |---|---|---|
+| K1 | Stretch | Per-lane beat stretch (one-shot). Blocked if compression is impossible. |
 | K2 | Clock Shift | Shifts the active lane only |
 | K3 | Nudge | Nudges the active lane only |
-| K7 | Mode | Cycles Velocity → Rpt1 → Rpt2 |
+| K4 | Resolution | Per-lane playback resolution |
+| K5 | Length | Per-lane clip length |
+| K6 | SeqFollow | Per-clip auto-scroll on/off |
+| K7 | Oct (Lane Note) | Shifts the active lane's MIDI note by ±1 octave. OLED shows note name and number. |
+| K8 | Note (Lane Note) | Shifts the active lane's MIDI note by ±1 semitone |
 
-Lane MIDI note assignments persist across saves and reloads. Use NoteFX bank K7/K8 to shift a lane's MIDI note by octave or semitone.
+Lane MIDI note assignments persist across saves and reloads. Use DRUM LANE bank K7/K8 to shift a lane's MIDI note by octave or semitone.
 
 ### ALL LANES Bank
 
-Bank 7 on drum tracks only. Applies CLIP-style parameters to all 32 lanes simultaneously.
+Bank 7 on drum tracks only. Applies parameters to all 32 lanes simultaneously.
 
 | Knob | Parameter | Notes |
 |---|---|---|
 | K1 | Stretch | Beat stretch applied atomically. If any lane can't compress or expand, the entire operation is a no-op ("NO ROOM" popup). |
 | K2 | Clock Shift | Shifts all lanes simultaneously |
 | K3 | Nudge | Nudges all lanes simultaneously |
-| K4 | Resolution | Sets step resolution for all lanes |
-| K5 | Length | Sets clip length for all lanes |
-| K6 | Velocity Input | Global velocity input setting for all lanes |
-| K7 | Quantize | Sets NoteFX quantize for all 32 lanes simultaneously |
+| K4 | Quantize | Playback quantize for all 32 lanes |
+| K5 | VelIn | Velocity input override for this track |
+| K6 | InQ | Recording input quantize (Off · 1/32 · 1/16 · 1/8 · 1/4 · 1/4T · 1/8T · 1/16T · 1/32T) |
 
 ### Note Repeat
 
@@ -551,17 +553,19 @@ Press **Sample** to open the bake dialog.
 
 **Melodic bake:**
 
-The dialog always appears with options: CANCEL / 1× / 2× / 4× / 8× (defaults to 1×).
+The dialog shows loop count options: **1x / 2x / 4x / CANCEL** (defaults to 1x). After selecting any loop count, a second dialog asks **WRAP TAILS?** — Yes wraps delay echoes that fall past the clip end back to the beginning (useful for seamless looping clips).
 
-- **1×:** Bakes the clip once
-- **2×/4×/8×:** Bakes N loops end-to-end; delay echoes bleed from the end of each loop into the start of the next
-- After selecting 2×/4×/8×, a second dialog asks **WRAP TAILS?** — Yes wraps delay echoes that fall past the clip end back to the beginning (useful for seamless looping clips)
+- **1x:** Bakes the clip once
+- **2x / 4x:** Bakes N loops end-to-end; delay echoes bleed from the end of each loop into the start of the next
 
-Full chain is applied: NoteFX + Harmony → Delay → Sequence Arp. Walk mode Pitch Random produces independent sequences per loop.
+Full chain is applied: NoteFX → Harmony → Delay → Sequence Arp. Walk mode Pitch Random produces independent sequences per loop.
 
 **Drum bake:**
 
-Dialog options: CANCEL / CLIP / LANE / 1×.
+Three dialogs in sequence:
+1. **CLIP / LANE / CANCEL** — choose mode
+2. **1x / 2x / 4x / CANCEL** — choose loop count
+3. **WRAP TAILS? YES / NO / CANCEL** — handle delay tails
 
 - **CLIP mode:** Full chain runs per lane. Harmony can move hits between lanes. Notes at pitches with no matching lane are dropped. All lane effect params reset to defaults.
 - **LANE mode:** Processes the active lane only. Captures velocity, gate, timing, and Sequence Arp. Pitch transforms and Harmony are not applied.
@@ -638,14 +642,15 @@ While Loop is held, press a step button to set the capture length. The looper wa
 R3 (top)   Wild mods      — cyan
 R2         Vel/Gate mods  — yellow
 R1         Pitch mods     — magenta
-R0 (bottom) 1/32 | 1/16 | 1/8 | 1/4 | 1/2 | Hold | · | Latch
+R0 (bottom) 1/32 | 1/16 | 1/8 | 1/4 | 1/2 | Hold | Sync | Latch
 ```
 
 All active mods (held + latched + recalled presets) layer simultaneously.
 
 **R0 controls:**
-- **Length pads (1/32–1/2):** Select capture length and trigger capture
+- **Length pads (1/32–1/2):** Select capture length and trigger capture. R0 covers 1/32–1/2 bar only. To capture at 1-bar, use step button 6 while entering Performance Mode (while holding Loop).
 - **Hold:** Persistent hold mode — releasing a length pad doesn't stop the loop. Press Hold again to cancel.
+- **Sync:** Toggle clock-aligned capture. When on, captures wait for the next aligned clock boundary before starting. When off, capture starts immediately.
 - **Latch:** Toggle latch mode
 
 ### R1 — Pitch Mods
@@ -835,7 +840,7 @@ A "── Global ──" separator appears below Track Config.
 
 | Item | Description |
 |---|---|
-| Metro | Cnt-In · Play · Always. Controls when the metronome click is audible. Count-in click plays on all 4 beats. |
+| Metro | Off · Cnt-In · Play · Always. Controls when the metronome click is audible. Count-in click plays on all 4 beats. **Shortcut:** Mute + Play in Track View toggles between Off and the last non-Off state. Shift+Step 6 cycles between Cnt-In and Always only. |
 | Metro Vol | 0–150%. 100% = full scale; 150% = hot. |
 | Tap Tempo | Full-screen tap interface. Any pad tap calculates BPM from rolling average. Jog adjusts ±1 BPM per detent. Jog click or Note/Session exits and applies. |
 | BPM | Set tempo 40–250. Updates in real time. Note/Session cancels and restores previous. |
@@ -1012,8 +1017,8 @@ All playing clips flash in sync, locked to the main clock.
 | State | LED |
 |---|---|
 | Active step (has notes) | Bright track color |
-| Inactive step within clip | Dim track color |
-| Out of bounds (beyond clip length) | White |
+| Inactive step within clip | Off (when Beat Markers enabled, positions 1/5/9/13 show dim track color) |
+| Out of bounds (beyond clip length) | Dark grey |
 | Playback head position | Bright white |
 
 ### Step Buttons (Session View — scene scroll indicator)
@@ -1292,9 +1297,11 @@ All Track View — Melodic controls apply except where noted below.
 | Loop (tap) | Lock Performance Mode on / off |
 | Loop (hold) | Temporary — active while held |
 | Shift + Loop | Toggle latch mode |
-| R0 length pads (Steps 1–6) | Set capture length and trigger capture |
+| R0 length pads (5 pads: 1/32–1/2) | Set capture length and trigger capture |
+| Step button 6 (while holding Loop to enter) | Set capture length to 1-bar |
 | Hold Step 16 + length pad | Select triplet capture length |
 | R0 Hold pad | Persistent hold — loop continues after releasing a length pad |
+| R0 Sync pad | Toggle clock-aligned capture on/off |
 | R0 Latch pad | Toggle latch mode |
 | R1 pads (magenta) | Pitch mods (momentary or latched) |
 | R2 pads (yellow) | Velocity / gate mods |
@@ -1310,14 +1317,8 @@ All Track View — Melodic controls apply except where noted below.
 | Control | Action |
 |---|---|
 | Loop (held) + jog rotate | Adjust clip length ±1 step |
-| Shift + Loop (held) + jog rotate | Adjust clip length in fine increments |
 | Loop (held) + two step buttons | Set loop start and end |
-| Step button (tap, held) | Select / deselect bar |
-| Step button (double-tap) | Set loop to that single bar |
-| Hold step + jog rotate | Adjust note lengths for all notes in bar |
-| Hold step + Volume encoder | Adjust note velocities for all notes in bar |
-| Hold step + +/− | Transpose all notes in bar |
-| Hold step + Left / Right arrows | Nudge all notes in bar |
+| Step button (tap) | Select / deselect bar |
 | Delete | Delete active clip |
 | Delete + step button | Clear all notes in that bar |
 | Copy + step button | Copy bar (press dest step to paste) |
