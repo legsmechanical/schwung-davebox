@@ -41,7 +41,7 @@ cp ui_leds.mjs       "dist/${MODULE_ID}/"
 python3 - <<'PYEOF'
 import wave, struct, audioop, warnings
 warnings.filterwarnings('ignore')   # suppress audioop deprecation on Python 3.13+
-src = "MPC Metronome Click 001.wav"
+src = "db-click.wav"
 dst = "dist/davebox/click-seq8.wav"
 with wave.open(src, 'rb') as r:
     rate, nch, sw, nf = r.getframerate(), r.getnchannels(), r.getsampwidth(), r.getnframes()
