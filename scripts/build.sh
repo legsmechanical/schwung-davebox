@@ -119,4 +119,14 @@ fi
 
 echo "GLIBC check passed (all symbols <= 2.35)"
 echo ""
+
+# ----- Release tarball -----------------------------------------------------
+# Produces dist/davebox-module.tar.gz suitable for upload as a GitHub release
+# asset. The tarball, when extracted, gives a single top-level davebox/ folder
+# matching schwung-manager's expected layout.
+echo "=== Building release tarball ==="
+tar -czf "dist/${MODULE_ID}-module.tar.gz" -C dist "${MODULE_ID}/"
+ls -lh "dist/${MODULE_ID}-module.tar.gz"
+echo ""
+
 echo "Build complete: dist/${MODULE_ID}/"
