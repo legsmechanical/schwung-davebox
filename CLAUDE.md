@@ -1,4 +1,4 @@
-# SEQ8
+# dAVEBOx
 
 **Working rule:** Before acting on any assumed or suggested cause/fix, read the relevant code and verify the assumption is correct first.
 
@@ -18,7 +18,7 @@
 - **Feature reference**: before touching any feature area (bank, transport, copy/paste, bake, perf, etc.), read the relevant section in `docs/FEATURE_REFERENCE.md`.
 - **Schwung patches**: see `docs/SCHWUNG_PATCHES.md`. After any Schwung upgrade: `cd ~/schwung && git apply patches/seq8-local.patch`. Deploy shim to `/data/UserData/schwung/schwung-shim.so` (not `/usr/lib/` symlink).
 
-SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move — standalone 8-track MIDI sequencer. No audio. C (DSP) + JavaScript (UI). `button_passthrough: [79]` + `claims_master_knob: true` — Move firmware handles CC 79 natively; `claims_master_knob` prevents Schwung host from running its own acceleration, which caused inconsistent knob speed and MIDI output pauses.
+dAVEBOx is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move — standalone 8-track MIDI sequencer. No audio. C (DSP) + JavaScript (UI). `button_passthrough: [79]` + `claims_master_knob: true` — Move firmware handles CC 79 natively; `claims_master_knob` prevents Schwung host from running its own acceleration, which caused inconsistent knob speed and MIDI output pauses.
 
 ## Upcoming tasks — see [TODO.md](TODO.md)
 
@@ -27,11 +27,11 @@ SEQ8 is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move �
 ```sh
 ./scripts/build.sh && ./scripts/install.sh      # DSP change (also copies all JS)
 python3 scripts/bundle_ui.py && ./scripts/install.sh  # JS-only
-nm -D dist/seq8/dsp.so | grep GLIBC             # verify ≤ 2.35
+nm -D dist/davebox/dsp.so | grep GLIBC             # verify ≤ 2.35
 ssh ableton@move.local "tail -f /data/UserData/schwung/seq8.log"
 ```
 
-**JS modules** (`ui.js`, `ui_constants.mjs`, `ui_state.mjs`, `ui_persistence.mjs`, `ui_dialogs.mjs`, `ui_scene.mjs`, `ui_leds.mjs`) — bundled into `dist/seq8/ui.js` by `scripts/bundle_ui.py`. Always run the bundler before deploying JS changes. **DSP**: see `dsp/CLAUDE.md`.
+**JS modules** (`ui.js`, `ui_constants.mjs`, `ui_state.mjs`, `ui_persistence.mjs`, `ui_dialogs.mjs`, `ui_scene.mjs`, `ui_leds.mjs`) — bundled into `dist/davebox/ui.js` by `scripts/bundle_ui.py`. Always run the bundler before deploying JS changes. **DSP**: see `dsp/CLAUDE.md`.
 
 ## State persistence
 
@@ -55,7 +55,7 @@ Set-duplicate inheritance: when init detects a Copy-suffixed name + missing stat
 - **ROUTE_MOVE external MIDI bypasses pfx chain**: injecting causes echo cascade (Move echoes cable-2 back → re-injection → crash). Use ROUTE_SCHWUNG if pfx processing on live external MIDI is needed.
 - **pfx_send from set_param context does NOT release Move synth voices.**
 - **`get_clock_status` is NULL**; `get_bpm` doesn't track BPM changes while stopped.
-- **Do not load SEQ8 from within SEQ8** — LED corruption. Shift+Back first.
+- **Do not load dAVEBOx from within dAVEBOx** — LED corruption. Shift+Back first.
 
 ## QuickJS compatibility
 

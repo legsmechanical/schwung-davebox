@@ -1,6 +1,6 @@
 # LED Color Assignment Reference
 
-> Maps every LED color assignment in SEQ8, organized by feature/mode. Verified against source: `ui_leds.mjs`, `ui_scene.mjs`, `ui.js`, `ui_constants.mjs`.
+> Maps every LED color assignment in dAVEBOx, organized by feature/mode. Verified against source: `ui_leds.mjs`, `ui_scene.mjs`, `ui.js`, `ui_constants.mjs`.
 
 ---
 

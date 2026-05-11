@@ -1,6 +1,6 @@
 # Note Repeat User Guide
 
-Note Repeat is a real-time performance feature for **drum tracks** in SEQ8. It retriggers drum lanes at rhythmic intervals while you hold pads, creating rolls, fills, and stutters. Two modes are available: **Repeat Play (Rpt1)** for quick single-lane repeats, and **Repeat Set (Rpt2)** for multi-lane simultaneous patterns.
+Note Repeat is a real-time performance feature for **drum tracks** in dAVEBOx. It retriggers drum lanes at rhythmic intervals while you hold pads, creating rolls, fills, and stutters. Two modes are available: **Repeat Play (Rpt1)** for quick single-lane repeats, and **Repeat Set (Rpt2)** for multi-lane simultaneous patterns.
 
 Note Repeat is only available on drum tracks.
 

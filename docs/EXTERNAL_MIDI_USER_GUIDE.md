@@ -1,6 +1,6 @@
 # External MIDI Output — User Guide
 
-SEQ8 can send MIDI to external hardware synths and drum machines connected via Move's USB-A port. Each track can independently route to the Schwung chain, Move's native instruments, or an external device.
+dAVEBOx can send MIDI to external hardware synths and drum machines connected via Move's USB-A port. Each track can independently route to the Schwung chain, Move's native instruments, or an external device.
 
 ---
 
@@ -49,7 +49,7 @@ The external device receives notes on the track's **MIDI Channel** (TRACK bank K
 
 ## Tips
 
-- Connect your external synth via USB-A before loading SEQ8
+- Connect your external synth via USB-A before loading dAVEBOx
 - Use different MIDI channels per track to address multiple instruments on a single device
 - The route setting persists across suspend/resume and save/load cycles
 - Switching a track from `Ext` back to `Swng` or `Move` immediately redirects output — any held notes on the external device get note-offs via the transport panic

@@ -1,6 +1,6 @@
-# SEQ8 Arpeggiators — User Guide
+# dAVEBOx Arpeggiators — User Guide
 
-SEQ8 has two arpeggiators that can be used independently or together. They share the same core engine and parameter set, but serve different roles in the signal flow.
+dAVEBOx has two arpeggiators that can be used independently or together. They share the same core engine and parameter set, but serve different roles in the signal flow.
 
 ---
 

@@ -1,4 +1,4 @@
-# SEQ8 DSP
+# dAVEBOx DSP
 
 Read this when starting DSP work. Covers details not in root CLAUDE.md.
 
@@ -12,7 +12,7 @@ Reference port: `~/schwung-notetwist` — NoteTwist pfx stages. API reference: `
 
 ```sh
 ./scripts/build.sh          # Docker cross-compile (aarch64)
-nm -D dist/seq8/dsp.so | grep GLIBC   # must be ≤ 2.35
+nm -D dist/davebox/dsp.so | grep GLIBC   # must be ≤ 2.35
 ```
 
 GLIBC ≤ 2.35 required. No complex static initializers. Schwung core v0.9.9.

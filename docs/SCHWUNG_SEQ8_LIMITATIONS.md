@@ -1,6 +1,6 @@
-# Schwung Framework — SEQ8 Limitations & Lessons
+# Schwung Framework — dAVEBOx Limitations & Lessons
 
-Practical lessons learned building SEQ8 within the Schwung framework. Complements
+Practical lessons learned building dAVEBOx within the Schwung framework. Complements
 CLAUDE.md (which documents what's built); this document explains *why* things are
 built the way they are and what to watch for in future work.
 
@@ -242,7 +242,7 @@ track instruments AND echoes every cable-2 event it receives back on MIDI_OUT ca
 The shim delivers MIDI_OUT cable-2 to `onMidiMessageExternal`. This means:
 
 - A note from a keyboard plugged into USB-A arrives in `onMidiMessageExternal`
-- If SEQ8 injects that note back to Move (to remap the channel), Move echoes the
+- If dAVEBOx injects that note back to Move (to remap the channel), Move echoes the
   inject on MIDI_OUT cable-2
 - `onMidiMessageExternal` fires again → another inject → another echo → ∞ cascade
 - The cascade fills the 64-packet inject SHM ring within milliseconds → crash
@@ -260,11 +260,11 @@ when the echo arrives, drop the echo. This does not work reliably because:
 
 This is documented in `~/schwung-docs/MIDI_INJECTION.md` as a known-broken pattern.
 
-### The fix (current SEQ8 behaviour)
+### The fix (current dAVEBOx behaviour)
 
 Never inject in `onMidiMessageExternal` for ROUTE_MOVE tracks. Move's native
 cable-2 passthrough plays keyboard notes on whatever Move track has a matching
-MIDI In channel — no SEQ8 involvement needed. The `liveSendNote` call is guarded
+MIDI In channel — no dAVEBOx involvement needed. The `liveSendNote` call is guarded
 by `if (!routeIsMove)` for all message types (note-on, note-off, CC/AT/PB).
 
 Pad notes still inject (they are cable-0 events; Move does not auto-route them to
@@ -274,7 +274,7 @@ context, which is unaffected.
 ### Consequence: no channel remapping for live external MIDI
 
 The keyboard always plays the Move track whose MIDI In matches the keyboard's
-channel. SEQ8's Ch knob (which drives sequencer and pad routing) has no effect on
+channel. dAVEBOx's Ch knob (which drives sequencer and pad routing) has no effect on
 live external MIDI. The user must set their controller to send on the channel
 matching the Move track they want to address.
 
@@ -296,7 +296,7 @@ a currently-playing sequencer note, the gate for that keyboard note may be misse
 Schwung v0.9.8 added `host_ext_midi_remap_set/clear/enable` — the shim rewrites
 cable-2 channel bytes in-place before Move processes them. No inject cascade.
 
-SEQ8 uses `applyExtMidiRemap()` which activates when:
+dAVEBOx uses `applyExtMidiRemap()` which activates when:
 - Active track route = ROUTE_MOVE
 - MIDI In = All (channel 0)
 
@@ -309,7 +309,7 @@ Shim auto-clears the remap table on overtake exit.
 **THRU bypass**: the shim skips remap entirely if any chain slot has
 `forward_channel = THRU (-2)`, which is the default for new Schwung slots.
 Slots must be set to AUTO (-1) or a specific channel for remap to function.
-This is a Schwung-level default issue — not something SEQ8 can control.
+This is a Schwung-level default issue — not something dAVEBOx can control.
 
 ---
 

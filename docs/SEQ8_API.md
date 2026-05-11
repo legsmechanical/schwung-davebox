@@ -1,4 +1,4 @@
-# SEQ8 API Reference
+# dAVEBOx API Reference
 
 DSP parameter keys, C structs, recording architecture, and algorithm details.
 Read this when writing DSP calls or modifying DSP/pfx code.

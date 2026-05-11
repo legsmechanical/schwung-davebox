@@ -1,15 +1,15 @@
-# SEQ8 Suspend & Resume
+# dAVEBOx Suspend & Resume
 
-SEQ8 now supports background operation — you can leave SEQ8 while it keeps playing, browse Move's native UI, and jump back in instantly.
+dAVEBOx now supports background operation — you can leave dAVEBOx while it keeps playing, browse Move's native UI, and jump back in instantly.
 
 ## How It Works
 
 | Action | What Happens |
 |--------|-------------|
-| **Back** | Suspends SEQ8. Sequencer keeps playing in the background. Move's native UI returns. |
-| **Shift + Step 13** (single tap) | Opens the Tools menu. Select SEQ8 to resume. |
-| **Shift + Step 13** (double tap or long press) | Resumes SEQ8 directly — no menu. |
-| **Shift + Back** | Fully exits SEQ8 (stops playback, unloads module). |
+| **Back** | Suspends dAVEBOx. Sequencer keeps playing in the background. Move's native UI returns. |
+| **Shift + Step 13** (single tap) | Opens the Tools menu. Select dAVEBOx to resume. |
+| **Shift + Step 13** (double tap or long press) | Resumes dAVEBOx directly — no menu. |
+| **Shift + Back** | Fully exits dAVEBOx (stops playback, unloads module). |
 
 ## What Happens During Suspend
 

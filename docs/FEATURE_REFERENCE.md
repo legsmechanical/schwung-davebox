@@ -1,4 +1,4 @@
-# SEQ8 Feature Reference
+# dAVEBOx Feature Reference
 
 Read the relevant section before working on a feature area. Use `offset`/`limit` with the Read tool to load only the section you need.
 
@@ -41,7 +41,7 @@ Read the relevant section before working on a feature area. Use `offset`/`limit`
 
 ## Transport
 
-Play/Stop. Shift+Play=restart. Delete+Play: playing→`deactivate_all`; stopped→`panic`. **Do not use per-track `tN_deactivate` for bulk clearing** — DSP processes one/callback; pollDSP restores stale state between calls. BPM owned by SEQ8; `set_param("bpm")` updates `tick_delta`+`cached_bpm`.
+Play/Stop. Shift+Play=restart. Delete+Play: playing→`deactivate_all`; stopped→`panic`. **Do not use per-track `tN_deactivate` for bulk clearing** — DSP processes one/callback; pollDSP restores stale state between calls. BPM owned by dAVEBOx; `set_param("bpm")` updates `tick_delta`+`cached_bpm`.
 
 ---
 
@@ -252,7 +252,7 @@ Routes to `activeTrack`.
 
 **ROUTE_MOVE**: `liveSendNote` NOT called — injecting causes echo cascade→crash (Move echoes cable-2 back to `onMidiMessageExternal` → infinite loop). Pads unaffected (cable-0). Recording echo filter: `seqActiveNotes.has(d1)` guards ROUTE_MOVE `recordNoteOn`. External MIDI rechannelized to active track's channel via `host_ext_midi_remap_*`. `applyExtMidiRemap()` called from `tick()` (change-detect) and from `init()`. `onMidiMessageExternal` filters by `trackChannel[t]` when `S.extMidiRemapActive` is set. Shim auto-resets remap on overtake exit.
 
-**Suspend** (Back): JS calls `host_ext_midi_remap_enable(0)` to clear BLOCK so external MIDI reaches other instruments while SEQ8 is parked; **resume**: `applyExtMidiRemap()` re-applies.
+**Suspend** (Back): JS calls `host_ext_midi_remap_enable(0)` to clear BLOCK so external MIDI reaches other instruments while dAVEBOx is parked; **resume**: `applyExtMidiRemap()` re-applies.
 
 **ROUTE_EXTERNAL** (Route=Ext): sequenced notes go DSP `pfx_send`→`ext_queue` ring buffer→JS tick() drains via `get_param('ext_queue')`→`move_midi_external_send` (USB-A). Live pad/MIDI input sent directly from JS via `move_midi_external_send`. VelIn override applies. See `docs/EXTERNAL_MIDI_USER_GUIDE.md`.
 
@@ -346,7 +346,7 @@ Back=suspend (sequencer keeps playing in background); Shift+Step13=resume (doubl
 
 ## Set state inheritance & cleanup
 
-**Storage layout.** SEQ8 state lives entirely under `/data/UserData/schwung/`; never under Move's `UserLibrary/Sets/`. Two files per set at `set_state/<uuid>/seq8-state.json` (DSP) and `set_state/<uuid>/seq8-ui-state.json` (UI sidecar). A name-index file `seq8_name_index.json` (top-level under `schwung/`) maps `{ <set name>: <uuid> }` and is refreshed in `updateNameIndex()` after every deferred-save and suspend-save tail. **No writes happen inside Move's set folders** — duplication is detected via name suffix, not piggybacked on Move's file copy. This decoupling means Move firmware changes to the Sets-folder layout cannot break SEQ8 state inheritance.
+**Storage layout.** dAVEBOx state lives entirely under `/data/UserData/schwung/`; never under Move's `UserLibrary/Sets/`. Two files per set at `set_state/<uuid>/seq8-state.json` (DSP) and `set_state/<uuid>/seq8-ui-state.json` (UI sidecar). A name-index file `seq8_name_index.json` (top-level under `schwung/`) maps `{ <set name>: <uuid> }` and is refreshed in `updateNameIndex()` after every deferred-save and suspend-save tail. **No writes happen inside Move's set folders** — duplication is detected via name suffix, not piggybacked on Move's file copy. This decoupling means Move firmware changes to the Sets-folder layout cannot break dAVEBOx state inheritance.
 
 **Duplicate detection (init / resume).** `maybeShowInheritPicker(uuid, name)` runs from `init()` and from the resume-edge path after a set switch. Trigger conditions: name has trailing ` Copy` or ` Copy N` (regex in `stripCopySuffix`), AND no canonical state file at the current UUID. Returns `'auto' | 'picker' | 'blank'`:
 - `'auto'` — exactly one family candidate; silently copy its state files via `copyStateFiles`, force `S.pendingSetLoad = true` so DSP reloads (`create_instance` had already called `seq8_load_state` with the then-empty path).
