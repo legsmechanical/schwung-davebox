@@ -262,7 +262,7 @@ Routes to `activeTrack`.
 
 TRACK ARP→NOTE FX→HARMZ→MIDI DLY→SEQ ARP.
 
-TRACK ARP intercepts live input (pads + external MIDI note events) only; sequenced notes enter at NOTE FX. ROUTE_SCHWUNG live input routes through full pfx chain. ROUTE_MOVE live external MIDI bypasses pfx chain (echo cascade constraint). Per-clip params (`clip_pfx_params_t`); clip switch→`pfx_sync_from_clip`. See `docs/SEQ8_API.md` for arp algorithm details.
+TRACK ARP intercepts live input (pads + external MIDI note events) only; sequenced notes enter at NOTE FX. ROUTE_SCHWUNG live input routes through full pfx chain. ROUTE_MOVE live external MIDI bypasses pfx chain (echo cascade constraint). Per-clip params (`clip_pfx_params_t`); clip switch→`pfx_sync_from_clip`. See `docs/DAVEBOX_API.md` for arp algorithm details.
 
 ---
 
@@ -367,7 +367,7 @@ Back=suspend (sequencer keeps playing in background); Shift+Step13=resume (doubl
 
 ## Perf Mode
 
-Session View (loop running). tap Loop=lock (`perfViewLocked`); hold Loop=temporary (pads active while held); Shift+Loop=toggle latch mode (`perfLatchMode`); Loop+length pad=start. 4 rows × 8 pads = 32 mods (see `docs/SEQ8_API.md`).
+Session View (loop running). tap Loop=lock (`perfViewLocked`); hold Loop=temporary (pads active while held); Shift+Loop=toggle latch mode (`perfLatchMode`); Loop+length pad=start. 4 rows × 8 pads = 32 mods (see `docs/DAVEBOX_API.md`).
 
 **Step buttons=16 preset/snapshot slots**: tap=recall; hold ~0.75s (`STEP_SAVE_HOLD_TICKS=150`)=save (perf preset when Loop held/locked, mute state when Mute held); Delete+step=clear; step LEDs double-blink on save (`stepSaveFlashStartTick`/`stepSaveFlashEndTick`). `perf_mods`=OR(toggled+held+recalled) sent on every change.
 
@@ -417,4 +417,4 @@ DSP routing + deadlock constraint: see `dsp/CLAUDE.md`.
 - **Swing**: CC automation lanes are not swung (intentional). Live-recorded notes with inp_quant=off will have swing applied twice. Long notes get slightly shorter effective gate.
 - `pfx_send` from set_param context does NOT release Move synth voices.
 - **Drum bake undo**: `undo_begin_drum_clip` snapshots notes/steps but not `pfx_params` — undo doesn't restore per-lane FX settings (pending fix).
-- See `docs/SCHWUNG_SEQ8_LIMITATIONS.md` for framework interaction patterns.
+- See `docs/SCHWUNG_DAVEBOX_LIMITATIONS.md` for framework interaction patterns.

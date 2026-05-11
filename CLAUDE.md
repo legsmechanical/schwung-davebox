@@ -13,7 +13,7 @@
 - **Restart Move**: `ssh root@move.local "for name in MoveOriginal Move MoveLauncher MoveMessageDisplay shadow_ui schwung link-subscriber display-server schwung-manager; do pids=\$(pidof \$name 2>/dev/null || true); [ -n \"\$pids\" ] && kill -9 \$pids 2>/dev/null || true; done && /etc/init.d/move start >/dev/null 2>&1"`
 - **CLAUDE.md**: update at session end or after a major phase — not after routine task work.
 - **State version bump**: Any time DSP struct layout changes or state format changes, delete ALL state files on device before deploying: `ssh root@move.local "find /data/UserData/schwung/set_state -name 'seq8-state.json' -exec rm {} \; && find /data/UserData/schwung/set_state -name 'seq8-ui-state.json' -exec rm {} \;"`. Dev build — always prefer a clean slate over migration.
-- **DSP calls / pfx code**: read `docs/SEQ8_API.md` for parameter keys, structs, and algorithm details.
+- **DSP calls / pfx code**: read `docs/DAVEBOX_API.md` for parameter keys, structs, and algorithm details.
 - **DSP work**: read `dsp/CLAUDE.md` for logging, build, state format keys, and deferred save details.
 - **Feature reference**: before touching any feature area (bank, transport, copy/paste, bake, perf, etc.), read the relevant section in `docs/FEATURE_REFERENCE.md`.
 - **Schwung patches**: see `docs/SCHWUNG_PATCHES.md`. After any Schwung upgrade: `cd ~/schwung && git apply patches/seq8-local.patch`. Deploy shim to `/data/UserData/schwung/schwung-shim.so` (not `/usr/lib/` symlink).
