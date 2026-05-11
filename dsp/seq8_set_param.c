@@ -2926,9 +2926,12 @@ static void set_param(void *instance, const char *key, const char *val) {
                     }
                 }
 
-                /* Mirror to step arrays */
+                /* Mirror to step arrays. Use note_step() (rounded) so sidx
+                 * matches the _steps get_param reader and clip_build_steps_from_notes;
+                 * truncation here previously caused step LED / hold-read divergence
+                 * for notes recorded in the upper half of a step with InQ Off. */
                 {
-                    uint16_t sidx = (uint16_t)(abs_tick / tps);
+                    uint16_t sidx = note_step(abs_tick, cl->length, tps);
                     int16_t  off  = (int16_t)((int32_t)abs_tick
                                               - (int32_t)sidx * tps);
                     if (sidx < SEQ_STEPS) {

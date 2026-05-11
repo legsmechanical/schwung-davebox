@@ -784,6 +784,7 @@ static void clip_pfx_params_init(clip_pfx_params_t *p);
 static void pfx_sync_from_clip(seq8_track_t *tr);
 static void drum_pfx_apply_params(drum_pfx_t *px, const drum_pfx_params_t *p);
 static uint32_t effective_note_tick(const note_t *n, const clip_t *cl, int quantize);
+static uint16_t note_step(uint32_t tick, uint16_t clip_len, uint16_t tps);
 
 /* ------------------------------------------------------------------ */
 /* Utility                                                              */
@@ -3696,7 +3697,10 @@ static void tarp_fire_step(seq8_instance_t *inst, seq8_track_t *tr) {
             int rni = clip_insert_note(cl, abs_tick, gticks, pitch, (uint8_t)v);
             if (rni >= 0) {
                 cl->notes[rni].suppress_until_wrap = 1;
-                uint16_t sidx = (uint16_t)(abs_tick / tps);
+                /* Round sidx via note_step() so the mirror agrees with the
+                 * _steps reader (which also rounds). Truncation here would
+                 * put sub-step notes on a different step than the LED shows. */
+                uint16_t sidx = note_step(abs_tick, cl->length, tps);
                 int16_t  off  = (int16_t)((int32_t)abs_tick - (int32_t)sidx * tps);
                 if (sidx < SEQ_STEPS) {
                     if (!cl->steps[sidx] && cl->step_note_count[sidx] > 0) {
