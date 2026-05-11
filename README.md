@@ -8,6 +8,8 @@ There are lots of weird little things to explore that can radically transform yo
 
 dAVEBOx was built by AI goblins and meticulously designed by a human who is not Dave.
 
+📖 **[Read the full user manual](docs/MANUAL.md)**
+
 ---
 
 ## What it brings to the table
