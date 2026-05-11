@@ -2163,15 +2163,19 @@ function updatePerfModeLEDs() {
         else                                setLED(16 + i, LightGrey);
     }
 
-    /* R0 (68-75): rate pads 0-4 (1/32..1/2), hold (5), sync (6), latch (7) */
-    for (let i = 0; i < 5; i++)
-        setLED(68 + i, flashAtRate(LOOPER_RATES_STRAIGHT[i]) ? White : LightGrey);
-    /* Hold pad (73): White when held, Red otherwise */
-    setLED(73, S.perfHoldPadHeld ? White : Red);
-    /* Sync (pad 74): blink dim/bright green at 1/4 when sync=on; solid Green when sync=off */
-    setLED(74, S.perfSync ? (flashAtRate(96) ? Green : DeepGreen) : Green);
-    /* Latch (pad 75): Yellow when latch mode is on (mods sticky); Purple when off */
-    setLED(75, S.perfLatchMode ? VividYellow : PurpleBlue);
+    /* R0 (68-75): rate pads 0-4 (1/32..1/2), hold (5), sync (6), latch (7).
+     * Static colors only — no flashing. */
+    for (let i = 0; i < 5; i++) {
+        const rateActive = S.perfStickyLengths.has(i) ||
+                           S.perfStack.some(function(e) { return e.idx === i; });
+        setLED(68 + i, rateActive ? White : DarkGrey);
+    }
+    /* Hold pad (73): bright Red when engaged, dim Red when off. */
+    setLED(73, S.perfHoldPadHeld ? Red : DeepRed);
+    /* Sync (pad 74): bright Green when on, dim Green when off. */
+    setLED(74, S.perfSync ? Green : DeepGreen);
+    /* Latch (pad 75): track-3 bright/dim pair (BrightGreen / DarkOlive). */
+    setLED(75, S.perfLatchMode ? TRACK_COLORS[2] : TRACK_DIM_COLORS[2]);
 
     /* R1 (76-83): PITCH mods — active = White, inactive = dim Magenta */
     for (let i = 0; i < 8; i++) {
