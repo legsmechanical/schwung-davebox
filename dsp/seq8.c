@@ -202,6 +202,10 @@ typedef struct {
     uint8_t  held_pitch[ARP_MAX_HELD];
     uint8_t  held_vel[ARP_MAX_HELD];
     uint8_t  held_order[ARP_MAX_HELD];
+    /* TARP only: 1 = pad still physically held; 0 = latched (pad released, kept
+     * in buffer because latch is on). Used by the tarp_latch off handler to drop
+     * latched entries while preserving still-held ones. Unused by SEQ ARP. */
+    uint8_t  held_physical[ARP_MAX_HELD];
     uint8_t  held_count;
     uint8_t  next_order;
 
@@ -3018,11 +3022,13 @@ static void arp_remove_note(arp_engine_t *a, uint8_t pitch) {
         if (a->held_pitch[i] == pitch) { found = i; break; }
     if (found < 0) return;
     for (i = found; i + 1 < a->held_count; i++) {
-        a->held_pitch[i] = a->held_pitch[i + 1];
-        a->held_vel[i]   = a->held_vel[i + 1];
-        a->held_order[i] = a->held_order[i + 1];
+        a->held_pitch[i]    = a->held_pitch[i + 1];
+        a->held_vel[i]      = a->held_vel[i + 1];
+        a->held_order[i]    = a->held_order[i + 1];
+        a->held_physical[i] = a->held_physical[i + 1];
     }
     a->held_count--;
+    a->held_physical[a->held_count] = 0;
     if (a->held_count == 0) {
         /* Buffer empty — let the sounding note play out its own gate via
          * arp_tick countdown. Don't reset cycle position; consecutive
@@ -3589,9 +3595,30 @@ static void live_note_on(seq8_instance_t *inst, seq8_track_t *tr,
         pfx_note_on(inst, tr, pitch, vel);
         return;
     }
-    if (tr->tarp_latch && tr->tarp_physical == 0)
-        tarp_silence(inst, tr); /* new chord gesture: replace latched buffer */
+    if (tr->tarp_latch && tr->tarp_physical == 0) {
+        /* New chord gesture (first pad press after all pads released, latch on).
+         * With retrigger on, replace the latched buffer entirely; with retrigger
+         * off, silence the sounding note but keep the buffer (chord stacking). */
+        arp_engine_t *a = &tr->tarp;
+        if (a->retrigger) {
+            uint8_t saved = tr->tarp_latch;
+            tr->tarp_latch = 0;
+            tarp_silence(inst, tr); /* arp_clear_runtime branch — buffer dropped */
+            tr->tarp_latch = saved;
+        } else {
+            tarp_silence(inst, tr); /* preserve branch — buffer kept */
+        }
+    }
     arp_add_note(&tr->tarp, pitch, vel);
+    /* Mark this pitch's slot as physically held so a later latch-off can
+     * distinguish it from latched (released) entries. arp_add_note either
+     * inserted a new slot at index held_count-1 or updated an existing slot
+     * with this pitch — scan for the matching pitch to cover both. */
+    {
+        arp_engine_t *a = &tr->tarp;
+        for (int i = 0; i < a->held_count; i++)
+            if (a->held_pitch[i] == pitch) { a->held_physical[i] = 1; break; }
+    }
     tr->tarp_physical++;
 }
 
@@ -3612,6 +3639,12 @@ static void live_note_off(seq8_instance_t *inst, seq8_track_t *tr,
         arp_remove_note(&tr->tarp, pitch);
         if (tr->tarp.held_count == 0)
             tarp_silence(inst, tr);
+    } else {
+        /* Latch on: pad released but buffer keeps the pitch. Mark non-physical
+         * so a later latch-off knows to drop this entry. */
+        arp_engine_t *a = &tr->tarp;
+        for (int i = 0; i < a->held_count; i++)
+            if (a->held_pitch[i] == pitch) { a->held_physical[i] = 0; break; }
     }
     /* Safety belt: if pfx chain has this pitch active (e.g., tarp toggled on
      * while pad was held), release it now. No-op if already inactive. */
