@@ -1470,6 +1470,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             uint8_t lo = (uint8_t)(my_atoi(val) ? 1 : 0);
             tr->pfx.looper_on = lo;
             { int _ll; for (_ll = 0; _ll < DRUM_LANES; _ll++) tr->drum_lane_pfx[_ll].looper_on = lo; }
+            inst->state_dirty = 1;
             return;
         }
 
