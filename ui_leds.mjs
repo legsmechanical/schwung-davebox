@@ -550,9 +550,8 @@ export function updateTrackLEDs() {
 
     /* Shift overlay: bottom row shows track-switch color hints (all track types) */
     if (!S.sessionView && S.shiftHeld && S.shiftTrackLEDActive) {
-        const _tc = (Math.floor(S.tickCount / 24) % 2);
         for (let i = 0; i < NUM_TRACKS; i++) {
-            cachedSetLED(TRACK_PAD_BASE + i, _tc ? TRACK_COLORS[i] : LED_OFF);
+            cachedSetLED(TRACK_PAD_BASE + i, TRACK_DIM_COLORS[i]);
         }
     }
 
