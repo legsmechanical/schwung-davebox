@@ -1185,6 +1185,8 @@ static void set_param(void *instance, const char *key, const char *val) {
                 lane->pfx_params   = src->pfx_params;
                 clip_migrate_to_notes(dst);
             }
+            if ((int)inst->tracks[t].active_clip == c)
+                pfx_sync_from_clip(&inst->tracks[t]);
             inst->drum_undo_valid = 0;
             snprintf(inst->last_restore_info, sizeof(inst->last_restore_info), "d %d %d", t, c);
             return;
@@ -1270,6 +1272,8 @@ static void set_param(void *instance, const char *key, const char *val) {
                 lane->pfx_params  = src->pfx_params;
                 clip_migrate_to_notes(dst);
             }
+            if ((int)inst->tracks[t].active_clip == c)
+                pfx_sync_from_clip(&inst->tracks[t]);
             inst->drum_redo_valid = 0;
             snprintf(inst->last_restore_info, sizeof(inst->last_restore_info), "d %d %d", t, c);
             return;
