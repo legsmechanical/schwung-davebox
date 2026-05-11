@@ -1663,6 +1663,10 @@ static void merge_finalize(seq8_instance_t *inst) {
 
 static void pfx_emit(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2);
 static void pfx_q_insert(play_fx_t *fx, uint64_t fire_at, uint8_t s, uint8_t d1, uint8_t d2, uint8_t flags);
+static inline void looper_mark_active(seq8_instance_t *inst, uint8_t track,
+                                       uint8_t raw_pitch, uint8_t emitted_pitch);
+static int perf_apply(seq8_instance_t *inst, uint8_t tr_idx,
+                      uint8_t status, uint8_t *d1, uint8_t *d2);
 
 static void pfx_send(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
     /* SEQ ARP is the last chain stage. Any note-on/off coming out of the
@@ -1695,6 +1699,43 @@ static void pfx_send(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
             g_inst->looper_events[ei].d1     = d1;
             g_inst->looper_events[ei].d2     = d2;
             g_inst->looper_events[ei].track  = fx->track_idx;
+            /* Apply perf mods to live emit so mods kick in immediately during
+             * the first capture cycle. Captured event (above) stays raw —
+             * LOOPING playback re-applies perf_apply on the clean events. */
+            if (g_inst->perf_mods_active) {
+                uint8_t raw_d1 = d1;
+                g_inst->perf_current_event_idx = (uint16_t)ei;
+                if (!perf_apply(g_inst, fx->track_idx, status, &d1, &d2)) {
+                    if (raw_d1 < 128)
+                        g_inst->perf_emitted_pitch[fx->track_idx][raw_d1] = 0xFF;
+                    return; /* suppressed (sparse/halftime/staccato/legato/ramp) */
+                }
+                if (st == 0x90 && d2 > 0) {
+                    looper_mark_active(g_inst, fx->track_idx, raw_d1, d1);
+                    /* Phantom: ghost note at pitch-12, vel/4, gate=cap/8. */
+                    if ((g_inst->perf_mods_active & PERF_MOD_PHANTOM) &&
+                            g_inst->perf_staccato_count < 32) {
+                        int gp = (int)d1 - 12;
+                        if (gp >= 0) {
+                            uint8_t gpb = (uint8_t)gp;
+                            uint8_t gv  = d2 / 4 < 1 ? 1 : d2 / 4;
+                            uint16_t cap = g_inst->looper_capture_ticks;
+                            uint16_t gap = cap / 8 < 2 ? 2 : cap / 8;
+                            uint16_t gfire = (uint16_t)((g_inst->looper_pos + gap) % cap);
+                            g_inst->looper_emitting = 1;
+                            pfx_send(fx, status, gpb, gv);
+                            g_inst->looper_emitting = 0;
+                            int si = (int)g_inst->perf_staccato_count++;
+                            g_inst->perf_staccato_notes[si].raw_pitch     = 0xFF;
+                            g_inst->perf_staccato_notes[si].emitted_pitch = gpb;
+                            g_inst->perf_staccato_notes[si].track         = fx->track_idx;
+                            g_inst->perf_staccato_notes[si].fire_at       = gfire;
+                        }
+                    }
+                } else {
+                    looper_mark_active(g_inst, fx->track_idx, raw_d1, 0xFF);
+                }
+            }
             /* fall through and emit normally so capture is parallel */
         } else if (g_inst->looper_state == LOOPER_STATE_LOOPING) {
             return; /* silenced track during loop playback */
@@ -2015,11 +2056,36 @@ static void looper_tick(seq8_instance_t *inst) {
             inst->looper_pos         = 0;
             inst->looper_event_count = 0;
             inst->looper_play_idx    = 0;
+            /* Reset perf state so mods applied during CAPTURING start fresh. */
+            inst->perf_cycle_note_idx = 0;
+            inst->perf_staccato_count = 0;
         }
         return;
     }
 
     if (inst->looper_state == LOOPER_STATE_CAPTURING) {
+        /* Fire staccato/legato/phantom pending note-offs due at this position.
+         * Mirrors the LOOPING-state drain so gate-override mods (Staccato, Legato,
+         * Ramp Gate) and Phantom ghost notes work during the first capture cycle. */
+        {
+            int _si;
+            for (_si = 0; _si < (int)inst->perf_staccato_count; ) {
+                if (inst->perf_staccato_notes[_si].fire_at == (uint16_t)inst->looper_pos) {
+                    uint8_t _tr = inst->perf_staccato_notes[_si].track;
+                    uint8_t _ep = inst->perf_staccato_notes[_si].emitted_pitch;
+                    uint8_t _rp = inst->perf_staccato_notes[_si].raw_pitch;
+                    if (_tr < NUM_TRACKS) {
+                        inst->looper_emitting = 1;
+                        pfx_send(&inst->tracks[_tr].pfx,
+                                 (uint8_t)(0x80 | inst->tracks[_tr].channel), _ep, 0);
+                        inst->looper_emitting = 0;
+                    }
+                    if (_rp < 128) inst->perf_emitted_pitch[_tr][_rp] = 0xFF;
+                    inst->perf_staccato_notes[_si] =
+                        inst->perf_staccato_notes[--inst->perf_staccato_count];
+                } else { _si++; }
+            }
+        }
         inst->looper_pos++;
         if (inst->looper_pos >= cap) {
             inst->looper_state    = LOOPER_STATE_LOOPING;
