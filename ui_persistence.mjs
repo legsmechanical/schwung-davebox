@@ -13,6 +13,94 @@ export function uuidToUiStatePath(uuid) {
         : '/data/UserData/schwung/seq8-ui-state.json';
 }
 
+const NAME_INDEX_PATH = '/data/UserData/schwung/seq8_name_index.json';
+const SET_STATE_DIR   = '/data/UserData/schwung/set_state';
+const ACTIVE_SET_PATH = '/data/UserData/schwung/active_set.txt';
+
+/* Read /data/UserData/schwung/active_set.txt: line 1 = UUID, line 2 = name. */
+export function readActiveSet() {
+    if (typeof host_read_file !== 'function') return { uuid: '', name: '' };
+    try {
+        const raw = host_read_file(ACTIVE_SET_PATH);
+        if (!raw) return { uuid: '', name: '' };
+        const lines = raw.split('\n');
+        return {
+            uuid: (lines[0] || '').trim(),
+            name: (lines[1] || '').trim()
+        };
+    } catch (e) {
+        return { uuid: '', name: '' };
+    }
+}
+
+/* Move's Copy/Paste appends " Copy" (first) or " Copy N" (subsequent) to the
+ * inner set folder name. Strip one level; returns null if no suffix matched. */
+export function stripCopySuffix(name) {
+    const m = (name || '').match(/^(.*?)\s+Copy(?:\s+\d+)?\s*$/);
+    return m ? m[1].trimEnd() : null;
+}
+
+/* Lazy-loaded name -> uuid map; survives across saves via S.nameIndexCache. */
+export function loadNameIndex() {
+    if (typeof host_read_file !== 'function') return {};
+    if (typeof host_file_exists === 'function' && !host_file_exists(NAME_INDEX_PATH))
+        return {};
+    try {
+        const raw = host_read_file(NAME_INDEX_PATH);
+        if (!raw) return {};
+        const obj = JSON.parse(raw);
+        return (obj && typeof obj === 'object') ? obj : {};
+    } catch (e) {
+        return {};
+    }
+}
+
+export function saveNameIndex(idx) {
+    if (typeof host_write_file !== 'function') return false;
+    return host_write_file(NAME_INDEX_PATH, JSON.stringify(idx));
+}
+
+/* Copy seq8-state.json + seq8-ui-state.json from one UUID folder to another.
+ * Used on first launch in a freshly-pasted Move set so the duplicate inherits
+ * the source's SEQ8 state. Returns true if the state file was copied. */
+export function copyStateFiles(srcUuid, dstUuid) {
+    if (!srcUuid || !dstUuid) return false;
+    if (typeof host_read_file !== 'function' || typeof host_write_file !== 'function')
+        return false;
+    if (typeof host_file_exists !== 'function') return false;
+    const srcSt = uuidToStatePath(srcUuid);
+    if (!host_file_exists(srcSt)) return false;
+    if (typeof host_ensure_dir === 'function')
+        host_ensure_dir(SET_STATE_DIR + '/' + dstUuid);
+    const stContents = host_read_file(srcSt);
+    if (!stContents) return false;
+    host_write_file(uuidToStatePath(dstUuid), stContents);
+    const srcUi = uuidToUiStatePath(srcUuid);
+    if (host_file_exists(srcUi)) {
+        const uiContents = host_read_file(srcUi);
+        if (uiContents) host_write_file(uuidToUiStatePath(dstUuid), uiContents);
+    }
+    return true;
+}
+
+/* Walk the index searching for an ancestor whose state exists. Recursively
+ * strips ` Copy[ N]` suffixes (max 4 levels) to handle chained duplicates. */
+export function findInheritSource(currentName, idx) {
+    let name = currentName, depth = 0;
+    while (depth < 4) {
+        const base = stripCopySuffix(name);
+        if (!base) return null;
+        const candidateUuid = idx[base];
+        if (candidateUuid && typeof host_file_exists === 'function'
+                && host_file_exists(uuidToStatePath(candidateUuid))) {
+            return { uuid: candidateUuid, name: base };
+        }
+        name = base;
+        depth++;
+    }
+    return null;
+}
+
 export function showActionPopup(...lines) {
     S.actionPopupHighlight = -1;
     S.actionPopupLines   = lines;

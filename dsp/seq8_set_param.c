@@ -513,6 +513,50 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
 
+    /* Walk /data/UserData/schwung/set_state/ and remove seq8-state.json +
+     * seq8-ui-state.json for any UUID-named subdir whose corresponding Move
+     * set folder no longer exists. Leaves Schwung core's master_fx_*.json,
+     * shadow_chain_config.json, slot_*.json untouched. */
+    if (!strcmp(key, "prune_orphan_states")) {
+        DIR *d = opendir("/data/UserData/schwung/set_state");
+        if (!d) { seq8_ilog(inst, "SEQ8 prune: opendir failed"); return; }
+        struct dirent *de;
+        char buf[256];
+        int scanned = 0, removed = 0;
+        while ((de = readdir(d)) != NULL) {
+            const char *n = de->d_name;
+            /* UUID format: 8-4-4-4-12 hex chars with hyphens at fixed positions. */
+            if (strlen(n) != 36) continue;
+            if (n[8] != '-' || n[13] != '-' || n[18] != '-' || n[23] != '-') continue;
+            int hex_ok = 1, _i;
+            for (_i = 0; _i < 36 && hex_ok; _i++) {
+                if (_i == 8 || _i == 13 || _i == 18 || _i == 23) continue;
+                char c = n[_i];
+                if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')))
+                    hex_ok = 0;
+            }
+            if (!hex_ok) continue;
+            scanned++;
+            snprintf(buf, sizeof(buf), "/data/UserData/UserLibrary/Sets/%s", n);
+            struct stat st;
+            if (stat(buf, &st) == 0) continue;
+            snprintf(buf, sizeof(buf), "/data/UserData/schwung/set_state/%s/seq8-state.json", n);
+            int u1 = unlink(buf);
+            snprintf(buf, sizeof(buf), "/data/UserData/schwung/set_state/%s/seq8-ui-state.json", n);
+            int u2 = unlink(buf);
+            snprintf(buf, sizeof(buf), "/data/UserData/schwung/set_state/%s", n);
+            rmdir(buf);  /* silently fails if other module's files remain */
+            if (u1 == 0 || u2 == 0) removed++;
+        }
+        closedir(d);
+        {
+            char log[96];
+            snprintf(log, sizeof(log), "SEQ8 prune: scanned=%d removed=%d", scanned, removed);
+            seq8_ilog(inst, log);
+        }
+        return;
+    }
+
     if (!strcmp(key, "state_path")) {
         strncpy(inst->state_path, val, sizeof(inst->state_path) - 1);
         inst->state_path[sizeof(inst->state_path) - 1] = '\0';

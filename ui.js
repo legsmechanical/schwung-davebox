@@ -79,7 +79,7 @@ import {
 } from '/data/UserData/schwung/modules/tools/seq8/ui_constants.mjs';
 
 import { S, CC_ASSIGN_DEFAULTS, PERF_FACTORY_PRESETS } from '/data/UserData/schwung/modules/tools/seq8/ui_state.mjs';
-import { saveState, doClearSession, showActionPopup, uuidToStatePath, uuidToUiStatePath } from '/data/UserData/schwung/modules/tools/seq8/ui_persistence.mjs';
+import { saveState, doClearSession, showActionPopup, uuidToStatePath, uuidToUiStatePath, readActiveSet, loadNameIndex, saveNameIndex, copyStateFiles, findInheritSource } from '/data/UserData/schwung/modules/tools/seq8/ui_persistence.mjs';
 import { drawGlobalMenu } from '/data/UserData/schwung/modules/tools/seq8/ui_dialogs.mjs';
 import { trackClipHasContent, sceneAllQueued, updateSceneMapLEDs } from '/data/UserData/schwung/modules/tools/seq8/ui_scene.mjs';
 import { effectiveClip, updateStepLEDs, updateSessionLEDs, updateTrackLEDs, flashAtRate, drawPositionBar, invalidateLEDCache } from '/data/UserData/schwung/modules/tools/seq8/ui_leds.mjs';
@@ -1720,10 +1720,23 @@ function pollDSP() {
     /* Deferred DSP state save: fetch state_full (DSP serializes only when dirty) */
     if (typeof host_write_file === 'function' && S.currentSetUuid) {
         const _st = host_module_get_param('state_full');
-        if (_st && _st.length > 2)
+        if (_st && _st.length > 2) {
             host_write_file(uuidToStatePath(S.currentSetUuid), _st);
+            updateNameIndex();
+        }
     }
 
+}
+
+/* Refresh name -> uuid mapping after any successful save so that future
+ * duplicates of this set can inherit its state. In-memory cache; disk write
+ * happens on suspend, deferred-save, and clear-session. */
+function updateNameIndex() {
+    if (!S.currentSetUuid || !S.currentSetName) return;
+    if (!S.nameIndexCache) S.nameIndexCache = loadNameIndex();
+    if (S.nameIndexCache[S.currentSetName] === S.currentSetUuid) return;
+    S.nameIndexCache[S.currentSetName] = S.currentSetUuid;
+    saveNameIndex(S.nameIndexCache);
 }
 
 /* Reset NOTE FX, HARMZ, and MIDI DLY banks to DSP defaults for track t.
@@ -2792,15 +2805,17 @@ function fmtHex(b) {
 /* Lifecycle                                                            */
 /* ------------------------------------------------------------------ */
 
-function readActiveSetUuid() {
-    try {
-        const raw = (typeof host_read_file === 'function')
-            ? host_read_file('/data/UserData/schwung/active_set.txt') : null;
-        if (!raw) return '';
-        return raw.split('\n')[0].trim();
-    } catch (e) {
-        return '';
-    }
+/* Probe for a freshly-pasted Move set: if no state file at the current UUID
+ * but the set name has a " Copy[ N]" suffix, seed it from the source set's
+ * state via the name index. Returns true if state was inherited. */
+function tryInheritFromSource(uuid, name) {
+    if (!uuid || !name) return false;
+    if (typeof host_file_exists !== 'function') return false;
+    if (host_file_exists(uuidToStatePath(uuid))) return false;
+    const idx = S.nameIndexCache || (S.nameIndexCache = loadNameIndex());
+    const src = findInheritSource(name, idx);
+    if (!src) return false;
+    return copyStateFiles(src.uuid, uuid);
 }
 
 function restoreUiSidecar(applyDefaultsNow) {
@@ -3029,18 +3044,32 @@ globalThis.init = function () {
     /* Detect set mismatch: compare active_set.txt UUID with what the DSP currently has loaded.
      * Works regardless of JS context lifetime — no cross-init state needed.
      * If they differ, DSP has old set's data: save it, then load the active set. */
-    S.currentSetUuid = readActiveSetUuid();
+    {
+        const _as = readActiveSet();
+        S.currentSetUuid = _as.uuid;
+        S.currentSetName = _as.name;
+    }
+    /* Seed state from source set if this is a freshly-pasted Move duplicate
+     * (no state file yet + name has " Copy[ N]" suffix matching the index).
+     * Force pendingSetLoad on success: create_instance already called
+     * seq8_load_state with the (then-empty) duplicate path; DSP needs to
+     * reload from the now-seeded file. */
+    const inheritedState = tryInheritFromSource(S.currentSetUuid, S.currentSetName);
     const currentDspNonce = (typeof host_module_get_param === 'function')
         ? host_module_get_param('instance_id') : null;
     const dspUuid = (typeof host_module_get_param === 'function')
         ? (host_module_get_param('state_uuid') || '') : '';
     if (currentDspNonce) S.lastDspInstanceId = currentDspNonce;
-    if (S.currentSetUuid && dspUuid !== S.currentSetUuid) {
+    if (inheritedState) {
+        S.pendingSetLoad = true;
+    } else if (S.currentSetUuid && dspUuid !== S.currentSetUuid) {
         S.pendingSetLoad = true;
     } else if (S.currentSetUuid && typeof host_file_exists === 'function') {
         const sp = '/data/UserData/schwung/set_state/' + S.currentSetUuid + '/seq8-state.json';
         if (!host_file_exists(sp)) S.pendingSetLoad = true;
     }
+    /* Schedule orphan prune for the next quiet tick (after state_load settles). */
+    S.pendingPruneOrphans = true;
 
     if (typeof host_module_get_param === 'function') {
         S.playing = dspSurvived;
@@ -3155,11 +3184,14 @@ globalThis.tick = function () {
         S.heldStep  = -1;    S.heldStepBtn = -1; S.heldStepNotes = [];
         S.stepWasEmpty = false; S.stepWasHeld = false;
         /* Check if the active set changed while we were parked. */
-        const _resumeUuid = readActiveSetUuid();
+        const _as = readActiveSet();
         const _dspUuid = (typeof host_module_get_param === 'function')
             ? (host_module_get_param('state_uuid') || '') : '';
-        if (_resumeUuid && _dspUuid !== _resumeUuid) {
-            S.currentSetUuid = _resumeUuid;
+        if (_as.uuid && _dspUuid !== _as.uuid) {
+            S.currentSetUuid = _as.uuid;
+            S.currentSetName = _as.name;
+            /* Return value unused: pendingSetLoad already true regardless */
+            tryInheritFromSource(_as.uuid, _as.name);
             S.pendingSetLoad = true;
         }
         S.ledInitComplete = false;
@@ -3916,7 +3948,30 @@ globalThis.tick = function () {
     /* Suspend save: fires last so no subsequent set_param can overwrite it. */
     if (S.pendingSuspendSave && typeof host_module_set_param === 'function') {
         S.pendingSuspendSave = false;
+        updateNameIndex();
         host_module_set_param('save', '1');
+    }
+
+    /* Orphan prune: clean up set_state/<uuid>/seq8-*.json for sets that no
+     * longer exist on disk. Defer until any state_load + initial sync settles
+     * so the prune set_param doesn't collide with state_load coalescing. */
+    if (S.pendingPruneOrphans && !S.pendingSetLoad && S.pendingDspSync === 0 &&
+            typeof host_module_set_param === 'function') {
+        S.pendingPruneOrphans = false;
+        host_module_set_param('prune_orphan_states', '1');
+        /* Drop stale entries from the in-memory index so subsequent inheritance
+         * lookups don't find UUIDs whose state file is about to be removed. */
+        if (!S.nameIndexCache) S.nameIndexCache = loadNameIndex();
+        let _dropped = false;
+        for (const _nm in S.nameIndexCache) {
+            const _u = S.nameIndexCache[_nm];
+            if (_u && typeof host_file_exists === 'function'
+                    && !host_file_exists(uuidToStatePath(_u))) {
+                delete S.nameIndexCache[_nm];
+                _dropped = true;
+            }
+        }
+        if (_dropped) saveNameIndex(S.nameIndexCache);
     }
 
     if (S.screenDirty && !isSuspended) { S.screenDirty = false; drawUI(); }
