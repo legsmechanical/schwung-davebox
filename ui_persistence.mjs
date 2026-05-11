@@ -83,22 +83,40 @@ export function copyStateFiles(srcUuid, dstUuid) {
     return true;
 }
 
-/* Walk the index searching for an ancestor whose state exists. Recursively
- * strips ` Copy[ N]` suffixes (max 4 levels) to handle chained duplicates. */
-export function findInheritSource(currentName, idx) {
-    let name = currentName, depth = 0;
-    while (depth < 4) {
-        const base = stripCopySuffix(name);
-        if (!base) return null;
-        const candidateUuid = idx[base];
-        if (candidateUuid && typeof host_file_exists === 'function'
-                && host_file_exists(uuidToStatePath(candidateUuid))) {
-            return { uuid: candidateUuid, name: base };
-        }
-        name = base;
-        depth++;
+function escapeForRegex(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const SETS_BASE_DIR = '/data/UserData/UserLibrary/Sets';
+
+/* All known family members whose state file AND backing Move set still
+ * exist, for the inherit picker. Family = the suffix-stripped base name
+ * OR base + " Copy [N]". Sorted: base name first, then by length, then
+ * alpha. Excludes the currently-active set itself so the picker never
+ * offers a no-op. Skipping deleted Move sets keeps the picker honest —
+ * the state file may linger on disk if the orphan prune hasn't run yet. */
+export function findInheritCandidates(currentName, idx) {
+    const base = stripCopySuffix(currentName);
+    if (!base) return [];
+    if (typeof host_file_exists !== 'function') return [];
+    const famRe = new RegExp('^' + escapeForRegex(base) + '(?:\\s+Copy(?:\\s+\\d+)?)?$');
+    const out = [];
+    for (const name in idx) {
+        if (name === currentName) continue;
+        if (!famRe.test(name)) continue;
+        const uuid = idx[name];
+        if (!uuid) continue;
+        if (!host_file_exists(uuidToStatePath(uuid))) continue;
+        if (!host_file_exists(SETS_BASE_DIR + '/' + uuid)) continue;
+        out.push({ uuid: uuid, name: name });
     }
-    return null;
+    out.sort(function(a, b) {
+        if (a.name === base) return -1;
+        if (b.name === base) return 1;
+        if (a.name.length !== b.name.length) return a.name.length - b.name.length;
+        return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0);
+    });
+    return out;
 }
 
 export function showActionPopup(...lines) {

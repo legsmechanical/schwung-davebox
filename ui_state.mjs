@@ -256,6 +256,7 @@ export const S = {
     pendingSuspendSave: false,
     pendingPruneOrphans: false,
     nameIndexCache: null,    /* { name: uuid } map, lazy-loaded on first save */
+    pendingInheritPicker: null,  /* { dstUuid, dstName, candidates: [{uuid,name}], selectedIndex } when picker is open */
     pendingUndoSync: 0,
     pendingDefaultSetParams: [],
     pendingStepsReread: 0,

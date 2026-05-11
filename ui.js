@@ -79,7 +79,7 @@ import {
 } from '/data/UserData/schwung/modules/tools/seq8/ui_constants.mjs';
 
 import { S, CC_ASSIGN_DEFAULTS, PERF_FACTORY_PRESETS } from '/data/UserData/schwung/modules/tools/seq8/ui_state.mjs';
-import { saveState, doClearSession, showActionPopup, uuidToStatePath, uuidToUiStatePath, readActiveSet, loadNameIndex, saveNameIndex, copyStateFiles, findInheritSource } from '/data/UserData/schwung/modules/tools/seq8/ui_persistence.mjs';
+import { saveState, doClearSession, showActionPopup, uuidToStatePath, uuidToUiStatePath, readActiveSet, loadNameIndex, saveNameIndex, copyStateFiles, findInheritCandidates } from '/data/UserData/schwung/modules/tools/seq8/ui_persistence.mjs';
 import { drawGlobalMenu } from '/data/UserData/schwung/modules/tools/seq8/ui_dialogs.mjs';
 import { trackClipHasContent, sceneAllQueued, updateSceneMapLEDs } from '/data/UserData/schwung/modules/tools/seq8/ui_scene.mjs';
 import { effectiveClip, updateStepLEDs, updateSessionLEDs, updateTrackLEDs, flashAtRate, drawPositionBar, invalidateLEDCache } from '/data/UserData/schwung/modules/tools/seq8/ui_leds.mjs';
@@ -1146,6 +1146,48 @@ function drawBakeConfirm() {
     }
 }
 
+
+function drawInheritPicker() {
+    clear_screen();
+    const p = S.pendingInheritPicker;
+    if (!p) return;
+    /* Header (two preamble lines + title wrapped to two lines; Move display
+     * is 128px wide which only fits ~21 chars at the standard 6px/char font).
+     * Tight 8-9px line stride to leave room for the list below. */
+    print(2, 2,  'Copied Move set', 1);
+    print(2, 10, 'detected',        1);
+    fill_rect(0, 18, 128, 1, 1);
+    print(2, 20, 'Inherit dAVEBOx', 1);
+    print(2, 28, 'state from?',     1);
+    fill_rect(0, 36, 128, 1, 1);
+
+    /* List: candidates + 'Start blank' sentinel. Scroll window of 3 around
+     * the selected index so 4+ entries still fit. Selection inverts the
+     * line; arrows hint at off-screen items. */
+    const total = p.candidates.length + 1;
+    const visible = 3;
+    const sel = p.selectedIndex;
+    let top = Math.max(0, Math.min(sel - 1, total - visible));
+    if (total <= visible) top = 0;
+    const lineH = 9;
+    const listTopY = 39;
+    for (let i = 0; i < visible && (top + i) < total; i++) {
+        const idx = top + i;
+        const y = listTopY + i * lineH;
+        const isBlank = (idx === p.candidates.length);
+        const label = isBlank ? 'Start blank' : p.candidates[idx].name;
+        const truncated = label.length > 20 ? label.substring(0, 19) + '…' : label;
+        if (idx === sel) {
+            fill_rect(2, y - 1, 124, lineH - 1, 1);
+            print(5, y, truncated, 0);
+        } else {
+            print(5, y, truncated, 1);
+        }
+    }
+    /* Scroll indicators */
+    if (top > 0)               print(120, listTopY, '^', 1);
+    if (top + visible < total) print(120, listTopY + (visible - 1) * lineH, 'v', 1);
+}
 
 function drawBakeSceneConfirm() {
     clear_screen();
@@ -2314,6 +2356,7 @@ function drawPerfModeOled() {
 
 function drawUI() {
     if (S.sessionOverlayHeld) { drawSessionOverview(); return; }
+    if (S.pendingInheritPicker) { drawInheritPicker(); return; }
     if (S.confirmBakeScene) { drawBakeSceneConfirm(); return; }
     if (S.confirmBake) { drawBakeConfirm(); return; }
     if (S.globalMenuOpen || S.tapTempoOpen) { drawGlobalMenu(); return; }
@@ -2805,17 +2848,50 @@ function fmtHex(b) {
 /* Lifecycle                                                            */
 /* ------------------------------------------------------------------ */
 
-/* Probe for a freshly-pasted Move set: if no state file at the current UUID
- * but the set name has a " Copy[ N]" suffix, seed it from the source set's
- * state via the name index. Returns true if state was inherited. */
-function tryInheritFromSource(uuid, name) {
-    if (!uuid || !name) return false;
-    if (typeof host_file_exists !== 'function') return false;
-    if (host_file_exists(uuidToStatePath(uuid))) return false;
+/* Inherit-picker entry. On first launch in a freshly-pasted Move duplicate
+ * (Copy-suffixed name + no canonical state file), check the name index for
+ * family members and either auto-inherit (one candidate) or show a picker
+ * dialog (two or more). Returns one of:
+ *   'auto'   — silently inherited from the single candidate
+ *   'picker' — dialog opened, S.pendingInheritPicker set
+ *   'blank'  — nothing to inherit; let normal flow proceed */
+function maybeShowInheritPicker(uuid, name) {
+    if (!uuid || !name) return 'blank';
+    if (typeof host_file_exists !== 'function') return 'blank';
+    if (host_file_exists(uuidToStatePath(uuid))) return 'blank';
     const idx = S.nameIndexCache || (S.nameIndexCache = loadNameIndex());
-    const src = findInheritSource(name, idx);
-    if (!src) return false;
-    return copyStateFiles(src.uuid, uuid);
+    const candidates = findInheritCandidates(name, idx);
+    if (candidates.length === 0) return 'blank';
+    if (candidates.length === 1) {
+        copyStateFiles(candidates[0].uuid, uuid);
+        return 'auto';
+    }
+    S.pendingInheritPicker = {
+        dstUuid: uuid,
+        dstName: name,
+        candidates: candidates,
+        selectedIndex: 0
+    };
+    S.screenDirty = true;
+    return 'picker';
+}
+
+/* Resolve the inherit picker: action is either the candidates index to
+ * inherit from, or -1 for "Start blank". Always trigger pendingSetLoad
+ * so DSP runs its state_load handler — which both resets the internal
+ * state (clip_init, drum_track_init, etc.) and reads the canonical file.
+ * For "Start blank" the file is missing on purpose; the reset alone gives
+ * a clean slate. For inherit, we copy the source's state files first so
+ * the load reads the seeded content. */
+function resolveInheritPicker(action) {
+    const p = S.pendingInheritPicker;
+    if (!p) return;
+    if (action >= 0 && action < p.candidates.length) {
+        copyStateFiles(p.candidates[action].uuid, p.dstUuid);
+    }
+    S.pendingSetLoad = true;
+    S.pendingInheritPicker = null;
+    S.screenDirty = true;
 }
 
 function restoreUiSidecar(applyDefaultsNow) {
@@ -3049,19 +3125,23 @@ globalThis.init = function () {
         S.currentSetUuid = _as.uuid;
         S.currentSetName = _as.name;
     }
-    /* Seed state from source set if this is a freshly-pasted Move duplicate
-     * (no state file yet + name has " Copy[ N]" suffix matching the index).
+    /* Inherit-picker decision tree for a freshly-pasted Move duplicate.
+     * 'auto'   — single family candidate, silently inherited; force pendingSetLoad.
+     * 'picker' — multiple candidates; dialog open, state_load is deferred.
+     * 'blank'  — no candidates; fall through to normal mismatch/exists checks.
      * Force pendingSetLoad on success: create_instance already called
      * seq8_load_state with the (then-empty) duplicate path; DSP needs to
      * reload from the now-seeded file. */
-    const inheritedState = tryInheritFromSource(S.currentSetUuid, S.currentSetName);
+    const inheritResult = maybeShowInheritPicker(S.currentSetUuid, S.currentSetName);
     const currentDspNonce = (typeof host_module_get_param === 'function')
         ? host_module_get_param('instance_id') : null;
     const dspUuid = (typeof host_module_get_param === 'function')
         ? (host_module_get_param('state_uuid') || '') : '';
     if (currentDspNonce) S.lastDspInstanceId = currentDspNonce;
-    if (inheritedState) {
+    if (inheritResult === 'auto') {
         S.pendingSetLoad = true;
+    } else if (inheritResult === 'picker') {
+        /* state_load deferred until resolveInheritPicker fires */
     } else if (S.currentSetUuid && dspUuid !== S.currentSetUuid) {
         S.pendingSetLoad = true;
     } else if (S.currentSetUuid && typeof host_file_exists === 'function') {
@@ -3190,9 +3270,11 @@ globalThis.tick = function () {
         if (_as.uuid && _dspUuid !== _as.uuid) {
             S.currentSetUuid = _as.uuid;
             S.currentSetName = _as.name;
-            /* Return value unused: pendingSetLoad already true regardless */
-            tryInheritFromSource(_as.uuid, _as.name);
-            S.pendingSetLoad = true;
+            /* If multiple family candidates, picker opens and state_load is
+             * deferred. Otherwise pendingSetLoad is fine to set immediately
+             * since the auto-inherit branch (or blank branch) is already done. */
+            const _r = maybeShowInheritPicker(_as.uuid, _as.name);
+            if (_r !== 'picker') S.pendingSetLoad = true;
         }
         S.ledInitComplete = false;
         invalidateLEDCache();
@@ -3308,8 +3390,10 @@ globalThis.tick = function () {
     }
 
 
-    /* Set change detected in init(): send UUID so DSP constructs path and loads. */
-    if (S.pendingSetLoad && typeof host_module_set_param === 'function') {
+    /* Set change detected in init(): send UUID so DSP constructs path and loads.
+     * Suppressed while the inherit picker is open — state_load fires only
+     * after the user picks a source (or "Start blank"). */
+    if (S.pendingSetLoad && !S.pendingInheritPicker && typeof host_module_set_param === 'function') {
         S.pendingSetLoad = false;
         S.stateLoading = true;
         disarmRecord();
@@ -3984,6 +4068,13 @@ globalThis.tick = function () {
 
 function _onCC_jog(d1, d2) {
     if (S.shiftTrackLEDActive) { S.shiftTrackLEDActive = false; S.screenDirty = true; }
+    /* Inherit picker: jog click confirms selection (-1 = Start blank). */
+    if (d1 === 3 && d2 === 127 && S.pendingInheritPicker) {
+        const p = S.pendingInheritPicker;
+        const action = (p.selectedIndex === p.candidates.length) ? -1 : p.selectedIndex;
+        resolveInheritPicker(action);
+        return;
+    }
     /* Scene bake confirm: jog click confirms/cancels */
     if (d1 === 3 && d2 === 127 && S.confirmBakeScene) {
         if (S.confirmBakeSceneSel > 0) {
@@ -4189,6 +4280,16 @@ function _onCC_jog(d1, d2) {
 
     if (d1 === MoveMainKnob) {
 
+        if (S.pendingInheritPicker) {
+            const delta = decodeDelta(d2);
+            if (delta !== 0) {
+                const p = S.pendingInheritPicker;
+                const total = p.candidates.length + 1;
+                p.selectedIndex = (p.selectedIndex + (delta > 0 ? 1 : total - 1)) % total;
+                S.screenDirty = true;
+            }
+            return;
+        }
         if (S.confirmBakeScene) {
             const delta = decodeDelta(d2);
             if (delta !== 0) {
@@ -4780,7 +4881,10 @@ function _onCC_transport(d1, d2) {
     if (d1 === MoveSample && d2 === 127 && !S.shiftHeld) {
         S.sampleHeld           = true;
         S.sampleUsedAsModifier = false;
-        if (S.confirmBakeScene) {
+        if (S.pendingInheritPicker) {
+            resolveInheritPicker(-1);  /* Cancel = Start blank */
+            S.sampleUsedAsModifier = true;
+        } else if (S.confirmBakeScene) {
             S.confirmBakeScene     = false;
             S.sampleUsedAsModifier = true;
             forceRedraw();
