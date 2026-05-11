@@ -30,6 +30,7 @@ Read the relevant section before working on a feature area. Use `offset`/`limit`
 - [Bake](#bake)
 - [Live Merge](#live-merge)
 - [Suspend / Resume](#suspend--resume)
+- [Set state inheritance & cleanup](#set-state-inheritance--cleanup)
 - [Perf Mode](#perf-mode)
 - [Global MIDI Looper](#global-midi-looper)
 - [Hardware reference](#hardware-reference)
@@ -340,6 +341,27 @@ Back=suspend (sequencer keeps playing in background); Shift+Step13=resume (doubl
 **Set change while suspended**: on resume edge (`!isSuspended && S._wasSuspended`), `active_set.txt` UUID compared against DSP `state_uuid`; mismatch triggers `S.pendingSetLoad`. After `pendingDspSync` resync completes, `restoreUiSidecar(true)` re-applies the new set's sidecar. **SESSION LOADING...** OLED overlay shown while `S.stateLoading` is true.
 
 `installFlagsWrap` must be removed on suspend so `JUMP_TO_TOOLS` flag reaches shadow_ui for resume.
+
+---
+
+## Set state inheritance & cleanup
+
+**Storage layout.** SEQ8 state lives entirely under `/data/UserData/schwung/`; never under Move's `UserLibrary/Sets/`. Two files per set at `set_state/<uuid>/seq8-state.json` (DSP) and `set_state/<uuid>/seq8-ui-state.json` (UI sidecar). A name-index file `seq8_name_index.json` (top-level under `schwung/`) maps `{ <set name>: <uuid> }` and is refreshed in `updateNameIndex()` after every deferred-save and suspend-save tail. **No writes happen inside Move's set folders** — duplication is detected via name suffix, not piggybacked on Move's file copy. This decoupling means Move firmware changes to the Sets-folder layout cannot break SEQ8 state inheritance.
+
+**Duplicate detection (init / resume).** `maybeShowInheritPicker(uuid, name)` runs from `init()` and from the resume-edge path after a set switch. Trigger conditions: name has trailing ` Copy` or ` Copy N` (regex in `stripCopySuffix`), AND no canonical state file at the current UUID. Returns `'auto' | 'picker' | 'blank'`:
+- `'auto'` — exactly one family candidate; silently copy its state files via `copyStateFiles`, force `S.pendingSetLoad = true` so DSP reloads (`create_instance` had already called `seq8_load_state` with the then-empty path).
+- `'picker'` — two-plus candidates; `S.pendingInheritPicker = { dstUuid, dstName, candidates, selectedIndex }` opens the dialog. `pendingSetLoad` is **gated** on `!pendingInheritPicker` so `state_load` is deferred until the user resolves.
+- `'blank'` — no candidates; fall through to normal flow.
+
+**Family regex.** `^<escapedBase>(?:\s+Copy(?:\s+\d+)?)?$` — matches `<base>`, `<base> Copy`, `<base> Copy N`. Excludes the active duplicate itself. Candidates also filtered by `host_file_exists(/data/UserData/UserLibrary/Sets/<uuid>)` so deleted Move sets never appear. Sort: base name first, then by length, then alpha.
+
+**Picker dialog.** `drawInheritPicker()` in `ui.js` (dispatched first in `drawUI()`, before `confirmBakeScene`). Two-stage header — `Copied Move set / detected` preamble + `Inherit dAVEBOx / state from?` title — above a scrollable 3-row list (`listTopY=39`, `lineH=9`). Items: each candidate's display name + a `Start blank` sentinel. Selected line inverts; `^` and `v` indicate off-screen items. Jog wheel rotates `selectedIndex` (mod total); jog click invokes `resolveInheritPicker(action)`. Sample button cancels = action `-1` (blank).
+
+**Resolution always fires `pendingSetLoad`** — including for `Start blank`. The DSP `state_load` handler resets internal arrays (`clip_init`, `drum_track_init`, etc.) *before* attempting to read the file; with no file, the reset alone produces a clean slate. Without firing state_load, DSP would retain the previously-active set's data (this was the original "Start blank doesn't start blank" bug, fixed in `da7675e`).
+
+**Orphan cleanup.** DSP handler `prune_orphan_states` (`seq8_set_param.c`) opens `/data/UserData/schwung/set_state/`, validates UUID-shaped dir names, and for each whose `/data/UserData/UserLibrary/Sets/<uuid>/` is missing, `unlink`s `seq8-state.json` + `seq8-ui-state.json` and tries `rmdir` (silently fails when Schwung-core files remain — those are not our concern). Triggered from JS via `S.pendingPruneOrphans = true` (set in `init()`) → fires once after `state_load` settles (`pendingDspSync === 0`). Log line: `SEQ8 prune: scanned=N removed=N`.
+
+**Commits.** `fa44865` (root-only auto-inherit + name index + DSP prune handler) and `da7675e` (picker dialog + dead-Move-set filter + `Start blank` reset fix).
 
 ---
 

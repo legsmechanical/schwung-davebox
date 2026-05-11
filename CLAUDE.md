@@ -41,6 +41,8 @@ JS `init()` reads UUID, compares with `state_uuid` get_param. Mismatch → `stat
 
 UI sidecar (`seq8-ui-state.json`): v=3; written on suspend/Quit/Shift+Back; wiped on Clear Session. Deferred save: handlers set `inst->state_dirty = 1`; JS `pollDSP()` writes via `host_write_file` when dirty. Suspend: sidecar written immediately, `set_param('save')` deferred to end of tick() via `S.pendingSuspendSave`.
 
+Set-duplicate inheritance: when init detects a Copy-suffixed name + missing state file, `maybeShowInheritPicker` looks up family candidates in `seq8_name_index.json` and either auto-inherits (1 candidate), opens the dialog (2+), or starts blank (0). Details in `docs/FEATURE_REFERENCE.md` → *Set state inheritance & cleanup*. DSP-side `prune_orphan_states` handler cleans up `seq8-*.json` files for deleted Move sets on every launch.
+
 ## Critical constraints
 
 - **Coalescing**: only the LAST `set_param` per audio buffer reaches DSP. `shadow_send_midi_to_dsp` shares the same delivery channel and also coalesces. In `onMidiMessage`, if both fire, the set_param is lost. Defer set_params to tick() via a pending variable (see `pendingRepeatLane` pattern). Multi-field operations require a single atomic DSP command.
