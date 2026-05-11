@@ -64,6 +64,7 @@ shadow_ui runs QuickJS, not V8. Node.js `--check` is NOT a reliable validator.
 ## JS internals
 
 - **Two-tick deferred pattern** (`_toggle` / `_set_notes`): `_toggle` tick N activates step; `_set_notes` tick N+1 writes chord/notes. Phase-2 check must precede phase-1 in tick() to prevent same-tick coalescing. `_set_notes` is a no-op on empty steps — activate first.
+- **Count-in preroll chord capture**: `pendingPrerollNotes[]` (ui_state.mjs) accumulates all chord notes pressed during count-in on melodic tracks. At flush (all notes released + 1 step elapsed after transport start): first note fires `step_0_toggle`; remaining notes drain via `pendingPrerollToggleQueue` — one `step_0_toggle` per tick, last entry sets `pendingPrerollGate`. Drum preroll uses separate `pendingPrerollNote` (single object, unchanged).
 - `pendingDrumResync` deferred 2 ticks after drum clip switch — `tN_lL_steps` reads active_clip implicitly; must wait for `tN_launch_clip` to process.
 - `pendingStepsReread` 2 ticks after `_reassign`/`_copy_to`.
 - `pollDSP` overwrites `trackActiveClip[t]` when playing; change triggers `refreshPerClipBankParams(t)` + drum resync.
