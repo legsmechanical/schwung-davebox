@@ -862,7 +862,7 @@ Use the **Loop** button (in Session View):
 |---|---|
 | Tap Loop | **Lock** perf mode — persists hands-free. Loop blinks at 1/8-note rate. |
 | Hold Loop | **Temporary** — pads active while held, exits on release. |
-| Shift + Loop | Toggle latch mode (mod pads toggle on/off rather than momentary). |
+| Shift + Loop *or* tap **Latch** pad (R0-8) | Toggle latch mode. Toggling latch only changes how mod pads behave (sticky vs momentary) — it does **not** wipe currently active mods. |
 
 While Loop is held to enter, press a **step button** to set the **capture length**:
 
@@ -895,7 +895,12 @@ While Performance Mode is active (locked, held, or latched), the pad grid become
    R0 (bottom) length / hold / sync / latch — see below
 ```
 
-All active mods (held + latched + recalled presets) layer simultaneously.
+Mods come from two sources that layer simultaneously:
+
+- **Sticky mods** — set by latch-mode taps and by recalling a preset. Persist until you toggle them off (or recall a different preset, which replaces sticky mods with the preset's bits).
+- **Momentary mods** — held with the mod pad while latch is off. Released when the pad is released.
+
+**Pressing a mod pad whose LED is lit always clears that bit**, regardless of latch mode. This means you can take a recalled preset and dial individual mods off by tapping their pads.
 
 ### R0 — length and controls
 
@@ -906,9 +911,11 @@ All active mods (held + latched + recalled presets) layer simultaneously.
 | 3 | 1/8 capture |
 | 4 | 1/4 capture |
 | 5 | 1/2 bar capture |
-| 6 | **Hold** — persistent hold mode (releasing a length pad doesn't stop the loop) |
-| 7 | **Sync** — toggle clock-aligned capture. On = wait for next boundary; Off = capture starts immediately. |
-| 8 | **Latch** — toggle latch mode |
+| 6 | **Hold** — persistent hold mode (releasing a length pad doesn't stop the loop). Dim red when off, bright red when on. |
+| 7 | **Sync** — toggle clock-aligned capture. On = wait for next boundary; Off = capture starts immediately. Dim green when off, bright green when on. |
+| 8 | **Latch** — toggle latch mode (sticky vs momentary mod pads). Dark olive when off, bright green when on. |
+
+Length pads (1–5) are dark grey when idle and bright white when their rate is engaged. None of the R0 pads blink — colors are static.
 
 R0 covers 1/32 through 1/2 bar only. For 1-bar captures, use step button 6 while entering Performance Mode (Loop held).
 
@@ -959,9 +966,11 @@ In Performance Mode, step buttons 1–16 are preset slots.
 
 | Control | Behavior |
 |---|---|
-| Tap step | Recall that slot (mods layer on top of held/latched) |
-| Hold step ~0.75s | Save current mod state to slot (step double-blinks to confirm) |
-| Delete + step | Clear that slot |
+| Tap step | Recall slot — replaces sticky mods with the preset's bits. Tap the same slot again to clear. |
+| Hold step ~0.75s | Save current mod state (sticky + held) to slot. Step double-blinks to confirm; OLED briefly shows `PERF PRESET / SAVED`. |
+| Delete + step | Clear that slot. OLED shows `PERF PRESET / CLEARED`. |
+
+After recalling a preset you can dial individual mods off by tapping their pads — preset bits become sticky in the same way latch-toggled bits are, so a single press clears them.
 
 **Steps 1–8 are factory presets:**
 
@@ -1463,7 +1472,17 @@ Below the bank header:
 
 ### Performance Mode
 
-When a mod pad is pressed, the OLED briefly shows the full mod name (e.g. `Scale Up`, `Decrescendo`). It then settles into an abbreviated list of all currently active mods.
+The OLED takes over while in Performance Mode (Loop held or perf view locked):
+
+- **Header bar (top)** — preset name when a slot is recalled (e.g. `Float`, `Robot`); otherwise `PERFORMANCE`. White-on-black inverted bar.
+- **Body** — abbreviated list of all currently active mods (sticky + held), e.g. `Oct+  Sc+  Drift  Sprs`. Up to four lines in a tiny pixel font. When no mods are active: `no mods active / tap pad to engage`.
+- **Footer chips** — three small status indicators on the left and a rate chip on the right:
+  - `Latch` — filled = latch mode on (mod pads sticky); outlined = momentary
+  - `Hold` — filled when Hold pad is engaged or any rate is sticky-held
+  - `Sync` — filled = clock-aligned capture; outlined = free capture
+  - `1/4`, `1/16`, etc. on the right — current loop rate (only when a length is engaged)
+
+Pressing a mod pad briefly replaces the body with the full mod name (e.g. `Scale Up`). Hold-saving a preset slot briefly replaces the body with `PERF PRESET / SAVED`; clearing a slot shows `PERF PRESET / CLEARED`.
 
 ### Track number row
 
@@ -1487,7 +1506,7 @@ A segmented bar at the bottom of Track View showing the clip's page structure:
 
 A dot moves across the full bar tracking the playhead. When the dot crosses the solid block, it inverts to black to remain visible.
 
-### Action pop-ups (~500 ms)
+### Action pop-ups (~520 ms)
 
 Dismissed immediately if you touch a knob or enter step edit.
 
@@ -1504,6 +1523,8 @@ Dismissed immediately if you touch a knob or enter step edit.
 | Full bank reset | CLIP PARAMS RESET |
 | Loop double | LOOP DOUBLED |
 | Loop double at max length | CLIP FULL |
+| Perf preset saved (hold step in Perf Mode) | PERF PRESET / SAVED |
+| Perf preset cleared (Delete + step in Perf Mode) | PERF PRESET / CLEARED |
 | Beat stretch blocked (no room) | NO ROOM |
 | Resolution zoom blocked | NOTES OUT OF RANGE |
 | Beat stretch compress blocked | COMPRESS LIMIT |
@@ -1657,7 +1678,8 @@ All melodic Track View controls apply except as noted below.
 | R1 pads (magenta) | Pitch mods |
 | R2 pads (yellow) | Velocity / gate mods |
 | R3 pads (cyan) | Wild mods |
-| Step (tap) | Recall preset slot |
+| Tap mod pad (lit) | Clear that mod (works in either latch state) |
+| Step (tap) | Recall preset slot — replaces sticky mods |
 | Step (hold ~0.75s) | Save current mods to slot |
 | Delete + step | Clear preset slot |
 

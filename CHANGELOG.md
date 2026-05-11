@@ -24,6 +24,7 @@ the section into a versioned heading at release time.
 
 ### Documentation
 - MANUAL.md rewritten as a comprehensive user guide; code-verified against `ui.js` / `seq8.c`
+- MANUAL.md Performance Mode + Appendix B updated for the toggleable-preset / latch-as-pure-mode-switch / new-OLED-layout behavior; new `PERF PRESET / SAVED` and `PERF PRESET / CLEARED` action pop-ups documented
 - README maintained on GitHub directly (pre-commit hook blocks local commits)
 
 ## [0.1.0] — 2026-05-11
