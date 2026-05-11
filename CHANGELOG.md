@@ -2,7 +2,31 @@
 
 All notable changes to dAVEBOx are documented here.
 
-## 0.1.0 — 2026-05-11
+Format follows [Keep a Changelog](https://keepachangelog.com). Add entries to
+`[Unreleased]` as user-facing changes land; `scripts/cut_release.sh` finalizes
+the section into a versioned heading at release time.
+
+## [Unreleased]
+
+### Features
+- Perf Mode preset mods are now individually toggleable — pressing a mod pad clears its bit whether latch is on or off
+- Latch toggle is purely a mode switch (mod pads sticky vs momentary); it no longer wipes mod state
+- Perf Mode OLED redesigned: header (preset name / PERFORMANCE), tiny-font active mod list (up to 4 lines), footer chips (Latch · Hold · Sync, filled = active) + right-aligned rate
+- Action popups now render in Perf Mode (e.g. "PERF PRESET / SAVED")
+- Top-row Perf pad LEDs are static — no more flashing: DarkGrey/White (rates), DeepRed/Red (Hold), DeepGreen/Green (Sync), DarkOlive/BrightGreen (Latch)
+
+### Fixes
+- Removed the rec-arm count-in OLED takeover; the normal track view stays visible during count-in
+
+### Performance / UX
+- Action popup duration halved (~1 s → ~520 ms)
+- Step hold-to-save duration shortened (~1.6 s → ~750 ms) — affects both Perf preset and Mute snapshot saves
+
+### Documentation
+- MANUAL.md rewritten as a comprehensive user guide; code-verified against `ui.js` / `seq8.c`
+- README maintained on GitHub directly (pre-commit hook blocks local commits)
+
+## [0.1.0] — 2026-05-11
 
 Initial public release.
 
