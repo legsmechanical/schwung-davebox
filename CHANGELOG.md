@@ -17,6 +17,7 @@ the section into a versioned heading at release time.
 
 ### Fixes
 - Removed the rec-arm count-in OLED takeover; the normal track view stays visible during count-in
+- Melodic live-recording: notes pressed in the upper half of a step no longer play back stuck at the default ~½-step gate — the note-off step-array mirror now uses the same `note_step()` rounding as the rest of the recording path
 
 ### Performance / UX
 - Action popup duration halved (~1 s → ~520 ms)

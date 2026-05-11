@@ -3142,9 +3142,16 @@ static void set_param(void *instance, const char *key, const char *val) {
                     }
                 }
 
-                /* Mirror gate to step arrays */
+                /* Mirror gate to step arrays. Use note_step() (rounded) to match the
+                 * sidx used by the record_note_on mirror (line ~3045) and the
+                 * _steps get_param reader. Previously this used truncation
+                 * (`on_tick / tps`), which for notes pressed in the upper half of
+                 * a step caused the off mirror to update the wrong step's gate
+                 * — and since the guard `cl->steps[sidx]` fails on the empty
+                 * truncated step, the rounded step kept its default GATE_TICKS
+                 * (~0.5 step), making the note play back too short. */
                 {
-                    uint16_t sidx = (uint16_t)(on_tick / tps);
+                    uint16_t sidx = note_step(on_tick, cl->length, tps);
                     if (sidx < SEQ_STEPS && cl->steps[sidx])
                         cl->step_gate[sidx] = (uint16_t)gate_ticks;
                 }
