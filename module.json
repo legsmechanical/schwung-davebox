@@ -1,8 +1,8 @@
 {
-    "id": "seq8",
-    "name": "SEQ8",
+    "id": "davebox",
+    "name": "dAVEBOx",
     "version": "0.1.0",
-    "abbrev": "SEQ8",
+    "abbrev": "dAVEBOx",
     "api_version": 2,
     "ui": "ui.js",
     "dsp": "dsp.so",

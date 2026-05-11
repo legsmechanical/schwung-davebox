@@ -5,19 +5,19 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_DIR"
 
-MODULE_ID="seq8"
+MODULE_ID="davebox"
 CROSS_PREFIX="${CROSS_PREFIX:-aarch64-linux-gnu-}"
 
 # Re-enter inside Docker if we don't have a cross compiler.
 if ! command -v "${CROSS_PREFIX}gcc" >/dev/null 2>&1; then
     echo "Cross compiler not found, building via Docker..."
-    docker build -t seq8-builder -f Dockerfile .
-    docker run --rm -v "$PROJECT_DIR:/build" -w /build seq8-builder \
+    docker build -t davebox-builder -f Dockerfile .
+    docker run --rm -v "$PROJECT_DIR:/build" -w /build davebox-builder \
         bash -c "CROSS_PREFIX=aarch64-linux-gnu- ./scripts/build.sh"
     exit $?
 fi
 
-echo "=== Building SEQ8 ==="
+echo "=== Building dAVEBOx ==="
 echo "Compiler: ${CROSS_PREFIX}gcc"
 
 mkdir -p "dist/${MODULE_ID}"
@@ -42,7 +42,7 @@ python3 - <<'PYEOF'
 import wave, struct, audioop, warnings
 warnings.filterwarnings('ignore')   # suppress audioop deprecation on Python 3.13+
 src = "MPC Metronome Click 001.wav"
-dst = "dist/seq8/click-seq8.wav"
+dst = "dist/davebox/click-seq8.wav"
 with wave.open(src, 'rb') as r:
     rate, nch, sw, nf = r.getframerate(), r.getnchannels(), r.getsampwidth(), r.getnframes()
     raw = r.readframes(nf)

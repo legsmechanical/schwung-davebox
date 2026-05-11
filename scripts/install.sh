@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_DIR"
 
-MODULE_ID="seq8"
+MODULE_ID="davebox"
 MOVE_HOST="${MOVE_HOST:-move.local}"
 MOVE_USER="${MOVE_USER:-ableton}"
 

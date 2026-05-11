@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bundle SEQ8 ES modules into dist/seq8/ui.js.
+"""Bundle dAVEBOx ES modules into dist/davebox/ui.js.
 
 The Schwung shadow_ui loader only resolves imports from /data/UserData/schwung/shared/.
 Imports from the tool's own directory are not supported, so we concatenate local
@@ -24,7 +24,7 @@ ORDER = [
 ]
 
 SHARED_PREFIX = '/data/UserData/schwung/shared/'
-LOCAL_PREFIX  = '/data/UserData/schwung/modules/tools/seq8/'
+LOCAL_PREFIX  = '/data/UserData/schwung/modules/tools/davebox/'
 
 
 def collect_import(lines, start):
@@ -111,7 +111,7 @@ for fname in ORDER:
 
 # Generate output
 out = []
-out.append('/* SEQ8 UI — bundled from source modules by scripts/bundle_ui.py */')
+out.append('/* dAVEBOx UI — bundled from source modules by scripts/bundle_ui.py */')
 out.append('/* Source: ' + ', '.join(ORDER) + ' */')
 out.append('')
 
@@ -137,12 +137,12 @@ for fname, body in file_bodies:
 
 text = '\n'.join(out)
 
-out_path = Path('dist/seq8/ui.js')
+out_path = Path('dist/davebox/ui.js')
 out_path.parent.mkdir(parents=True, exist_ok=True)
 out_path.write_text(text)
 
 lines_out = text.count('\n') + 1
-print(f'Bundle: {len(file_bodies)} files → dist/seq8/ui.js '
+print(f'Bundle: {len(file_bodies)} files → dist/davebox/ui.js '
       f'({lines_out} lines, {len(text):,} bytes)')
 print(f'Shared imports: {sum(len(v) for v in shared_imports.values())} names '
       f'from {len(shared_imports)} modules')

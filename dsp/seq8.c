@@ -4224,7 +4224,7 @@ static void seq8_clear_state(seq8_instance_t *inst) {
 }
 
 static void metro_wav_open(seq8_instance_t *inst) {
-    const char *path = "/data/UserData/schwung/modules/tools/seq8/click-seq8.wav";
+    const char *path = "/data/UserData/schwung/modules/tools/davebox/click-seq8.wav";
     inst->metro_wav_fd = open(path, O_RDONLY);
     if (inst->metro_wav_fd < 0) return;
 
