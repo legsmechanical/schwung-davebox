@@ -2840,6 +2840,46 @@ static void drum_pfx_send(drum_pfx_t *px, uint8_t status, uint8_t d1, uint8_t d2
             g_inst->looper_events[ei].d1     = d1;
             g_inst->looper_events[ei].d2     = d2;
             g_inst->looper_events[ei].track  = px->track_idx;
+            /* Apply perf mods to live emit so mods kick in immediately during
+             * the first capture cycle. perf_apply skips pitch transforms for
+             * drum tracks (gated on tr_idx pad_mode==DRUM); vel/gate/cycle
+             * suppression mods still apply. Captured event stays raw. */
+            if (g_inst->perf_mods_active && px->track_idx < NUM_TRACKS) {
+                uint8_t raw_d1 = d1;
+                g_inst->perf_current_event_idx = (uint16_t)ei;
+                if (!perf_apply(g_inst, px->track_idx, status, &d1, &d2)) {
+                    if (raw_d1 < 128)
+                        g_inst->perf_emitted_pitch[px->track_idx][raw_d1] = 0xFF;
+                    return; /* suppressed (sparse/halftime/staccato/legato/ramp) */
+                }
+                if (st == 0x90 && d2 > 0) {
+                    looper_mark_active(g_inst, px->track_idx, raw_d1, d1);
+                    /* Phantom: ghost note at pitch-12, vel/4, gate=cap/8.
+                     * Match LOOPING playback path — emit via track's melodic pfx. */
+                    if ((g_inst->perf_mods_active & PERF_MOD_PHANTOM) &&
+                            g_inst->perf_staccato_count < 32) {
+                        int gp = (int)d1 - 12;
+                        if (gp >= 0) {
+                            uint8_t gpb = (uint8_t)gp;
+                            uint8_t gv  = d2 / 4 < 1 ? 1 : d2 / 4;
+                            uint16_t cap = g_inst->looper_capture_ticks;
+                            uint16_t gap = cap / 8 < 2 ? 2 : cap / 8;
+                            uint16_t gfire = (uint16_t)((g_inst->looper_pos + gap) % cap);
+                            play_fx_t *track_fx = &g_inst->tracks[px->track_idx].pfx;
+                            g_inst->looper_emitting = 1;
+                            pfx_send(track_fx, status, gpb, gv);
+                            g_inst->looper_emitting = 0;
+                            int si = (int)g_inst->perf_staccato_count++;
+                            g_inst->perf_staccato_notes[si].raw_pitch     = 0xFF;
+                            g_inst->perf_staccato_notes[si].emitted_pitch = gpb;
+                            g_inst->perf_staccato_notes[si].track         = px->track_idx;
+                            g_inst->perf_staccato_notes[si].fire_at       = gfire;
+                        }
+                    }
+                } else {
+                    looper_mark_active(g_inst, px->track_idx, raw_d1, 0xFF);
+                }
+            }
             /* fall through and emit normally */
         } else if (g_inst->looper_state == LOOPER_STATE_LOOPING) {
             return;
