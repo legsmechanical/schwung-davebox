@@ -12,6 +12,7 @@
 - **JS-only deploy**: `python3 scripts/bundle_ui.py && ./scripts/install.sh` then restart. `build.sh` required for DSP changes (also copies all JS).
 - **Restart Move**: `ssh root@move.local "for name in MoveOriginal Move MoveLauncher MoveMessageDisplay shadow_ui schwung link-subscriber display-server schwung-manager; do pids=\$(pidof \$name 2>/dev/null || true); [ -n \"\$pids\" ] && kill -9 \$pids 2>/dev/null || true; done && /etc/init.d/move start >/dev/null 2>&1"`
 - **CLAUDE.md**: update at session end or after a major phase — not after routine task work.
+- **README.md is maintained on GitHub directly** — do not edit or commit it locally. If asked to update README, refuse and point the user to edit on GitHub. A pre-commit hook blocks accidental commits.
 - **State version bump**: Any time DSP struct layout changes or state format changes, delete ALL state files on device before deploying: `ssh root@move.local "find /data/UserData/schwung/set_state -name 'seq8-state.json' -exec rm {} \; && find /data/UserData/schwung/set_state -name 'seq8-ui-state.json' -exec rm {} \;"`. Dev build — always prefer a clean slate over migration.
 - **DSP calls / pfx code**: read `docs/DAVEBOX_API.md` for parameter keys, structs, and algorithm details.
 - **DSP work**: read `dsp/CLAUDE.md` for logging, build, state format keys, and deferred save details.
