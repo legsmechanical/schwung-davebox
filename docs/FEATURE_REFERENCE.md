@@ -254,7 +254,7 @@ Routes to `activeTrack`.
 
 **Suspend** (Back): JS calls `host_ext_midi_remap_enable(0)` to clear BLOCK so external MIDI reaches other instruments while dAVEBOx is parked; **resume**: `applyExtMidiRemap()` re-applies.
 
-**ROUTE_EXTERNAL** (Route=Ext): sequenced notes go DSP `pfx_send`→`ext_queue` ring buffer→JS tick() drains via `get_param('ext_queue')`→`move_midi_external_send` (USB-A). Live pad/MIDI input sent directly from JS via `move_midi_external_send`. VelIn override applies. See `docs/EXTERNAL_MIDI_USER_GUIDE.md`.
+**ROUTE_EXTERNAL** (Route=Ext): sequenced notes go DSP `pfx_send`→`ext_queue` ring buffer→JS tick() drains via `get_param('ext_queue')`→`move_midi_external_send` (USB-A). Live pad/MIDI input sent directly from JS via `move_midi_external_send`. VelIn override applies.
 
 ---
 
