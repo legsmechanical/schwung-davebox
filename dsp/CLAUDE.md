@@ -50,6 +50,10 @@ Key prefixes:
 
 `state_load` calls `drum_track_init` + `drum_repeat_init_defaults` before applying saved values.
 
+## Step-write invariant
+
+Any code that writes to `cl->step_notes[]` / `cl->step_note_count[]` / `cl->steps[]` from an absolute clip tick **must** compute `sidx` via `note_step(abs_tick, cl->length, tps)` — **not** `abs_tick / tps`. The `_steps` get_param reader and `clip_build_steps_from_notes` both round (`(tick + tps/2) / tps`); truncating writers cause LED-vs-hold step divergence for sub-step (InQ Off) notes. `note_tick_offset[sidx][i]` is signed (`int16_t`) and may be negative when a note rounds up into the next step. Paths that index by `drum_current_step[lane]` (drum_record_note_on, drum_repeat_tick, drum_repeat2_tick) don't need note_step() — they're already at a step index.
+
 ## Deferred save
 
 Handlers set `inst->state_dirty = 1` — no file I/O on audio thread.
