@@ -1703,6 +1703,21 @@ static void set_param(void *instance, const char *key, const char *val) {
                 clip_migrate_to_notes(cl);
                 return;
             }
+            if (!strncmp(p, "_pfx_set", 8) && p[8] == '\0') {
+                /* tN_cC_pfx_set "key value" — apply pfx param to this clip's
+                 * pfx_params (any clip, not just active). Mirrors drum-lane
+                 * pfx_set but targets melodic per-clip pfx_params. */
+                const char *sp = val;
+                char pfx_key[64]; int ki = 0;
+                while (*sp && *sp != ' ' && ki < 63) pfx_key[ki++] = *sp++;
+                pfx_key[ki] = '\0';
+                while (*sp == ' ') sp++;
+                pfx_set(inst, tr, &cl->pfx_params, pfx_key, sp);
+                if ((int)tr->active_clip == cidx)
+                    pfx_sync_from_clip(tr);
+                inst->state_dirty = 1;
+                return;
+            }
             if (!strncmp(p, "_clear", 6) && p[6] == '\0') {
                 /* tN_cC_clear — atomically wipe all steps in clip */
                 int i;

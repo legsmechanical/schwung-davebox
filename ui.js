@@ -1468,6 +1468,14 @@ function resetPerClipBankParamsToDefault(t) {
             if (pm) S.bankParams[t][b][k] = pm.def;
         }
     }
+    /* DSP self-resets pfx params to 0 on clip clear; defer non-zero JS defaults
+     * onto the pendingDefaultSetParams queue so they land on a later tick and
+     * don't coalesce with the clear set_param fired by the caller. */
+    const _ac = S.trackActiveClip[t];
+    S.pendingDefaultSetParams.push({
+        key: 't' + t + '_c' + _ac + '_pfx_set',
+        val: 'delay_level 127'
+    });
     S.screenDirty = true;
 }
 
@@ -1727,8 +1735,18 @@ function resetFxBanks(t) {
     if (S.trackPadMode[t] === PAD_MODE_DRUM) {
         const lane = S.activeDrumLane[t];
         host_module_set_param('t' + t + '_l' + lane + '_pfx_reset', '1');
+        /* Defer delay_level=127 override; DSP zeros it during pfx_reset. */
+        S.pendingDefaultSetParams.push({
+            key: 't' + t + '_l' + lane + '_pfx_set',
+            val: 'delay_level 127'
+        });
     } else {
         host_module_set_param('t' + t + '_pfx_reset', '1');
+        const _ac = S.trackActiveClip[t];
+        S.pendingDefaultSetParams.push({
+            key: 't' + t + '_c' + _ac + '_pfx_set',
+            val: 'delay_level 127'
+        });
     }
     const targets = [1, 2, 3, 4];
     for (let bi = 0; bi < targets.length; bi++) {
@@ -1750,8 +1768,23 @@ function resetSingleFxBank(t, bankIdx) {
     if (S.trackPadMode[t] === PAD_MODE_DRUM) {
         const lane = S.activeDrumLane[t];
         host_module_set_param('t' + t + '_l' + lane + '_pfx_set', dspCmd + ' 1');
+        /* After DSP zeroes delay_level, defer a 127 override onto the queue
+         * so it lands on a later tick (avoids set_param coalescing). */
+        if (bankIdx === 3) {
+            S.pendingDefaultSetParams.push({
+                key: 't' + t + '_l' + lane + '_pfx_set',
+                val: 'delay_level 127'
+            });
+        }
     } else {
         host_module_set_param('t' + t + '_' + dspCmd, '1');
+        if (bankIdx === 3) {
+            const _ac = S.trackActiveClip[t];
+            S.pendingDefaultSetParams.push({
+                key: 't' + t + '_c' + _ac + '_pfx_set',
+                val: 'delay_level 127'
+            });
+        }
     }
     for (let k = 0; k < 8; k++) {
         const pm = BANKS[bankIdx].knobs[k];
@@ -2822,6 +2855,23 @@ function restoreUiSidecar(applyDefaultsNow) {
                 { key: 'metro_vol',   val: '100' },
                 { key: 't0_pad_mode', val: String(PAD_MODE_DRUM) }
             ];
+            /* Seed delay_level=127 on all clips and on drum lanes of the
+             * default drum track (t0). DSP inits delay_level=0, so without
+             * this the audible default is silent. Drains 1/tick. */
+            for (let _t = 0; _t < NUM_TRACKS; _t++) {
+                for (let _c = 0; _c < NUM_CLIPS; _c++) {
+                    S.pendingDefaultSetParams.push({
+                        key: 't' + _t + '_c' + _c + '_pfx_set',
+                        val: 'delay_level 127'
+                    });
+                }
+            }
+            for (let _l = 0; _l < DRUM_LANES; _l++) {
+                S.pendingDefaultSetParams.push({
+                    key: 't0_l' + _l + '_pfx_set',
+                    val: 'delay_level 127'
+                });
+            }
         }
     }
 }
@@ -3643,6 +3693,12 @@ globalThis.tick = function () {
         /* Contextual button LEDs: dim available indicator (16) on actionable buttons. */
         setButtonLED(MoveShift,       16);
         setButtonLED(MoveNoteSession, 16);
+        /* Blink Session/Track view button while in Global Menu or Tap Tempo to
+         * advertise it as the exit affordance (press already exits both modes). */
+        if (S.globalMenuOpen || S.tapTempoOpen) {
+            const _exitBlink = (Math.floor(S.tickCount / 24) % 2) ? 16 : LED_OFF;
+            setButtonLED(MoveNoteSession, _exitBlink);
+        }
         setButtonLED(MoveUndo,        16);
         setButtonLED(MoveDelete,      16);
         setButtonLED(MoveCopy,        16);
