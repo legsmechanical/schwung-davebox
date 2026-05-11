@@ -9,6 +9,7 @@ the section into a versioned heading at release time.
 ## [Unreleased]
 
 ### Features
+- Loop+Play (Track View): restarts playback with the active clip starting at the first step of the visible step-view page; other tracks land at the musically-equivalent offset (preserves sync)
 - Perf Mode preset mods are now individually toggleable — pressing a mod pad clears its bit whether latch is on or off
 - Latch toggle is purely a mode switch (mod pads sticky vs momentary); it no longer wipes mod state
 - Perf Mode OLED redesigned: header (preset name / PERFORMANCE), tiny-font active mod list (up to 4 lines), footer chips (Latch · Hold · Sync, filled = active) + right-aligned rate

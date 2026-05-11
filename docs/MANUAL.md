@@ -1559,6 +1559,7 @@ Dismissed immediately if you touch a knob or enter step edit.
 | Volume encoder | Master output volume |
 | Play | Start / stop transport |
 | Shift + Play | Restart transport from start |
+| Loop + Play | Restart with active clip at the visible page's first step (other tracks land in sync) |
 | Delete + Play (running) | Deactivate all clips |
 | Delete + Play (stopped) | MIDI panic |
 | Record | Start / stop recording |
@@ -1690,6 +1691,7 @@ All melodic Track View controls apply except as noted below.
 | Jog rotate | Adjust clip length ±1 step |
 | Two step buttons | Set loop start and end |
 | Step (tap) | Select bar |
+| Play | Restart with active clip at the visible page's first step (other tracks land in sync) |
 | Delete | Delete active clip |
 | Delete + step | Clear all notes in that bar |
 | Copy + step | Copy bar |

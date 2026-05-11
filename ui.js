@@ -4836,6 +4836,17 @@ function _onCC_transport(d1, d2) {
             if (typeof host_module_set_param === 'function')
                 host_module_set_param('metro_on', String(S.metronomeOn));
             showActionPopup('METRO ' + (S.metronomeOn === 0 ? 'OFF' : 'ON'));
+        } else if (S.loopHeld && !S.sessionView) {
+            /* Loop+Play (Track View only): restart with active clip starting at
+             * the first step of the visible page; other tracks land at the
+             * musically-equivalent offset. Atomic single set_param. */
+            const _lpAt   = S.activeTrack;
+            const _lpIsDr = S.trackPadMode[_lpAt] === PAD_MODE_DRUM;
+            const _lpPage = _lpIsDr ? (S.drumStepPage[_lpAt] | 0) : (S.trackCurrentPage[_lpAt] | 0);
+            const _lpLane = _lpIsDr ? (S.activeDrumLane[_lpAt] | 0) : -1;
+            if (typeof host_module_set_param === 'function') {
+                host_module_set_param('transport', 'restart_at:' + _lpAt + ':' + _lpPage + ':' + _lpLane);
+            }
         } else if (S.shiftHeld) {
             /* Restart: atomic DSP-side stop+play. Single set_param avoids
              * coalescing flakiness when stop+play land in same audio block. */

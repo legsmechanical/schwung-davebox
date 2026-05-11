@@ -354,6 +354,91 @@ static void set_param(void *instance, const char *key, const char *val) {
             }
             inst->playing = 1;
             seq8_ilog(inst, "SEQ8 transport: restart");
+        } else if (!strncmp(val, "restart_at:", 11)) {
+            /* Loop+Play: restart with active track's clip starting at page*16.
+             * Format: "restart_at:<at>:<page>:<drumLane>" — drumLane -1 for melodic.
+             * Other tracks land at musically-equivalent position (master_off % own_clip_ticks). */
+            int at = 0, page = 0, lane = -1;
+            int parsed = sscanf(val + 11, "%d:%d:%d", &at, &page, &lane);
+            if (parsed < 2) { return; }
+            if (at < 0) at = 0; if (at >= NUM_TRACKS) at = NUM_TRACKS - 1;
+            if (page < 0) page = 0;
+
+            seq8_track_t *atr = &inst->tracks[at];
+            uint16_t step_tps;
+            if (atr->pad_mode == PAD_MODE_DRUM && lane >= 0 && lane < DRUM_LANES) {
+                step_tps = atr->drum_clips[atr->active_clip].lanes[lane].clip.ticks_per_step;
+            } else {
+                step_tps = atr->clips[atr->active_clip].ticks_per_step;
+            }
+            if (step_tps == 0) step_tps = TICKS_PER_STEP;
+            uint64_t master_off = (uint64_t)page * 16ULL * (uint64_t)step_tps;
+
+            /* Silence / finalize prelude (mirrors restart branch). */
+            int t;
+            for (t = 0; t < NUM_TRACKS; t++) {
+                play_fx_t *fx = &inst->tracks[t].pfx;
+                silence_track_notes_v2(inst, &inst->tracks[t]);
+                if (fx->route == ROUTE_MOVE) {
+                    int ei;
+                    for (ei = 0; ei < fx->event_count; ei++)
+                        fx->events[ei].fire_at = fx->sample_counter;
+                    memset(fx->active_notes, 0, sizeof(fx->active_notes));
+                } else {
+                    fx->event_count = 0;
+                    memset(fx->active_notes, 0, sizeof(fx->active_notes));
+                }
+                inst->tracks[t].clips[inst->tracks[t].active_clip].clock_shift_pos = 0;
+                inst->tracks[t].pending_page_stop = 0;
+                inst->tracks[t].record_armed      = 0;
+                if (inst->tracks[t].recording) {
+                    finalize_pending_notes(&inst->tracks[t].clips[inst->tracks[t].active_clip],
+                                           &inst->tracks[t]);
+                    clip_clear_suppress(&inst->tracks[t].clips[inst->tracks[t].active_clip]);
+                }
+                inst->tracks[t].recording   = 0;
+                inst->tracks[t].queued_clip = -1;
+            }
+            send_panic(inst);
+
+            inst->global_tick         = (uint32_t)(master_off / TICKS_PER_STEP);
+            inst->master_tick_in_step = (uint32_t)(master_off % TICKS_PER_STEP);
+            inst->tick_accum          = 0;
+            inst->arp_master_tick     = (uint32_t)master_off;
+            inst->count_in_ticks      = 0;
+            for (t = 0; t < NUM_TRACKS; t++) {
+                seq8_track_t *tr = &inst->tracks[t];
+                clip_t *cl = &tr->clips[tr->active_clip];
+                uint16_t ttps = cl->ticks_per_step ? cl->ticks_per_step : TICKS_PER_STEP;
+                uint32_t clip_ticks = (uint32_t)cl->length * ttps;
+                uint32_t track_off  = clip_ticks ? (uint32_t)(master_off % clip_ticks) : 0;
+                tr->current_step = (uint16_t)(track_off / ttps);
+                tr->tick_in_step = track_off % ttps;
+                int l;
+                for (l = 0; l < DRUM_LANES; l++) {
+                    clip_t *dcl = &tr->drum_clips[tr->active_clip].lanes[l].clip;
+                    uint16_t dtps = dcl->ticks_per_step ? dcl->ticks_per_step : TICKS_PER_STEP;
+                    uint32_t dct  = (uint32_t)dcl->length * dtps;
+                    uint32_t dto  = dct ? (uint32_t)(master_off % dct) : 0;
+                    tr->drum_current_step[l] = (uint16_t)(dto / dtps);
+                    tr->drum_tick_in_step[l] = dto % dtps;
+                }
+                tr->note_active        = 0;
+                tr->pfx.sample_counter = 0;
+                if (tr->will_relaunch) {
+                    tr->clip_playing      = 1;
+                    tr->will_relaunch     = 0;
+                    tr->pending_page_stop = 0;
+                }
+            }
+            inst->playing = 1;
+            {
+                char _lpbuf[128];
+                snprintf(_lpbuf, sizeof(_lpbuf),
+                         "SEQ8 transport: restart_at t%d page %d lane %d (step_tps %u, master_off %u)",
+                         at, page, lane, (unsigned)step_tps, (unsigned)master_off);
+                seq8_ilog(inst, _lpbuf);
+            }
         } else if (!strcmp(val, "panic")) {
             int t;
             for (t = 0; t < NUM_TRACKS; t++) {
