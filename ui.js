@@ -3824,6 +3824,15 @@ globalThis.tick = function () {
         } else if (S.pendingPrerollNotes.length > 0 && S.playing) {
             const pns = S.pendingPrerollNotes;
             const pr  = pns[0];
+            /* TARP-on: DSP tarp_fire_step records arp output to clip directly. Skip
+             * JS preroll capture so a held chord becomes an arpeggiated sequence
+             * across steps instead of a chord stamped on step 0. */
+            const _tarpOn = parseInt(host_module_get_param('t' + pr.track + '_tarp_on'), 10) === 1;
+            if (_tarpOn) {
+                S.pendingPrerollNotes       = [];
+                S.pendingPrerollToggleQueue = [];
+                S.pendingPrerollGate        = null;
+            } else {
             const _prLive = pns.some(function(n) { return S.liveActiveNotes.has(n.pitch); });
             const tps = (S.clipTPS[pr.track] && S.clipTPS[pr.track][pr.clip]) || 24;
             const elapsed = S.tickCount - S.transportStartTick;
@@ -3853,6 +3862,7 @@ globalThis.tick = function () {
                     invalidateLEDCache();
                     forceRedraw();
                 }
+            }
             }
         } else {
             /* No note event this tick — safe to send a length set_param without coalescing. */
