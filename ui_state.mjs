@@ -46,7 +46,6 @@ export const S = {
     perfSnapshots: PERF_FACTORY_PRESETS.map(function(p) { return p.mods; })
                            .concat(new Array(8).fill(0)),  /* slots 8-15 empty */
     perfRecalledSlot: -1,
-    perfRecalledMods: 0,
     perfModPopupName: '',
     perfModPopupEndTick: -1,
     perfViewLocked: false,

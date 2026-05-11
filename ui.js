@@ -356,8 +356,8 @@ const PERF_MOD_FULL_NAMES = [
 ];
 
 /* Preset S.snapshots: 16 slots (step buttons 1-16).
- * S.perfRecalledSlot: which slot is active (-1 = none).
- * S.perfRecalledMods: bitmask from the recalled slot (ORed into sendPerfMods).
+ * S.perfRecalledSlot: which slot is active (-1 = none); preset bits are
+ * copied into S.perfModsToggled on recall so mod pads can toggle them off.
  * Factory presets populate slots 0-7 (steps 1-8) at init. */
 const PERF_MOD_POPUP_TICKS = 80; /* ~500ms at ~160 ticks/s */
 
@@ -500,7 +500,7 @@ function fmtCCLabel(cc) {
  * first button's release to exit step edit prematurely. */
 
 const STEP_HOLD_TICKS      = 19;   /* ~200ms at ~94Hz (device actual): below = tap, at/above = hold */
-const STEP_SAVE_HOLD_TICKS = 150;  /* ~0.75s at 196Hz */
+const STEP_SAVE_HOLD_TICKS = 70;   /* ~750ms at 94Hz */
 const STEP_SAVE_FLASH_TICKS = 40;  /* ~200ms double-blink on step button LEDs after save */
 
 /* Metronome */
@@ -2144,7 +2144,7 @@ function sceneAnyPlaying(sceneIdx) {
 /* Send current combined modifier bitmask to DSP. */
 function sendPerfMods() {
     if (typeof host_module_set_param === 'function')
-        host_module_set_param('perf_mods', String(S.perfModsToggled | S.perfModsHeld | S.perfRecalledMods));
+        host_module_set_param('perf_mods', String(S.perfModsToggled | S.perfModsHeld));
 }
 
 /* Draw the full 4-row pad grid for Performance Mode.
@@ -2155,7 +2155,7 @@ function sendPerfMods() {
  * Also clears step buttons (16-31) — not used in Perf Mode. */
 function updatePerfModeLEDs() {
     if (!S.ledInitComplete) return;
-    const activeMods = S.perfModsToggled | S.perfModsHeld | S.perfRecalledMods;
+    const activeMods = S.perfModsToggled | S.perfModsHeld;
     /* Step buttons: preset slots. */
     for (let i = 0; i < 16; i++) {
         if (i === S.perfRecalledSlot)         setLED(16 + i, White);
@@ -2302,55 +2302,103 @@ function drawTrackRow(y) {
     }
 }
 
+/* Convert a PERF_MOD_NAMES entry to mcufont-safe ASCII (no arrows / fractions). */
+function _modAscii(name) {
+    return name.replace('↑', '+').replace('↓', '-').replace('½', 'Hf');
+}
+
+/* Footer indicator chip: filled-rect when active, outline when inactive.
+ * Returns the chip's width so the caller can advance x. */
+function _perfChip(x, y, label, active) {
+    const w = label.length * 6 + 3;
+    if (active) {
+        fill_rect(x, y, w, 9, 1);
+        pixelPrint(x + 2, y + 2, label, 0);
+    } else {
+        /* hollow outline */
+        fill_rect(x,         y,     w, 1, 1);
+        fill_rect(x,         y + 8, w, 1, 1);
+        fill_rect(x,         y,     1, 9, 1);
+        fill_rect(x + w - 1, y,     1, 9, 1);
+        pixelPrint(x + 2, y + 2, label, 1);
+    }
+    return w;
+}
+
 function drawPerfModeOled() {
     clear_screen();
-    const activeMods = S.perfModsToggled | S.perfModsHeld | S.perfRecalledMods;
-    /* Header: show preset name if a slot is recalled */
-    let headerRight = '';
+    const activeMods = S.perfModsToggled | S.perfModsHeld;
+
+    /* ── Header bar (y 0-11): preset name or "PERFORMANCE" ── */
+    fill_rect(0, 0, 128, 12, 1);
+    let title;
     if (S.perfRecalledSlot >= 0) {
         const fp = PERF_FACTORY_PRESETS[S.perfRecalledSlot];
-        headerRight = fp ? fp.name : ('P' + (S.perfRecalledSlot + 1));
-    } else if (S.perfLatchMode || S.perfModsToggled) {
-        headerRight = S.perfLatchMode ? 'LATCH' : 'LATCHED';
+        title = fp ? fp.name : ('SLOT ' + (S.perfRecalledSlot + 1));
+    } else {
+        title = 'PERFORMANCE';
     }
-    let header = 'PERFORMANCE';
-    if (S.perfHoldPadHeld || S.perfStickyLengths.size > 0) header += ' \xb7 HOLD';
-    fill_rect(0, 0, 128, 13, 1);
-    print(4, 4, header, 0);
-    if (headerRight) {
-        const hrX = 128 - headerRight.length * 6 - 4;
-        if (S.perfRecalledSlot >= 0) print(hrX, 4, headerRight, 0);
-        else pixelPrint(hrX, 4, headerRight, 0);
-    }
-    /* Brief full-name popup on mod activate */
-    if (S.perfModPopupEndTick >= 0 && S.tickCount <= S.perfModPopupEndTick && S.perfModPopupName) {
+    print(4, 3, title, 0);
+
+    /* ── Body (y 14-49): action popup → mod popup → mods list ── */
+    if (S.actionPopupEndTick >= 0 && S.tickCount <= S.actionPopupEndTick && S.actionPopupLines.length > 0) {
+        if (S.actionPopupLines.length >= 2) {
+            print(4, 20, S.actionPopupLines[0], 1);
+            print(4, 32, S.actionPopupLines[1], 1);
+        } else {
+            print(4, 26, S.actionPopupLines[0], 1);
+        }
+    } else if (S.perfModPopupEndTick >= 0 && S.tickCount <= S.perfModPopupEndTick && S.perfModPopupName) {
         const px = Math.floor((128 - S.perfModPopupName.length * 6) / 2);
-        print(px < 0 ? 0 : px, 28, S.perfModPopupName, 1);
+        print(px < 0 ? 0 : px, 26, S.perfModPopupName, 1);
     } else {
         S.perfModPopupEndTick = -1;
-        /* Active modifier names — up to 3 per line, +N overflow */
         const activeNames = [];
         for (let i = 0; i < PERF_MOD_NAMES.length; i++)
-            if ((activeMods >> i) & 1) activeNames.push(PERF_MOD_NAMES[i]);
+            if ((activeMods >> i) & 1) activeNames.push(_modAscii(PERF_MOD_NAMES[i]));
         if (activeNames.length === 0) {
-            print(4, 24, 'No mods active', 1);
-            print(4, 36, 'Hold pad to engage', 1);
+            pixelPrint(4, 24, 'no mods active', 1);
+            pixelPrint(4, 34, 'tap pad to engage', 1);
         } else {
-            const extra = activeNames.length > 6 ? '+' + (activeNames.length - 5) : '';
-            const show  = extra ? activeNames.slice(0, 5) : activeNames;
-            const line1 = show.slice(0, 3).join('  ');
-            const line2 = show.slice(3).join('  ') + (extra ? '  ' + extra : '');
-            print(4, 24, line1, 1);
-            if (line2) print(4, 36, line2, 1);
+            /* Wrap into up to 4 lines, ~20 chars per line at 6px each. */
+            const MAX_CHARS = 20;
+            const MAX_LINES = 4;
+            const lines = [];
+            let cur = '';
+            for (let i = 0; i < activeNames.length; i++) {
+                const sep  = cur ? '  ' : '';
+                const next = cur + sep + activeNames[i];
+                if (next.length > MAX_CHARS && cur) {
+                    lines.push(cur);
+                    if (lines.length >= MAX_LINES) { cur = ''; break; }
+                    cur = activeNames[i];
+                } else {
+                    cur = next;
+                }
+            }
+            if (cur && lines.length < MAX_LINES) lines.push(cur);
+            for (let li = 0; li < lines.length; li++) {
+                pixelPrint(4, 16 + li * 8, lines[li], 1);
+            }
         }
     }
-    /* Rate + slot indicator */
+
+    /* ── Footer (y 53-61): mode chips + rate ── */
+    const fy = 53;
+    let fx = 2;
+    fx += _perfChip(fx, fy, 'Latch', S.perfLatchMode) + 3;
+    fx += _perfChip(fx, fy, 'Hold',  S.perfHoldPadHeld || S.perfStickyLengths.size > 0) + 3;
+    fx += _perfChip(fx, fy, 'Sync',  S.perfSync) + 3;
+
+    /* Rate (right-aligned, only when a loop length is active) */
     if (S.perfStack.length > 0) {
         const RATE_LABELS = ['1/32','1/16','1/8','1/4','1/2'];
         const top = S.perfStack[S.perfStack.length - 1];
-        const label = RATE_LABELS[top.idx];
-        const slotStr = S.perfRecalledSlot >= 0 ? '  S' + (S.perfRecalledSlot + 1) : '';
-        print(4, 52, '\xbb ' + label + slotStr, 1);
+        const lab = RATE_LABELS[top.idx];
+        const w   = lab.length * 6 + 3;
+        const rx  = 128 - w - 2;
+        fill_rect(rx, fy, w, 9, 1);
+        pixelPrint(rx + 2, fy + 2, lab, 0);
     }
 }
 
@@ -2402,18 +2450,6 @@ function drawUI() {
     /* Track View — priority display state machine */
     const bank      = S.activeBank;
     const inTimeout = S.bankSelectTick >= 0 || S.jogTouched;
-
-    /* Count-in overlay: highest priority while waiting for bar to elapse */
-    if (S.recordArmed && S.recordCountingIn && !S.sessionView && S.heldStep < 0) {
-        const ac_r       = S.trackActiveClip[S.recordArmedTrack];
-        const totalPages = Math.max(1, Math.ceil(S.clipLength[S.recordArmedTrack][ac_r] / 16));
-        print(4, 10, 'TR' + (S.recordArmedTrack + 1) + ' \xb7 ' + SCENE_LETTERS[ac_r] +
-                     '  PG 1/' + totalPages, 1);
-        print(4, 22, 'COUNT-IN', 1);
-        print(4, 34, 'REC ARMED', 1);
-        drawTrackRow(46);
-        return;
-    }
 
     /* Compress-limit override: highest priority for ~1500ms after a blocked compress */
     if (S.stretchBlockedEndTick >= 0) {
@@ -2931,9 +2967,8 @@ function restoreUiSidecar(applyDefaultsNow) {
                             S.perfSnapshots[8 + _i] = us.us[_i];
                     }
                 }
-                S.perfRecalledMods = S.perfSnapshots[S.perfRecalledSlot] || 0;
             }
-            const _pm = S.perfModsToggled | S.perfRecalledMods;
+            const _pm = S.perfModsToggled | S.perfModsHeld;
             if (_pm) S.pendingDefaultSetParams.push({ key: 'perf_mods', val: String(_pm) });
         }
     } else {
@@ -3635,7 +3670,7 @@ globalThis.tick = function () {
                 S.sessionStepHeldCtx = 0;
                 S.stepBtnPressedTick[_ssh] = -1;
                 if (_ctx === 1) {
-                    S.perfSnapshots[_ssh] = S.perfModsToggled | S.perfModsHeld | S.perfRecalledMods;
+                    S.perfSnapshots[_ssh] = S.perfModsToggled | S.perfModsHeld;
                     showActionPopup('PERF PRESET', 'SAVED');
                 } else {
                     const drumEffMutes = [];
@@ -4549,14 +4584,8 @@ function _onCC_buttons(d1, d2) {
     if (d1 === MoveLoop && S.sessionView) {
         if (d2 === 127) {
             if (S.shiftHeld) {
-                /* Shift+Loop: toggle perf latch mode */
-                if (S.perfLatchMode) {
-                    S.perfLatchMode   = false;
-                    S.perfModsToggled = 0;
-                    sendPerfMods();
-                } else {
-                    S.perfLatchMode = true;
-                }
+                /* Shift+Loop: toggle perf latch mode (mod pads momentary vs sticky). */
+                S.perfLatchMode = !S.perfLatchMode;
                 forceRedraw();
                 return;
             }
@@ -6370,10 +6399,15 @@ function _onPadPress(status, d1, d2) {
             } else {
                 const modIdx = PERF_MOD_PAD_MAP[d1];
                 if (modIdx !== undefined) {
+                    const bit = (1 << modIdx);
                     if (S.perfLatchMode) {
-                        S.perfModsToggled ^= (1 << modIdx);
+                        S.perfModsToggled ^= bit;
+                    } else if (S.perfModsToggled & bit) {
+                        /* Non-latch press on an already-on bit (e.g. from preset recall):
+                         * clear it instead of stacking a momentary held bit on top. */
+                        S.perfModsToggled &= ~bit;
                     } else {
-                        S.perfModsHeld |= (1 << modIdx);
+                        S.perfModsHeld |= bit;
                     }
                     S.perfModPopupName    = PERF_MOD_FULL_NAMES[modIdx] || '';
                     S.perfModPopupEndTick = S.tickCount + PERF_MOD_POPUP_TICKS;
@@ -6549,7 +6583,7 @@ function _onStepButtons(d1, d2) {
     if (S.sessionView && S.deleteHeld) {
         if (S.loopHeld || S.perfViewLocked) {
             S.perfSnapshots[idx] = 0;
-            if (S.perfRecalledSlot === idx) { S.perfRecalledSlot = -1; S.perfRecalledMods = 0; sendPerfMods(); }
+            if (S.perfRecalledSlot === idx) { S.perfRecalledSlot = -1; S.perfModsToggled = 0; sendPerfMods(); }
             showActionPopup('PERF PRESET', 'CLEARED');
         } else if (S.muteHeld) {
             S.snapshots[idx] = null;
@@ -6900,14 +6934,8 @@ function _onPadRelease(status, d1, d2) {
         if (d1 >= 68 && d1 <= 75) {
             const subIdx = d1 - 68;
             if (subIdx === 7) {
-                /* Latch release: tap = toggle latch mode; exiting clears all toggled mods. */
-                if (!S.perfLatchMode) {
-                    S.perfLatchMode = true;
-                } else {
-                    S.perfLatchMode   = false;
-                    S.perfModsToggled = 0;
-                    sendPerfMods();
-                }
+                /* Latch release: toggle latch mode (mod pads momentary vs sticky). */
+                S.perfLatchMode = !S.perfLatchMode;
             } else if (subIdx === 5) {
                 /* Hold pad release: drop momentary state + stop all loops it was holding */
                 if (S.perfHoldPadHeld) {
@@ -6960,10 +6988,10 @@ function _onPadRelease(status, d1, d2) {
                 /* Perf recall */
                 if (S.perfRecalledSlot === btn) {
                     S.perfRecalledSlot = -1;
-                    S.perfRecalledMods = 0;
+                    S.perfModsToggled  = 0;
                 } else {
                     S.perfRecalledSlot = btn;
-                    S.perfRecalledMods = S.perfSnapshots[btn];
+                    S.perfModsToggled  = S.perfSnapshots[btn];
                 }
                 sendPerfMods();
             } else {
