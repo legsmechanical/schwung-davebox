@@ -4,7 +4,7 @@
 
 <img width="323" height="171" alt="IMG_0177" src="https://github.com/user-attachments/assets/b84d5136-706b-41f7-a551-5799be8daaab" />
 
-[![IMAGE ALT TEXT HERE](https://img.youtube.com/vi/bKRPJhNgEO8/0.jpg)](https://www.youtube.com/watch?v=bKRPJhNgEO8)
+[Video Overview](https://www.youtube.com/watch?v=bKRPJhNgEO8)
 
 
 dAVEBOx is an integrated sequencing environment & MIDI playground capable of fully replacing the functionality of the native Move sequencer. There are lots of weird little things to explore that can radically transform your compositions — and probably overload the Move CPU when you overdo it. You'll have a good time getting to that point, though.
