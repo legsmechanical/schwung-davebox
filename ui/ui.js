@@ -1489,11 +1489,11 @@ function refreshDrumLaneBankParams(t, lane) {
             for (let k = 0; k < 6; k++) S.bankParams[t][3][k] = parseInt(v[3 + k], 10) | 0;
         }
     }
-    /* DRUM LANE bank (0): Res (K3), Len (K4) from active-lane meta; SqFl (K7) per-clip */
+    /* DRUM LANE bank (0): Res (K3=idx2), Len (K4=idx3), SqFl (K5=idx4) per-lane meta */
     const tpsIdx = TPS_VALUES.indexOf(S.drumLaneTPS[t]);
-    S.bankParams[t][0][3] = tpsIdx >= 0 ? tpsIdx : 1;
-    S.bankParams[t][0][4] = S.drumLaneLength[t] || 16;
-    S.bankParams[t][0][5] = S.clipSeqFollow[t][S.trackActiveClip[t]] ? 1 : 0;
+    S.bankParams[t][0][2] = tpsIdx >= 0 ? tpsIdx : 1;
+    S.bankParams[t][0][3] = S.drumLaneLength[t] || 16;
+    S.bankParams[t][0][4] = S.clipSeqFollow[t][S.trackActiveClip[t]] ? 1 : 0;
     /* Repeat Groove state for this lane */
     syncDrumRepeatState(t, lane);
     S.screenDirty = true;
@@ -1543,12 +1543,12 @@ function refreshPerClipBankParams(t) {
     if (v.length >= 31) {
         for (let s = 0; s < 8; s++) S.seqArpStepVel[t][ac][s] = parseInt(v[23 + s], 10) | 0;
     }
-    /* CLIP bank (0): Res (K3), Len (K4), SqFl (K7) — all per-clip */
+    /* CLIP bank (0): Res (K3=idx2), Len (K4=idx3), SqFl (K7=idx6) — all per-clip */
     const tps    = S.clipTPS[t][ac] || 24;
     const tpsIdx = TPS_VALUES.indexOf(tps);
-    S.bankParams[t][0][3] = tpsIdx >= 0 ? tpsIdx : 1;
-    S.bankParams[t][0][4] = S.clipLength[t][ac] || 16;
-    S.bankParams[t][0][7] = S.clipSeqFollow[t][ac] ? 1 : 0;
+    S.bankParams[t][0][2] = tpsIdx >= 0 ? tpsIdx : 1;
+    S.bankParams[t][0][3] = S.clipLength[t][ac] || 16;
+    S.bankParams[t][0][6] = S.clipSeqFollow[t][ac] ? 1 : 0;
     S.screenDirty = true;
 }
 
@@ -2040,7 +2040,7 @@ function readTrackConfig(t) {
     const diq = host_module_get_param('t' + t + '_diq');
     if (diq !== null && diq !== undefined) {
         S.drumInpQuant[t] = Math.max(0, Math.min(8, parseInt(diq, 10) | 0));
-        S.bankParams[t][7][5] = S.drumInpQuant[t];
+        S.bankParams[t][7][4] = S.drumInpQuant[t];
     }
 }
 
@@ -2731,15 +2731,14 @@ function drawUI() {
             const sqfl   = S.clipSeqFollow[t][ac] ? 1 : 0;
             const _dlNote  = S.drumLaneNote[t][lane];
             const _noteStr = midiNoteName(_dlNote) + ' ' + _dlNote;
-            const drumLaneLabels = ['Stch', 'Shft', 'Ndg', 'Res', 'Len', 'SqFl', null, null];
+            const drumLaneLabels = ['Stch', S.shiftHeld ? 'Nudg' : 'Shft', 'Res', 'Len', 'SqFl', null, null, null];
             const drumLaneVals  = [
                 fmtStretch(S.bankParams[t][0][0]),
                 fmtSign(S.bankParams[t][0][1]),
-                fmtSign(S.bankParams[t][0][2]),
                 fmtRes(tpsIdx),
                 fmtLen(len),
                 fmtBool(sqfl),
-                null, null,
+                null, null, null,
             ];
             drawBankHeading('DRUM LANE >>');
             for (let k = 0; k < 6; k++) {
@@ -2769,17 +2768,16 @@ function drawUI() {
         } else if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 7) {
             /* ALL LANES bank overview */
             const t = S.activeTrack;
-            const qv = S.bankParams[t][7][3];
+            const qv = S.bankParams[t][7][2];
             const DIQ_LABELS = ['Off','1/64','1/32','1/16','1/16T','1/8','1/8T','1/4','1/4T'];
-            const allLabels = ['Stch', 'Shft', 'Ndg', 'Qnt', 'VelIn', 'InQ', null, null];
+            const allLabels = ['Stch', S.shiftHeld ? 'Nudg' : 'Shft', 'Qnt', 'VelIn', 'InQ', null, null, null];
             const allVals = [
                 fmtStretch(S.bankParams[t][7][0]),
                 fmtSign(S.bankParams[t][7][1]),
-                fmtSign(S.bankParams[t][7][2]),
                 qv <= 0 ? '--' : fmtPct(qv),
                 fmtVelOverride(S.trackVelOverride[t]),
                 DIQ_LABELS[S.drumInpQuant[t]] || 'Off',
-                null, null,
+                null, null, null,
             ];
             fill_rect(0, 0, 128, 9, 1);
             print(4, 1, (Math.floor(S.tickCount / 24) % 2 === 0 ? 'ALL' : '   ') + ' LANES', 0);
@@ -2898,7 +2896,8 @@ function drawUI() {
             const rowY = k < 4 ? 12 : 36;
             const hi   = (S.knobTouched === k);
             if (hi) fill_rect(colX, rowY, 24, 24, 1);
-            print(colX, rowY,      knobs[k].abbrev || '-', hi ? 0 : 1);
+            const _lbl = (knobs[k].dspKey === 'clock_shift' && S.shiftHeld) ? 'Nudg' : (knobs[k].abbrev || '-');
+            print(colX, rowY,      _lbl, hi ? 0 : 1);
             print(colX, rowY + 12, col4(knobs[k].abbrev ? knobs[k].fmt(vals[k]) : null), hi ? 0 : 1);
         }
         }
@@ -3745,7 +3744,7 @@ globalThis.tick = function () {
         }
     }
     if (S.allLanesQntResetTick >= 0 && S.tickCount >= S.allLanesQntResetTick) {
-        S.bankParams[S.allLanesQntResetTrack][7][3] = -1;
+        S.bankParams[S.allLanesQntResetTrack][7][2] = -1;
         S.allLanesQntResetTick  = -1;
         S.allLanesQntResetTrack = -1;
         S.screenDirty = true;
@@ -5286,7 +5285,7 @@ function _onCC_transport(d1, d2) {
         const _sfAc = effectiveClip(S.activeTrack);
         if (S.clipSeqFollow[S.activeTrack][_sfAc]) {
             S.clipSeqFollow[S.activeTrack][_sfAc] = false;
-            S.bankParams[S.activeTrack][0][7] = 0;
+            S.bankParams[S.activeTrack][0][6] = 0;
         }
         S.screenDirty = true;
     }
@@ -5662,34 +5661,28 @@ function _onCC_knobs(d1, d2) {
                 return;
             }
             if (knobIdx === 1) {
-                /* K2 = Shft (clock shift, sens=8) */
+                /* K2 = Shft (clock shift, sens=8). Shift+turn = Nudge (sens=4, faster). */
                 S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 8) {
+                if (S.knobAccum[knobIdx] >= (S.shiftHeld ? 4 : 8)) {
                     S.knobAccum[knobIdx] = 0;
-                    S.clockShiftTouchDelta += dir;
-                    S.bankParams[t][0][knobIdx] = S.clockShiftTouchDelta;
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + t + '_l' + lane + '_clock_shift', String(dir));
+                    if (S.shiftHeld) {
+                        /* Shift+Shft = Nudge */
+                        S.bankParams[t][0][knobIdx] += dir;
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + t + '_l' + lane + '_nudge', String(dir));
+                    } else {
+                        S.clockShiftTouchDelta += dir;
+                        S.bankParams[t][0][knobIdx] = S.clockShiftTouchDelta;
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + t + '_l' + lane + '_clock_shift', String(dir));
+                    }
                     S.pendingDrumLaneResync = 2; S.pendingDrumLaneResyncTrack = t; S.pendingDrumLaneResyncLane = lane;
                     S.screenDirty = true;
                 }
                 return;
             }
             if (knobIdx === 2) {
-                /* K3 = Ndg (nudge, sens=8) */
-                S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 8) {
-                    S.knobAccum[knobIdx] = 0;
-                    S.bankParams[t][0][knobIdx] += dir;
-                    if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + t + '_l' + lane + '_nudge', String(dir));
-                    S.pendingDrumLaneResync = 2; S.pendingDrumLaneResyncTrack = t; S.pendingDrumLaneResyncLane = lane;
-                    S.screenDirty = true;
-                }
-                return;
-            }
-            if (knobIdx === 3) {
-                /* K4 = Res (normal=proportional rescale; Shift=zoom, sens=16) */
+                /* K3 = Res (normal=proportional rescale; Shift=zoom, sens=16) */
                 S.knobAccum[knobIdx]++;
                 if (S.knobAccum[knobIdx] >= 16) {
                     S.knobAccum[knobIdx] = 0;
@@ -5728,8 +5721,8 @@ function _onCC_knobs(d1, d2) {
                 }
                 return;
             }
-            if (knobIdx === 4) {
-                /* K5 = Len (lane length, sens=8) */
+            if (knobIdx === 3) {
+                /* K4 = Len (lane length, sens=8) */
                 if (S.recordArmed && !S.recordCountingIn) { S.screenDirty = true; return; }
                 S.knobAccum[knobIdx]++;
                 if (S.knobAccum[knobIdx] >= 8) {
@@ -5747,8 +5740,8 @@ function _onCC_knobs(d1, d2) {
                 }
                 return;
             }
-            if (knobIdx === 5) {
-                /* K6 = SqFl: sens=16 — matches melodic */
+            if (knobIdx === 4) {
+                /* K5 = SqFl: sens=16 — matches melodic */
                 S.knobAccum[knobIdx]++;
                 if (S.knobAccum[knobIdx] >= 16) {
                     S.knobAccum[knobIdx] = 0;
@@ -5756,7 +5749,7 @@ function _onCC_knobs(d1, d2) {
                     const _nv  = Math.max(0, Math.min(1, _cur + dir));
                     if (_nv !== _cur) {
                         S.clipSeqFollow[t][ac] = _nv !== 0;
-                        S.bankParams[t][0][5]  = _nv;
+                        S.bankParams[t][0][4]  = _nv;
                         S.screenDirty = true;
                     }
                 }
@@ -5800,39 +5793,32 @@ function _onCC_knobs(d1, d2) {
                 return;
             }
             if (knobIdx === 1) {
-                /* K2 = Shft: clock shift all lanes, sens=8 */
+                /* K2 = Shft: clock shift all lanes, sens=8. Shift+turn = Nudge (sens=4). */
                 S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 8) {
+                if (S.knobAccum[knobIdx] >= (S.shiftHeld ? 4 : 8)) {
                     S.knobAccum[knobIdx] = 0;
-                    S.clockShiftTouchDelta += dir;
-                    S.bankParams[t][7][1] = S.clockShiftTouchDelta;
-                    host_module_set_param('t' + t + '_all_lanes_clock_shift', String(dir));
+                    if (S.shiftHeld) {
+                        S.bankParams[t][7][1] += dir;
+                        host_module_set_param('t' + t + '_all_lanes_nudge', String(dir));
+                    } else {
+                        S.clockShiftTouchDelta += dir;
+                        S.bankParams[t][7][1] = S.clockShiftTouchDelta;
+                        host_module_set_param('t' + t + '_all_lanes_clock_shift', String(dir));
+                    }
                     S.pendingDrumResync = 2; S.pendingDrumResyncTrack = t;
                     S.screenDirty = true;
                 }
                 return;
             }
             if (knobIdx === 2) {
-                /* K3 = Ndg: nudge all lanes, sens=8 */
-                S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 8) {
-                    S.knobAccum[knobIdx] = 0;
-                    S.bankParams[t][7][2] += dir;
-                    host_module_set_param('t' + t + '_all_lanes_nudge', String(dir));
-                    S.pendingDrumResync = 2; S.pendingDrumResyncTrack = t;
-                    S.screenDirty = true;
-                }
-                return;
-            }
-            if (knobIdx === 3) {
-                /* K4 = Qnt: quantize all lanes 0-100, sens=1 */
+                /* K3 = Qnt: quantize all lanes 0-100, sens=1 */
                 S.knobAccum[knobIdx]++;
                 if (S.knobAccum[knobIdx] >= 1) {
                     S.knobAccum[knobIdx] = 0;
-                    const cur7q = S.bankParams[t][7][3] < 0 ? 0 : S.bankParams[t][7][3];
+                    const cur7q = S.bankParams[t][7][2] < 0 ? 0 : S.bankParams[t][7][2];
                     const nv = Math.max(0, Math.min(100, cur7q + dir));
                     if (nv !== cur7q) {
-                        S.bankParams[t][7][3] = nv;
+                        S.bankParams[t][7][2] = nv;
                         S.drumLaneQnt[t] = nv;
                         S.bankParams[t][1][2] = nv;
                         host_module_set_param('t' + t + '_drum_lanes_qnt', String(nv));
@@ -5841,23 +5827,23 @@ function _onCC_knobs(d1, d2) {
                 }
                 return;
             }
-            if (knobIdx === 4) {
-                /* K5 = VelIn: track velocity override, sens=1 */
+            if (knobIdx === 3) {
+                /* K4 = VelIn: track velocity override, sens=1 */
                 const cur7v = S.trackVelOverride[t];
                 const nv = Math.max(0, Math.min(127, cur7v + dir));
                 if (nv !== cur7v) applyTrackConfig(t, 'track_vel_override', nv);
                 S.screenDirty = true;
                 return;
             }
-            if (knobIdx === 5) {
-                /* K6 = InQ: per-track drum input quantize, 9 values (0=Off..8=1/4T), sens=8 */
+            if (knobIdx === 4) {
+                /* K5 = InQ: per-track drum input quantize, 9 values (0=Off..8=1/4T), sens=8 */
                 S.knobAccum[knobIdx]++;
                 if (S.knobAccum[knobIdx] >= 8) {
                     S.knobAccum[knobIdx] = 0;
                     const nv = Math.max(0, Math.min(8, S.drumInpQuant[t] + dir));
                     if (nv !== S.drumInpQuant[t]) {
                         S.drumInpQuant[t] = nv;
-                        S.bankParams[t][7][5] = nv;
+                        S.bankParams[t][7][4] = nv;
                         host_module_set_param('t' + t + '_diq', String(nv));
                     }
                     S.screenDirty = true;
@@ -6028,7 +6014,9 @@ function _onCC_knobs(d1, d2) {
                 S.knobLastDir[knobIdx] = dir;
             }
             S.knobAccum[knobIdx]++;
-            if (S.knobAccum[knobIdx] >= pm.sens) {
+            /* Shift+Shft (Nudge mode) fires twice as fast as plain Clock Shift. */
+            const _effSens = (pm.dspKey === 'clock_shift' && S.shiftHeld) ? Math.max(1, (pm.sens >> 1)) : pm.sens;
+            if (S.knobAccum[knobIdx] >= _effSens) {
                 S.knobAccum[knobIdx] = 0;
                 S.screenDirty = true;
                 if (pm.scope === 'action') {
@@ -6076,8 +6064,17 @@ function _onCC_knobs(d1, d2) {
                             }
                         }
                     } else if (pm.dspKey === 'clock_shift') {
-                        /* Clock Shift: continuous rotation, no lock */
-                        if (len >= 2 && typeof host_module_set_param === 'function') {
+                        if (S.shiftHeld) {
+                            /* Shift+Shft = Nudge — fire DSP, mirror counter for display, schedule re-read */
+                            if (typeof host_module_set_param === 'function') {
+                                host_module_set_param('t' + t + '_nudge', String(dir));
+                                S.bankParams[t][bank][knobIdx] += dir;
+                                S.pendingStepsReread      = 2;
+                                S.pendingStepsRereadTrack = t;
+                                S.pendingStepsRereadClip  = ac;
+                            }
+                        } else if (len >= 2 && typeof host_module_set_param === 'function') {
+                            /* Clock Shift: continuous rotation, no lock */
                             host_module_set_param('t' + t + '_' + pm.dspKey, String(dir));
                             const steps = S.clipSteps[t][ac];
                             if (dir === 1) {
@@ -6091,15 +6088,6 @@ function _onCC_knobs(d1, d2) {
                             }
                             S.clockShiftTouchDelta += dir;
                             S.bankParams[t][bank][knobIdx] = S.clockShiftTouchDelta;
-                        }
-                    } else {
-                        /* Nudge: fire DSP, mirror counter locally for display, schedule steps re-read */
-                        if (typeof host_module_set_param === 'function') {
-                            host_module_set_param('t' + t + '_' + pm.dspKey, String(dir));
-                            S.bankParams[t][bank][knobIdx] += dir;
-                            S.pendingStepsReread      = 2;
-                            S.pendingStepsRereadTrack = t;
-                            S.pendingStepsRereadClip  = ac;
                         }
                     }
                 } else {
@@ -7056,7 +7044,7 @@ function _onStepButtons(d1, d2) {
                     /* ALL LANES: quantize all drum lanes */
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + t + '_drum_lanes_qnt', '100');
-                    S.bankParams[t][7][3] = 100;
+                    S.bankParams[t][7][2] = 100;
                     S.drumLaneQnt[t] = 100;
                     S.bankParams[t][1][2] = 100;
                 } else {
@@ -7594,9 +7582,22 @@ globalThis.onMidiMessageInternal = function (data) {
                         } else if (relPm.dspKey === 'clock_shift' || relPm.dspKey === 'beat_stretch') {
                             S.clockShiftTouchDelta = 0;
                             S.bankParams[S.activeTrack][S.activeBank][d1] = 0;
+                            /* Shft knob doubles as Nudge under Shift held — reset DSP nudge
+                             * accumulator on release in case the user finished a Shift+turn. */
+                            if (relPm.dspKey === 'clock_shift' &&
+                                    typeof host_module_set_param === 'function') {
+                                const _isAllLanes = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.activeBank === 7;
+                                const _isDrum     = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.activeBank === 0;
+                                if (_isAllLanes)
+                                    host_module_set_param('t' + S.activeTrack + '_all_lanes_nudge', '0');
+                                else if (_isDrum)
+                                    host_module_set_param('t' + S.activeTrack + '_l' + S.activeDrumLane[S.activeTrack] + '_nudge', '0');
+                                else
+                                    host_module_set_param('t' + S.activeTrack + '_nudge', '0');
+                            }
                         }
-                        /* ALL LANES K4 (Qnt): schedule display reset to '--' after ~500ms */
-                        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.activeBank === 7 && d1 === 3) {
+                        /* ALL LANES K3 (Qnt, idx 2): schedule display reset to '--' after ~500ms */
+                        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.activeBank === 7 && d1 === 2) {
                             S.allLanesQntResetTick  = S.tickCount + 47;
                             S.allLanesQntResetTrack = S.activeTrack;
                         }

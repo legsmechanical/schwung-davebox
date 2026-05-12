@@ -239,16 +239,16 @@ const _X  = p(null, null, null, 'stub', 0,   0, 0,  fmtNA);
 const _XQ = p(null, null, null, 'stub', 0, 100, -1, fmtNA);  /* bank 7 K4: quantize, def=-1 = unset */
 
 export const BANKS = [
-    /* 0 — CLIP (pad 92) — Beat Stretch, Clock Shift, Nudge, Resolution, Length, (stubs) */
+    /* 0 — CLIP (pad 92) — Beat Stretch, Clock Shift (Shift+turn = Nudge), Resolution, Length, (stubs) */
     { name: 'CLIP', knobs: [
         p('Stch', 'Beat Stretch',    'beat_stretch',    'action', 0, 0,   0,   fmtStretch, 16, '_factor', true),
         p('Shft', 'Clock Shift',     'clock_shift',     'action', 0, 0,   0,   fmtSign,    8),
-        p('Ndg',  'Nudge',           'nudge',           'action', 0, 0,   0,   fmtSign,    8),
         p('Res',  'Resolution',      'clip_resolution', 'clip',   0, 5,   1,   fmtRes, 16),
         p('Len',  'Clip Length',     'clip_length',     'track',  1, 256, 16,  fmtLen, 8),
         _X,
         _X,
         p('SqFl', 'Seq Follow',      null,              'seqfollow', 0, 1, 1,  fmtBool, 16),
+        _X,
     ]},
     /* 1 — NOTE FX (pad 93) */
     { name: 'NOTE FX', knobs: [
@@ -303,15 +303,15 @@ export const BANKS = [
     ]},
     /* 6 — CC PARAM (pad 98) — per-track CC assignments; custom handling, no DSP-wired knobs */
     { name: 'CC AUTOMATION', knobs: [_X, _X, _X, _X, _X, _X, _X, _X] },
-    /* 7 — ALL LANES (drum pad 92) — macro controls across all 32 drum lanes */
+    /* 7 — ALL LANES (drum pad 92) — macro controls across all 32 drum lanes.
+     * K2 Shft + Shift held = Nudge (replaced standalone Ndg knob). */
     { name: 'ALL LANES', knobs: [
         p('Stch', 'Beat Stretch', 'beat_stretch', 'action', 0, 0,  0,  fmtStretch, 16, '_factor', true),
         p('Shft', 'Clock Shift',  'clock_shift',  'action', 0, 0,  0,  fmtSign,    8),
-        p('Ndg',  'Nudge',        'nudge',         'action', 0, 0,  0,  fmtSign,    8),
-        _XQ,  /* K4: quantize all lanes — custom handling, def=-1 */
-        _X,   /* K5: VelIn — custom handling via trackVelOverride */
-        _X,   /* K6: InQ — per-track drum input quantize, custom handling */
-        _X, _X,
+        _XQ,  /* K3: quantize all lanes — custom handling, def=-1 */
+        _X,   /* K4: VelIn — custom handling via trackVelOverride */
+        _X,   /* K5: InQ — per-track drum input quantize, custom handling */
+        _X, _X, _X,
     ]},
 ];
 

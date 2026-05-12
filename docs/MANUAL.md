@@ -495,7 +495,7 @@ Every parameter in NOTE FX, HARMONY, DELAY, SEQUENCE ARP, and CC AUTOMATION is *
 Bank parameters fall into two categories:
 
 - **Non-destructive** (play FX) — applied at render time. The underlying notes aren't modified. Returning the knob to default leaves the clip unchanged. **NOTE FX, HARMONY, DELAY, SEQUENCE ARP, ARP IN** are all non-destructive.
-- **Destructive** — modifies the underlying note data immediately. Returning the knob to default does *not* revert the change; use **Undo** instead. The **CLIP** bank (Stretch, Clock Shift, Nudge, Resolution, Length), the equivalent per-lane controls in **DRUM LANE**, and **ALL LANES K1–K3** (Stretch / Clock Shift / Nudge) are destructive.
+- **Destructive** — modifies the underlying note data immediately. Returning the knob to default does *not* revert the change; use **Undo** instead. The **CLIP** bank (Stretch, Clock Shift, Shift+K2 Nudge, Resolution, Length), the equivalent per-lane controls in **DRUM LANE**, and **ALL LANES K1–K2** (Stretch / Clock Shift, including Shift+K2 Nudge) are destructive.
 
 **CC AUTOMATION** records automation data — recording adds points to the clip; reverting needs an explicit clear (Delete + jog click clears all; Delete + knob touch clears one).
 
@@ -516,13 +516,12 @@ Timing and playback settings for the active clip. **K1–K5 are destructive** �
 | Knob | Parameter | Notes |
 |---|---|---|
 | K1 | Stretch | One-shot. Each detent doubles (right) or halves (left) the clip. Blocked if compression would put two notes on the same step. |
-| K2 | Clock Shift | Rotates all notes forward/backward by whole steps. Shows cumulative signed offset while held; resets to 0 on release. |
-| K3 | Nudge | Shifts all notes at tick resolution. Shows offset while held; resets on release. Notes wrap at clip boundary. |
-| K4 | Resolution | Per-clip playback speed: 1/32, 1/16 (default), 1/8, 1/4, 1/2, 1-bar. Rescales note positions proportionally. **Shift + K4** = Zoom mode: keeps absolute note positions, adjusts the step grid around them. |
-| K5 | Length | Clip length in steps, 1–256. Immediate. |
-| K8 | SeqFollow | On (default): Track View auto-scrolls to follow the playhead. Off: view stays put. |
+| K2 | Clock Shift / **Nudg** | Plain turn: rotates all notes forward/backward by whole steps (signed offset shown while held, resets on release). **Shift + turn**: nudges all notes at tick resolution (faster response than Clock Shift). The K2 label flips to `Nudg` while Shift is held. |
+| K3 | Resolution | Per-clip playback speed: 1/32, 1/16 (default), 1/8, 1/4, 1/2, 1-bar. Rescales note positions proportionally. **Shift + K3** = Zoom mode: keeps absolute note positions, adjusts the step grid around them. |
+| K4 | Length | Clip length in steps, 1–256. Immediate. |
+| K7 | SeqFollow | On (default): Track View auto-scrolls to follow the playhead. Off: view stays put. |
 
-K6 and K7 are unassigned on the CLIP bank.
+K5, K6, and K8 are unassigned on the CLIP bank.
 
 ## 5.2 NOTE FX bank
 
@@ -707,11 +706,10 @@ Per-lane settings for the active lane. (This bank replaces CLIP on drum tracks; 
 | Knob | Parameter | Notes |
 |---|---|---|
 | K1 | Stretch | Per-lane beat stretch (one-shot). Blocked if compression impossible. |
-| K2 | Clock Shift | Shifts the active lane only |
-| K3 | Nudge | Nudges the active lane only |
-| K4 | Resolution | Per-lane playback resolution |
-| K5 | Length | Per-lane clip length |
-| K6 | SeqFollow | Per-clip auto-scroll on/off |
+| K2 | Clock Shift / **Nudg** | Plain turn: shifts the active lane by whole steps. **Shift + turn**: nudges the active lane at tick resolution (faster than Clock Shift). Label flips to `Nudg` while Shift is held. |
+| K3 | Resolution | Per-lane playback resolution |
+| K4 | Length | Per-lane clip length |
+| K5 | SeqFollow | Per-clip auto-scroll on/off |
 | K7 | Oct (Lane Note) | Shifts the active lane's MIDI note by ±1 octave. OLED shows note name and number. |
 | K8 | Note (Lane Note) | Shifts the active lane's MIDI note by ±1 semitone |
 
@@ -719,18 +717,17 @@ Lane MIDI note assignments persist across saves and reloads.
 
 ## 6.6 ALL LANES bank
 
-Bank 7 on drum tracks. Applies parameters to all 32 lanes simultaneously. **K1–K3 are destructive** (modify note data across all lanes); **K4 (Qnt)** is non-destructive playback quantize; **K5 (VelIn)** and **K6 (InQ)** are track-config settings and don't modify existing note data.
+Bank 7 on drum tracks. Applies parameters to all 32 lanes simultaneously. **K1–K2 are destructive** (modify note data across all lanes, including Shift+K2 = Nudge); **K3 (Qnt)** is non-destructive playback quantize; **K4 (VelIn)** and **K5 (InQ)** are track-config settings and don't modify existing note data.
 
 | Knob | Parameter | Notes |
 |---|---|---|
 | K1 | Stretch | Beat stretch applied atomically. If any lane can't compress or expand, the operation is a no-op ("NO ROOM" popup). |
-| K2 | Clock Shift | Shifts all lanes |
-| K3 | Nudge | Nudges all lanes |
-| K4 | Quantize | Playback quantize for all 32 lanes |
-| K5 | VelIn | Velocity input override for this track |
-| K6 | InQ | Recording input quantize (Off · 1/32 · 1/16 · 1/8 · 1/4 · 1/4T · 1/8T · 1/16T · 1/32T) |
+| K2 | Clock Shift / **Nudg** | Plain turn: shifts all lanes by whole steps. **Shift + turn**: nudges all lanes at tick resolution. Label flips to `Nudg` while Shift is held. |
+| K3 | Quantize | Playback quantize for all 32 lanes |
+| K4 | VelIn | Velocity input override for this track |
+| K5 | InQ | Recording input quantize (Off · 1/32 · 1/16 · 1/8 · 1/4 · 1/4T · 1/8T · 1/16T · 1/32T) |
 
-K7 and K8 are unassigned.
+K6, K7, and K8 are unassigned.
 
 ## 6.7 Note Repeat
 
