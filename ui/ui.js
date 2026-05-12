@@ -200,6 +200,17 @@ function buildGlobalMenuItems() {
                 openSchwungSlotEditor(S.activeTrack);
             })
         ] : []),
+        /* Move-native co-run entry — visible only when (a) active track is
+         * ROUTE_MOVE, (b) the patched Schwung shim exposes the binding, and
+         * (c) the cable-0 MIDI inject API is present (Schwung >= v0.7.0).
+         * On stock Schwung or non-Move-routed tracks the entry isn't built. */
+        ...((S.trackRoute[S.activeTrack] === 1 &&
+             typeof shadow_set_corun_move_native === 'function' &&
+             typeof move_midi_inject_to_move === 'function') ? [
+            createAction('Edit Synth...', function() {
+                enterMoveNativeCoRun(S.activeTrack);
+            })
+        ] : []),
         createDivider('Global'),
         createValue('BPM', {
             get: function() {
@@ -1087,6 +1098,7 @@ function openGlobalMenu() {
     /* Co-run owns the OLED — exit it before opening the menu so dAVEBOx
      * can draw again. */
     if (S.schwungCoRunSlot >= 0) exitSchwungCoRun();
+    if (S.moveCoRunTrack >= 0) exitMoveNativeCoRun();
     S.globalMenuItems       = buildGlobalMenuItems();
     S.globalMenuState       = createMenuState();
     S.globalMenuStack       = createMenuStack();
@@ -1547,6 +1559,19 @@ function pollDSP() {
             S.globalMenuOpen = false;
             S.lastSentMenuEditValue = null;
             S.screenDirty = true;
+        }
+    }
+    /* Same pattern for Move-native co-run. Phase A doesn't have a shim-side
+     * "auto-exit" path the way chain-edit does (Menu is intercepted in
+     * dAVEBOx, not shadow_ui), so the SHM clearing currently only happens
+     * via our own exitMoveNativeCoRun(). The reconcile is here for parity
+     * and so a future shim-side exit (e.g. on tool unload) propagates. */
+    if (typeof shadow_get_corun_move_native === 'function') {
+        const _shm = shadow_get_corun_move_native();
+        if (_shm < 0 && S.moveCoRunTrack >= 0) {
+            S.moveCoRunTrack = -1;
+            S.screenDirty = true;
+            forceRedraw();
         }
     }
     if (typeof host_module_get_param !== 'function') return;
@@ -2438,6 +2463,13 @@ function drawUI() {
      * Skip every dAVEBOx draw path so it doesn't fight the chain editor's
      * frame. shadow_ui still calls clear_screen + redraw each tick. */
     if (S.schwungCoRunSlot >= 0) return;
+    /* Move-native co-run: Move firmware owns the OLED (preset browser /
+     * device-edit pages). The shim's display_mode bypass keeps Move's
+     * framebuffer visible while the MIDI filter stays active; we just
+     * stay out of the way. Pad/step LEDs are frozen at entry-time state
+     * (Phase A) — Phase B refactor will split drawUI into OLED + LED
+     * branches so static and animated LEDs can keep updating. */
+    if (S.moveCoRunTrack >= 0) return;
     if (S.sessionOverlayHeld) { drawSessionOverview(); return; }
     if (S.pendingInheritPicker) { drawInheritPicker(); return; }
     if (S.pendingSchwungSlotPicker) { drawSchwungSlotPicker(); return; }
@@ -3015,6 +3047,46 @@ function exitSchwungCoRun() {
     S.screenDirty = true;
 }
 
+/* Enter Move-native co-run for dAVEBOx track t. Asks the shim to (a) yield
+ * the OLED to Move firmware and (b) flip its sh_midi filter / shadow_ui
+ * forward so the nav-CC + touch-note set routes to Move firmware instead
+ * of dAVEBOx. Fires one cable-0 track-button tap so Move firmware lands
+ * on the preset browser for the relevant track without the user touching
+ * the front panel. Move's track-button CC mapping is REVERSED
+ * (CC 43 = Track 1 ... CC 40 = Track 4), and dAVEBOx tracks 5-8 with
+ * ROUTE_MOVE rely on the user's trackChannel to address one of Move's
+ * 4 tracks — if trackChannel is outside 1-4 we just enter co-run without
+ * an auto-tap and let the user pick the Move track manually. */
+function enterMoveNativeCoRun(t) {
+    if (typeof shadow_set_corun_move_native !== 'function') return;
+    if (typeof move_midi_inject_to_move !== 'function') return;
+    S.moveCoRunTrack = t;
+    shadow_set_corun_move_native(t);
+    const ch = S.trackChannel[t] | 0;
+    if (ch >= 1 && ch <= 4) {
+        const cc = 44 - ch;  /* ch 1 -> CC 43 (Track 1) ... ch 4 -> CC 40 (Track 4) */
+        move_midi_inject_to_move([0x0B, 0xB0, cc, 127]);
+        move_midi_inject_to_move([0x0B, 0xB0, cc, 0]);
+    }
+    S.globalMenuOpen = false;
+    S.lastSentMenuEditValue = null;
+    S.screenDirty = true;
+}
+
+/* Exit Move-native co-run. The shim drops its input split + display
+ * bypass the next time it reads corun_move_native_track from SHM, so
+ * Move firmware's framebuffer stops reaching the OLED and the nav CCs
+ * start flowing to dAVEBOx again. We force a full redraw so any LEDs
+ * Move firmware was driving (knob rings, track buttons, Shift, Back)
+ * get repainted from dAVEBOx state right away. */
+function exitMoveNativeCoRun() {
+    if (S.moveCoRunTrack < 0) return;
+    S.moveCoRunTrack = -1;
+    if (typeof shadow_set_corun_move_native === 'function')
+        shadow_set_corun_move_native(-1);
+    forceRedraw();
+}
+
 function resolveSchwungSlotPicker(action) {
     const p = S.pendingSchwungSlotPicker;
     if (!p) return;
@@ -3280,6 +3352,9 @@ globalThis.init = function () {
     S.schwungCoRunSlot = -1;
     if (typeof shadow_set_corun_chain_edit === 'function')
         shadow_set_corun_chain_edit(-1);
+    S.moveCoRunTrack = -1;
+    if (typeof shadow_set_corun_move_native === 'function')
+        shadow_set_corun_move_native(-1);
     if (S.bankParams === null)
         S.bankParams = Array.from({length: NUM_TRACKS}, function() {
             return BANKS.map(function(bank) { return bank.knobs.map(function(k) { return k.def; }); });
@@ -4691,6 +4766,15 @@ function _onCC_buttons(d1, d2) {
      * tap = switch view; hold = session overview */
     if (d1 === MoveNoteSession) {
         if (d2 === 127) {
+            /* Move-native co-run uses Menu as the exit gesture (Back is
+             * routed to Move firmware and never reaches us). Short-circuit
+             * BEFORE the normal Menu/Note-Session handling — shiftHeld is
+             * stale during co-run (Shift is also shim-routed to Move) so
+             * the regular branches can't be trusted. */
+            if (S.moveCoRunTrack >= 0) {
+                exitMoveNativeCoRun();
+                return;
+            }
             if (S.shiftHeld) {
                 if (S.globalMenuOpen) { S.globalMenuOpen = false; forceRedraw(); }
                 else { openGlobalMenu(); }

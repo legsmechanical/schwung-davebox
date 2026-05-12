@@ -114,6 +114,7 @@ export const S = {
     trackRoute: new Array(8).fill(0),
     trackSchwungSlot: new Array(8).fill(-1),  /* -1 = unassigned; 0-3 = Schwung chain slot picked from this track's "Edit Slot" menu */
     schwungCoRunSlot: -1,                     /* -1 = off; 0-3 = Schwung chain editor is co-running on this slot (dAVEBOx skips OLED + suppresses track-button LEDs) */
+    moveCoRunTrack: -1,                       /* -1 = off; 0-3 = Move firmware is co-running on this track (dAVEBOx skips OLED; shim filters nav CCs + touch 0-9 from tool, lets them reach Move) */
     trackPadMode: new Array(8).fill(0),
     trackVelOverride: new Array(8).fill(0),
     trackLooper: new Array(8).fill(1),
