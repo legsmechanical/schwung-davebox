@@ -8,7 +8,7 @@ the section into a versioned heading at release time.
 
 ## [Unreleased]
 ### Features
-- Track menu: **Edit Slot...** — for Schwung-routed tracks, hands the OLED + jog wheel + track buttons over to Schwung's native chain editor while dAVEBOx keeps pads, step buttons, knobs, and transport. First use shows a slot picker (1-4); the choice persists per track. Hold **Shift** while selecting `Edit Slot...` to reopen the picker and reassign. Press **Back** to navigate up within the editor, **Menu** to exit co-run. Requires the matching Schwung shim addition on `feat/ui-split` (adds `shadow_set_corun_chain_edit` + `corun_chain_edit_slot` in shadow_control).
+- Track menu: **Edit Slot...** — hands the OLED + jog wheel + track buttons over to Schwung's native chain editor while dAVEBOx keeps pads, step buttons, knobs, and transport. First use shows a slot picker (1-4); the choice persists per track. Hold **Shift** while selecting `Edit Slot...` to reopen the picker and reassign. Press **Back** to navigate up within the editor, **Menu** to exit co-run. **Capability-gated**: requires the patched Schwung shim from [`legsmechanical/schwung`](https://github.com/legsmechanical/schwung) (adds `shadow_set_corun_chain_edit` + `corun_chain_edit_slot` in shadow_control). On stock Schwung the entry is hidden and the feature is invisible.
 
 ### Persistence
 - UI sidecar bumped to v=4: per-track Schwung-slot assignment (`ss`). Old v=3 sidecars upgrade in place; new slots default to unassigned.

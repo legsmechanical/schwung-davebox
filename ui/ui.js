@@ -190,9 +190,16 @@ function buildGlobalMenuItems() {
             set: function(v) { applyTrackConfig(S.activeTrack, 'track_looper', v ? 1 : 0); },
             onLabel: 'On', offLabel: 'Off'
         }),
-        createAction('Edit Slot...', function() {
-            openSchwungSlotEditor(S.activeTrack);
-        }),
+        /* Co-run capability gate. The chain-editor co-run feature requires the
+         * patched Schwung shim (adds shadow_set_corun_chain_edit + co-run draw
+         * paths in shadow_ui.js). On stock Schwung the API is undefined and
+         * the menu entry isn't built, so the feature is invisible. All other
+         * co-run code is dormant unless this entry triggers it. */
+        ...(typeof shadow_set_corun_chain_edit === 'function' ? [
+            createAction('Edit Slot...', function() {
+                openSchwungSlotEditor(S.activeTrack);
+            })
+        ] : []),
         createDivider('Global'),
         createValue('BPM', {
             get: function() {
