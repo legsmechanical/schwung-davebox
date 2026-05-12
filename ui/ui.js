@@ -5797,9 +5797,11 @@ function _onCC_knobs(d1, d2) {
                 return;
             }
             if (knobIdx === 1) {
-                /* K2 = Shft: clock shift all lanes, sens=8. Shift+turn = Nudge (sens=4). */
+                /* K2 = Shft: clock shift all lanes, sens=8. Shift+turn = Nudge (sens=1,
+                 * every detent fires — much faster than per-lane nudge sens=4 to
+                 * compensate for DSP-side latency when nudging 32 lanes at once). */
                 S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= (S.shiftHeld ? 4 : 8)) {
+                if (S.knobAccum[knobIdx] >= (S.shiftHeld ? 1 : 8)) {
                     S.knobAccum[knobIdx] = 0;
                     if (S.shiftHeld) {
                         S.bankParams[t][7][1] += dir;

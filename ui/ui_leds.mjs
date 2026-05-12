@@ -104,16 +104,25 @@ export function updateStepLEDs() {
     }
 
     /* Shift overlay: suppress step state; blink shortcut hints and return early to keep
-     * MIDI traffic low (avoids queue overflow that breaks hardware button LED blinking). */
+     * MIDI traffic low (avoids queue overflow that breaks hardware button LED blinking).
+     * Exception: while Shift is held and the Shft/Res knob is being touched on a bank
+     * where the shift modifier applies (CLIP bank 0 = Shft+Res; ALL LANES bank 7 = Shft
+     * only, no Res), fall through to normal step LEDs so the grid is visible. */
     if (S.shiftHeld) {
-        const isDrum = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
-        const flash  = (Math.floor(S.tickCount / 24) % 2) ? LightGrey : LED_OFF;
-        for (let i = 0; i < 16; i++) {
-            let on = i === 1 || (i >= 4 && i <= 6) || i === 8;
-            if (i === 7 || i === 9 || (i === 10 && !isDrum) || i === 14 || i === 15) on = true;
-            setLED(16 + i, on ? flash : LED_OFF);
+        const _kt = S.knobTouched;
+        const _knobShiftMode =
+            (S.activeBank === 0 && (_kt === 1 || _kt === 2)) ||
+            (S.activeBank === 7 && _kt === 1);
+        if (!_knobShiftMode) {
+            const isDrum = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
+            const flash  = (Math.floor(S.tickCount / 24) % 2) ? LightGrey : LED_OFF;
+            for (let i = 0; i < 16; i++) {
+                let on = i === 1 || (i >= 4 && i <= 6) || i === 8;
+                if (i === 7 || i === 9 || (i === 10 && !isDrum) || i === 14 || i === 15) on = true;
+                setLED(16 + i, on ? flash : LED_OFF);
+            }
+            return;
         }
-        return;
     }
 
     /* Drum mode: step buttons show active lane's steps — identical visualization to melodic */
@@ -298,13 +307,19 @@ export function updateTrackLEDs() {
     }
 
     /* Step icon LEDs (CCs 16-31): light shortcut hints while Shift held in Track View.
-     * Force-send every POLL_INTERVAL to override any native Move state that bypasses caches. */
+     * Force-send every POLL_INTERVAL to override any native Move state that bypasses caches.
+     * Suppress icons too while Shift+Shft/Res knob is being touched (matches the step
+     * button main-LED fall-through to the normal step view). */
     {
         const isDrum    = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
         const force     = S.tickCount % POLL_INTERVAL === 0;
+        const _kt = S.knobTouched;
+        const _knobShiftMode =
+            (S.activeBank === 0 && (_kt === 1 || _kt === 2)) ||
+            (S.activeBank === 7 && _kt === 1);
         for (let i = 0; i < 16; i++) {
             let on = false;
-            if (S.shiftHeld) {
+            if (S.shiftHeld && !_knobShiftMode) {
                 if (i === 1 || (i >= 4 && i <= 6) || i === 8) on = true; /* shared shortcuts */
                 if (!S.sessionView) {
                     if (i === 7)                            on = true;
@@ -565,11 +580,12 @@ export function updateTrackLEDs() {
         const _isDrum = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
         for (let k = 0; k < 8; k++) {
             let hasShift = false;
-            if      (S.activeBank === 0 && k === 3)             hasShift = true; // K4 zoom
-            else if (S.activeBank === 1 && k === 2 && !_isDrum) hasShift = true; // K3 Rnd algo
-            else if (S.activeBank === 3 && k === 7 && !_isDrum) hasShift = true; // K8 Rnd algo
-            else if (S.activeBank === 5 && _isDrum)             hasShift = true; // K1-8 nudge
-            else if (S.activeBank === 6)                        hasShift = true; // K1-8 CC assign
+            if      (S.activeBank === 0 && (k === 1 || k === 2)) hasShift = true; // K2 Nudg, K3 Zoom
+            else if (S.activeBank === 7 && k === 1)              hasShift = true; // ALL LANES K2 Nudg
+            else if (S.activeBank === 1 && k === 2 && !_isDrum)  hasShift = true; // K3 Rnd algo
+            else if (S.activeBank === 3 && k === 7 && !_isDrum)  hasShift = true; // K8 Rnd algo
+            else if (S.activeBank === 5 && _isDrum)              hasShift = true; // K1-8 nudge
+            else if (S.activeBank === 6)                         hasShift = true; // K1-8 CC assign
             if (hasShift) cachedSetButtonLED(71 + k, _sf);
         }
     }
