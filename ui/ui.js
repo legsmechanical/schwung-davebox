@@ -6551,6 +6551,27 @@ function _onPadPressTrackView(status, d1, d2) {
 }
 
 function _onPadPress(status, d1, d2) {
+        /* Move-native co-run + drum-mode active track: synthesize the
+         * native Move "Shift + drum pad" gesture on cable-0 so Move
+         * firmware silently selects the cell for editing. dAVEBOx keeps
+         * its normal pad handling below (the sequencer still fires the
+         * drum from this track), so the pad tap = audible dAVEBOx drum
+         * + silent Move-side cell change. Mask: left 4 columns of each
+         * pad row, where notes 68-99 are laid out bottom-to-top as
+         * 68-75 / 76-83 / 84-91 / 92-99 — left-4x4 is (d1 - 68) % 8 < 4.
+         * Note-on (status 0x9_) with d2 > 0 only; note-off doesn't need
+         * a re-select. Velocity 100 is arbitrary — Move's cell-select
+         * is gesture-driven, not velocity-driven. */
+        if (S.moveCoRunTrack >= 0 &&
+                S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM &&
+                d1 >= 68 && d1 <= 99 && ((d1 - 68) % 8) < 4 &&
+                (status & 0xF0) === 0x90 && d2 > 0 &&
+                typeof move_midi_inject_to_move === 'function') {
+            move_midi_inject_to_move([0x0B, 0xB0, 49, 127]);  /* Shift on */
+            move_midi_inject_to_move([0x09, 0x90, d1, 100]);  /* pad on */
+            move_midi_inject_to_move([0x08, 0x80, d1, 0]);    /* pad off */
+            move_midi_inject_to_move([0x0B, 0xB0, 49, 0]);    /* Shift off */
+        }
         if (S.tapTempoOpen && d1 >= 68 && d1 <= 99) {
             registerTapTempo(d1);
             return;
