@@ -2466,9 +2466,9 @@ function drawUI() {
     /* Move-native co-run: Move firmware owns the OLED (preset browser /
      * device-edit pages). The shim's display_mode bypass keeps Move's
      * framebuffer visible while the MIDI filter stays active; we just
-     * stay out of the way. Pad/step LEDs are frozen at entry-time state
-     * (Phase A) — Phase B refactor will split drawUI into OLED + LED
-     * branches so static and animated LEDs can keep updating. */
+     * stay out of the way. Pad/step LEDs freeze at entry-time state —
+     * verified harmless in real use (nothing the user does during co-run
+     * depends on live LED feedback). */
     if (S.moveCoRunTrack >= 0) return;
     if (S.sessionOverlayHeld) { drawSessionOverview(); return; }
     if (S.pendingInheritPicker) { drawInheritPicker(); return; }

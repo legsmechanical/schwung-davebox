@@ -166,11 +166,11 @@ A tool that opts into Move-native co-run is expected to:
 
 dAVEBOx implements this contract via `S.moveCoRunTrack`, the `Edit Synth...` track-menu action (capability-gated on `S.trackRoute[t] === 1` + the two binding probes), the `drawUI` early-return, a `pollDSP` reconciliation step, and a Menu (CC 50) short-circuit in `_onCC_buttons`.
 
-### Phasing — frozen LEDs first, live LEDs later
+### Phasing — frozen LEDs in practice
 
 The Phase A `drawUI` early-return freezes pad and step-button LEDs at their entry-time state during co-run. Static state (active-track color, clip color, drum-lane assignments, armed-step state) is preserved; animated state (playhead pulses, mute/solo flashes, beat-marker pulses) stops animating. The sequencer continues firing audibly.
 
-A separate Phase B refactor — splitting `drawUI` into "render OLED" vs "render pad/step-button LEDs" branches — would let static and animated LEDs keep updating during co-run. The OLED branch would be gated on `S.moveCoRunTrack >= 0 || S.schwungCoRunSlot >= 0`; the LED branch would run unconditionally. This benefits both co-run features and is decoupled from the shim portal architecture.
+The originally-planned "Phase B" refactor — splitting `drawUI` into "render OLED" vs "render pad/step-button LEDs" branches so LEDs stay live during co-run — was deferred after real-use testing on 2026-05-12 confirmed the freeze isn't a problem in practice. Nothing the user actually does during co-run depends on live LED feedback (drum cell-select is gesture-driven, preset audition is OLED+audio-driven). The refactor remains an option if a future Move firmware change or new co-run consumer makes the freeze visibly annoying, but isn't worth pursuing speculatively.
 
 ### LED-write filtering (Phase 1.5, deferred)
 
