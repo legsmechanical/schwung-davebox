@@ -841,7 +841,13 @@ Empty cells in the scene don't affect their column — that track keeps doing wh
 
 Mixing clip copy and scene-row copy (in the same press-and-paste sequence) is rejected.
 
-## 7.3 Scene clear
+## 7.3 Capture scene from what's playing
+
+| Control | Behavior |
+|---|---|
+| Capture + scene row button | Snapshot the current performance into the pressed row: each track's currently-active clip is copied into that row. Tracks where the active clip is empty are skipped (the target keeps its prior content for those tracks). Tracks already on the target row are skipped (no self-copy). OLED shows `CAPTURED / TO ROW N`, or `NOTHING / TO CAPTURE` if nothing applied. Works in both Session View and Track View. |
+
+## 7.4 Scene clear
 
 | Control | Behavior |
 |---|---|

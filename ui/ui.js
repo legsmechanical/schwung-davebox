@@ -5433,6 +5433,25 @@ function _onCC_side(d1, d2) {
             S.confirmBakeSceneSel   = 1;
             S.confirmBakeSceneClip  = clipIdx;
             S.screenDirty           = true;
+        } else if (S.captureHeld) {
+            /* Capture + scene row: copy each track's active clip into this row.
+             * Skip self-copy and empty-source tracks so unused tracks keep their target. */
+            let scooped = 0;
+            for (let t = 0; t < NUM_TRACKS; t++) {
+                const srcC = S.trackActiveClip[t];
+                if (srcC === clipIdx) continue;
+                if (!trackClipHasContent(t, srcC)) continue;
+                if (S.trackPadMode[t] === PAD_MODE_DRUM) {
+                    copyDrumClip(t, srcC, t, clipIdx);
+                } else {
+                    copyClip(t, srcC, t, clipIdx);
+                }
+                scooped++;
+            }
+            invalidateLEDCache();
+            forceRedraw();
+            if (scooped > 0) showActionPopup('CAPTURED', 'TO ROW ' + (clipIdx + 1));
+            else             showActionPopup('NOTHING', 'TO CAPTURE');
         } else if (S.sessionView) {
             S.sceneBtnFlashTick[idx] = S.tickCount;
             if (typeof host_module_set_param === 'function')
