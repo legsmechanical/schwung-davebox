@@ -14,13 +14,13 @@ from pathlib import Path
 
 # Dependency order: each file must come before files that depend on it
 ORDER = [
-    'ui_constants.mjs',
-    'ui_state.mjs',
-    'ui_scene.mjs',
-    'ui_persistence.mjs',
-    'ui_dialogs.mjs',
-    'ui_leds.mjs',
-    'ui.js',
+    'ui/ui_constants.mjs',
+    'ui/ui_state.mjs',
+    'ui/ui_scene.mjs',
+    'ui/ui_persistence.mjs',
+    'ui/ui_dialogs.mjs',
+    'ui/ui_leds.mjs',
+    'ui/ui.js',
 ]
 
 SHARED_PREFIX = '/data/UserData/schwung/shared/'
@@ -112,7 +112,7 @@ for fname in ORDER:
 # Generate output
 out = []
 out.append('/* dAVEBOx UI — bundled from source modules by scripts/bundle_ui.py */')
-out.append('/* Source: ' + ', '.join(ORDER) + ' */')
+out.append('/* Source: ' + ', '.join(Path(f).name for f in ORDER) + ' */')
 out.append('')
 
 # Deduplicated shared imports
@@ -131,7 +131,7 @@ out.append('')
 
 # Concatenated bodies
 for fname, body in file_bodies:
-    out.append(f'/* ---- {fname} ---- */')
+    out.append(f'/* ---- {Path(fname).name} ---- */')
     out.append(body)
     out.append('')
 

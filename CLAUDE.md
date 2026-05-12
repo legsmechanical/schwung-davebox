@@ -35,7 +35,7 @@ nm -D dist/davebox/dsp.so | grep GLIBC             # verify ≤ 2.35
 ssh ableton@move.local "tail -f /data/UserData/schwung/seq8.log"
 ```
 
-**JS modules** (`ui.js`, `ui_constants.mjs`, `ui_state.mjs`, `ui_persistence.mjs`, `ui_dialogs.mjs`, `ui_scene.mjs`, `ui_leds.mjs`) — bundled into `dist/davebox/ui.js` by `scripts/bundle_ui.py`. Always run the bundler before deploying JS changes. **DSP**: see `dsp/CLAUDE.md`.
+**JS modules** live under `ui/` (`ui.js` + 6 `ui_*.mjs`) — bundled into `dist/davebox/ui.js` by `scripts/bundle_ui.py`. Always run the bundler before deploying JS changes. **DSP**: see `dsp/CLAUDE.md`.
 
 ## State persistence
 

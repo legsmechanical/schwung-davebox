@@ -29,19 +29,19 @@ echo "Compiling DSP..."
     -I. \
     -lm
 
-cp module.json        "dist/${MODULE_ID}/"
-cp ui.js              "dist/${MODULE_ID}/"
-cp ui_constants.mjs   "dist/${MODULE_ID}/"
-cp ui_state.mjs       "dist/${MODULE_ID}/"
-cp ui_persistence.mjs "dist/${MODULE_ID}/"
-cp ui_dialogs.mjs    "dist/${MODULE_ID}/"
-cp ui_scene.mjs      "dist/${MODULE_ID}/"
-cp ui_leds.mjs       "dist/${MODULE_ID}/"
+cp module.json           "dist/${MODULE_ID}/"
+cp ui/ui.js              "dist/${MODULE_ID}/"
+cp ui/ui_constants.mjs   "dist/${MODULE_ID}/"
+cp ui/ui_state.mjs       "dist/${MODULE_ID}/"
+cp ui/ui_persistence.mjs "dist/${MODULE_ID}/"
+cp ui/ui_dialogs.mjs     "dist/${MODULE_ID}/"
+cp ui/ui_scene.mjs       "dist/${MODULE_ID}/"
+cp ui/ui_leds.mjs        "dist/${MODULE_ID}/"
 # Convert source (24-bit stereo 44100Hz) → normalized 16-bit mono 48000Hz for DSP render_block
 python3 - <<'PYEOF'
 import wave, struct, audioop, warnings
 warnings.filterwarnings('ignore')   # suppress audioop deprecation on Python 3.13+
-src = "db-click.wav"
+src = "assets/db-click.wav"
 dst = "dist/davebox/click-seq8.wav"
 with wave.open(src, 'rb') as r:
     rate, nch, sw, nf = r.getframerate(), r.getnchannels(), r.getsampwidth(), r.getnframes()

@@ -10,6 +10,6 @@ ssh -o ConnectTimeout=5 "root@${MOVE_HOST}" "echo Connected." || { echo "Cannot 
 
 echo "Installing palette-viewer..."
 ssh "root@${MOVE_HOST}" "mkdir -p ${DEST}"
-scp "${PROJECT_DIR}/palette-viewer/module.json" "root@${MOVE_HOST}:${DEST}/module.json"
-scp "${PROJECT_DIR}/palette-viewer/ui.js"       "root@${MOVE_HOST}:${DEST}/ui.js"
+scp "${PROJECT_DIR}/tools/palette-viewer/module.json" "root@${MOVE_HOST}:${DEST}/module.json"
+scp "${PROJECT_DIR}/tools/palette-viewer/ui.js"       "root@${MOVE_HOST}:${DEST}/ui.js"
 echo "Done. Restart Schwung or rescan modules to pick it up."
