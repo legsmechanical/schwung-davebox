@@ -2,7 +2,7 @@
 
 Local patches applied to `~/schwung/` that must be re-applied after any Schwung upgrade.
 
-Current base: **v0.9.10** (`1f65169b`), branch `feat/ui-split` (was `fix/cable2-passthrough-no-tool` before the chain-edit co-run work landed).
+Current base: **v0.9.11** (`62529d77`), branch `main` on the `legsmechanical/schwung` fork. (Chain-edit co-run work landed via `feat/ui-split` and was merged to fork `main` on 2026-05-12.)
 
 ## Re-applying after a Schwung upgrade
 
@@ -29,7 +29,7 @@ Then restart Move. Deploy to `/data/UserData/schwung/schwung-shim.so` (data part
 
 ## Patch table
 
-| PR | Commit (on v0.9.10 branch) | File | Description |
+| PR | Commit (on fork/main) | File | Description |
 |----|----------------------------|------|-------------|
 | [#71](https://github.com/charlesvestal/schwung/pull/71) | `e70d7340` | `src/host/shadow_midi.c` | Defer cable-2 inject when cable-0 or cable-2 hardware is active — prevents SIGABRT in ROUTE_MOVE external MIDI monitoring |
 | [#72](https://github.com/charlesvestal/schwung/pull/72) | `5b74e6cc` + `4a95b4d6` | `src/host/shadow_midi.c` | Hold inject drain for 2 frames (~6ms) after overtake exit — prevents SIGABRT when suspending (Back) with a ROUTE_MOVE drum pattern playing |
