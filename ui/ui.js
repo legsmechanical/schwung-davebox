@@ -1530,11 +1530,15 @@ function resetPerClipBankParamsToDefault(t) {
 function pollDSP() {
     /* Reconcile co-run flag with SHM. shadow_ui can clear corun_chain_edit_slot
      * externally (e.g. Menu pressed during co-run) — when it does, the local
-     * mirror needs to clear so dAVEBOx resumes drawing. */
+     * mirror needs to clear so dAVEBOx resumes drawing. Menu is treated as a
+     * "return all the way out" gesture, so we also close the global menu the
+     * user opened to start the co-run flow. */
     if (typeof shadow_get_corun_chain_edit === 'function') {
         const _shm = shadow_get_corun_chain_edit();
         if (_shm < 0 && S.schwungCoRunSlot >= 0) {
             S.schwungCoRunSlot = -1;
+            S.globalMenuOpen = false;
+            S.lastSentMenuEditValue = null;
             S.screenDirty = true;
         }
     }
@@ -2964,12 +2968,15 @@ function openSchwungSlotEditor(t) {
         showActionPopup('NOT', 'SCHWUNG-ROUTED');
         return;
     }
+    /* Close the global menu in both branches so Menu (exit co-run) doesn't
+     * land back on a half-open menu. */
+    S.globalMenuOpen = false;
+    S.lastSentMenuEditValue = null;
     const slot = S.trackSchwungSlot[t];
     if (slot >= 0 && slot <= 3) {
         enterSchwungCoRun(t, slot);
         return;
     }
-    S.globalMenuOpen = false;
     S.pendingSchwungSlotPicker = { track: t, selectedIndex: 0 };
     S.screenDirty = true;
 }
