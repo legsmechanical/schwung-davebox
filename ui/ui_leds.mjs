@@ -277,6 +277,26 @@ export function updateSessionLEDs() {
 export function updateTrackLEDs() {
     if (!S.ledInitComplete) return;
 
+    /* Track buttons (CCs 40-43) — bright White while co-run is active so the
+     * user sees they're disconnected from dAVEBOx and owned by Schwung's
+     * chain editor. On exit, restore to OFF (dAVEBOx doesn't otherwise drive
+     * these LEDs). The transition latch fires the OFF writes exactly once
+     * when co-run clears. */
+    {
+        const inCoRun = S.schwungCoRunSlot >= 0;
+        if (inCoRun) {
+            const force = S.tickCount % POLL_INTERVAL === 0;
+            for (let _i = 0; _i < 4; _i++) {
+                if (force) setButtonLED(40 + _i, White, true);
+                else cachedSetButtonLED(40 + _i, White);
+            }
+            S._coRunTrackLedsLit = true;
+        } else if (S._coRunTrackLedsLit) {
+            for (let _i = 0; _i < 4; _i++) setButtonLED(40 + _i, LED_OFF, true);
+            S._coRunTrackLedsLit = false;
+        }
+    }
+
     /* Step icon LEDs (CCs 16-31): light shortcut hints while Shift held in Track View.
      * Force-send every POLL_INTERVAL to override any native Move state that bypasses caches. */
     {
@@ -463,6 +483,11 @@ export function updateTrackLEDs() {
         }
     }
 
+    /* Co-run: track buttons are owned by Schwung's chain editor — skip the
+     * scene/clip-color writes so the bright-White indicator written at the
+     * top of this function isn't overwritten. Knob LEDs below still update
+     * normally so dAVEBOx's sequencer-side controls stay legible. */
+  if (S.schwungCoRunSlot < 0) {
     for (let idx = 0; idx < 4; idx++) {
         const row      = 3 - idx;
         const sceneIdx = S.sceneRow + row;
@@ -500,6 +525,7 @@ export function updateTrackLEDs() {
         }
         cachedSetButtonLED(40 + idx, color);
     }
+  }
 
     /* Knob LEDs (CC 71-78) */
     for (let k = 0; k < NUM_TRACKS; k++) {

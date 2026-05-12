@@ -2973,11 +2973,16 @@ function openSchwungSlotEditor(t) {
     S.globalMenuOpen = false;
     S.lastSentMenuEditValue = null;
     const slot = S.trackSchwungSlot[t];
-    if (slot >= 0 && slot <= 3) {
+    /* Shift held = force picker (re-assignment). Without Shift, an
+     * already-assigned track goes straight to co-run. */
+    if (slot >= 0 && slot <= 3 && !S.shiftHeld) {
         enterSchwungCoRun(t, slot);
         return;
     }
-    S.pendingSchwungSlotPicker = { track: t, selectedIndex: 0 };
+    /* Pre-select the current assignment in the picker (or Slot 1 / index 0 if
+     * unassigned) so jog-click + Shift held confirms the same slot quickly. */
+    const _idx = (slot >= 0 && slot <= 3) ? slot : 0;
+    S.pendingSchwungSlotPicker = { track: t, selectedIndex: _idx };
     S.screenDirty = true;
 }
 
