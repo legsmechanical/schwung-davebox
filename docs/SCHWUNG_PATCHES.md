@@ -4,6 +4,52 @@ Local patches applied to `~/schwung/` that must be re-applied after any Schwung 
 
 Current base: **v0.9.11** (`62529d77`), branch `main` on the `legsmechanical/schwung` fork. (Chain-edit co-run work landed via `feat/ui-split` and was merged to fork `main` on 2026-05-12.)
 
+## Why this is split into two repos
+
+dAVEBOx ships from `legsmechanical/schwung-davebox` `main` to anyone running stock Schwung — public releases need to install cleanly on `charlesvestal/schwung` without expecting patches. But some dAVEBOx features (currently: chain-edit co-run via `Edit Slot...`) require Schwung-side surgery that isn't a candidate for upstream as-is.
+
+**Pattern:** keep all dAVEBOx code on `main`, capability-gate any feature that needs patched-Schwung APIs at the entry point (typically the menu item that triggers it). On stock Schwung the gate resolves false → entry doesn't render → the feature is invisible and all downstream code stays dormant. On a Move running the patched `legsmechanical/schwung` shim, the gate resolves true and the feature lights up automatically.
+
+Concrete example (from `buildGlobalMenuItems()` in `ui/ui.js`):
+
+```js
+...(typeof shadow_set_corun_chain_edit === 'function' ? [
+    createAction('Edit Slot...', function() {
+        openSchwungSlotEditor(S.activeTrack);
+    })
+] : []),
+```
+
+All downstream calls (`shadow_set_corun_chain_edit`, `shadow_get_corun_chain_edit`) are defensively guarded with `typeof ... === 'function'` checks, and runtime state like `S.schwungCoRunSlot` defaults to `-1` so the LED-suppression / drawUI-early-return / Back-exit hooks all stay false-y on stock Schwung.
+
+**Result:** one repo, one main branch, one release flow. Co-run lives in the codebase as a feature that simply doesn't surface unless the host supports it.
+
+## Maintenance workflow
+
+Day-to-day dAVEBOx development is normal — work on `main`, commit, release via `scripts/cut_release.sh`. The patched-Schwung side has its own cadence:
+
+1. **When upstream Schwung tags a new release** (e.g. `v0.9.12`):
+   - Fetch and check out the new tag in `~/schwung`.
+   - Cherry-pick the local commits from the previous fork-`main` onto the new tag (or rebase). Resolve any conflicts.
+   - Regenerate the patch:
+     ```sh
+     cd ~/schwung
+     git diff <new-tag>..main -- src/ > patches/davebox-local.patch
+     git add patches/davebox-local.patch && git commit -m "chore: regenerate patch against <new-tag>"
+     git push fork main
+     ```
+   - Update the "Current base" line in this file and `patches/README.md` in the fork.
+   - Build the new shim (`./scripts/build.sh`), deploy to Move, smoke-test.
+
+2. **When a new local Schwung change is needed** (e.g. extending co-run, adding another capability-gated API):
+   - Work on a feature branch in `~/schwung` off `main`.
+   - When ready, fast-forward `main` and regenerate the patch (`git diff v<base>..main -- src/ > patches/davebox-local.patch`).
+   - Push fork.
+   - In `~/schwung-davebox`, add the corresponding feature gated on `typeof shadow_xxx === 'function'`.
+
+3. **When cutting a dAVEBOx release**:
+   - Normal `scripts/cut_release.sh <version>` flow. No special handling — capability-gated features go along for the ride, invisible to stock-Schwung users.
+
 ## Re-applying after a Schwung upgrade
 
 ```sh
