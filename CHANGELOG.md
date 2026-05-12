@@ -8,6 +8,7 @@ the section into a versioned heading at release time.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-05-11
 ### Features
 - Loop+Play (Track View): restarts playback with the active clip starting at the first step of the visible step-view page; other tracks land at the musically-equivalent offset (preserves sync)
 - Perf Mode preset mods are now individually toggleable — pressing a mod pad clears its bit whether latch is on or off
