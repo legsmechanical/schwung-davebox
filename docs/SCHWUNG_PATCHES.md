@@ -86,8 +86,9 @@ Then restart Move. Deploy to `/data/UserData/schwung/schwung-shim.so` (data part
 | (local) | `743bb18f` | `src/schwung_shim.c`, `src/host/shadow_midi.c`, `src/host/shadow_midi.h` | Cable-2 passthrough: inject cable-2 as cable-0 for Move native routing + dispatch to Schwung chain slots by channel when no tool active (overtake_mode==0 or suspend_overtake==1) |
 | (local) | `456c0a9e` | `src/schwung_shim.c` | Remove THRU-slot gate from cable-2 remap: `any_thru_slot_active()` was silently blocking rechannelization whenever any THRU slot existed |
 | (local) | `c31cf29c` → `9f0d2c8c` (5 commits) | `src/host/shadow_constants.h`, `src/schwung_shim.c`, `src/shadow/shadow_ui.c`, `src/shadow/shadow_ui.js` | **Chain-edit co-run mode.** Lets shadow_ui's chain editor (slot settings, hierarchy editor, preset browser) render and accept input while an overtake tool module (dAVEBOx) is still loaded and ticking. See [Co-run architecture](#co-run-architecture) below. |
+| (local) | `9a32ccf6` + `1e27f983` (2 commits) | `src/host/shadow_constants.h`, `src/schwung_shim.c`, `src/shadow/shadow_ui.c` | **Move-native co-run mode.** Lets Move firmware's preset browser + device-edit pages render to the OLED and accept jog/track-button/knob/Shift/Back input while an overtake tool (dAVEBOx) keeps pads, step buttons, transport, and Menu. Pure shim-level split — no `shadow_ui.js` change because Move firmware is a separate process reading the shadow_mailbox MIDI_IN region directly. See [Move-native co-run architecture](#move-native-co-run-architecture) below. |
 
-PRs #71/#72 are upstream patches. Local commits fix inject races, add cable-2 BLOCK support for external MIDI isolation, and add the chain-edit co-run feature for dAVEBOx.
+PRs #71/#72 are upstream patches. Local commits fix inject races, add cable-2 BLOCK support for external MIDI isolation, and add the chain-edit + Move-native co-run features for dAVEBOx.
 
 ## Co-run architecture
 
@@ -132,3 +133,51 @@ The feature is narrowly designed for the dAVEBOx use case. Two open questions fo
 - `dispatchCoRunDraw` mirrors the main draw switch; upstream additions to chain-edit-reachable views would need to be mirrored here too. A shared dispatch helper would be cleaner.
 
 See `~/.claude/projects/-Users-josh-schwung-davebox/memory/project_schwung_chain_ui_access.md` for the original heavy design and the design conversation.
+
+## Move-native co-run architecture
+
+Lets the user open Move firmware's native preset browser and device-edit pages for a track's synth **without leaving dAVEBOx**. While co-run is active, OLED + jog + jog-click + track buttons + Shift + Back + device-edit knobs (CC 71–78) + master knob (CC 79) + capacitive touch notes 0–9 drive Move firmware. dAVEBOx keeps pads, step buttons, transport, and Menu — pads still fire the sequencer audibly so the user can audition presets against the playing pattern. Entry: track menu → `Edit Synth...` (visible only on ROUTE_MOVE tracks). Exit: Menu button.
+
+Architecturally a sibling of [chain-edit co-run](#co-run-architecture) with the receiving side swapped from `shadow_ui`'s chain editor (JS, same process) to Move firmware (separate process, reachable via the shadow_mailbox MIDI_IN buffer + display_mode-bypass framebuffer copy). The split is **entirely shim-side** because Move firmware reads `sh_midi` (the shim-filtered shadow_mailbox region) directly, not `shadow_ui_midi_shm` (the JS dispatch buffer). No `shadow_ui.js` change is needed; no `runToolCallback` host-API swap is needed (Move firmware can't clobber the tool's `globalThis` shims because it's a separate process).
+
+### What changed in Schwung
+
+**`src/host/shadow_constants.h`** — `shadow_control_t` gains `int8_t corun_move_native_track` (−1 = off, 0–7 = active dAVEBOx track). Steals 1 byte from `reserved[5]` → `reserved[4]`. Layout-stable. Bound is 0–7 (not 0–3) because dAVEBOx has 8 sequencer tracks; the shim only uses the value as a gate (`>= 0` = co-run active), so the actual identity is for the tool side to interpret.
+
+**`src/schwung_shim.c`** — three additions:
+
+1. **`shadow_swap_display()` early-return** when `corun_move_native_track >= 0`. Bypasses the shadow framebuffer copy without dropping `shadow_display_mode`, so Move firmware's framebuffer reaches the OLED while the MIDI filter at the `sh_midi` sync site (which is gated on `shadow_display_mode`) stays active. Without this bypass the only way to yield the OLED would be `display_mode = 0`, which would also disable the filter and leak pads + transport to Move firmware.
+2. **`sh_midi` filter override** at the overtake-mode-2 branch (~line 5519). The existing filter zeros all cable-0 `status >= 0x80` events from what Move firmware reads. The override sets `filter = 0` for the navigation surface: CCs 3, 14, 40–43, 49, 51, 71–78, 79 and touch notes 0–9. Move firmware now sees the events it needs to drive its preset browser / device-edit pages.
+3. **`shadow_ui_midi_shm` forward filter** at the overtake-2 forward (~line 6515). The existing forward sends every cable-0 event to the tool. The override `continue`s on the same nav-CC + touch-note set so dAVEBOx stops seeing them while co-run is on. Pads, step buttons, transport, and Menu (the tool's exit gesture) still flow.
+
+The two filter lists are mirrors of each other — keep them in sync.
+
+**`src/shadow/shadow_ui.c`** — two new JS bindings:
+- `shadow_set_corun_move_native(track)` — enable co-run for `track` (or `-1` to disable). The dAVEBOx side calls this on `Edit Synth...` entry and on Menu exit.
+- `shadow_get_corun_move_native()` — read current state. Tool polls this for external clears (currently dead code in Phase A — the dAVEBOx side handles its own Menu intercept — but kept for parity with chain-edit and so any future shim-side exit propagates).
+
+### Tool-side contract (the dAVEBOx half)
+
+A tool that opts into Move-native co-run is expected to:
+- Call `shadow_set_corun_move_native(track)` on entry, `shadow_set_corun_move_native(-1)` on exit.
+- Skip its own OLED drawing while co-run is active (Move firmware draws to the OLED; the tool's pixels would be invisible anyway because of the shim's `shadow_swap_display` bypass, but skipping saves the wasted work).
+- Optionally fire a single synthesized track-button tap on entry via `move_midi_inject_to_move` (cable-0 CC 43–`(channel-1)` press + release) so Move firmware lands on the preset browser for the right track without the user needing to touch the front panel.
+- Accept that jog, jog-click, track buttons (CC 40–43), Shift, Back, device-edit knobs (CC 71–78), master knob (CC 79), and capacitive touch notes 0–9 are unavailable to the tool while co-run is active.
+
+dAVEBOx implements this contract via `S.moveCoRunTrack`, the `Edit Synth...` track-menu action (capability-gated on `S.trackRoute[t] === 1` + the two binding probes), the `drawUI` early-return, a `pollDSP` reconciliation step, and a Menu (CC 50) short-circuit in `_onCC_buttons`.
+
+### Phasing — frozen LEDs first, live LEDs later
+
+The Phase A `drawUI` early-return freezes pad and step-button LEDs at their entry-time state during co-run. Static state (active-track color, clip color, drum-lane assignments, armed-step state) is preserved; animated state (playhead pulses, mute/solo flashes, beat-marker pulses) stops animating. The sequencer continues firing audibly.
+
+A separate Phase B refactor — splitting `drawUI` into "render OLED" vs "render pad/step-button LEDs" branches — would let static and animated LEDs keep updating during co-run. The OLED branch would be gated on `S.moveCoRunTrack >= 0 || S.schwungCoRunSlot >= 0`; the LED branch would run unconditionally. This benefits both co-run features and is decoupled from the shim portal architecture.
+
+### LED-write filtering (Phase 1.5, deferred)
+
+While dAVEBOx's `drawUI` skips, Move firmware may still issue LED writes for its own UI elements (e.g. pad-area display while in the device-edit grid). For Phase A those writes reach hardware and can clobber dAVEBOx's frozen pad LEDs. A shim-side filter that blocks Move firmware's pad / step-button / Menu / transport LED writes during co-run — while passing through knob-ring / master / track-button / Shift / Back writes — is the right cleanup. It's deferred until the on-device behavior is observed; the LED protocol per physical-element needs to be identified before a clean filter can be written.
+
+### Why this isn't suitable for upstream
+
+Same shape as chain-edit co-run's why-not-upstream: the tool-side "skip my draw" contract is implicit, and the nav-surface list is hand-curated for the dAVEBOx UX. A generalized version would want a manifest-driven let-through set.
+
+See `/Users/josh/.claude/plans/6-spicy-waterfall.md` for the design conversation (approved 2026-05-12).
