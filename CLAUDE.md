@@ -20,7 +20,7 @@
 - **DSP calls / pfx code**: read `docs/DAVEBOX_API.md` for parameter keys, structs, and algorithm details.
 - **DSP work**: read `dsp/CLAUDE.md` for logging, build, state format keys, and deferred save details.
 - **Feature reference**: before touching any feature area (bank, transport, copy/paste, bake, perf, etc.), read the relevant section in `docs/FEATURE_REFERENCE.md`.
-- **Schwung patches**: see `docs/SCHWUNG_PATCHES.md`. After any Schwung upgrade: `cd ~/schwung && git apply patches/seq8-local.patch`. Deploy shim to `/data/UserData/schwung/schwung-shim.so` (not `/usr/lib/` symlink).
+- **Schwung patches**: see `docs/SCHWUNG_PATCHES.md`. After any Schwung upgrade: `cd ~/schwung && git apply patches/davebox-local.patch`. Deploy shim to `/data/UserData/schwung/schwung-shim.so` (not `/usr/lib/` symlink).
 
 dAVEBOx is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move — standalone 8-track MIDI sequencer. No audio. C (DSP) + JavaScript (UI). `button_passthrough: [79]` + `claims_master_knob: true` — Move firmware handles CC 79 natively; `claims_master_knob` prevents Schwung host from running its own acceleration, which caused inconsistent knob speed and MIDI output pauses.
 

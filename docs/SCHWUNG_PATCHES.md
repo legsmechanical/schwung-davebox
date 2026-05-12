@@ -7,12 +7,12 @@ Current base: **v0.9.11** (`62529d77`), branch `main` on the `legsmechanical/sch
 ## Re-applying after a Schwung upgrade
 
 ```sh
-cd ~/schwung && git apply patches/seq8-local.patch
+cd ~/schwung && git apply patches/davebox-local.patch
 ```
 
 Regenerate the patch after cherry-picking onto a new base:
 ```sh
-git diff <new-base>..HEAD -- src/ > patches/seq8-local.patch
+git diff <new-base>..HEAD -- src/ > patches/davebox-local.patch
 ```
 
 Verify each commit is present before deploying:
