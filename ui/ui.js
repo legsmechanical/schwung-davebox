@@ -1528,6 +1528,16 @@ function resetPerClipBankParamsToDefault(t) {
 }
 
 function pollDSP() {
+    /* Reconcile co-run flag with SHM. shadow_ui can clear corun_chain_edit_slot
+     * externally (e.g. Menu pressed during co-run) — when it does, the local
+     * mirror needs to clear so dAVEBOx resumes drawing. */
+    if (typeof shadow_get_corun_chain_edit === 'function') {
+        const _shm = shadow_get_corun_chain_edit();
+        if (_shm < 0 && S.schwungCoRunSlot >= 0) {
+            S.schwungCoRunSlot = -1;
+            S.screenDirty = true;
+        }
+    }
     if (typeof host_module_get_param !== 'function') return;
     const snap = host_module_get_param('state_snapshot');
     if (!snap) return;
