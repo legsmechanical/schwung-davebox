@@ -1458,6 +1458,12 @@ function drainLedInit() {
     S.ledInitIndex = end;
     if (S.ledInitIndex >= S.ledInitQueue.length) {
         S.ledInitComplete = true;
+        /* Custom scratch palette entry for the Loop button's ambient LED —
+         * Loop's LED renders palette colors brighter than peers (Delete/Copy
+         * idx 16 = dim grey; same idx 16 is invisible on Loop, and 124/DarkGrey
+         * on Loop reads as fully bright). Push a low-RGB entry before
+         * reapplyPalette so the LED hardware picks up index 60 on the refresh. */
+        setPaletteEntryRGB(60, 32, 32, 32);
         reapplyPalette();
     }
 }
@@ -4059,10 +4065,14 @@ globalThis.tick = function () {
             } else if (S.sessionView && S.perfLatchMode) {
                 loopColor = VividYellow;
             } else {
-                loopColor = 16;
+                /* Loop's LED renders palette colors brighter than Delete/Copy;
+                 * scratch index 60 is a custom-RGB dim grey set in drainLedInit
+                 * so Loop's ambient visually matches Delete/Copy at idx 16. */
+                loopColor = 60;
             }
             setButtonLED(MoveLoop, loopColor);
         }
+        setButtonLED(MoveCapture, DarkGrey);
         {
             const _muted      = S.trackMuted[S.activeTrack];
             const _soloed     = S.trackSoloed[S.activeTrack];
@@ -4649,14 +4659,8 @@ function _onCC_jog(d1, d2) {
         } else {
             const delta = decodeDelta(d2);
             if (delta !== 0) {
-                if (S.sessionView) {
-                    if (!S.shiftHeld) {
-                        S.sceneRow = Math.min(NUM_CLIPS - 4, Math.max(0, S.sceneRow + delta));
-                        forceRedraw();
-                    }
-                    /* Shift + jog in Session View: no-op */
-                } else if (S.shiftHeld) {
-                    /* Track View + Shift: step active track 0–7, clamp at ends */
+                if (S.shiftHeld) {
+                    /* Shift + jog (any view): step active track 0–7, clamp at ends */
                     const next = Math.min(NUM_TRACKS - 1, Math.max(0, S.activeTrack + delta));
                     if (next !== S.activeTrack) {
                         extNoteOffAll();
@@ -4674,6 +4678,9 @@ function _onCC_jog(d1, d2) {
                         S.seqLastClip = -1;
                         forceRedraw();
                     }
+                } else if (S.sessionView) {
+                    S.sceneRow = Math.min(NUM_CLIPS - 4, Math.max(0, S.sceneRow + delta));
+                    forceRedraw();
                 } else if (S.loopHeld) {
                     /* Track View + Loop held: adjust length ±1 step */
                     const _t  = S.activeTrack;
@@ -6096,8 +6103,9 @@ function _onCC_knobs(d1, d2) {
                         }
                     }
                 } else {
-                    const cur = S.bankParams[S.activeTrack][bank][knobIdx];
-                    let nv  = Math.max(pm.min, Math.min(pm.max, cur + dir));
+                    const cur  = S.bankParams[S.activeTrack][bank][knobIdx];
+                    const step = pm.step || 1;
+                    let nv  = Math.max(pm.min, Math.min(pm.max, cur + dir * step));
                     if (nv !== cur) {
                         if (S.shiftHeld && pm.dspKey === 'clip_resolution') {
                             const _t   = S.activeTrack;
@@ -6866,26 +6874,29 @@ function _onPadPress(status, d1, d2) {
         }
 }
 
+function _jumpToMenuLabel(label) {
+    openGlobalMenu();
+    if (!S.globalMenuItems || !S.globalMenuState) return;
+    for (let i = 0; i < S.globalMenuItems.length; i++) {
+        const it = S.globalMenuItems[i];
+        if (it && it.label === label) {
+            S.globalMenuState.selectedIndex = i;
+            return;
+        }
+    }
+}
+
 function _doShiftStepCommon(idx) {
-    const t      = S.activeTrack;
-    const isDrum = S.trackPadMode[t] === PAD_MODE_DRUM;
-    if (idx === 1) {
-        openGlobalMenu();
-        S.globalMenuState.selectedIndex = 6;
-    } else if (idx === 4) {
-        openTapTempo();
-    } else if (idx === 5) {
+    if      (idx === 1) _jumpToMenuLabel('Global');
+    else if (idx === 4) openTapTempo();
+    else if (idx === 5) {
         S.metronomeOn = (S.metronomeOn === 1) ? 3 : 1;
         if (typeof host_module_set_param === 'function')
             host_module_set_param('metro_on', String(S.metronomeOn));
         showActionPopup(['Off', 'Cnt-In', 'Play', 'Always'][S.metronomeOn]);
-    } else if (idx === 6) {
-        openGlobalMenu();
-        S.globalMenuState.selectedIndex = 12;
-    } else if (idx === 8) {
-        openGlobalMenu();
-        S.globalMenuState.selectedIndex = 8;
     }
+    else if (idx === 6) _jumpToMenuLabel('Swing Amt');
+    else if (idx === 8) _jumpToMenuLabel('Scale');
 }
 
 function _onStepButtons(d1, d2) {

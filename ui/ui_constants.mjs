@@ -228,11 +228,12 @@ export function pixelPrintC(cx, y, text, color) {
 /* Bank parameter factory & definitions                                 */
 /* ------------------------------------------------------------------ */
 
-function p(abbrev, full, dspKey, scope, min, max, def, fmt, sens, actionSuffix, lock) {
+function p(abbrev, full, dspKey, scope, min, max, def, fmt, sens, actionSuffix, lock, step) {
     return { abbrev, full, dspKey, scope, min, max, def, fmt,
              sens: sens || 1,
              actionSuffix: actionSuffix || '_pos',
-             lock: lock || false };
+             lock: lock || false,
+             step: step || 1 };
 }
 const _X  = p(null, null, null, 'stub', 0,   0, 0,  fmtNA);
 const _XQ = p(null, null, null, 'stub', 0, 100, -1, fmtNA);  /* bank 7 K4: quantize, def=-1 = unset */
@@ -254,7 +255,7 @@ export const BANKS = [
         p('Oct',  'Octave Shift',    'noteFX_octave',   'track', -4,   4,   0,   fmtSign,    16),
         p('Ofs',  'Note Offset',     'noteFX_offset',   'track', -24,  24,  0,   fmtSign,    8),
         p('Rnd',  'Pitch Random',    'noteFX_random',   'track',  0,   24,  0,   fmtPitchRnd, 4),
-        p('Gate', 'Gate Time',       'noteFX_gate',     'track',  0,   400, 100, fmtPct,     2),
+        p('Gate', 'Gate Time',       'noteFX_gate',     'track',  0,   400, 100, fmtPct,     1, undefined, undefined, 2),
         p('Vel',  'Velocity Offset', 'noteFX_velocity', 'track', -127, 127, 0,   fmtSign       ),
         p('Qnt',  'Quantize',        'quantize',        'track',  0,   100, 0,   fmtPct),
         _X, _X,
