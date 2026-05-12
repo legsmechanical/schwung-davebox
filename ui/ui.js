@@ -3217,23 +3217,6 @@ function restoreUiSidecar(applyDefaultsNow) {
                 { key: 'metro_vol',   val: '100' },
                 { key: 't0_pad_mode', val: String(PAD_MODE_DRUM) }
             ];
-            /* Seed delay_level=127 on all clips and on drum lanes of the
-             * default drum track (t0). DSP inits delay_level=0, so without
-             * this the audible default is silent. Drains 1/tick. */
-            for (let _t = 0; _t < NUM_TRACKS; _t++) {
-                for (let _c = 0; _c < NUM_CLIPS; _c++) {
-                    S.pendingDefaultSetParams.push({
-                        key: 't' + _t + '_c' + _c + '_pfx_set',
-                        val: 'delay_level 127'
-                    });
-                }
-            }
-            for (let _l = 0; _l < DRUM_LANES; _l++) {
-                S.pendingDefaultSetParams.push({
-                    key: 't0_l' + _l + '_pfx_set',
-                    val: 'delay_level 127'
-                });
-            }
         }
     }
 }

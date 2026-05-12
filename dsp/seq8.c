@@ -3966,7 +3966,7 @@ static void clip_pfx_params_init(clip_pfx_params_t *p) {
     p->harmonize_1     = 0;
     p->harmonize_2     = 0;
     p->delay_time_idx  = DEFAULT_DELAY_TIME_IDX;
-    p->delay_level     = 0;
+    p->delay_level     = 127;
     p->repeat_times    = 0;
     p->fb_velocity     = 0;
     p->fb_note         = 0;
@@ -3992,7 +3992,7 @@ static void drum_pfx_params_init(drum_pfx_params_t *p) {
     p->velocity_offset = 0;
     p->quantize        = 0;
     p->delay_time_idx  = DEFAULT_DRUM_DELAY_TIME_IDX;
-    p->delay_level     = 0;
+    p->delay_level     = 127;
     p->repeat_times    = 0;
     p->fb_velocity     = 0;
     p->fb_gate_time    = 0;
