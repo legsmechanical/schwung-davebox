@@ -707,7 +707,7 @@ Per-lane settings for the active lane. (This bank replaces CLIP on drum tracks; 
 |---|---|---|
 | K1 | Stretch | Per-lane beat stretch (one-shot). Blocked if compression impossible. |
 | K2 | Clock Shift / **Nudg** | Plain turn: shifts the active lane by whole steps. **Shift + turn**: nudges the active lane at tick resolution (faster than Clock Shift). Label flips to `Nudg` while Shift is held. |
-| K3 | Resolution | Per-lane playback resolution |
+| K3 | Resolution / **Zoom** | Plain turn: per-lane playback resolution (1/32 · 1/16 · 1/8 · 1/4 · 1/2 · 1-bar). **Shift + turn**: Zoom mode — keeps absolute note positions, adjusts the step grid around them. Label flips to `Zoom` while Shift is held. |
 | K4 | Length | Per-lane clip length |
 | K5 | SeqFollow | Per-clip auto-scroll on/off |
 | K7 | Oct (Lane Note) | Shifts the active lane's MIDI note by ±1 octave. OLED shows note name and number. |

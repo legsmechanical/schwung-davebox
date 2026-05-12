@@ -2731,7 +2731,7 @@ function drawUI() {
             const sqfl   = S.clipSeqFollow[t][ac] ? 1 : 0;
             const _dlNote  = S.drumLaneNote[t][lane];
             const _noteStr = midiNoteName(_dlNote) + ' ' + _dlNote;
-            const drumLaneLabels = ['Stch', S.shiftHeld ? 'Nudg' : 'Shft', 'Res', 'Len', 'SqFl', null, null, null];
+            const drumLaneLabels = ['Stch', S.shiftHeld ? 'Nudg' : 'Shft', S.shiftHeld ? 'Zoom' : 'Res', 'Len', 'SqFl', null, null, null];
             const drumLaneVals  = [
                 fmtStretch(S.bankParams[t][0][0]),
                 fmtSign(S.bankParams[t][0][1]),
@@ -2896,7 +2896,11 @@ function drawUI() {
             const rowY = k < 4 ? 12 : 36;
             const hi   = (S.knobTouched === k);
             if (hi) fill_rect(colX, rowY, 24, 24, 1);
-            const _lbl = (knobs[k].dspKey === 'clock_shift' && S.shiftHeld) ? 'Nudg' : (knobs[k].abbrev || '-');
+            let _lbl = knobs[k].abbrev || '-';
+            if (S.shiftHeld) {
+                if      (knobs[k].dspKey === 'clock_shift')    _lbl = 'Nudg';
+                else if (knobs[k].dspKey === 'clip_resolution') _lbl = 'Zoom';
+            }
             print(colX, rowY,      _lbl, hi ? 0 : 1);
             print(colX, rowY + 12, col4(knobs[k].abbrev ? knobs[k].fmt(vals[k]) : null), hi ? 0 : 1);
         }
