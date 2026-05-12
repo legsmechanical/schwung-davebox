@@ -2283,23 +2283,38 @@ static void looper_stop(seq8_instance_t *inst) {
     inst->perf_cycle_note_idx       = 0;
 }
 
-/* Brute-force note-off for all 128 notes on all active channels.
- * Routes through pfx_send so ROUTE_MOVE tracks panic on the correct bus. */
+/* For every route with at least one track assigned, broadcast a panic on
+ * all 16 MIDI channels (not just the channels our tracks happen to use).
+ * Each route gets exactly one sweep — one representative pfx per route. */
 static void send_panic(seq8_instance_t *inst) {
-    int t, n;
+    play_fx_t *route_pfx[3] = { NULL, NULL, NULL };
+    int t, ch, n;
     for (t = 0; t < NUM_TRACKS; t++) {
         play_fx_t *fx = &inst->tracks[t].pfx;
-        if (fx->route == ROUTE_MOVE) continue; /* deferred via pfx_q_fire */
-        if (fx->route == ROUTE_EXTERNAL) {
-            /* 128 individual note-offs would overflow the 64-slot ext_queue;
-             * CC 120 + 123 silences everything in 2 messages. */
-            uint8_t cc_s = (uint8_t)(0xB0 | inst->tracks[t].channel);
-            pfx_send(fx, cc_s, 120, 0); /* All Sound Off */
-            pfx_send(fx, cc_s, 123, 0); /* All Notes Off */
-            continue;
+        if (fx->route >= 0 && fx->route < 3 && !route_pfx[fx->route])
+            route_pfx[fx->route] = fx;
+    }
+    if (route_pfx[ROUTE_SCHWUNG]) {
+        play_fx_t *fx = route_pfx[ROUTE_SCHWUNG];
+        for (ch = 0; ch < 16; ch++)
+            for (n = 0; n < 128; n++)
+                pfx_send(fx, (uint8_t)(0x80 | ch), (uint8_t)n, 0);
+    }
+    if (route_pfx[ROUTE_EXTERNAL]) {
+        /* 128 note-offs/channel would overflow the 64-slot ext_queue;
+         * CC 120 + 123 per channel silences everything in 32 messages. */
+        play_fx_t *fx = route_pfx[ROUTE_EXTERNAL];
+        for (ch = 0; ch < 16; ch++) {
+            pfx_send(fx, (uint8_t)(0xB0 | ch), 120, 0); /* All Sound Off */
+            pfx_send(fx, (uint8_t)(0xB0 | ch), 123, 0); /* All Notes Off */
         }
-        for (n = 0; n < 128; n++)
-            pfx_send(fx, (uint8_t)(0x80 | inst->tracks[t].channel), (uint8_t)n, 0);
+    }
+    if (route_pfx[ROUTE_MOVE]) {
+        /* silence_active_notes_move() already handled tracked notes per track;
+         * CC 123 sweep covers anything Move is still sustaining off-book. */
+        play_fx_t *fx = route_pfx[ROUTE_MOVE];
+        for (ch = 0; ch < 16; ch++)
+            pfx_send(fx, (uint8_t)(0xB0 | ch), 123, 0); /* All Notes Off */
     }
 }
 
