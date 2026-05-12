@@ -43,7 +43,7 @@ DSP state v=26 (only v=26 accepted); v≠26 → deleted + clean start. Full key 
 
 JS `init()` reads UUID, compares with `state_uuid` get_param. Mismatch → `state_load=UUID` next tick → `pendingDspSync=5` → `syncClipsFromDsp()` → `restoreUiSidecar(true)`. Same path fires on resume when set changed while suspended (UUID mismatch on resume edge). `restoreUiSidecar(applyDefaultsNow)` — shared helper called from init() and pendingDspSync=0 completion; applies activeTrack/trackActiveClip/sessionView/activeDrumLane/perf/beatMarkers; handles no-sidecar first-run defaults.
 
-UI sidecar (`seq8-ui-state.json`): v=3; written on suspend/Quit/Shift+Back; wiped on Clear Session. Deferred save: handlers set `inst->state_dirty = 1`; JS `pollDSP()` writes via `host_write_file` when dirty. Suspend: sidecar written immediately, `set_param('save')` deferred to end of tick() via `S.pendingSuspendSave`.
+UI sidecar (`seq8-ui-state.json`): v=4 (adds `ss` = per-track Schwung-slot for the track-menu "Edit Slot..." co-run handoff); written on suspend/Quit/Shift+Back; wiped on Clear Session. Deferred save: handlers set `inst->state_dirty = 1`; JS `pollDSP()` writes via `host_write_file` when dirty. Suspend: sidecar written immediately, `set_param('save')` deferred to end of tick() via `S.pendingSuspendSave`.
 
 Set-duplicate inheritance: when init detects a Copy-suffixed name + missing state file, `maybeShowInheritPicker` looks up family candidates in `seq8_name_index.json` and either auto-inherits (1 candidate), opens the dialog (2+), or starts blank (0). Details in `docs/FEATURE_REFERENCE.md` → *Set state inheritance & cleanup*. DSP-side `prune_orphan_states` handler cleans up `seq8-*.json` files for deleted Move sets on every launch.
 

@@ -112,6 +112,8 @@ export const S = {
     trackQueuedClip: new Array(8).fill(-1),
     trackChannel: new Array(8).fill(1),
     trackRoute: new Array(8).fill(0),
+    trackSchwungSlot: new Array(8).fill(-1),  /* -1 = unassigned; 0-3 = Schwung chain slot picked from this track's "Edit Slot" menu */
+    schwungCoRunSlot: -1,                     /* -1 = off; 0-3 = Schwung chain editor is co-running on this slot (dAVEBOx skips OLED + suppresses track-button LEDs) */
     trackPadMode: new Array(8).fill(0),
     trackVelOverride: new Array(8).fill(0),
     trackLooper: new Array(8).fill(1),
@@ -256,6 +258,7 @@ export const S = {
     pendingPruneOrphans: false,
     nameIndexCache: null,    /* { name: uuid } map, lazy-loaded on first save */
     pendingInheritPicker: null,  /* { dstUuid, dstName, candidates: [{uuid,name}], selectedIndex } when picker is open */
+    pendingSchwungSlotPicker: null,  /* { track, selectedIndex } when slot-pick dialog is open before co-run entry; index 0-3 = slot, 4 = Cancel */
     pendingUndoSync: 0,
     pendingDefaultSetParams: [],
     pendingStepsReread: 0,

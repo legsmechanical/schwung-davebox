@@ -190,6 +190,9 @@ function buildGlobalMenuItems() {
             set: function(v) { applyTrackConfig(S.activeTrack, 'track_looper', v ? 1 : 0); },
             onLabel: 'On', offLabel: 'Off'
         }),
+        createAction('Edit Slot...', function() {
+            openSchwungSlotEditor(S.activeTrack);
+        }),
         createDivider('Global'),
         createValue('BPM', {
             get: function() {
@@ -1074,6 +1077,9 @@ function doDoubleFill() {
 }
 
 function openGlobalMenu() {
+    /* Co-run owns the OLED — exit it before opening the menu so dAVEBOx
+     * can draw again. */
+    if (S.schwungCoRunSlot >= 0) exitSchwungCoRun();
     S.globalMenuItems       = buildGlobalMenuItems();
     S.globalMenuState       = createMenuState();
     S.globalMenuStack       = createMenuStack();
@@ -2407,8 +2413,13 @@ function drawPerfModeOled() {
 }
 
 function drawUI() {
+    /* CO-RUN: shadow_ui's chain editor owns the OLED while this is active.
+     * Skip every dAVEBOx draw path so it doesn't fight the chain editor's
+     * frame. shadow_ui still calls clear_screen + redraw each tick. */
+    if (S.schwungCoRunSlot >= 0) return;
     if (S.sessionOverlayHeld) { drawSessionOverview(); return; }
     if (S.pendingInheritPicker) { drawInheritPicker(); return; }
+    if (S.pendingSchwungSlotPicker) { drawSchwungSlotPicker(); return; }
     if (S.confirmBakeScene) { drawBakeSceneConfirm(); return; }
     if (S.confirmBake) { drawBakeConfirm(); return; }
     if (S.globalMenuOpen || S.tapTempoOpen) { drawGlobalMenu(); return; }
@@ -2934,6 +2945,89 @@ function resolveInheritPicker(action) {
     S.screenDirty = true;
 }
 
+/* Open the Schwung-slot picker (first use) or enter co-run directly if the
+ * track already has a slot assigned. Co-run keeps dAVEBOx loaded; the chain
+ * editor for the picked slot takes over OLED + jog + track buttons, while
+ * pads / step buttons / knobs / transport stay with dAVEBOx. */
+function openSchwungSlotEditor(t) {
+    if (S.trackRoute[t] !== 0) {  /* 0 = ROUTE_SCHWUNG; fmtRoute('Swng') */
+        showActionPopup('NOT', 'SCHWUNG-ROUTED');
+        return;
+    }
+    const slot = S.trackSchwungSlot[t];
+    if (slot >= 0 && slot <= 3) {
+        enterSchwungCoRun(t, slot);
+        return;
+    }
+    S.globalMenuOpen = false;
+    S.pendingSchwungSlotPicker = { track: t, selectedIndex: 0 };
+    S.screenDirty = true;
+}
+
+/* Enter co-run for slot N on track t. Persists the track's slot choice,
+ * suppresses dAVEBOx's OLED drawing + track-button LEDs (handled where each
+ * is written), and tells Schwung's shadow_ui to also tick the chain editor. */
+function enterSchwungCoRun(t, slot) {
+    S.trackSchwungSlot[t] = slot;
+    S.schwungCoRunSlot = slot;
+    if (typeof shadow_set_corun_chain_edit === 'function')
+        shadow_set_corun_chain_edit(slot);
+    saveState();
+    S.screenDirty = true;
+}
+
+/* Exit co-run. Called on Back, on switching tracks, on global-menu open, or
+ * any other dAVEBOx state change that should restore full ownership. */
+function exitSchwungCoRun() {
+    if (S.schwungCoRunSlot < 0) return;
+    S.schwungCoRunSlot = -1;
+    if (typeof shadow_set_corun_chain_edit === 'function')
+        shadow_set_corun_chain_edit(-1);
+    S.screenDirty = true;
+}
+
+function resolveSchwungSlotPicker(action) {
+    const p = S.pendingSchwungSlotPicker;
+    if (!p) return;
+    const t = p.track;
+    S.pendingSchwungSlotPicker = null;
+    S.screenDirty = true;
+    if (action >= 0 && action <= 3) {
+        enterSchwungCoRun(t, action);
+    } else {
+        S.globalMenuOpen = true;
+    }
+}
+
+function drawSchwungSlotPicker() {
+    clear_screen();
+    const p = S.pendingSchwungSlotPicker;
+    if (!p) return;
+    print(2, 2,  'Edit Schwung slot', 1);
+    print(2, 10, 'for track ' + (p.track + 1), 1);
+    fill_rect(0, 18, 128, 1, 1);
+
+    const total = 5;
+    const visible = 3;
+    const sel = p.selectedIndex;
+    let top = Math.max(0, Math.min(sel - 1, total - visible));
+    const lineH = 9;
+    const listTopY = 22;
+    for (let i = 0; i < visible && (top + i) < total; i++) {
+        const idx = top + i;
+        const y = listTopY + i * lineH;
+        const label = (idx < 4) ? ('Slot ' + (idx + 1)) : 'Cancel';
+        if (idx === sel) {
+            fill_rect(2, y - 1, 124, lineH - 1, 1);
+            print(5, y, label, 0);
+        } else {
+            print(5, y, label, 1);
+        }
+    }
+    if (top > 0)               print(120, listTopY, '^', 1);
+    if (top + visible < total) print(120, listTopY + (visible - 1) * lineH, 'v', 1);
+}
+
 function restoreUiSidecar(applyDefaultsNow) {
     const uiSp = uuidToUiStatePath(S.currentSetUuid);
     let us = null;
@@ -2974,6 +3068,12 @@ function restoreUiSidecar(applyDefaultsNow) {
             }
             const _pm = S.perfModsToggled | S.perfModsHeld;
             if (_pm) S.pendingDefaultSetParams.push({ key: 'perf_mods', val: String(_pm) });
+        }
+        if (us.v >= 4 && Array.isArray(us.ss)) {
+            for (let _t = 0; _t < NUM_TRACKS; _t++) {
+                const _s = us.ss[_t];
+                S.trackSchwungSlot[_t] = (typeof _s === 'number' && _s >= 0 && _s < 4) ? _s : -1;
+            }
         }
     } else {
         S.scaleAware   = 1;
@@ -3145,6 +3245,12 @@ function syncMuteSoloFromDsp() {
 
 globalThis.init = function () {
     installConsoleOverride('SEQ8');
+    /* Clear any lingering co-run flag from a prior session — shim's SHM
+     * may still hold a slot if we were warm-restarted (Shift+Back + relaunch
+     * does not reset shadow_control). */
+    S.schwungCoRunSlot = -1;
+    if (typeof shadow_set_corun_chain_edit === 'function')
+        shadow_set_corun_chain_edit(-1);
     if (S.bankParams === null)
         S.bankParams = Array.from({length: NUM_TRACKS}, function() {
             return BANKS.map(function(bank) { return bank.knobs.map(function(k) { return k.def; }); });
@@ -4114,6 +4220,13 @@ function _onCC_jog(d1, d2) {
         resolveInheritPicker(action);
         return;
     }
+    /* Schwung-slot picker: jog click confirms slot (0-3) or Cancel (4 -> -1). */
+    if (d1 === 3 && d2 === 127 && S.pendingSchwungSlotPicker) {
+        const p = S.pendingSchwungSlotPicker;
+        const action = (p.selectedIndex >= 4) ? -1 : p.selectedIndex;
+        resolveSchwungSlotPicker(action);
+        return;
+    }
     /* Scene bake confirm: jog click confirms/cancels */
     if (d1 === 3 && d2 === 127 && S.confirmBakeScene) {
         if (S.confirmBakeSceneSel > 0) {
@@ -4324,6 +4437,16 @@ function _onCC_jog(d1, d2) {
             if (delta !== 0) {
                 const p = S.pendingInheritPicker;
                 const total = p.candidates.length + 1;
+                p.selectedIndex = (p.selectedIndex + (delta > 0 ? 1 : total - 1)) % total;
+                S.screenDirty = true;
+            }
+            return;
+        }
+        if (S.pendingSchwungSlotPicker) {
+            const delta = decodeDelta(d2);
+            if (delta !== 0) {
+                const p = S.pendingSchwungSlotPicker;
+                const total = 5;
                 p.selectedIndex = (p.selectedIndex + (delta > 0 ? 1 : total - 1)) % total;
                 S.screenDirty = true;
             }
@@ -4716,6 +4839,13 @@ function _onCC_buttons(d1, d2) {
 function _onCC_transport(d1, d2) {
     /* Back: close global menu if open; otherwise (with Shift) hide module */
     if (d1 === MoveBack && d2 === 127) {
+        if (S.schwungCoRunSlot >= 0) {
+            /* Co-run: Back exits the slot editor and restores dAVEBOx's
+             * full OLED + track-button ownership. */
+            exitSchwungCoRun();
+            forceRedraw();
+            return;
+        }
         if (S.tapTempoOpen) {
             closeTapTempo();
             forceRedraw();
@@ -4731,6 +4861,7 @@ function _onCC_transport(d1, d2) {
             S.lastSentMenuEditValue = null;
             forceRedraw();
         } else if (S.shiftHeld) {
+            if (S.schwungCoRunSlot >= 0) exitSchwungCoRun();
             saveState();
             removeFlagsWrap();
             S.ledInitComplete = false;
