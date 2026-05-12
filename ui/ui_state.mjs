@@ -209,6 +209,7 @@ export const S = {
     globalMenuItems: null,
     globalMenuState: null,
     globalMenuStack: null,
+    globalMenuBuiltForTrack: -1,
     bpmWasEditing: false,
     lastSentMenuEditValue: null,
     confirmClearSession: false,

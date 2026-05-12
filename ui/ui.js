@@ -194,8 +194,10 @@ function buildGlobalMenuItems() {
          * patched Schwung shim (adds shadow_set_corun_chain_edit + co-run draw
          * paths in shadow_ui.js). On stock Schwung the API is undefined and
          * the menu entry isn't built, so the feature is invisible. All other
-         * co-run code is dormant unless this entry triggers it. */
-        ...(typeof shadow_set_corun_chain_edit === 'function' ? [
+         * co-run code is dormant unless this entry triggers it. Also hidden on
+         * non-Schwung-routed tracks (symmetric with Edit Synth below). */
+        ...((S.trackRoute[S.activeTrack] === 0 &&
+             typeof shadow_set_corun_chain_edit === 'function') ? [
             createAction('Edit Slot...', function() {
                 openSchwungSlotEditor(S.activeTrack);
             })
@@ -1099,13 +1101,42 @@ function openGlobalMenu() {
      * can draw again. */
     if (S.schwungCoRunSlot >= 0) exitSchwungCoRun();
     if (S.moveCoRunTrack >= 0) exitMoveNativeCoRun();
-    S.globalMenuItems       = buildGlobalMenuItems();
-    S.globalMenuState       = createMenuState();
-    S.globalMenuStack       = createMenuStack();
-    S.globalMenuOpen        = true;
-    S.lastSentMenuEditValue = null;
-    S.screenDirty           = true;
-    S.jogTouched            = false;
+    S.globalMenuItems         = buildGlobalMenuItems();
+    S.globalMenuState         = createMenuState();
+    S.globalMenuStack         = createMenuStack();
+    S.globalMenuOpen          = true;
+    S.globalMenuBuiltForTrack = S.activeTrack;
+    S.lastSentMenuEditValue   = null;
+    S.screenDirty             = true;
+    S.jogTouched              = false;
+}
+
+/* Rebuild the global menu items list if the active track has changed
+ * since the last build. Edit Slot... and Edit Synth... visibility
+ * depends on the track's Route, so a Shift+jog track switch with the
+ * menu open must rebuild the list. Cursor preserved by label-match
+ * when possible, otherwise clamped. */
+function ensureGlobalMenuFresh() {
+    if (!S.globalMenuOpen) return;
+    if (S.globalMenuBuiltForTrack === S.activeTrack) return;
+    let prevLabel = null;
+    if (S.globalMenuItems && S.globalMenuState) {
+        const _cur = S.globalMenuItems[S.globalMenuState.selectedIndex];
+        if (_cur) prevLabel = _cur.label || null;
+    }
+    S.globalMenuItems = buildGlobalMenuItems();
+    if (prevLabel && S.globalMenuState) {
+        let idx = -1;
+        for (let i = 0; i < S.globalMenuItems.length; i++) {
+            const _it = S.globalMenuItems[i];
+            if (_it && _it.label === prevLabel) { idx = i; break; }
+        }
+        if (idx >= 0) S.globalMenuState.selectedIndex = idx;
+        else S.globalMenuState.selectedIndex = Math.min(
+            S.globalMenuState.selectedIndex,
+            Math.max(0, S.globalMenuItems.length - 1));
+    }
+    S.globalMenuBuiltForTrack = S.activeTrack;
 }
 
 
@@ -2475,7 +2506,7 @@ function drawUI() {
     if (S.pendingSchwungSlotPicker) { drawSchwungSlotPicker(); return; }
     if (S.confirmBakeScene) { drawBakeSceneConfirm(); return; }
     if (S.confirmBake) { drawBakeConfirm(); return; }
-    if (S.globalMenuOpen || S.tapTempoOpen) { drawGlobalMenu(); return; }
+    if (S.globalMenuOpen || S.tapTempoOpen) { ensureGlobalMenuFresh(); drawGlobalMenu(); return; }
     /* Perf Mode OLED takeover (Session View + Loop held or locked) */
     if (S.sessionView && (S.loopHeld || S.perfViewLocked)) { drawPerfModeOled(); return; }
     if (S.stateLoading) {
@@ -4604,6 +4635,7 @@ function _onCC_jog(d1, d2) {
             return;
         }
         if (S.globalMenuOpen && !S.shiftHeld) {
+            ensureGlobalMenuFresh();
             if (S.confirmClearSession) {
                 const delta = decodeDelta(d2);
                 if (delta !== 0) { S.confirmClearSel = S.confirmClearSel === 0 ? 1 : 0; S.screenDirty = true; }
