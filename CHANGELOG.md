@@ -16,6 +16,8 @@ the section into a versioned heading at release time.
 - **Loop** and **Capture** buttons now light with a visible dim grey ambient (Loop was invisible at peer-button palette idx 16; Capture was unlit). Loop uses a custom-RGB scratch palette entry; Capture uses DarkGrey. Loop's perf-mode and drum-repeat indicator overrides are preserved.
 - **Shift + jog wheel** in Session View now steps the active track 0–7 (was a no-op). Plain jog still scrolls scene rows. Track View behavior unchanged.
 - **NoteFX Gate** knob is now 4× snappier: each detent changes the value by ±2% (was 1% per 2 detents). Useful precision preserved for the 0–400% range; other NoteFX knobs unchanged.
+- **NoteFX Quantize** knob now changes by ±2% per detent (was ±1%), 2× faster sweep across the 0–100% range.
+- **Melodic step-edit Pit knob** snappier: shifts a scale degree every 10 detents (was 16).
 
 ### Fixes
 - **Shift+Step 2/7/9 menu shortcuts** now target by label (`Global` / `Swing Amt` / `Scale`) instead of hardcoded numeric menu indices. The conditional `Edit Slot...` / `Edit Synth...` items were shifting the indices so the shortcuts landed on the wrong items (e.g. Step 7 was hitting `Launch`, Step 9 was hitting `Tap Tempo`). Now stable under future menu reorders.

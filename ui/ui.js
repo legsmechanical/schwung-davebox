@@ -5568,10 +5568,10 @@ function _onCC_stepedit(d1, d2) {
                     host_module_set_param(pfx + '_set_notes', S.heldStepNotes.join(' '));
             }
         } else if (knobIdx === 1) {
-            /* K2 Pitch: shift each note ±1 scale degree (or ±1 semitone if scale-aware off), sens=16 */
+            /* K2 Pitch: shift each note ±1 scale degree (or ±1 semitone if scale-aware off), sens=10 */
             S.knobAccum[knobIdx] = (dir === S.knobLastDir[knobIdx]) ? S.knobAccum[knobIdx] + 1 : 1;
             S.knobLastDir[knobIdx] = dir;
-            if (S.knobAccum[knobIdx] >= 16) {
+            if (S.knobAccum[knobIdx] >= 10) {
                 S.knobAccum[knobIdx] = 0;
                 S.heldStepNotes = S.heldStepNotes.map(function(n) {
                     return scaleNudgeNote(n, dir, S.padKey, S.padScale);

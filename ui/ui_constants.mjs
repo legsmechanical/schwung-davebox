@@ -257,7 +257,7 @@ export const BANKS = [
         p('Rnd',  'Pitch Random',    'noteFX_random',   'track',  0,   24,  0,   fmtPitchRnd, 4),
         p('Gate', 'Gate Time',       'noteFX_gate',     'track',  0,   400, 100, fmtPct,     1, undefined, undefined, 2),
         p('Vel',  'Velocity Offset', 'noteFX_velocity', 'track', -127, 127, 0,   fmtSign       ),
-        p('Qnt',  'Quantize',        'quantize',        'track',  0,   100, 0,   fmtPct),
+        p('Qnt',  'Quantize',        'quantize',        'track',  0,   100, 0,   fmtPct,     1, undefined, undefined, 2),
         _X, _X,
     ]},
     /* 2 — HARMZ (pad 94) */
