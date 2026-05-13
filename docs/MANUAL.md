@@ -663,7 +663,7 @@ Two banks of 16 lanes (A and B) give you 32 lanes total. The active bank is show
 
 **Right 4×4 modes** (cycle by tapping the jog wheel, or **Shift + Step 8**):
 
-- **Velocity** (default). 16 zones from velocity 8 (bottom-left) to velocity 127 (top-right). Used for live monitoring, step-edit velocity, and recording. Step-tap velocity defaults to 100 until you've pressed a vel-pad on this track; after that the most recently pressed zone is sticky (persists across sessions).
+- **Velocity** (default). 16 zones from velocity 8 (bottom-left) to velocity 127 (top-right). Used for live monitoring, step-edit velocity, and recording. Step-tap velocity defaults to 100 until you've pressed a vel-pad on this track; after that the most recently pressed zone is sticky (persists across sessions). Drum vel zones — sticky or actively pressed — override VelIn.
 - **Rpt1.** Single-lane Note Repeat. See [§6.7](#67-note-repeat).
 - **Rpt2.** Multi-lane Note Repeat.
 

@@ -977,18 +977,31 @@ function handoffRecordingToTrack(newTrack) {
 function effectiveVelocity(rawVel) { return rawVel; }
 
 /* Step-entry velocity. Single source of truth used by every step-write site.
- *   VelIn (S.trackVelOverride[t] > 0)        →  VelIn value
- *   live pad press right now (liveVel >= 0)  →  that velocity
- *   drum step-tap with vel-pad armed         →  sticky zone velocity
+ *
+ * Drum context (allowZone=true, used at drum step-tap sites and the drum
+ * vel-pad-while-step-held site): drum vel zones ALWAYS win over VelIn.
+ *   active vel-pad press now (liveVel >= 0)  →  zone velocity
+ *   sticky vel-zone armed                    →  sticky zone velocity
+ *   VelIn engaged                            →  VelIn value
  *   otherwise                                →  100
- * allowZone is true only for drum step-tap sites where the sticky zone is the
- * intended fallback. */
+ *
+ * Melodic context (allowZone=false): VelIn wins over pad press.
+ *   VelIn engaged                            →  VelIn value
+ *   live pad press now (liveVel >= 0)        →  pad press velocity
+ *   otherwise                                →  100
+ */
 function stepEntryVelocity(t, liveVel, allowZone) {
+    if (allowZone) {
+        if (liveVel >= 0) return liveVel;
+        if (S.drumVelZoneArmed && S.drumVelZoneArmed[t])
+            return drumVelZoneToVelocity(S.drumLastVelZone[t]);
+        const tvo = S.trackVelOverride[t];
+        if (tvo > 0) return tvo;
+        return 100;
+    }
     const tvo = S.trackVelOverride[t];
     if (tvo > 0) return tvo;
     if (liveVel >= 0) return liveVel;
-    if (allowZone && S.drumVelZoneArmed && S.drumVelZoneArmed[t])
-        return drumVelZoneToVelocity(S.drumLastVelZone[t]);
     return 100;
 }
 
@@ -6383,8 +6396,8 @@ function _onPadPressTrackView(status, d1, d2) {
                 padPressTick[padIdx] = S.tickCount;
                 S.liveActiveNotes.add(laneNote);
                 if (S.heldStep >= 0 && S.heldStepNotes.length > 0) {
-                    /* Active vel-pad press while step held → write that zone, unless VelIn forces a value */
-                    const _heldWriteVel = stepEntryVelocity(t, zoneVel, false);
+                    /* Active vel-pad press while step held → zone wins (beats VelIn) */
+                    const _heldWriteVel = stepEntryVelocity(t, zoneVel, true);
                     S.stepEditVel = _heldWriteVel;
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + t + '_l' + lane_vp + '_step_' + S.heldStep + '_vel', String(_heldWriteVel));
