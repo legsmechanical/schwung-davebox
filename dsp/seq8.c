@@ -564,6 +564,7 @@ typedef struct {
     uint32_t master_tick_in_step;     /* drives global_tick and launch-quant at master 1/16 boundary */
     uint32_t global_tick;             /* steps elapsed since transport play; bar boundary = global_tick % 16 == 0 */
     uint32_t arp_master_tick;         /* free-running master tick for SEQ ARP; advances even while stopped, resets on transport play / count-in fire */
+    int      emit_bypass_swing;       /* set to 1 around live-tap emissions; pfx_send/drum_pfx_send skip swing when nonzero */
 
     /* DSP-side count-in: counts down in DSP ticks; fires transport+recording when done */
     int32_t  count_in_ticks;        /* remaining ticks; 0 = inactive */
@@ -1796,8 +1797,11 @@ static void pfx_send(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
     }
 
     /* Swing deferral: note-on and note-off on even steps are queued and routed
-     * directly (bypass_swing) so they don't re-enter pfx_send on fire. */
-    if (g_inst && g_inst->playing && g_inst->swing_step_delay > 0) {
+     * directly (bypass_swing) so they don't re-enter pfx_send on fire.
+     * Applies whether transport is playing or stopped (so ARP IN, SEQ ARP, and
+     * drum repeats still swing with transport off). Live one-shot pad taps
+     * bypass via emit_bypass_swing so they never feel laggy. */
+    if (g_inst && g_inst->swing_step_delay > 0 && !g_inst->emit_bypass_swing) {
         uint8_t st = status & 0xF0;
         if (st == 0x90 || st == 0x80) {
             pfx_q_insert(fx, fx->sample_counter + g_inst->swing_step_delay,
@@ -2946,8 +2950,9 @@ static void drum_pfx_send(drum_pfx_t *px, uint8_t status, uint8_t d1, uint8_t d2
             }
         }
     }
-    /* Swing deferral */
-    if (g_inst && g_inst->playing && g_inst->swing_step_delay > 0) {
+    /* Swing deferral. Mirrors pfx_send: applies in both transport states so
+     * Rpt1/Rpt2 swing while stopped; live drum taps bypass via emit_bypass_swing. */
+    if (g_inst && g_inst->swing_step_delay > 0 && !g_inst->emit_bypass_swing) {
         uint8_t st = status & 0xF0;
         if (st == 0x90 || st == 0x80) {
             drum_pfx_q_insert(px, px->sample_counter + g_inst->swing_step_delay,
@@ -3707,14 +3712,18 @@ static void live_note_on(seq8_instance_t *inst, seq8_track_t *tr,
     if (tr->pad_mode == PAD_MODE_DRUM) {
         for (int l = 0; l < DRUM_LANES; l++) {
             if (tr->drum_clips[tr->active_clip].lanes[l].midi_note == pitch) {
+                inst->emit_bypass_swing = 1;
                 drum_pfx_note_on(inst, tr, &tr->drum_lane_pfx[l], pitch, vel);
+                inst->emit_bypass_swing = 0;
                 return;
             }
         }
         return; /* no matching lane — drop silently */
     }
     if (!tr->tarp_on) {
+        inst->emit_bypass_swing = 1;
         pfx_note_on(inst, tr, pitch, vel);
+        inst->emit_bypass_swing = 0;
         return;
     }
     if (tr->tarp_latch && tr->tarp_physical == 0) {
@@ -3749,11 +3758,15 @@ static void live_note_on(seq8_instance_t *inst, seq8_track_t *tr,
 static void live_note_off(seq8_instance_t *inst, seq8_track_t *tr,
                           uint8_t pitch) {
     if (tr->pad_mode == PAD_MODE_DRUM) {
+        inst->emit_bypass_swing = 1;
         drum_lane_note_off_imm(inst, tr, pitch);
+        inst->emit_bypass_swing = 0;
         return;
     }
     if (!tr->tarp_on) {
+        inst->emit_bypass_swing = 1;
         pfx_note_off_imm(inst, tr, pitch);
+        inst->emit_bypass_swing = 0;
         return;
     }
     if (tr->tarp_physical > 0) tr->tarp_physical--;
@@ -3770,7 +3783,9 @@ static void live_note_off(seq8_instance_t *inst, seq8_track_t *tr,
     }
     /* Safety belt: if pfx chain has this pitch active (e.g., tarp toggled on
      * while pad was held), release it now. No-op if already inactive. */
+    inst->emit_bypass_swing = 1;
     pfx_note_off_imm(inst, tr, pitch);
+    inst->emit_bypass_swing = 0;
 }
 
 /* Fire one TRACK ARP step: silence prior sounding, emit next picked note
@@ -6003,6 +6018,29 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
         inst->tick_accum += inst->tick_delta;
         while (inst->tick_accum >= inst->tick_threshold) {
             inst->tick_accum -= inst->tick_threshold;
+            /* Free-running swing parity: derive step parity from arp_master_tick
+             * so ARP IN, SEQ ARP, and drum Rpt1/Rpt2 pick up swing even with
+             * transport off. Mirrors the playing-block computation below. */
+            if ((inst->arp_master_tick % (uint32_t)TICKS_PER_STEP) == 0) {
+                if (inst->swing_amt > 0) {
+                    uint32_t step_counter = inst->arp_master_tick / (uint32_t)TICKS_PER_STEP;
+                    int sw_even = (inst->swing_res == 0)
+                        ? (int)(step_counter % 2 == 1)
+                        : (int)((step_counter / 2) % 2 == 1);
+                    if (sw_even) {
+                        uint32_t pair_ticks = (inst->swing_res == 0)
+                            ? (uint32_t)TICKS_PER_STEP * 2 : (uint32_t)TICKS_PER_STEP * 4;
+                        uint32_t off_ticks = (uint32_t)inst->swing_amt * pair_ticks / 400;
+                        double spt = (double)MOVE_FRAMES_PER_BLOCK
+                                     * (double)inst->tick_threshold / (double)inst->tick_delta;
+                        inst->swing_step_delay = (uint64_t)(off_ticks * spt + 0.5);
+                    } else {
+                        inst->swing_step_delay = 0;
+                    }
+                } else {
+                    inst->swing_step_delay = 0;
+                }
+            }
             looper_tick(inst);
             for (t = 0; t < NUM_TRACKS; t++) {
                 seq8_track_t *tr_s = &inst->tracks[t];
