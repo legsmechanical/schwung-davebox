@@ -545,7 +545,7 @@ export function updateTrackLEDs() {
     /* Knob LEDs (CC 71-78) */
     for (let k = 0; k < NUM_TRACKS; k++) {
         let ledVal = LED_OFF;
-        if (S.loopHeld || S.perfViewLocked) {
+        if ((S.loopHeld || S.perfViewLocked) && !S.sessionView) {
             ledVal = S.trackLooper[k] !== 0 ? TRACK_COLORS[k] : LED_OFF;
         } else if (S.sessionView) {
             ledVal = (k === S.activeTrack) ? White : LED_OFF;
