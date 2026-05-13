@@ -386,7 +386,11 @@ typedef struct {
     uint8_t  step_vel[SEQ_STEPS];         /* default SEQ_VEL */
     uint16_t step_gate[SEQ_STEPS];        /* gate ticks 1..clip_len*TICKS_PER_STEP; raw, scaled at render */
     int16_t  note_tick_offset[SEQ_STEPS][8]; /* per-note ±23 within-step offset; 0=quantized */
-    uint16_t length;                      /* 1..256, default 16 */
+    uint16_t length;                      /* 1..256, default 16 — size of the loop window in steps */
+    /* Loop window anchor in steps. Playback wraps inside [loop_start, loop_start+length).
+     * Default 0 (anchored at step 0). Pattern data outside the window is preserved but silent.
+     * Bake resets this to 0 (window is re-anchored at step 0 by the bake re-write). */
+    uint16_t loop_start;
     uint8_t  active;                      /* 1 if any step is on */
     /* Per-clip: cumulative rotation offset for display. Destructive — step
      * data is actually rotated; this counter tracks how far from "origin".
@@ -439,6 +443,7 @@ typedef struct {
     uint16_t step_gate[SEQ_STEPS];
     int16_t  note_tick_offset[SEQ_STEPS][8];
     uint16_t length;
+    uint16_t loop_start;
     uint8_t  active;
     drum_pfx_params_t pfx_params;
 } drum_rec_snap_lane_t;
@@ -905,7 +910,7 @@ static void ensure_parent_dir(const char *path) {
 
 static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
     int t, c;
-    fprintf(fp, "{\"v\":26,\"playing\":%d", inst->playing);
+    fprintf(fp, "{\"v\":27,\"playing\":%d", inst->playing);
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
     for (t = 0; t < NUM_TRACKS; t++)
@@ -944,6 +949,8 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
         for (c = 0; c < NUM_CLIPS; c++) {
             clip_t *cl = &inst->tracks[t].clips[c];
             fprintf(fp, ",\"t%dc%d_len\":%d", t, c, (int)cl->length);
+            if (cl->loop_start != 0)
+                fprintf(fp, ",\"t%dc%d_ls\":%d", t, c, (int)cl->loop_start);
             if (cl->stretch_exp != 0)
                 fprintf(fp, ",\"t%dc%d_se\":%d", t, c, (int)cl->stretch_exp);
             if (cl->clock_shift_pos != 0)
@@ -1025,6 +1032,8 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
                     fprintf(fp, ",\"t%dc%dl%d_mn\":%d", t, c, l, (int)dl->midi_note);
                 if (dlc->length != SEQ_STEPS_DEFAULT)
                     fprintf(fp, ",\"t%dc%dl%d_len\":%d", t, c, l, (int)dlc->length);
+                if (dlc->loop_start != 0)
+                    fprintf(fp, ",\"t%dc%dl%d_ls\":%d", t, c, l, (int)dlc->loop_start);
                 if (dlc->ticks_per_step != TICKS_PER_STEP)
                     fprintf(fp, ",\"t%dc%dl%d_tps\":%d", t, c, l, (int)dlc->ticks_per_step);
                 int wrote = 0;
@@ -1169,10 +1178,10 @@ static void seq8_load_state(seq8_instance_t *inst) {
     if (!n) { free(buf); remove(inst->state_path); return; }
     buf[n] = '\0';
 
-    /* Version gate: only v=24 accepted (dev build; wipe on version mismatch). */
+    /* Version gate: only v=27 accepted (dev build; wipe on version mismatch). */
     {
         int sv = json_get_int(buf, "v", -1);
-        if (sv != 26) {
+        if (sv != 27) {
             free(buf);
             remove(inst->state_path);
             seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
@@ -1208,6 +1217,10 @@ static void seq8_load_state(seq8_instance_t *inst) {
             snprintf(key, sizeof(key), "t%dc%d_len", t, c);
             cl->length = (uint16_t)clamp_i(
                 json_get_int(buf, key, SEQ_STEPS_DEFAULT), 1, SEQ_STEPS);
+
+            snprintf(key, sizeof(key), "t%dc%d_ls", t, c);
+            cl->loop_start = (uint16_t)clamp_i(
+                json_get_int(buf, key, 0), 0, SEQ_STEPS - (int)cl->length);
 
             snprintf(key, sizeof(key), "t%dc%d_se", t, c);
             cl->stretch_exp = (int8_t)clamp_i(json_get_int(buf, key, 0), -8, 8);
@@ -1477,6 +1490,9 @@ static void seq8_load_state(seq8_instance_t *inst) {
                 snprintf(key, sizeof(key), "t%dc%dl%d_len", t, c, l);
                 dlc->length = (uint16_t)clamp_i(
                     json_get_int(buf, key, SEQ_STEPS_DEFAULT), 1, SEQ_STEPS);
+                snprintf(key, sizeof(key), "t%dc%dl%d_ls", t, c, l);
+                dlc->loop_start = (uint16_t)clamp_i(
+                    json_get_int(buf, key, 0), 0, SEQ_STEPS - (int)dlc->length);
                 snprintf(key, sizeof(key), "t%dc%dl%d_tps", t, c, l);
                 {
                     int raw_tps = json_get_int(buf, key, (int)TICKS_PER_STEP);
@@ -4296,6 +4312,7 @@ static void pfx_sync_from_clip(seq8_track_t *tr) {
 static void clip_init(clip_t *cl) {
     int s;
     cl->length         = SEQ_STEPS_DEFAULT;
+    cl->loop_start     = 0;
     cl->active         = 0;
     cl->clock_shift_pos = 0;
     cl->stretch_exp     = 0;
@@ -4735,6 +4752,7 @@ static void drum_row_snap(seq8_instance_t *inst, int row,
             memcpy(d->step_gate,        src->step_gate,        SEQ_STEPS * sizeof(uint16_t));
             memcpy(d->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
             d->length     = src->length;
+            d->loop_start = src->loop_start;
             d->active     = src->active;
             d->pfx_params = lane->pfx_params;
         }
@@ -4757,6 +4775,7 @@ static void drum_row_restore(seq8_instance_t *inst, int row,
             memcpy(dst->step_gate,        s->step_gate,        SEQ_STEPS * sizeof(uint16_t));
             memcpy(dst->note_tick_offset, s->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
             dst->length       = s->length;
+            dst->loop_start   = s->loop_start;
             dst->active       = s->active;
             lane->pfx_params  = s->pfx_params;
             clip_migrate_to_notes(dst);
@@ -4855,6 +4874,7 @@ static void undo_begin_drum_clip(seq8_instance_t *inst, int t, int c) {
         memcpy(dst->step_gate,        src->step_gate,        SEQ_STEPS * sizeof(uint16_t));
         memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
         dst->length     = src->length;
+        dst->loop_start = src->loop_start;
         dst->active     = src->active;
         dst->pfx_params = lane->pfx_params;
     }
@@ -6530,8 +6550,11 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                     if (tr->drum_tick_in_step[l] >= dlc->ticks_per_step) {
                         tr->drum_tick_in_step[l] = 0;
                         if (tr->clip_playing) {
-                            uint16_t ns2 = (uint16_t)((tr->drum_current_step[l] + 1) % dlc->length);
-                            if (ns2 == 0) {
+                            uint16_t _ls = dlc->loop_start;
+                            uint16_t _le = (uint16_t)(_ls + dlc->length);
+                            uint16_t ns2 = (uint16_t)(tr->drum_current_step[l] + 1);
+                            if (ns2 >= _le || ns2 < _ls) ns2 = _ls;
+                            if (ns2 == _ls) {
                                 uint16_t ni2;
                                 for (ni2 = 0; ni2 < dlc->note_count; ni2++)
                                     dlc->notes[ni2].suppress_until_wrap = 0;
@@ -6546,8 +6569,11 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 if (tr->tick_in_step >= cl->ticks_per_step) {
                     tr->tick_in_step = 0;
                     if (tr->clip_playing) {
-                        uint16_t ns2 = (uint16_t)((tr->current_step + 1) % cl->length);
-                        if (ns2 == 0) {
+                        uint16_t _ls = cl->loop_start;
+                        uint16_t _le = (uint16_t)(_ls + cl->length);
+                        uint16_t ns2 = (uint16_t)(tr->current_step + 1);
+                        if (ns2 >= _le || ns2 < _ls) ns2 = _ls;
+                        if (ns2 == _ls) {
                             uint16_t ni2;
                             for (ni2 = 0; ni2 < cl->note_count; ni2++)
                                 cl->notes[ni2].suppress_until_wrap = 0;

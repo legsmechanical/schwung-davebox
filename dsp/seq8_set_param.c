@@ -1292,6 +1292,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 memcpy(dst->step_gate,        src->step_gate,        SEQ_STEPS * sizeof(uint16_t));
                 memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
                 dst->length     = src->length;
+                dst->loop_start = src->loop_start;
                 dst->active     = src->active;
                 dst->pfx_params = lane->pfx_params;
             }
@@ -1310,6 +1311,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 memcpy(dst->step_gate,        src->step_gate,        SEQ_STEPS * sizeof(uint16_t));
                 memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
                 dst->length        = src->length;
+                dst->loop_start    = src->loop_start;
                 dst->active        = src->active;
                 lane->pfx_params   = src->pfx_params;
                 clip_migrate_to_notes(dst);
@@ -1379,6 +1381,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 memcpy(dst->step_gate,        src->step_gate,        SEQ_STEPS * sizeof(uint16_t));
                 memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
                 dst->length     = src->length;
+                dst->loop_start = src->loop_start;
                 dst->active     = src->active;
                 dst->pfx_params = lane->pfx_params;
             }
@@ -1397,6 +1400,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 memcpy(dst->step_gate,        src->step_gate,        SEQ_STEPS * sizeof(uint16_t));
                 memcpy(dst->note_tick_offset, src->note_tick_offset, SEQ_STEPS * 8 * sizeof(int16_t));
                 dst->length       = src->length;
+                dst->loop_start   = src->loop_start;
                 dst->active       = src->active;
                 lane->pfx_params  = src->pfx_params;
                 clip_migrate_to_notes(dst);
