@@ -1832,9 +1832,42 @@ static void set_param(void *instance, const char *key, const char *val) {
                 }
                 return;
             }
-            if (!strncmp(p, "_length", 7)) {
-                cl->length = (uint16_t)clamp_i(my_atoi(val), 1, SEQ_STEPS);
+            if (!strncmp(p, "_length", 7) && p[7] == '\0') {
+                int max_len = SEQ_STEPS - (int)cl->loop_start;
+                if (max_len < 1) max_len = 1;
+                cl->length = (uint16_t)clamp_i(my_atoi(val), 1, max_len);
+                if (cidx == (int)tr->active_clip) {
+                    uint16_t le = (uint16_t)(cl->loop_start + cl->length);
+                    if (tr->current_step < cl->loop_start || tr->current_step >= le)
+                        tr->current_step = cl->loop_start;
+                }
                 clip_migrate_to_notes(cl);
+                return;
+            }
+            if (!strncmp(p, "_loop_set", 9) && p[9] == '\0') {
+                /* tN_cC_loop_set "packed" — atomic loop window write.
+                 * packed = loop_start * 65536 + length (both 1..256, sum <= SEQ_STEPS).
+                 * Single set_param to avoid the per-buffer coalescing hazard
+                 * that two separate keys would hit. */
+                long packed = 0;
+                const char *vp = val;
+                while (*vp == ' ') vp++;
+                while (*vp >= '0' && *vp <= '9') packed = packed * 10 + (*vp++ - '0');
+                int ls  = (int)((packed >> 16) & 0xFFFF);
+                int len = (int)(packed & 0xFFFF);
+                if (len < 1) len = 1;
+                if (ls  < 0) ls  = 0;
+                if (ls > SEQ_STEPS - 1) ls = SEQ_STEPS - 1;
+                if (ls + len > SEQ_STEPS) len = SEQ_STEPS - ls;
+                cl->loop_start = (uint16_t)ls;
+                cl->length     = (uint16_t)len;
+                if (cidx == (int)tr->active_clip) {
+                    uint16_t le = (uint16_t)(cl->loop_start + cl->length);
+                    if (tr->current_step < cl->loop_start || tr->current_step >= le)
+                        tr->current_step = cl->loop_start;
+                }
+                clip_migrate_to_notes(cl);
+                inst->state_dirty = 1;
                 return;
             }
             if (!strncmp(p, "_pfx_set", 8) && p[8] == '\0') {
@@ -2328,10 +2361,40 @@ static void set_param(void *instance, const char *key, const char *val) {
                 return;
             }
             if (!strcmp(p2, "_clip_length")) {
-                int newlen = clamp_i(my_atoi(val), 1, SEQ_STEPS);
+                int max_len = SEQ_STEPS - (int)dlc->loop_start;
+                if (max_len < 1) max_len = 1;
+                int newlen = clamp_i(my_atoi(val), 1, max_len);
                 dlc->length = (uint16_t)newlen;
-                if (tr->drum_current_step[lane_idx] >= (uint16_t)newlen)
-                    tr->drum_current_step[lane_idx] = 0;
+                {
+                    uint16_t le = (uint16_t)(dlc->loop_start + dlc->length);
+                    if (tr->drum_current_step[lane_idx] < dlc->loop_start
+                            || tr->drum_current_step[lane_idx] >= le)
+                        tr->drum_current_step[lane_idx] = dlc->loop_start;
+                }
+                clip_migrate_to_notes(dlc);
+                inst->state_dirty = 1;
+                return;
+            }
+            if (!strcmp(p2, "_loop_set")) {
+                /* tN_lL_loop_set "packed" — atomic loop window write for one drum lane. */
+                long packed = 0;
+                const char *vp = val;
+                while (*vp == ' ') vp++;
+                while (*vp >= '0' && *vp <= '9') packed = packed * 10 + (*vp++ - '0');
+                int ls  = (int)((packed >> 16) & 0xFFFF);
+                int len = (int)(packed & 0xFFFF);
+                if (len < 1) len = 1;
+                if (ls  < 0) ls  = 0;
+                if (ls > SEQ_STEPS - 1) ls = SEQ_STEPS - 1;
+                if (ls + len > SEQ_STEPS) len = SEQ_STEPS - ls;
+                dlc->loop_start = (uint16_t)ls;
+                dlc->length     = (uint16_t)len;
+                {
+                    uint16_t le = (uint16_t)(dlc->loop_start + dlc->length);
+                    if (tr->drum_current_step[lane_idx] < dlc->loop_start
+                            || tr->drum_current_step[lane_idx] >= le)
+                        tr->drum_current_step[lane_idx] = dlc->loop_start;
+                }
                 clip_migrate_to_notes(dlc);
                 inst->state_dirty = 1;
                 return;
@@ -3640,15 +3703,51 @@ static void set_param(void *instance, const char *key, const char *val) {
         }
 
         if (!strcmp(sub, "all_lanes_length")) {
-            /* tN_all_lanes_length "steps" — set clip length on all 32 drum lanes. */
-            int newlen = clamp_i(my_atoi(val), 1, SEQ_STEPS);
+            /* tN_all_lanes_length "steps" — set clip length on all 32 drum lanes.
+             * Per-lane clamp respects each lane's own loop_start. */
+            int reqlen = my_atoi(val);
             drum_clip_t *dc_al = &tr->drum_clips[tr->active_clip];
             int l_al;
             for (l_al = 0; l_al < DRUM_LANES; l_al++) {
                 clip_t *dlc = &dc_al->lanes[l_al].clip;
+                int max_len = SEQ_STEPS - (int)dlc->loop_start;
+                if (max_len < 1) max_len = 1;
+                int newlen = clamp_i(reqlen, 1, max_len);
                 dlc->length = (uint16_t)newlen;
-                if (tr->drum_current_step[l_al] >= (uint16_t)newlen)
-                    tr->drum_current_step[l_al] = 0;
+                uint16_t le = (uint16_t)(dlc->loop_start + dlc->length);
+                if (tr->drum_current_step[l_al] < dlc->loop_start
+                        || tr->drum_current_step[l_al] >= le)
+                    tr->drum_current_step[l_al] = dlc->loop_start;
+                clip_migrate_to_notes(dlc);
+            }
+            inst->state_dirty = 1;
+            return;
+        }
+
+        if (!strcmp(sub, "all_lanes_loop_set")) {
+            /* tN_all_lanes_loop_set "packed" — atomic loop window write across all
+             * 32 drum lanes of the active drum clip. Mirrors tN_lL_loop_set
+             * semantics on every lane. */
+            long packed = 0;
+            const char *vp = val;
+            while (*vp == ' ') vp++;
+            while (*vp >= '0' && *vp <= '9') packed = packed * 10 + (*vp++ - '0');
+            int ls  = (int)((packed >> 16) & 0xFFFF);
+            int len = (int)(packed & 0xFFFF);
+            if (len < 1) len = 1;
+            if (ls  < 0) ls  = 0;
+            if (ls > SEQ_STEPS - 1) ls = SEQ_STEPS - 1;
+            if (ls + len > SEQ_STEPS) len = SEQ_STEPS - ls;
+            drum_clip_t *dc_al = &tr->drum_clips[tr->active_clip];
+            int l_al;
+            for (l_al = 0; l_al < DRUM_LANES; l_al++) {
+                clip_t *dlc = &dc_al->lanes[l_al].clip;
+                dlc->loop_start = (uint16_t)ls;
+                dlc->length     = (uint16_t)len;
+                uint16_t le = (uint16_t)(dlc->loop_start + dlc->length);
+                if (tr->drum_current_step[l_al] < dlc->loop_start
+                        || tr->drum_current_step[l_al] >= le)
+                    tr->drum_current_step[l_al] = dlc->loop_start;
                 clip_migrate_to_notes(dlc);
             }
             inst->state_dirty = 1;

@@ -5802,6 +5802,8 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                 return snprintf(out, out_len, "%d", (int)dlc->note_count);
             if (!strcmp(p2, "_length"))
                 return snprintf(out, out_len, "%d", (int)dlc->length);
+            if (!strcmp(p2, "_loop_start"))
+                return snprintf(out, out_len, "%d", (int)dlc->loop_start);
             if (!strcmp(p2, "_current_step"))
                 return snprintf(out, out_len, "%d", (int)tr->drum_current_step[lidx]);
             if (!strcmp(p2, "_tps"))
@@ -5964,6 +5966,8 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
             }
             if (!strncmp(p, "_length", 7))
                 return snprintf(out, out_len, "%d", (int)cl->length);
+            if (!strncmp(p, "_loop_start", 11))
+                return snprintf(out, out_len, "%d", (int)cl->loop_start);
             if (!strncmp(p, "_active", 7))
                 return snprintf(out, out_len, "%d", (int)cl->active);
             if (!strncmp(p, "_drum_has_content", 17)) {
