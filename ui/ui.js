@@ -6355,7 +6355,6 @@ function _onPadPressTrackView(status, d1, d2) {
                  * Pad pressure is ignored — zone vel used for monitoring, step-edit, recording. */
                 S.drumLastVelZone[t] = velZone;
                 const zoneVel  = drumVelZoneToVelocity(velZone);
-                S.lastPadVelocity = zoneVel;
                 const lane_vp  = S.activeDrumLane[t];
                 const laneNote = S.drumLaneNote[t][lane_vp];
                 liveSendNote(t, 0x90, laneNote, zoneVel, true);
@@ -7195,7 +7194,7 @@ function _onStepButtons(d1, d2) {
             if (state_mp === 0) {
                 const assignNote3 = S.lastPlayedNote >= 0 ? S.lastPlayedNote : -1;
                 if (assignNote3 >= 0 && typeof host_module_set_param === 'function') {
-                    host_module_set_param(pref_mp + '_toggle', assignNote3 + ' ' + effectiveVelocity(S.lastPadVelocity));
+                    host_module_set_param(pref_mp + '_toggle', assignNote3 + ' 100');
                     S.clipSteps[S.activeTrack][ac_mp][absStep2] = 1;
                     S.clipNonEmpty[S.activeTrack][ac_mp] = true;
                     refreshSeqNotesIfCurrent(S.activeTrack, ac_mp, absStep2);
@@ -7394,7 +7393,7 @@ function _onPadRelease(status, d1, d2) {
                     /* Tap on empty step: assign lastPlayedNote now */
                     if (S.lastPlayedNote >= 0) {
                         const assignNote_t = S.lastPlayedNote;
-                        const assignVel_t  = effectiveVelocity(S.lastPadVelocity);
+                        const assignVel_t  = 100;
                         if (typeof host_module_set_param === 'function')
                             host_module_set_param('t' + S.activeTrack + '_c' + ac_t + '_step_' + absIdx + '_toggle', assignNote_t + ' ' + assignVel_t);
                         S.clipSteps[S.activeTrack][ac_t][absIdx] = 1;

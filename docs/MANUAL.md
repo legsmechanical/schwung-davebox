@@ -389,7 +389,7 @@ The 16 step buttons represent the current page of the active clip. Steps are eit
 
 | Action | Behavior |
 |---|---|
-| Quick tap (<200ms) on empty step | Activates the step with the **last note played** on the pads |
+| Quick tap (<200ms) on empty step | Activates the step with the **last note played** on the pads, at a fixed velocity of 100 |
 | Quick tap on active step | Clears it (notes deleted immediately) |
 | Hold (≥200ms) | Opens step edit overlay (see [§4.2](#42-step-edit)) |
 | Tap multiple steps together | Toggles each one |
