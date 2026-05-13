@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com). Add entries to
 the section into a versioned heading at release time.
 
 ## [Unreleased]
+
+## [0.3.0] — 2026-05-12
 ### Features
 - **Euclidean rhythm knob (DRUM LANE K4 = `Eucl`)** — per-lane Bjorklund hit-count placer. Turning K4 sets the number of evenly-spaced hits across the current drum lane's length; the displayed value is the active Euclidean count. Each turn diffs the previous Bjorklund pattern against the new one: only the changed positions toggle, so hand-placed hits outside the Euclidean set are preserved across knob sweeps. Hits are written with the unified step-entry velocity. Existing knobs shift right one slot: Len → K5, SqFl → K6 (K7/K8 LaneOct/LaneNote unchanged). Value is persisted per-track-per-lane via UI sidecar `dleu`.
 - **Capture + scene-row button** — snapshots the current performance into the pressed scene row: copies each track's currently-active clip into that row in one gesture. Skips tracks where the active clip is already on the target row (self-copy) or empty (so target keeps its prior contents on unused tracks). View-agnostic — works in both Session View and Track View. OLED shows `CAPTURED / TO ROW N` (or `NOTHING / TO CAPTURE` if nothing applied).
