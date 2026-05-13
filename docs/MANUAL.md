@@ -298,7 +298,8 @@ The primary editing environment. Shows the active track and clip.
 | Shift + bottom-row pad (1–8) | Switch to that track |
 | Loop (held) | Enter pages / loop view — step buttons now show pages of the clip |
 | Loop (held) + jog | Adjust clip length ±1 step per detent |
-| Loop (held) + two step buttons | Set loop start and end (defines the loop range across pages) |
+| Loop (held) + tap page | Set window to pages `[0, N]` (length-only) |
+| Loop (held) + hold page A + tap page B | Set window to pages `[min(A,B), max(A,B)]` (range) |
 | Up / Down | Shift the pad octave range (−4 to +4) |
 | Left / Right arrows | Navigate clip pages (for clips longer than 16 steps) |
 | Note/Session (tap) | Switch to Session View |
@@ -440,11 +441,18 @@ When a clip is longer than 16 steps, it spans multiple pages. **Left / Right** n
 
 Hold **Loop** to enter pages view — each step button now represents a *bar* of the clip:
 
-- **White** — currently selected bar
-- **Track color** — bar is within the clip
-- **Dim grey** — beyond clip length
+- **White** — currently selected bar (held during a range gesture, see below)
+- **Track color** — bar is within the loop window
+- **Track color, pulsing** — bar contains notes
+- **Off** — bar is outside the loop window (either before the start or beyond the end)
 
-While Loop is held, to change clip length: jog ±1 step per detent, or press two step buttons together to set start and end.
+Three ways to change the loop window while Loop is held:
+
+- **Jog ±1 step per detent** — grows or shrinks the window from the end (start stays fixed).
+- **Tap a page button** — sets the window to pages `[0, N]` where `N` is the page you tapped. Same as it always worked.
+- **Hold a page + tap another page** — sets the window to `[start, end]`. The held page anchors the **start**; the tap sets the **end**. Tapping a smaller page than the held one swaps automatically so the range is always `[min, max]`. Additional taps while still holding the start re-set the end (scrub freely; last tap wins). Tapping the same page you're holding is ignored. If you release the held page without tapping a second one, it falls back to the tap behavior above. The held page lights white while you're mid-gesture.
+
+The bottom OLED bar shows pages in the window only. Small 1px ticks at the bar's left/right edges signal that note content exists outside the visible window — non-destructive, those notes are preserved and play again if you expand the window. **Bake** (Track menu) re-anchors the window at step 0, so you can grow the length back to 256 steps after baking a sub-range.
 
 ## 4.5 Live recording
 
@@ -803,8 +811,13 @@ Mute and solo are mutually exclusive: soloing a muted lane clears its mute; muti
 Hold **Loop** on a drum track to see pages view on the step buttons:
 
 - Pages with notes: pulse between track color and off
-- Empty pages within clip length: solid track color
-- Pages beyond clip length: dim grey
+- Empty in-window pages: solid track color
+- Out-of-window pages: off
+- Held start page during the range gesture: white
+
+The window-set gestures match the melodic Loop view (see Track View § 4.4 *Loop view*): tap = length-only `[0, N]`; hold + tap = range `[A, B]`. On a specific drum lane the gesture writes that lane only; in **ALL LANES** view (bank 7) the same gesture applies to all 32 lanes at once.
+
+The bottom OLED bar mirrors the active lane's window with the same 1px extent ticks signaling notes that exist outside the window.
 
 ## 6.10 Lane and clip copy / cut
 

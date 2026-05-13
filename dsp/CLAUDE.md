@@ -34,9 +34,11 @@ ssh ableton@move.local "tail -f /data/UserData/schwung/seq8.log"
 
 ## State format
 
-Version v=26 (only v=26 accepted). v≠26 → deleted + clean start.
+Version v=27 (only v=27 accepted). v≠27 → deleted + clean start.
 
 Note format: `tick:pitch:vel:gate;`
+
+Per-clip / per-drum-lane loop window: `t%dc%d_ls` (melodic) / `t%dc%dl%d_ls` (drum) — sparse, omitted when `loop_start == 0`. Playback wraps inside `[loop_start, loop_start+length)`. Pattern data outside the window is preserved.
 
 Key prefixes:
 - SEQ ARP: `_arst` / `_arrt` / `_aroc` / `_argt` / `_arsm` / `_artg`
