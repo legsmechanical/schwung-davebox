@@ -3117,6 +3117,10 @@ static void set_param(void *instance, const char *key, const char *val) {
                 /* Fresh recording session: clear pass mask so existing notes play back */
                 memset(tr->live_recorded_steps, 0, 32);
                 memset(tr->cc_auto_touch_frame, 0, sizeof(tr->cc_auto_touch_frame));
+                /* Reset drum-repeat per-pass accumulation detector so this pass's
+                 * first fire on each lane-step is treated as new (preserves the
+                 * write-once-across-passes semantic for Rpt1/Rpt2 recording). */
+                memset(tr->drum_last_rec_step, 0xFF, sizeof(tr->drum_last_rec_step));
                 /* Clear any tarp notes held before recording started — their note-offs
                  * can't reach live_note_off once activelyRecording=true in JS. */
                 tarp_silence(inst, tr);

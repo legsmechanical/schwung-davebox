@@ -491,6 +491,12 @@ typedef struct {
     /* Per-lane render-state tick counters (not persisted; reset on transport play/clip launch). */
     uint16_t drum_current_step[DRUM_LANES];
     uint32_t drum_tick_in_step[DRUM_LANES];
+    /* Per-pass accumulation detector for Rpt1/Rpt2 recording: tracks the last
+     * clip-step rs we wrote in this recording pass. -1 = none. On the first
+     * fire of a new lane-step in a pass we obey the existing write-once gate;
+     * on subsequent fires of the same lane-step (sub-step repeats) we
+     * accumulate notes into the step with their sub-step offsets (InQ Off only). */
+    int16_t  drum_last_rec_step[DRUM_LANES];
     /* Per-lane recording pending state (runtime only, not persisted). */
     uint32_t drum_rec_pending_tick[DRUM_LANES];
     uint16_t drum_rec_pending_step[DRUM_LANES];
@@ -3627,21 +3633,41 @@ static void drum_repeat_tick(seq8_instance_t *inst, seq8_track_t *tr) {
               }
             }
             drum_pfx_note_on(inst, tr, &tr->drum_lane_pfx[lane], pitch, (uint8_t)vel);
-            /* Record into sequencer if armed */
+            /* Record into sequencer if armed.
+             * First fire on a new lane-step this pass: write-once-across-passes
+             * (existing semantic). Subsequent fires on the same lane-step
+             * (sub-step repeats, rate finer than lane TPS) accumulate notes
+             * with their own sub-step offsets — InQ Off only, since InQ On
+             * snaps every fire to offset 0 and stacking duplicates is
+             * degenerate. */
             if (tr->recording) {
                 int ac = (int)tr->active_clip;
                 clip_t *rlc = &tr->drum_clips[ac].lanes[lane].clip;
                 uint16_t rs = tr->drum_current_step[lane];
-                if (rs < rlc->length && rlc->step_note_count[rs] == 0) {
-                    rlc->step_notes[rs][0]       = pitch;
-                    rlc->step_note_count[rs]     = 1;
-                    rlc->step_vel[rs]            = (uint8_t)vel;
-                    rlc->step_gate[rs]           = (uint16_t)GATE_TICKS;
-                    rlc->note_tick_offset[rs][0] = (inst->inp_quant || tr->drum_inp_quant)
-                        ? 0 : (int16_t)tr->drum_tick_in_step[lane];
-                    rlc->steps[rs]               = 1;
-                    rlc->active                  = 1;
-                    clip_migrate_to_notes(rlc);
+                if (rs < rlc->length) {
+                    int inq_on = (inst->inp_quant || tr->drum_inp_quant) ? 1 : 0;
+                    int new_step_this_pass = (tr->drum_last_rec_step[lane] != (int16_t)rs);
+                    int can_write = 0;
+                    if (new_step_this_pass) {
+                        can_write = (rlc->step_note_count[rs] == 0);
+                        tr->drum_last_rec_step[lane] = (int16_t)rs;
+                    } else if (!inq_on) {
+                        can_write = (rlc->step_note_count[rs] < 8);
+                    }
+                    if (can_write) {
+                        int slot = (int)rlc->step_note_count[rs];
+                        rlc->step_notes[rs][slot]       = pitch;
+                        rlc->note_tick_offset[rs][slot] = inq_on
+                            ? 0 : (int16_t)tr->drum_tick_in_step[lane];
+                        if (slot == 0) {
+                            rlc->step_vel[rs]  = (uint8_t)vel;
+                            rlc->step_gate[rs] = (uint16_t)GATE_TICKS;
+                        }
+                        rlc->step_note_count[rs]++;
+                        rlc->steps[rs] = 1;
+                        rlc->active   = 1;
+                        clip_migrate_to_notes(rlc);
+                    }
                 }
             }
             /* Schedule note-off: half the step interval */
@@ -3724,16 +3750,30 @@ static void drum_repeat2_tick(seq8_instance_t *inst, seq8_track_t *tr) {
                 int ac = (int)tr->active_clip;
                 clip_t *rlc = &tr->drum_clips[ac].lanes[l].clip;
                 uint16_t rs = tr->drum_current_step[l];
-                if (rs < rlc->length && rlc->step_note_count[rs] == 0) {
-                    rlc->step_notes[rs][0]       = pitch;
-                    rlc->step_note_count[rs]     = 1;
-                    rlc->step_vel[rs]            = (uint8_t)vel;
-                    rlc->step_gate[rs]           = (uint16_t)GATE_TICKS;
-                    rlc->note_tick_offset[rs][0] = inst->inp_quant
-                        ? 0 : (int16_t)tr->drum_tick_in_step[l];
-                    rlc->steps[rs]               = 1;
-                    rlc->active                  = 1;
-                    clip_migrate_to_notes(rlc);
+                if (rs < rlc->length) {
+                    int inq_on = (inst->inp_quant || tr->drum_inp_quant) ? 1 : 0;
+                    int new_step_this_pass = (tr->drum_last_rec_step[l] != (int16_t)rs);
+                    int can_write = 0;
+                    if (new_step_this_pass) {
+                        can_write = (rlc->step_note_count[rs] == 0);
+                        tr->drum_last_rec_step[l] = (int16_t)rs;
+                    } else if (!inq_on) {
+                        can_write = (rlc->step_note_count[rs] < 8);
+                    }
+                    if (can_write) {
+                        int slot = (int)rlc->step_note_count[rs];
+                        rlc->step_notes[rs][slot]       = pitch;
+                        rlc->note_tick_offset[rs][slot] = inq_on
+                            ? 0 : (int16_t)tr->drum_tick_in_step[l];
+                        if (slot == 0) {
+                            rlc->step_vel[rs]  = (uint8_t)vel;
+                            rlc->step_gate[rs] = (uint16_t)GATE_TICKS;
+                        }
+                        rlc->step_note_count[rs]++;
+                        rlc->steps[rs] = 1;
+                        rlc->active   = 1;
+                        clip_migrate_to_notes(rlc);
+                    }
                 }
             }
             uint16_t gate = rate / 2;
@@ -4224,6 +4264,7 @@ static void drum_track_init(seq8_track_t *tr, int track_idx) {
         tr->drum_rec_pending_tick[l]   = 0;
         tr->drum_rec_pending_step[l]   = 0;
         tr->drum_rec_pending_active[l] = 0;
+        tr->drum_last_rec_step[l]      = -1;
         drum_pfx_init_defaults(&tr->drum_lane_pfx[l], (uint8_t)track_idx, (uint8_t)l);
     }
 }
@@ -6053,6 +6094,8 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 }
                 inst->playing = 1;
                 inst->tracks[inst->count_in_track].recording   = 1;
+                memset(inst->tracks[inst->count_in_track].drum_last_rec_step, 0xFF,
+                       sizeof(inst->tracks[inst->count_in_track].drum_last_rec_step));
                 inst->tracks[inst->count_in_track].clip_playing = 1;
             }
         }
@@ -6218,6 +6261,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                     }
                     if (tr->record_armed) {
                         memset(tr->cc_auto_touch_frame, 0, sizeof(tr->cc_auto_touch_frame));
+                        memset(tr->drum_last_rec_step, 0xFF, sizeof(tr->drum_last_rec_step));
                         tr->recording    = 1;
                         tr->record_armed = 0;
                     }
@@ -6243,6 +6287,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                         }
                         if (tr->record_armed) {
                             memset(tr->cc_auto_touch_frame, 0, sizeof(tr->cc_auto_touch_frame));
+                            memset(tr->drum_last_rec_step, 0xFF, sizeof(tr->drum_last_rec_step));
                             tr->recording    = 1;
                             tr->record_armed = 0;
                         }
