@@ -7619,6 +7619,14 @@ globalThis.onMidiMessageInternal = function (data) {
             if (d2 === 127) {
                 if (d1 <= 7 && S.activeBank >= 0) {
                     S.knobTouched = d1; S.knobTurnedTick[d1] = -1; S.screenDirty = true;
+                    /* Perf view: Shift+touch knob k toggles looper for track k */
+                    if ((S.loopHeld || S.perfViewLocked) && S.shiftHeld) {
+                        const _lt = d1;
+                        const _newLooper = S.trackLooper[_lt] !== 0 ? 0 : 1;
+                        applyTrackConfig(_lt, 'track_looper', _newLooper);
+                        showActionPopup('LOOPER ' + (_newLooper ? 'ON' : 'OFF'), 'TRACK ' + (_lt + 1));
+                        invalidateLEDCache();
+                    }
                     /* CC bank: Delete+touch clears this knob's automation immediately */
                     if (S.activeBank === 6 && S.deleteHeld && !S.shiftHeld &&
                             S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM) {
