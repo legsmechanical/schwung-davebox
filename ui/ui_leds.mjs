@@ -55,23 +55,30 @@ export function updateStepLEDs() {
     const ac = effectiveClip(S.activeTrack);
 
     /* Loop-held pages view (no jog active): 16 step buttons = 16 possible 16-step pages.
-     * Pages with notes → pulse; empty pages within clip → solid track color; OOB → White. */
+     * Pages with notes within the window → pulse; empty in-window pages → solid track color;
+     * out-of-window pages → off. Held start page during the range gesture lights bright
+     * white as a "waiting for end tap" affordance. */
     if (S.loopHeld && !S.loopJogActive) {
         const t = S.activeTrack;
         const trackColor = TRACK_COLORS[t];
         const pulsOn = S.playing ? S.flashSixteenth : (Math.floor(S.tickCount / 24) % 2);
+        const gestureHeldPage = (S.loopGestureStart >= 0 && S.loopGestureTrack === t) ? S.loopGestureStart : -1;
         if (S.trackPadMode[t] === PAD_MODE_DRUM) {
             const lane = S.activeDrumLane[t];
             const len  = S.drumLaneLength[t];
+            const lsBase = S.drumLaneLoopStart[t] | 0;
             const ls   = S.drumLaneSteps[t][lane];
-            const totalPages = Math.ceil(len / 16);
+            const startPage = lsBase >> 4;
+            const endPage   = startPage + Math.ceil(len / 16) - 1;
             for (let p = 0; p < 16; p++) {
                 let color;
-                if (p >= totalPages) {
+                if (p === gestureHeldPage) {
+                    color = White;
+                } else if (p < startPage || p > endPage) {
                     color = LED_OFF;
                 } else {
                     const base = p * 16;
-                    const end  = Math.min(base + 16, len);
+                    const end  = Math.min(base + 16, lsBase + len);
                     let hasNotes = false;
                     for (let s = base; s < end; s++) {
                         if (ls[s] !== '0') { hasNotes = true; break; }
@@ -81,16 +88,20 @@ export function updateStepLEDs() {
                 setLED(16 + p, color);
             }
         } else {
-            const len   = S.clipLength[t][ac];
-            const steps = S.clipSteps[t][ac];
-            const totalPages = Math.ceil(len / 16);
+            const len    = S.clipLength[t][ac];
+            const lsBase = S.clipLoopStart[t][ac] | 0;
+            const steps  = S.clipSteps[t][ac];
+            const startPage = lsBase >> 4;
+            const endPage   = startPage + Math.ceil(len / 16) - 1;
             for (let p = 0; p < 16; p++) {
                 let color;
-                if (p >= totalPages) {
+                if (p === gestureHeldPage) {
+                    color = White;
+                } else if (p < startPage || p > endPage) {
                     color = LED_OFF;
                 } else {
                     const base = p * 16;
-                    const end  = Math.min(base + 16, len);
+                    const end  = Math.min(base + 16, lsBase + len);
                     let hasNotes = false;
                     for (let s = base; s < end; s++) {
                         if (steps[s] !== 0) { hasNotes = true; break; }
