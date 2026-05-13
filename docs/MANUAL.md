@@ -1410,7 +1410,9 @@ All playing clips flash in sync, locked to the main clock.
 
 ### Knob LEDs
 
-**All banks except CC AUTOMATION:** Lit when the parameter has been changed from its default. Off when at default.
+**Performance Mode (locked):** Each knob LED shows the looper state for the corresponding track — track color when looper is on, off when looper is off. **Touching a knob toggles that track's looper on/off** and updates the LED immediately.
+
+**All banks except CC AUTOMATION (Track View):** Lit when the parameter has been changed from its default. Off when at default.
 
 **CC AUTOMATION bank:**
 

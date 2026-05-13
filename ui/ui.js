@@ -4808,7 +4808,6 @@ function _onCC_buttons(d1, d2) {
         S.shiftTrackLEDActive = d2 === 127;
         if (!S.shiftHeld && S.jogTouched) S.jogTouched = false;
         if (!S.shiftHeld && S.rndDialogMode >= 0) { S.rndDialogMode = -1; S.screenDirty = true; }
-        if (!S.shiftHeld && S.perfViewLocked) invalidateLEDCache();
         if (!S.sessionView) forceRedraw();
     }
 
@@ -7620,13 +7619,14 @@ globalThis.onMidiMessageInternal = function (data) {
             if (d2 === 127) {
                 if (d1 <= 7 && S.activeBank >= 0) {
                     S.knobTouched = d1; S.knobTurnedTick[d1] = -1; S.screenDirty = true;
-                    /* Perf view: Shift+touch knob k toggles looper for track k */
-                    if (S.perfViewLocked && S.shiftHeld) {
+                    /* Perf view: touch knob k toggles looper for track k */
+                    if (S.perfViewLocked) {
                         const _lt = d1;
                         const _newLooper = S.trackLooper[_lt] !== 0 ? 0 : 1;
                         S.trackLooper[_lt] = _newLooper;
                         applyTrackConfig(_lt, 'track_looper', _newLooper);
                         showActionPopup('LOOPER ' + (_newLooper ? 'ON' : 'OFF'), 'TRACK ' + (_lt + 1));
+                        setButtonLED(71 + _lt, _newLooper ? TRACK_COLORS[_lt] : LED_OFF, true);
                     }
                     /* CC bank: Delete+touch clears this knob's automation immediately */
                     if (S.activeBank === 6 && S.deleteHeld && !S.shiftHeld &&
