@@ -545,7 +545,7 @@ export function updateTrackLEDs() {
     /* Knob LEDs (CC 71-78) */
     for (let k = 0; k < NUM_TRACKS; k++) {
         let ledVal = LED_OFF;
-        if ((S.loopHeld || S.perfViewLocked) && !S.sessionView) {
+        if (S.perfViewLocked) {
             ledVal = S.trackLooper[k] !== 0 ? TRACK_COLORS[k] : LED_OFF;
         } else if (S.sessionView) {
             ledVal = (k === S.activeTrack) ? White : LED_OFF;
@@ -577,7 +577,7 @@ export function updateTrackLEDs() {
         cachedSetButtonLED(71 + k, ledVal);
     }
     /* Shift-flash: knobs with a Shift-modified function blink DarkGrey/OFF while Shift is held. */
-    if (S.shiftHeld && !S.sessionView && !(S.loopHeld || S.perfViewLocked)) {
+    if (S.shiftHeld && !S.sessionView && !S.perfViewLocked) {
         const _sf = (Math.floor(S.tickCount / 24) % 2) ? 16 : LED_OFF;
         const _isDrum = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
         for (let k = 0; k < 8; k++) {
