@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com). Add entries to
 the section into a versioned heading at release time.
 
 ## [Unreleased]
+
+## [0.3.5] — 2026-05-13
 ### Features
 - **Shift + Step 3 — Edit Synth / Edit Slot shortcut.** One-press entry to the right co-run editor for the active track: **Move-routed** tracks open Move's device-edit / preset browser (same as Track menu → `Edit Synth...`); **Schwung-routed** tracks open the chain editor on the track's current slot (same as `Edit Slot...`). Available in both Track View and Session View. Silent no-op on External-routed tracks and on stock Schwung without the chain-edit shim.
 - **Swing applies to ARP IN, SEQ ARP, and drum Rpt1/Rpt2 with transport stopped.** Holding a chord through ARP IN (or driving drum repeats) used to feel straight with the transport off; the swing engine now runs off the free-running clock so offbeat output stays grooved whether the sequencer is playing or stopped. **Live one-shot pad taps now always bypass swing** — taps land immediately even if they happen on an offbeat step. (Previously, taps during playback that fell on offbeat steps could be delayed by the swing offset; that's gone.) Sequencer playback feel is unchanged.
