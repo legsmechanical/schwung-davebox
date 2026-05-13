@@ -41,7 +41,7 @@ export const S = {
     perfHoldPadHeld: false,
     perfModsToggled: 0,
     perfModsHeld: 0,
-    perfLatchMode: false,
+    perfLatchMode: true,
     perfLatchPressedTick: -1,
     perfSnapshots: PERF_FACTORY_PRESETS.map(function(p) { return p.mods; })
                            .concat(new Array(8).fill(0)),  /* slots 8-15 empty */

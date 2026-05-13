@@ -2509,9 +2509,9 @@ function drawPerfModeOled() {
     /* ── Footer (y 53-61): mode chips + rate ── */
     const fy = 53;
     let fx = 2;
-    fx += _perfChip(fx, fy, 'Latch', S.perfLatchMode) + 3;
     fx += _perfChip(fx, fy, 'Hold',  S.perfHoldPadHeld || S.perfStickyLengths.size > 0) + 3;
     fx += _perfChip(fx, fy, 'Sync',  S.perfSync) + 3;
+    fx += _perfChip(fx, fy, 'Latch', S.perfLatchMode) + 3;
 
     /* Rate (right-aligned, only when a loop length is active) */
     if (S.perfStack.length > 0) {
