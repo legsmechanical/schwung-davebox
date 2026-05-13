@@ -4292,13 +4292,19 @@ globalThis.tick = function () {
         } else if (S.pendingPrerollGate !== null) {
             const pg = S.pendingPrerollGate;
             S.pendingPrerollGate = null;
-            if (pg.isDrum)
-                host_module_set_param('t' + pg.track + '_l' + pg.lane + '_step_0_gate', String(pg.gate));
-            else
-                host_module_set_param('t' + pg.track + '_c' + pg.clip + '_step_0_gate', String(pg.gate));
+            /* Write to the first step of the loop window — playback starts at loop_start,
+             * not at absolute step 0. */
+            if (pg.isDrum) {
+                const _ls = S.drumLaneLoopStart[pg.track] | 0;
+                host_module_set_param('t' + pg.track + '_l' + pg.lane + '_step_' + _ls + '_gate', String(pg.gate));
+            } else {
+                const _ls = S.clipLoopStart[pg.track][pg.clip] | 0;
+                host_module_set_param('t' + pg.track + '_c' + pg.clip + '_step_' + _ls + '_gate', String(pg.gate));
+            }
         } else if (S.pendingPrerollToggleQueue.length > 0) {
             const _ptq = S.pendingPrerollToggleQueue.shift();
-            host_module_set_param('t' + _ptq.track + '_c' + _ptq.clip + '_step_0_toggle', _ptq.pitch + ' ' + _ptq.vel);
+            const _ls = S.clipLoopStart[_ptq.track][_ptq.clip] | 0;
+            host_module_set_param('t' + _ptq.track + '_c' + _ptq.clip + '_step_' + _ls + '_toggle', _ptq.pitch + ' ' + _ptq.vel);
             if (_ptq.last)
                 S.pendingPrerollGate = { isDrum: false, track: _ptq.track, clip: _ptq.clip, gate: _ptq.gate };
         } else if (S.pendingPrerollNote !== null && S.playing) {
@@ -4310,14 +4316,15 @@ globalThis.tick = function () {
                 /* Wait for note released AND one step elapsed (skip first loop pass to avoid double-trigger) */
                 if (!_prLive && elapsed >= tps) {
                     S.pendingPrerollNote = null;
-                    if (S.drumLaneSteps[pr.track][pr.lane][0] === '0') {
+                    const _ls = S.drumLaneLoopStart[pr.track] | 0;
+                    if (S.drumLaneSteps[pr.track][pr.lane][_ls] === '0') {
                         const countInDur = S.transportStartTick - pr.countInStart;
                         const dspPerJs = countInDur > 0 ? 384 / countInDur : 4;
                         const pressedDur = (pr.releasedAtTick || S.tickCount) - pr.pressedAtTick;
                         const gate = Math.max(1, Math.min(tps * 16, Math.round(pressedDur * dspPerJs)));
-                        host_module_set_param('t' + pr.track + '_l' + pr.lane + '_step_0_toggle', String(pr.vel));
+                        host_module_set_param('t' + pr.track + '_l' + pr.lane + '_step_' + _ls + '_toggle', String(pr.vel));
                         S.pendingPrerollGate = { isDrum: true, track: pr.track, lane: pr.lane, gate };
-                        S.drumLaneSteps[pr.track][pr.lane][0] = '1';
+                        S.drumLaneSteps[pr.track][pr.lane][_ls] = '1';
                         S.drumLaneHasNotes[pr.track][pr.lane] = true;
                         invalidateLEDCache();
                         forceRedraw();
@@ -4342,13 +4349,14 @@ globalThis.tick = function () {
             /* Wait for all chord notes released AND one step elapsed */
             if (!_prLive && elapsed >= tps) {
                 S.pendingPrerollNotes = [];
-                if (S.clipSteps[pr.track][pr.clip][0] === 0) {
+                const _ls = S.clipLoopStart[pr.track][pr.clip] | 0;
+                if (S.clipSteps[pr.track][pr.clip][_ls] === 0) {
                     const countInDur = S.transportStartTick - pr.countInStart;
                     const dspPerJs   = countInDur > 0 ? 384 / countInDur : 4;
                     const lastRel    = pns.reduce(function(m, n) { return Math.max(m, n.releasedAtTick || S.tickCount); }, 0);
                     const pressedDur = lastRel - pr.pressedAtTick;
                     const gate       = Math.max(1, Math.min(tps * 16, Math.round(pressedDur * dspPerJs)));
-                    host_module_set_param('t' + pr.track + '_c' + pr.clip + '_step_0_toggle', pr.pitch + ' ' + pr.vel);
+                    host_module_set_param('t' + pr.track + '_c' + pr.clip + '_step_' + _ls + '_toggle', pr.pitch + ' ' + pr.vel);
                     if (pns.length === 1) {
                         S.pendingPrerollGate = { isDrum: false, track: pr.track, clip: pr.clip, gate };
                     } else {
@@ -4360,7 +4368,7 @@ globalThis.tick = function () {
                             });
                         }
                     }
-                    S.clipSteps[pr.track][pr.clip][0] = 1;
+                    S.clipSteps[pr.track][pr.clip][_ls] = 1;
                     S.clipNonEmpty[pr.track][pr.clip] = true;
                     invalidateLEDCache();
                     forceRedraw();
