@@ -3023,16 +3023,18 @@ function drawUI() {
 
 
 function drawDrumPositionBar(t) {
-    const len        = S.drumLaneLength[t];
-    const totalPages = Math.max(1, Math.ceil(len / 16));
-    const viewPage   = Math.min(S.drumStepPage[t], totalPages - 1);
-    const cs         = S.drumCurrentStep[t];
-    const playPage   = (S.playing && S.trackClipPlaying[t] && cs >= 0)
-                     ? Math.min(Math.floor(cs / 16), totalPages - 1) : -1;
+    const lsBase = S.drumLaneLoopStart[t] | 0;
+    const len    = S.drumLaneLength[t];
+    const startPage = lsBase >> 4;
+    const winPages  = Math.max(1, Math.ceil(len / 16));
+    const viewPage  = Math.max(0, Math.min(S.drumStepPage[t] - startPage, winPages - 1));
+    const cs        = S.drumCurrentStep[t];
+    const playPage  = (S.playing && S.trackClipPlaying[t] && cs >= lsBase && cs < lsBase + len)
+                    ? Math.floor((cs - lsBase) / 16) : -1;
     const barY = 57, barH = 5, segGap = 1;
-    const segW   = Math.max(2, Math.floor((120 - (totalPages - 1) * segGap) / totalPages));
+    const segW   = Math.max(2, Math.floor((120 - (winPages - 1) * segGap) / winPages));
     const startX = 4;
-    for (let pg = 0; pg < totalPages; pg++) {
+    for (let pg = 0; pg < winPages; pg++) {
         const x = startX + pg * (segW + segGap);
         if (pg === viewPage) {
             fill_rect(x, barY, segW, barH, 1);
@@ -3045,11 +3047,23 @@ function drawDrumPositionBar(t) {
             fill_rect(x, barY + barH - 1, segW, 1, 1);
         }
     }
-    if (S.playing && S.trackClipPlaying[t] && cs >= 0) {
-        const dotX = Math.floor(cs * 128 / Math.max(1, len));
+    if (S.playing && S.trackClipPlaying[t] && cs >= lsBase && cs < lsBase + len) {
+        const winPxW = winPages * (segW + segGap) - segGap;
+        const dotX = startX + Math.floor((cs - lsBase) * winPxW / Math.max(1, len));
         const viewSegStart = startX + viewPage * (segW + segGap);
         const onSolid = dotX >= viewSegStart && dotX < viewSegStart + segW;
         fill_rect(dotX, barY, 1, barH, onSolid ? 0 : 1);
+    }
+    /* Extent markers from the active lane's step mirror. */
+    const lane  = S.activeDrumLane[t];
+    const steps = S.drumLaneSteps[t][lane];
+    let hasLeft = false, hasRight = false;
+    for (let s = 0; s < lsBase; s++) if (steps[s] !== '0') { hasLeft = true; break; }
+    for (let s = lsBase + len; s < 256; s++) if (steps[s] !== '0') { hasRight = true; break; }
+    if (hasLeft)  fill_rect(startX - 2, barY + 1, 1, barH - 2, 1);
+    if (hasRight) {
+        const xRight = startX + winPages * (segW + segGap) - segGap + 1;
+        fill_rect(xRight, barY + 1, 1, barH - 2, 1);
     }
 }
 
@@ -5413,21 +5427,28 @@ function _onCC_transport(d1, d2) {
         }
     }
 
-    /* Left/Right: page nav in Track View */
+    /* Left/Right: page nav in Track View — clamp to the loop window so
+     * step-edit nav never lands on a page that won't play. */
     if ((d1 === MoveLeft || d1 === MoveRight) && d2 === 127 && !S.sessionView) {
         if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
-            const totalPages = Math.max(1, Math.ceil(S.drumLaneLength[S.activeTrack] / 16));
+            const t = S.activeTrack;
+            const lsBase = S.drumLaneLoopStart[t] | 0;
+            const startPage = lsBase >> 4;
+            const lastPage  = startPage + Math.max(1, Math.ceil(S.drumLaneLength[t] / 16)) - 1;
             if (d1 === MoveLeft)
-                S.drumStepPage[S.activeTrack] = Math.max(0, S.drumStepPage[S.activeTrack] - 1);
+                S.drumStepPage[t] = Math.max(startPage, S.drumStepPage[t] - 1);
             else
-                S.drumStepPage[S.activeTrack] = Math.min(totalPages - 1, S.drumStepPage[S.activeTrack] + 1);
+                S.drumStepPage[t] = Math.min(lastPage, S.drumStepPage[t] + 1);
         } else {
-            const ac         = effectiveClip(S.activeTrack);
-            const totalPages = Math.max(1, Math.ceil(S.clipLength[S.activeTrack][ac] / 16));
+            const t  = S.activeTrack;
+            const ac = effectiveClip(t);
+            const lsBase = S.clipLoopStart[t][ac] | 0;
+            const startPage = lsBase >> 4;
+            const lastPage  = startPage + Math.max(1, Math.ceil(S.clipLength[t][ac] / 16)) - 1;
             if (d1 === MoveLeft)
-                S.trackCurrentPage[S.activeTrack] = Math.max(0, S.trackCurrentPage[S.activeTrack] - 1);
+                S.trackCurrentPage[t] = Math.max(startPage, S.trackCurrentPage[t] - 1);
             else
-                S.trackCurrentPage[S.activeTrack] = Math.min(totalPages - 1, S.trackCurrentPage[S.activeTrack] + 1);
+                S.trackCurrentPage[t] = Math.min(lastPage, S.trackCurrentPage[t] + 1);
         }
         /* Manual navigation disables SeqFollow so the view stays where the user navigated */
         const _sfAc = effectiveClip(S.activeTrack);

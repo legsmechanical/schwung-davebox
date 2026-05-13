@@ -643,16 +643,21 @@ export function flashAtRate(rateTicks) {
 }
 
 export function drawPositionBar(t) {
-    const ac = effectiveClip(t);
-    const totalPages = Math.max(1, Math.ceil(S.clipLength[t][ac] / 16));
-    const viewPage = Math.min(S.trackCurrentPage[t], totalPages - 1);
+    const ac     = effectiveClip(t);
+    const lsBase = S.clipLoopStart[t][ac] | 0;
+    const len    = S.clipLength[t][ac];
+    const startPage = lsBase >> 4;
+    const winPages  = Math.max(1, Math.ceil(len / 16));
+    /* View/play pages are translated into window-relative space so the bar
+     * always anchors at the window's first page on the left edge. */
+    const viewPage = Math.max(0, Math.min(S.trackCurrentPage[t] - startPage, winPages - 1));
     const cs = S.trackCurrentStep[t];
-    const playPage = (S.playing && S.trackClipPlaying[t] && cs >= 0)
-                   ? Math.min(Math.floor(cs / 16), totalPages - 1) : -1;
+    const playPage = (S.playing && S.trackClipPlaying[t] && cs >= lsBase && cs < lsBase + len)
+                   ? Math.floor((cs - lsBase) / 16) : -1;
     const barY = 57, barH = 5, segGap = 1;
-    const segW = Math.max(2, Math.floor((120 - (totalPages - 1) * segGap) / totalPages));
+    const segW   = Math.max(2, Math.floor((120 - (winPages - 1) * segGap) / winPages));
     const startX = 4;
-    for (let pg = 0; pg < totalPages; pg++) {
+    for (let pg = 0; pg < winPages; pg++) {
         const x = startX + pg * (segW + segGap);
         if (pg === viewPage) {
             fill_rect(x, barY, segW, barH, 1);
@@ -665,12 +670,23 @@ export function drawPositionBar(t) {
             fill_rect(x, barY + barH - 1, segW, 1, 1);
         }
     }
-    /* Playhead dot: 1px wide, full bar height, mapped across 128px width */
-    if (S.playing && S.trackClipPlaying[t] && cs >= 0) {
-        const totalSteps = Math.max(1, S.clipLength[t][ac]);
-        const dotX = Math.floor(cs * 128 / totalSteps);
+    /* Playhead dot mapped across the window's pixel span (not full 128px). */
+    if (S.playing && S.trackClipPlaying[t] && cs >= lsBase && cs < lsBase + len) {
+        const winPxW = winPages * (segW + segGap) - segGap;
+        const dotX = startX + Math.floor((cs - lsBase) * winPxW / Math.max(1, len));
         const viewSegStart = startX + viewPage * (segW + segGap);
         const onSolid = dotX >= viewSegStart && dotX < viewSegStart + segW;
         fill_rect(dotX, barY, 1, barH, onSolid ? 0 : 1);
+    }
+    /* Extent markers: small vertical ticks just outside the bar edges to
+     * hint that clip content exists before / after the visible window. */
+    const steps = S.clipSteps[t][ac];
+    let hasLeft = false, hasRight = false;
+    for (let s = 0; s < lsBase; s++) if (steps[s] !== 0) { hasLeft = true; break; }
+    for (let s = lsBase + len; s < NUM_STEPS; s++) if (steps[s] !== 0) { hasRight = true; break; }
+    if (hasLeft)  fill_rect(startX - 2, barY + 1, 1, barH - 2, 1);
+    if (hasRight) {
+        const xRight = startX + winPages * (segW + segGap) - segGap + 1;
+        fill_rect(xRight, barY + 1, 1, barH - 2, 1);
     }
 }
