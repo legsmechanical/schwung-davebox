@@ -7150,12 +7150,21 @@ function _loopGestureCtxFor(track) {
 
 /* Drop any partial Loop+step gesture, optionally firing the length-only
  * fallback if a B-tap never landed. Called on step release of the held
- * start page AND on Loop button release. */
+ * start page AND on Loop button release.
+ *
+ * Fallback semantics:
+ *   loop_start == 0 → length = (a+1)*16, loop_start stays 0 (the original
+ *                     pre-window single-tap behavior, preserved).
+ *   loop_start > 0  → if a >= startPage: length = (a - startPage + 1)*16,
+ *                     loop_start unchanged ("set END at page a, keep start").
+ *                     if a < startPage: tap is below the window — re-anchor
+ *                     by resetting to loop_start=0, length=(a+1)*16. */
 function _resolveLoopGesture(fireFallback) {
     const a = S.loopGestureStart;
     if (a < 0) return;
     const ctx   = S.loopGestureCtx;
     const trk   = S.loopGestureTrack;
+    const clip  = S.loopGestureClip;
     const fired = S.loopGestureFired;
     S.loopGestureStart = -1;
     S.loopGestureFired = false;
@@ -7164,8 +7173,14 @@ function _resolveLoopGesture(fireFallback) {
     S.loopGestureLane  = -1;
     if (fired) { forceRedraw(); return; }
     if (fireFallback) {
-        /* Existing single-tap semantics: length=(a+1)*16, loop_start=0 */
-        _fireLoopWindowSet(trk, ctx, 0, (a + 1) * 16);
+        const currentLs = (ctx === 0) ? (S.clipLoopStart[trk][clip] | 0)
+                                      : (S.drumLaneLoopStart[trk] | 0);
+        const startPage = currentLs >> 4;
+        if (currentLs === 0 || a < startPage) {
+            _fireLoopWindowSet(trk, ctx, 0, (a + 1) * 16);
+        } else {
+            _fireLoopWindowSet(trk, ctx, currentLs, (a - startPage + 1) * 16);
+        }
     }
     forceRedraw();
 }

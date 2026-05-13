@@ -148,15 +148,17 @@ export function updateStepLEDs() {
         const cs   = S.drumCurrentStep[t];
         const page = S.drumStepPage[t];
         const base = page * 16;
-        const len  = S.drumLaneLength[t];
+        const len    = S.drumLaneLength[t];
+        const lsBase = S.drumLaneLoopStart[t] | 0;
+        const winEnd = lsBase + len;
 
         for (let i = 0; i < 16; i++) {
             const absStep = base + i;
             let color;
-            if (absStep >= len)                    color = DarkGrey;
-            else if (S.playing && absStep === cs)    color = White;
-            else if (ls[absStep] === '1')          color = TRACK_COLORS[t];
-            else                                   color = (S.beatMarkersEnabled && i % 4 === 0) ? TRACK_DIM_COLORS[t] : LED_OFF;
+            if (absStep < lsBase || absStep >= winEnd) color = DarkGrey;
+            else if (S.playing && absStep === cs)      color = White;
+            else if (ls[absStep] === '1')              color = TRACK_COLORS[t];
+            else                                       color = (S.beatMarkersEnabled && i % 4 === 0) ? TRACK_DIM_COLORS[t] : LED_OFF;
             setLED(16 + i, color);
         }
         /* Gate span overlay: fixed index 56 across steps covered by held step's gate */
@@ -165,7 +167,7 @@ export function updateStepLEDs() {
             const _sSpan = Math.floor(S.stepEditGate / _sTps);
             for (let i = 0; i < 16; i++) {
                 const absStep = base + i;
-                if (absStep >= len) continue;
+                if (absStep < lsBase || absStep >= winEnd) continue;
                 const offset = (absStep - S.heldStep + len) % len;
                 if (offset <= _sSpan) setLED(16 + i, 56);
             }
@@ -177,7 +179,7 @@ export function updateStepLEDs() {
             const _partTicks = S.stepEditGate % _dTps;
             for (let i = 0; i < 16; i++) {
                 const absStep = base + i;
-                if (absStep >= len) continue;
+                if (absStep < lsBase || absStep >= winEnd) continue;
                 const offset = (absStep - S.heldStep + len) % len;
                 if (offset < _fullSteps) {
                     setLED(16 + i, White);
@@ -199,10 +201,12 @@ export function updateStepLEDs() {
     const page   = S.trackCurrentPage[S.activeTrack];
     const base   = page * 16;
     const len    = S.clipLength[S.activeTrack][ac];
+    const lsBase = S.clipLoopStart[S.activeTrack][ac] | 0;
+    const winEnd = lsBase + len;
     for (let i = 0; i < 16; i++) {
         const absStep = base + i;
         let color;
-        if (absStep >= len) {
+        if (absStep < lsBase || absStep >= winEnd) {
             color = DarkGrey;
         } else if (S.playing && absStep === cs) {
             color = White;
@@ -220,7 +224,7 @@ export function updateStepLEDs() {
         const spanFull  = Math.floor(S.stepEditGate / _spanTps);
         for (let i = 0; i < 16; i++) {
             const absStep = base + i;
-            if (absStep >= len) continue;
+            if (absStep < lsBase || absStep >= winEnd) continue;
             const offset = (absStep - S.heldStep + len) % len;
             if (offset <= spanFull) setLED(16 + i, 56);
         }
@@ -233,7 +237,7 @@ export function updateStepLEDs() {
         const partialTicks = S.stepEditGate % _acTps;
         for (let i = 0; i < 16; i++) {
             const absStep = base + i;
-            if (absStep >= len) continue;
+            if (absStep < lsBase || absStep >= winEnd) continue;
             const offset = (absStep - S.heldStep + len) % len;
             if (offset < fullSteps) {
                 setLED(16 + i, White);
