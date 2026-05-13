@@ -7626,8 +7626,7 @@ globalThis.onMidiMessageInternal = function (data) {
                         S.trackLooper[_lt] = _newLooper;
                         applyTrackConfig(_lt, 'track_looper', _newLooper);
                         showActionPopup('LOOPER ' + (_newLooper ? 'ON' : 'OFF'), 'TRACK ' + (_lt + 1));
-                        invalidateLEDCache();
-                        forceRedraw();
+                        setButtonLED(71 + _lt, _newLooper ? TRACK_COLORS[_lt] : LED_OFF, true);
                     }
                     /* CC bank: Delete+touch clears this knob's automation immediately */
                     if (S.activeBank === 6 && S.deleteHeld && !S.shiftHeld &&
