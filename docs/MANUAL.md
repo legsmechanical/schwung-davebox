@@ -353,7 +353,7 @@ In Track View, while you hold **Shift**, step buttons that have an available sho
 | 7 | Open Global Menu at **Swing Amt** |
 | 8 | **Drum:** cycle right-pad mode (Velocity / Rpt1 / Rpt2) — same as jog click. **Melodic:** toggle chromatic pad layout |
 | 9 | Open Global Menu at **Scale** |
-| 10 | VelIn toggle (Live ↔ Fixed 127) |
+| 10 | VelIn toggle (Live ↔ Fixed 100) |
 | 11 | **Melodic only:** ARP IN on/off |
 | 15 | Double-and-fill loop |
 | 16 | Quantize active clip 100% |
@@ -1595,7 +1595,7 @@ Dismissed immediately if you touch a knob or enter step edit.
 | Shift + Step 7 | Open Global Menu at **Swing Amt** |
 | Shift + Step 8 | Toggle chromatic pad layout |
 | Shift + Step 9 | Open Global Menu at **Scale** |
-| Shift + Step 10 | VelIn toggle (Live ↔ Fixed 127) |
+| Shift + Step 10 | VelIn toggle (Live ↔ Fixed 100) |
 | Shift + Step 11 | ARP IN on/off |
 | Shift + Step 15 | Double-and-fill loop |
 | Shift + Step 16 | Quantize clip 100% |

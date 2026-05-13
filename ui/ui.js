@@ -7102,9 +7102,9 @@ function _onStepButtons(d1, d2) {
                 showActionPopup(S.padLayoutChromatic[t] ? 'CHROMATIC' : 'IN-SCALE');
             }
         } else if (idx === 9) {
-            /* Step 10: toggle VelIn between Live and 127 */
+            /* Step 10: toggle VelIn between Live and 100 */
             const curVel = S.trackVelOverride[t];
-            const nextVel = curVel === 0 ? 127 : 0;
+            const nextVel = curVel === 0 ? 100 : 0;
             applyTrackConfig(t, 'track_vel_override', nextVel);
         } else if (idx === 10 && !isDrum) {
             /* Step 11: toggle TRACK ARP style on/off (melodic only) */
