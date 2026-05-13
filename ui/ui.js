@@ -4851,24 +4851,31 @@ function _onCC_jog(d1, d2) {
                     if (S.recordArmed && !S.recordCountingIn) {
                         /* Block length changes during active recording */
                     } else if (S.trackPadMode[_t] === PAD_MODE_DRUM) {
-                        /* Drum: adjust active lane length */
+                        /* Drum: adjust length. In ALL LANES bank, length applies to all 32
+                         * lanes atomically; in per-lane DRUM bank, just the active lane. */
                         const _lane = S.activeDrumLane[_t];
                         const _cur  = S.drumLaneLength[_t];
                         const _nv   = Math.max(1, Math.min(256, _cur + delta));
                         if (_nv !== _cur) {
                             S.drumLaneLength[_t] = _nv;
                             S.drumLaneLengthManuallySet[_t] = true;
-                            const _maxPage = Math.max(0, Math.ceil(_nv / 16) - 1);
-                            if (S.activeBank !== 7) {
-                                /* Show OOB step view: navigate to boundary page */
-                                S.loopJogActive = true;
-                                S.loopJogLastTick = S.tickCount;
-                                S.drumStepPage[_t] = _maxPage;
-                            } else {
-                                if (S.drumStepPage[_t] > _maxPage) S.drumStepPage[_t] = _maxPage;
+                            /* Boundary page is window-aware: last absolute step is
+                             * loop_start + length - 1, so the page containing it is
+                             * floor((loop_start + length - 1) / 16). */
+                            const _ls = S.drumLaneLoopStart[_t] | 0;
+                            const _maxPage = Math.max(0, Math.floor((_ls + _nv - 1) / 16));
+                            /* Show OOB step view in both modes — navigate to boundary page
+                             * so the step-level OOB greying renders. */
+                            S.loopJogActive = true;
+                            S.loopJogLastTick = S.tickCount;
+                            S.drumStepPage[_t] = _maxPage;
+                            if (typeof host_module_set_param === 'function') {
+                                if (S.activeBank === 7) {
+                                    host_module_set_param('t' + _t + '_all_lanes_length', String(_nv));
+                                } else {
+                                    host_module_set_param('t' + _t + '_l' + _lane + '_clip_length', String(_nv));
+                                }
                             }
-                            if (typeof host_module_set_param === 'function')
-                                host_module_set_param('t' + _t + '_l' + _lane + '_clip_length', String(_nv));
                             forceRedraw();
                         }
                     } else {
@@ -4878,10 +4885,11 @@ function _onCC_jog(d1, d2) {
                     if (_nv !== _cur) {
                         S.clipLength[_t][_ac] = _nv;
                         S.clipLengthManuallySet[_t][_ac] = true;
-                        /* Show OOB step view: navigate to boundary page */
+                        /* Show OOB step view: navigate to boundary page (window-aware) */
                         S.loopJogActive = true;
                         S.loopJogLastTick = S.tickCount;
-                        S.trackCurrentPage[_t] = Math.max(0, Math.ceil(_nv / 16) - 1);
+                        const _ls = S.clipLoopStart[_t][_ac] | 0;
+                        S.trackCurrentPage[_t] = Math.max(0, Math.floor((_ls + _nv - 1) / 16));
                         if (typeof host_module_set_param === 'function')
                             host_module_set_param('t' + _t + '_clip_length', String(_nv));
                         forceRedraw();
