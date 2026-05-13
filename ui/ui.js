@@ -4808,6 +4808,7 @@ function _onCC_buttons(d1, d2) {
         S.shiftTrackLEDActive = d2 === 127;
         if (!S.shiftHeld && S.jogTouched) S.jogTouched = false;
         if (!S.shiftHeld && S.rndDialogMode >= 0) { S.rndDialogMode = -1; S.screenDirty = true; }
+        if (!S.shiftHeld && S.perfViewLocked) invalidateLEDCache();
         if (!S.sessionView) forceRedraw();
     }
 
@@ -7626,7 +7627,6 @@ globalThis.onMidiMessageInternal = function (data) {
                         S.trackLooper[_lt] = _newLooper;
                         applyTrackConfig(_lt, 'track_looper', _newLooper);
                         showActionPopup('LOOPER ' + (_newLooper ? 'ON' : 'OFF'), 'TRACK ' + (_lt + 1));
-                        setButtonLED(71 + _lt, _newLooper ? TRACK_COLORS[_lt] : LED_OFF, true);
                     }
                     /* CC bank: Delete+touch clears this knob's automation immediately */
                     if (S.activeBank === 6 && S.deleteHeld && !S.shiftHeld &&
