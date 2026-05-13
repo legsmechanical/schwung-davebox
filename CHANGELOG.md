@@ -27,6 +27,7 @@ the section into a versioned heading at release time.
 - **NoteFX Gate** knob is now 4× snappier: each detent changes the value by ±2% (was 1% per 2 detents). Useful precision preserved for the 0–400% range; other NoteFX knobs unchanged.
 - **NoteFX Quantize** knob now changes by ±2% per detent (was ±1%), 2× faster sweep across the 0–100% range.
 - **Melodic step-edit Pit knob** snappier: shifts a scale degree every 10 detents (was 16).
+- **SEQ ARP / ARP IN `Stps` knob labels spelled out:** `Mut` → `Mute`, `Stp` → `Skip` (Off unchanged). Easier to read at a glance.
 
 ### Fixes
 - **Shift step-hint overlay drops when a compound modifier is pressed.** Holding Shift normally lights the step buttons as a shortcut-hint grid. When another modifier is pressed *while Shift is held* (Shift+Mute = Solo, Shift+Delete = clear/hard-reset, Shift+Copy = Cut, Shift+Loop = Perf latch toggle), the hint grid is no longer accurate — the step row carries the compound's semantic instead. The hint now disappears the moment the second modifier presses down and reappears if it's released while Shift is still held. Applies to step main LEDs (Track View), icon LEDs (CCs 16-31), and the Session View step-main overlay.

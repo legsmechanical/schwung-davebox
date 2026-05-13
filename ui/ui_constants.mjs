@@ -96,7 +96,7 @@ export function fmtPlain(v)  { return String(v); }
 export function fmtNA()      { return '-'; }
 export function fmtArpStyle(v) { return ['Off','Up','Dn','U/D','D/U','Cnv','Div','Ord','Rnd','RnO'][v] || 'Off'; }
 export function fmtArpRate(v)  { return ['1/32','1/16','1/16t','1/8','1/8t','1/4','1/4t','1/2','1/2t','1bar'][v] || '1/16'; }
-export function fmtArpSteps(v) { return ['Off','Mut','Stp'][v] || 'Off'; }
+export function fmtArpSteps(v) { return ['Off','Mute','Skip'][v] || 'Off'; }
 export function fmtArpOct(v)   { if (v === 0) return 'Off'; return (v > 0 ? '+' : '') + v; }
 export function fmtVelOverride(v) { return v === 0 ? 'Live' : String(v); }
 
