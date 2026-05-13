@@ -3612,17 +3612,37 @@ globalThis.tick = function () {
             move_midi_inject_to_move([0x09, 0x80, 108, 0]);
     }
 
-    /* Flush live note batches: offs first, then ons; one set_param per track so no coalescing.
+    /* Flush live note batches; one set_param per track so no coalescing.
      * Defer for 1 tick after any step button event so the step set_param clears its audio
-     * block before live_notes fires — otherwise live_notes can overwrite step toggles. */
+     * block before live_notes fires — otherwise live_notes can overwrite step toggles.
+     *
+     * Collision-aware ordering: a pitch with both an off and an on in this drain
+     * emits its events in arrival order so a same-tick press+release (on then off)
+     * doesn't get inverted into off→on. DSP's pfx_note_off_imm is a silent no-op
+     * on inactive notes, so an inverted off→on activates the note and never gets
+     * a follow-up off — the note hangs on Move. Pitches with only offs or only
+     * ons keep the legacy offs-first sort, which still protects release-before-
+     * retrigger semantics across different pitches. */
     if (S.tickCount > S.stepOpTick + 1) {
         for (let _t = 0; _t < NUM_TRACKS; _t++) {
             if (pendingLiveNotes[_t].length === 0) continue;
             const evts = pendingLiveNotes[_t];
             pendingLiveNotes[_t] = [];
+            const offPitches = new Set();
+            const onPitches  = new Set();
+            for (const e of evts) (e.isOff ? offPitches : onPitches).add(e.pitch);
+            const collide = new Set();
+            for (const p of offPitches) if (onPitches.has(p)) collide.add(p);
             const parts = [];
-            for (const e of evts) if (e.isOff)  parts.push('off ' + e.pitch);
-            for (const e of evts) if (!e.isOff) parts.push('on '  + e.pitch + ' ' + e.vel);
+            if (collide.size === 0) {
+                for (const e of evts) if (e.isOff)  parts.push('off ' + e.pitch);
+                for (const e of evts) if (!e.isOff) parts.push('on '  + e.pitch + ' ' + e.vel);
+            } else {
+                for (const e of evts) if (e.isOff  && !collide.has(e.pitch)) parts.push('off ' + e.pitch);
+                for (const e of evts) if (!e.isOff && !collide.has(e.pitch)) parts.push('on '  + e.pitch + ' ' + e.vel);
+                for (const e of evts) if (collide.has(e.pitch))
+                    parts.push(e.isOff ? ('off ' + e.pitch) : ('on ' + e.pitch + ' ' + e.vel));
+            }
             host_module_set_param('t' + _t + '_live_notes', parts.join(' '));
         }
     }

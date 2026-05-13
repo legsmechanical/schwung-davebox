@@ -3966,8 +3966,12 @@ static void set_param(void *instance, const char *key, const char *val) {
         }
 
         if (!strcmp(sub, "live_notes")) {
-            /* tN_live_notes "off p off p on p v on p v ..."
-             * Batched live note events; offs always precede ons in the JS flush.
+            /* tN_live_notes "off p ... on p v ... [off p|on p v]..."
+             * Batched live note events processed left-to-right.
+             * JS ordering: offs first then ons for pitches that appear only once;
+             * pitches that have BOTH off and on in the batch emit in arrival order
+             * (after the offs/ons block) so a same-tick press+release isn't inverted
+             * into off→on (which would no-op the off and leave the note stuck).
              * Routes through pfx_note_on/pfx_note_off_imm so play effects apply. */
             const char *sp = val;
             while (*sp) {
