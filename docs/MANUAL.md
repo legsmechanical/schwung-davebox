@@ -1393,8 +1393,6 @@ These are real-world quirks worth knowing.
 | **External MIDI into Move-routed tracks bypasses the effects chain** | Routing live external MIDI through pfx on a Move-routed track causes an echo cascade and crashes the device. dAVEBOx skips the chain for live input on Move-routed tracks; the keyboard plays the Move track whose MIDI In matches the keyboard's channel. Use **Schwung** routing if you need effects on live external MIDI. |
 | **Hardware volume knob briefly interrupts MIDI** when turned. Avoid adjusting during performance-critical moments. |
 | **Powering Move off from within dAVEBOx causes a brief hang** before shutdown. |
-| **Drum bake undo** restores notes but not per-lane FX params (pending fix). |
-| **Recording with Input Quantize Off can double-swing** notes (swing applied on input AND on playback). |
 | **CC automation lanes are not swung** (intentional — keeps automation precisely on the grid). |
 
 ---
