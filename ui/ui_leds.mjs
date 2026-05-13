@@ -107,8 +107,12 @@ export function updateStepLEDs() {
      * MIDI traffic low (avoids queue overflow that breaks hardware button LED blinking).
      * Exception: while Shift is held and the Shft/Res knob is being touched on a bank
      * where the shift modifier applies (CLIP bank 0 = Shft+Res; ALL LANES bank 7 = Shft
-     * only, no Res), fall through to normal step LEDs so the grid is visible. */
-    if (S.shiftHeld) {
+     * only, no Res), fall through to normal step LEDs so the grid is visible.
+     * Exception: when another modifier is also held (Shift+Mute/Delete/Copy/Loop forms
+     * a different compound gesture), the step row no longer carries the shift-shortcut
+     * semantic — drop the hint overlay so the step grid stays visible. */
+    const _compoundHeld = S.muteHeld || S.deleteHeld || S.copyHeld || S.loopHeld;
+    if (S.shiftHeld && !_compoundHeld) {
         const _kt = S.knobTouched;
         const _knobShiftMode =
             (S.activeBank === 0 && (_kt === 1 || _kt === 2)) ||
@@ -322,9 +326,10 @@ export function updateTrackLEDs() {
         const _knobShiftMode =
             (S.activeBank === 0 && (_kt === 1 || _kt === 2)) ||
             (S.activeBank === 7 && _kt === 1);
+        const _compoundHeld = S.muteHeld || S.deleteHeld || S.copyHeld || S.loopHeld;
         for (let i = 0; i < 16; i++) {
             let on = false;
-            if (S.shiftHeld && !_knobShiftMode) {
+            if (S.shiftHeld && !_knobShiftMode && !_compoundHeld) {
                 if (i === 1 || (i >= 4 && i <= 6) || i === 8) on = true; /* shared shortcuts */
                 if (!S.sessionView) {
                     if (i === 7)                            on = true;
@@ -344,8 +349,10 @@ export function updateTrackLEDs() {
     }
 
     /* Step button main LEDs (notes 16-31): shift overlay in session view only.
-     * Track view is handled by updateStepLEDs (early return keeps MIDI traffic low). */
-    if (S.sessionView && S.shiftHeld) {
+     * Track view is handled by updateStepLEDs (early return keeps MIDI traffic low).
+     * Suppressed when a compound modifier is held (Shift+Mute/Delete/Copy/Loop). */
+    if (S.sessionView && S.shiftHeld &&
+        !(S.muteHeld || S.deleteHeld || S.copyHeld || S.loopHeld)) {
         const flash = (Math.floor(S.tickCount / 24) % 2) ? LightGrey : LED_OFF;
         for (let i = 0; i < 16; i++) {
             const on = i === 1 || (i >= 4 && i <= 6) || i === 8; /* shared shortcuts only */
