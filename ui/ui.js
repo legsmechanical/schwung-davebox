@@ -6914,9 +6914,14 @@ function _onPadPress(status, d1, d2) {
                             const isQueued  = S.trackQueuedClip[t] === clipIdx;
                             if (!isPlaying && !isWR && !isQueued) {
                                 if (!S.playing) {
+                                    const prevClip = S.trackActiveClip[t];
                                     S.trackActiveClip[t]  = clipIdx;
                                     S.trackCurrentPage[t] = 0;
                                     refreshPerClipBankParams(t);
+                                    if (S.trackPadMode[t] === PAD_MODE_DRUM && prevClip !== clipIdx) {
+                                        S.pendingDrumResync      = 2;
+                                        S.pendingDrumResyncTrack = t;
+                                    }
                                 }
                                 if (typeof host_module_set_param === 'function')
                                     host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
@@ -6960,8 +6965,13 @@ function _onPadPress(status, d1, d2) {
                             handoffRecordingToTrack(t);
                             S.activeTrack = t;
                             if (!S.playing) {
+                                const prevClip = S.trackActiveClip[t];
                                 S.trackActiveClip[t]  = clipIdx;
                                 S.trackCurrentPage[t] = 0;
+                                if (S.trackPadMode[t] === PAD_MODE_DRUM && prevClip !== clipIdx) {
+                                    S.pendingDrumResync      = 2;
+                                    S.pendingDrumResyncTrack = t;
+                                }
                             }
                             refreshPerClipBankParams(t);
                             if (typeof host_module_set_param === 'function')
