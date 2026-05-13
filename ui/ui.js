@@ -4828,6 +4828,20 @@ function _onCC_buttons(d1, d2) {
         S.shiftTrackLEDActive = d2 === 127;
         if (!S.shiftHeld && S.jogTouched) S.jogTouched = false;
         if (!S.shiftHeld && S.rndDialogMode >= 0) { S.rndDialogMode = -1; S.screenDirty = true; }
+        /* Deferred Shift+Step3 dispatch: fire on Shift release so the Shift
+         * held state doesn't leak into Move firmware / Schwung chain editor. */
+        if (!S.shiftHeld && S.pendingEditEntryTrack >= 0) {
+            const _t = S.pendingEditEntryTrack;
+            S.pendingEditEntryTrack = -1;
+            if (S.trackRoute[_t] === 1 &&
+                typeof shadow_set_corun_move_native === 'function' &&
+                typeof move_midi_inject_to_move === 'function') {
+                enterMoveNativeCoRun(_t);
+            } else if (S.trackRoute[_t] === 0 &&
+                typeof shadow_set_corun_chain_edit === 'function') {
+                openSchwungSlotEditor(_t);
+            }
+        }
         if (!S.sessionView) forceRedraw();
     }
 
@@ -6974,6 +6988,13 @@ function _jumpToMenuLabel(label) {
 
 function _doShiftStepCommon(idx) {
     if      (idx === 1) _jumpToMenuLabel('Global');
+    else if (idx === 2) {
+        /* Defer co-run entry until Shift releases — otherwise the held Shift CC
+         * leaks into Move firmware / Schwung chain editor (the shim starts
+         * forwarding Shift on co-run entry). Dispatch happens in _onCC_buttons
+         * Shift-release branch. */
+        S.pendingEditEntryTrack = S.activeTrack;
+    }
     else if (idx === 4) openTapTempo();
     else if (idx === 5) {
         S.metronomeOn = (S.metronomeOn === 1) ? 3 : 1;

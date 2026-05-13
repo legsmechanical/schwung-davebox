@@ -263,6 +263,7 @@ export const S = {
     nameIndexCache: null,    /* { name: uuid } map, lazy-loaded on first save */
     pendingInheritPicker: null,  /* { dstUuid, dstName, candidates: [{uuid,name}], selectedIndex } when picker is open */
     pendingSchwungSlotPicker: null,  /* { track, selectedIndex } when slot-pick dialog is open before co-run entry; index 0-3 = slot, 4 = Cancel */
+    pendingEditEntryTrack: -1,  /* Shift+Step3: deferred co-run entry. -1 = none; track idx = fire on Shift release so Shift state doesn't leak into Move/Schwung */
     pendingUndoSync: 0,
     pendingDefaultSetParams: [],
     pendingStepsReread: 0,

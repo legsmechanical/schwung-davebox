@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com). Add entries to
 the section into a versioned heading at release time.
 
 ## [Unreleased]
+### Features
+- **Shift + Step 3 — Edit Synth / Edit Slot shortcut.** One-press entry to the right co-run editor for the active track: **Move-routed** tracks open Move's device-edit / preset browser (same as Track menu → `Edit Synth...`); **Schwung-routed** tracks open the chain editor on the track's current slot (same as `Edit Slot...`). Available in both Track View and Session View. Silent no-op on External-routed tracks and on stock Schwung without the chain-edit shim.
 
 ## [0.3.0] — 2026-05-12
 ### Features

@@ -121,7 +121,7 @@ export function updateStepLEDs() {
             const isDrum = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
             const flash  = (Math.floor(S.tickCount / 24) % 2) ? LightGrey : LED_OFF;
             for (let i = 0; i < 16; i++) {
-                let on = i === 1 || (i >= 4 && i <= 6) || i === 8;
+                let on = i === 1 || i === 2 || (i >= 4 && i <= 6) || i === 8;
                 if (i === 7 || i === 9 || (i === 10 && !isDrum) || i === 14 || i === 15) on = true;
                 setLED(16 + i, on ? flash : LED_OFF);
             }
@@ -330,7 +330,7 @@ export function updateTrackLEDs() {
         for (let i = 0; i < 16; i++) {
             let on = false;
             if (S.shiftHeld && !_knobShiftMode && !_compoundHeld) {
-                if (i === 1 || (i >= 4 && i <= 6) || i === 8) on = true; /* shared shortcuts */
+                if (i === 1 || i === 2 || (i >= 4 && i <= 6) || i === 8) on = true; /* shared shortcuts */
                 if (!S.sessionView) {
                     if (i === 7)                            on = true;
                     else if (i === 9)                       on = true;
@@ -355,7 +355,7 @@ export function updateTrackLEDs() {
         !(S.muteHeld || S.deleteHeld || S.copyHeld || S.loopHeld)) {
         const flash = (Math.floor(S.tickCount / 24) % 2) ? LightGrey : LED_OFF;
         for (let i = 0; i < 16; i++) {
-            const on = i === 1 || (i >= 4 && i <= 6) || i === 8; /* shared shortcuts only */
+            const on = i === 1 || i === 2 || (i >= 4 && i <= 6) || i === 8; /* shared shortcuts only */
             setLED(16 + i, on ? flash : LED_OFF);
         }
     }

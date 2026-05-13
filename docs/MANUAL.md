@@ -348,6 +348,7 @@ In Track View, while you hold **Shift**, step buttons that have an available sho
 | Step | Action |
 |---|---|
 | 2 | Open Global Menu at the **Global** section header |
+| 3 | Edit the active track's synth — **Move-routed:** open Move device-edit / preset browser. **Schwung-routed:** open the chain editor on the track's current slot. Silent no-op on External-routed tracks or on stock Schwung without the chain-edit shim. Works in both Track View and Session View. |
 | 5 | Open Tap Tempo screen |
 | 6 | Metro toggle (Cnt-In ↔ Always) |
 | 7 | Open Global Menu at **Swing Amt** |
