@@ -4154,9 +4154,11 @@ globalThis.tick = function () {
         /* Contextual button LEDs: dim available indicator (16) on actionable buttons. */
         setButtonLED(MoveShift,       16);
         setButtonLED(MoveNoteSession, 16);
-        /* Blink Session/Track view button while in Global Menu or Tap Tempo to
-         * advertise it as the exit affordance (press already exits both modes). */
-        if (S.globalMenuOpen || S.tapTempoOpen) {
+        /* Blink Session/Track view button while in Global Menu, Tap Tempo, or
+         * co-run (Edit Synth / Edit Slot) to advertise it as the exit
+         * affordance — Menu press exits all of these. */
+        if (S.globalMenuOpen || S.tapTempoOpen ||
+            S.moveCoRunTrack >= 0 || S.schwungCoRunSlot >= 0) {
             const _exitBlink = (Math.floor(S.tickCount / 24) % 2) ? 16 : LED_OFF;
             setButtonLED(MoveNoteSession, _exitBlink);
         }
