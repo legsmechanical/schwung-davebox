@@ -4257,6 +4257,18 @@ static int clip_insert_note(clip_t *cl, uint32_t tick, uint16_t gate,
     return idx;
 }
 
+/* Distribute 'hits' evenly across 'len' steps; returns count placed (<= hits, <= len).
+ * Positions written ascending to out[]. First hit always at step 0.
+ * Integer Bresenham distribution (pos[i] = (i * len) / hits) — yields the same
+ * 0-anchored even spacing as classic Bjorklund for musical use. */
+static int bjorklund_positions(int hits, int len, int *out) {
+    if (hits <= 0 || len <= 0) return 0;
+    if (hits > len) hits = len;
+    int i;
+    for (i = 0; i < hits; i++) out[i] = (i * len) / hits;
+    return hits;
+}
+
 /* Rebuild step arrays from notes[] — used after v=11 state load. */
 static void clip_build_steps_from_notes(clip_t *cl) {
     int s;

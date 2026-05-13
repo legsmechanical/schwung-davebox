@@ -1518,11 +1518,12 @@ function refreshDrumLaneBankParams(t, lane) {
             for (let k = 0; k < 6; k++) S.bankParams[t][3][k] = parseInt(v[3 + k], 10) | 0;
         }
     }
-    /* DRUM LANE bank (0): Res (K3=idx2), Len (K4=idx3), SqFl (K5=idx4) per-lane meta */
+    /* DRUM LANE bank (0): Res (K3=idx2), Eucl (K4=idx3), Len (K5=idx4), SqFl (K6=idx5) per-lane meta */
     const tpsIdx = TPS_VALUES.indexOf(S.drumLaneTPS[t]);
     S.bankParams[t][0][2] = tpsIdx >= 0 ? tpsIdx : 1;
-    S.bankParams[t][0][3] = S.drumLaneLength[t] || 16;
-    S.bankParams[t][0][4] = S.clipSeqFollow[t][S.trackActiveClip[t]] ? 1 : 0;
+    S.bankParams[t][0][3] = S.drumLaneEuclidN[t][lane] | 0;
+    S.bankParams[t][0][4] = S.drumLaneLength[t] || 16;
+    S.bankParams[t][0][5] = S.clipSeqFollow[t][S.trackActiveClip[t]] ? 1 : 0;
     /* Repeat Groove state for this lane */
     syncDrumRepeatState(t, lane);
     S.screenDirty = true;
@@ -2760,14 +2761,16 @@ function drawUI() {
             const sqfl   = S.clipSeqFollow[t][ac] ? 1 : 0;
             const _dlNote  = S.drumLaneNote[t][lane];
             const _noteStr = midiNoteName(_dlNote) + ' ' + _dlNote;
-            const drumLaneLabels = ['Stch', S.shiftHeld ? 'Nudg' : 'Shft', S.shiftHeld ? 'Zoom' : 'Res', 'Len', 'SqFl', null, null, null];
+            const eucN = Math.min(S.drumLaneEuclidN[t][lane] | 0, len);
+            const drumLaneLabels = ['Stch', S.shiftHeld ? 'Nudg' : 'Shft', S.shiftHeld ? 'Zoom' : 'Res', 'Eucl', 'Len', 'SqFl', null, null];
             const drumLaneVals  = [
                 fmtStretch(S.bankParams[t][0][0]),
                 fmtSign(S.bankParams[t][0][1]),
                 fmtRes(tpsIdx),
+                String(eucN),
                 fmtLen(len),
                 fmtBool(sqfl),
-                null, null, null,
+                null, null,
             ];
             drawBankHeading('DRUM LANE >>');
             for (let k = 0; k < 6; k++) {
@@ -3249,6 +3252,16 @@ function restoreUiSidecar(applyDefaultsNow) {
             for (let _t = 0; _t < NUM_TRACKS; _t++)
                 S.drumVelZoneArmed[_t] = us.dva[_t] === true;
         }
+        if (us.v >= 6 && Array.isArray(us.dleu)) {
+            for (let _t = 0; _t < NUM_TRACKS; _t++) {
+                const _row = us.dleu[_t];
+                if (!Array.isArray(_row)) continue;
+                for (let _l = 0; _l < DRUM_LANES; _l++) {
+                    const _n = _row[_l];
+                    S.drumLaneEuclidN[_t][_l] = (typeof _n === 'number' && _n >= 0) ? (_n | 0) : 0;
+                }
+            }
+        }
     } else {
         S.scaleAware   = 1;
         S.metronomeVol = 100;
@@ -3548,11 +3561,14 @@ globalThis.tick = function () {
          * set_param and cannot be overwritten by other deferred sends. */
         if (typeof host_write_file === 'function')
             host_write_file(uuidToUiStatePath(S.currentSetUuid), JSON.stringify({
-                v: 3, at: S.activeTrack, ac: S.trackActiveClip.slice(), sv: S.sessionView ? 1 : 0,
+                v: 6, at: S.activeTrack, ac: S.trackActiveClip.slice(), sv: S.sessionView ? 1 : 0,
                 dl: S.activeDrumLane.slice(),
                 pm: S.perfModsToggled, lm: S.perfLatchMode ? 1 : 0,
                 rs: S.perfRecalledSlot, us: S.perfSnapshots.slice(8),
-                bm: S.beatMarkersEnabled ? 1 : 0
+                bm: S.beatMarkersEnabled ? 1 : 0,
+                ss: S.trackSchwungSlot.slice(),
+                dva: S.drumVelZoneArmed.slice(),
+                dleu: S.drumLaneEuclidN.map(function(lane) { return lane.slice(); })
             }));
         S.pendingSuspendSave = true;
         removeFlagsWrap();
@@ -5759,7 +5775,28 @@ function _onCC_knobs(d1, d2) {
                 return;
             }
             if (knobIdx === 3) {
-                /* K4 = Len (lane length, sens=8) */
+                /* K4 = Eucl (Bjorklund hit count, sens=8) */
+                S.knobAccum[knobIdx]++;
+                if (S.knobAccum[knobIdx] >= 8) {
+                    S.knobAccum[knobIdx] = 0;
+                    const len  = S.drumLaneLength[t];
+                    const prev = Math.min(S.drumLaneEuclidN[t][lane] | 0, len);
+                    const nv   = Math.max(0, Math.min(len, prev + dir));
+                    if (nv !== prev) {
+                        const vel = stepEntryVelocity(t, -1, true);
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + t + '_l' + lane + '_euclid_stamp',
+                                                  prev + ' ' + nv + ' ' + vel);
+                        S.drumLaneEuclidN[t][lane] = nv;
+                        S.bankParams[t][0][3] = nv;
+                        S.pendingDrumLaneResync = 2; S.pendingDrumLaneResyncTrack = t; S.pendingDrumLaneResyncLane = lane;
+                    }
+                    S.screenDirty = true;
+                }
+                return;
+            }
+            if (knobIdx === 4) {
+                /* K5 = Len (lane length, sens=8) */
                 if (S.recordArmed && !S.recordCountingIn) { S.screenDirty = true; return; }
                 S.knobAccum[knobIdx]++;
                 if (S.knobAccum[knobIdx] >= 8) {
@@ -5777,8 +5814,8 @@ function _onCC_knobs(d1, d2) {
                 }
                 return;
             }
-            if (knobIdx === 4) {
-                /* K5 = SqFl: sens=16 — matches melodic */
+            if (knobIdx === 5) {
+                /* K6 = SqFl: sens=16 — matches melodic */
                 S.knobAccum[knobIdx]++;
                 if (S.knobAccum[knobIdx] >= 16) {
                     S.knobAccum[knobIdx] = 0;
@@ -5786,7 +5823,7 @@ function _onCC_knobs(d1, d2) {
                     const _nv  = Math.max(0, Math.min(1, _cur + dir));
                     if (_nv !== _cur) {
                         S.clipSeqFollow[t][ac] = _nv !== 0;
-                        S.bankParams[t][0][4]  = _nv;
+                        S.bankParams[t][0][5]  = _nv;
                         S.screenDirty = true;
                     }
                 }

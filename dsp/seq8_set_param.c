@@ -2817,6 +2817,74 @@ static void set_param(void *instance, const char *key, const char *val) {
                 return;
             }
 
+            /* tN_lL_euclid_stamp  val="prevN newN vel"
+             * Atomic Euclid diff: unstamp positions in (prev \ new), stamp positions in (new \ prev).
+             * Hand-edits at non-Euclid positions are preserved. */
+            if (!strcmp(p2, "_euclid_stamp")) {
+                int prevN = 0, newN = 0, vel = SEQ_VEL;
+                {
+                    const char *sp = val;
+                    prevN = my_atoi(sp);
+                    while (*sp && *sp != ' ') sp++;
+                    while (*sp == ' ') sp++;
+                    newN = my_atoi(sp);
+                    while (*sp && *sp != ' ') sp++;
+                    while (*sp == ' ') sp++;
+                    if (*sp) vel = my_atoi(sp);
+                }
+                vel = clamp_i(vel, 1, 127);
+                int len = (int)dlc->length;
+                if (len <= 0) return;
+                if (prevN < 0) prevN = 0; if (prevN > len) prevN = len;
+                if (newN  < 0) newN  = 0; if (newN  > len) newN  = len;
+                if (prevN == newN) return;
+                int old_pos[SEQ_STEPS], new_pos[SEQ_STEPS];
+                int no = bjorklund_positions(prevN, len, old_pos);
+                int nn = bjorklund_positions(newN,  len, new_pos);
+                /* Both arrays are ascending. Merge-walk to compute symmetric difference. */
+                int io = 0, in_ = 0;
+                while (io < no || in_ < nn) {
+                    int op = (io < no) ? old_pos[io] : SEQ_STEPS;
+                    int np = (in_ < nn) ? new_pos[in_] : SEQ_STEPS;
+                    if (op == np) { io++; in_++; continue; }
+                    if (op < np) {
+                        /* old-only: unstamp (clear step) */
+                        int s = op;
+                        if (dlc->steps[s] || dlc->step_note_count[s]) {
+                            dlc->steps[s]           = 0;
+                            dlc->step_note_count[s]  = 0;
+                            dlc->step_vel[s]         = (uint8_t)SEQ_VEL;
+                            dlc->step_gate[s]        = (uint16_t)GATE_TICKS;
+                            memset(dlc->note_tick_offset[s], 0, sizeof(dlc->note_tick_offset[s]));
+                            memset(dlc->step_notes[s], 0, 8);
+                            drum_lane_note_off_imm(inst, tr, dlane->midi_note);
+                        }
+                        io++;
+                    } else {
+                        /* new-only: stamp (activate step with lane note) */
+                        int s = np;
+                        if (dlc->step_note_count[s] == 0) {
+                            dlc->step_notes[s][0]      = dlane->midi_note;
+                            dlc->step_note_count[s]     = 1;
+                            dlc->step_vel[s]            = (uint8_t)vel;
+                            dlc->step_gate[s]           = (uint16_t)GATE_TICKS;
+                            dlc->note_tick_offset[s][0] = 0;
+                            dlc->steps[s]               = 1;
+                        } else {
+                            /* Has notes (possibly hand-placed): just ensure active */
+                            dlc->steps[s] = 1;
+                        }
+                        in_++;
+                    }
+                }
+                { int i, any = 0;
+                  for (i = 0; i < (int)dlc->length; i++) if (dlc->steps[i]) { any = 1; break; }
+                  dlc->active = (uint8_t)any; }
+                clip_migrate_to_notes(dlc);
+                inst->state_dirty = 1;
+                return;
+            }
+
             if (!strncmp(p2, "_step_", 6)) {
                 const char *q = p2 + 6;
                 int sidx = 0;

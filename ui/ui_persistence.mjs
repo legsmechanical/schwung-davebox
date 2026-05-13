@@ -130,13 +130,14 @@ export function saveState() {
     if (typeof host_module_set_param === 'function') host_module_set_param('save', '1');
     if (typeof host_write_file === 'function')
         host_write_file(uuidToUiStatePath(S.currentSetUuid), JSON.stringify({
-            v: 5, at: S.activeTrack, ac: S.trackActiveClip.slice(), sv: S.sessionView ? 1 : 0,
+            v: 6, at: S.activeTrack, ac: S.trackActiveClip.slice(), sv: S.sessionView ? 1 : 0,
             dl: S.activeDrumLane.slice(),
             pm: S.perfModsToggled, lm: S.perfLatchMode ? 1 : 0,
             rs: S.perfRecalledSlot, us: S.perfSnapshots.slice(8),
             bm: S.beatMarkersEnabled ? 1 : 0,
             ss: S.trackSchwungSlot.slice(),
-            dva: S.drumVelZoneArmed.slice()
+            dva: S.drumVelZoneArmed.slice(),
+            dleu: S.drumLaneEuclidN.map(function(lane) { return lane.slice(); })
         }));
 }
 
@@ -170,6 +171,7 @@ export function doClearSession() {
         S.drumRepeat2HeldLanes[_t].clear();
         S.drumRepeat2LatchedLanes[_t].clear();
         for (let _l = 0; _l < DRUM_LANES; _l++) S.drumRepeat2RatePerLane[_t][_l] = 0;
+        for (let _l = 0; _l < DRUM_LANES; _l++) S.drumLaneEuclidN[_t][_l] = 0;
         for (let _l = 0; _l < DRUM_LANES; _l++) {
             S.drumRepeatGate[_t][_l] = 0xFF;
             for (let _s = 0; _s < 8; _s++) {
