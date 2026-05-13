@@ -52,6 +52,17 @@ export const S = {
     loopJogActive: false,    /* true while jog is turned with loop held (step view vs pages view) */
     loopPressTick: -1,
     loopLastTapEndTick: -999,
+    /* Loop+step range gesture: held start page → tap end page → atomic loop_set.
+     * Press of step A defers; tap of step B before release fires the new range
+     * (and any further taps re-set end without release). Release of A with no
+     * second tap falls back to the existing length-set behavior. Cleared on
+     * Loop button release too so a partial gesture doesn't leak. */
+    loopGestureStart: -1,
+    loopGestureFired: false,
+    loopGestureCtx:   0,   /* 0 = melodic, 1 = drum lane, 2 = ALL LANES */
+    loopGestureTrack: -1,
+    loopGestureClip:  -1,
+    loopGestureLane:  -1,
     padKey: 9,
     padScale: 1,
     padOctave: new Array(8).fill(3),
@@ -61,6 +72,7 @@ export const S = {
                            Array.from({length: 16}, () => new Array(256).fill(0))),
     clipNonEmpty: Array.from({length: 8}, () => new Array(16).fill(false)),
     clipLength: Array.from({length: 8}, () => new Array(16).fill(16)),
+    clipLoopStart: Array.from({length: 8}, () => new Array(16).fill(0)),
     clipTPS: Array.from({length: 8}, () => new Array(16).fill(24)),
     clipSeqFollow: Array.from({length: 8}, () => new Array(16).fill(true)),
     trackCurrentStep: new Array(8).fill(-1),
@@ -75,6 +87,7 @@ export const S = {
     drumLastVelZone: new Array(8).fill(12),
     drumVelZoneArmed: new Array(8).fill(false),  /* per-track: has a vel-pad been pressed? gates sticky zone for step entry */
     drumLaneLength: new Array(8).fill(16),
+    drumLaneLoopStart: new Array(8).fill(0),
     drumLaneTPS: new Array(8).fill(24),
     drumLaneEuclidN: Array.from({length: 8}, () => new Array(32).fill(0)),
     drumStepPage: new Array(8).fill(0),

@@ -1341,8 +1341,12 @@ function syncDrumLaneSteps(t, l) {
     if (l === S.activeDrumLane[t]) {
         const lenRaw = host_module_get_param('t' + t + '_l' + l + '_length');
         if (lenRaw !== null) S.drumLaneLength[t] = parseInt(lenRaw, 10) || 16;
-        const maxPage = Math.max(0, Math.ceil(S.drumLaneLength[t] / 16) - 1);
-        if (S.drumStepPage[t] > maxPage) S.drumStepPage[t] = maxPage;
+        const lsRaw = host_module_get_param('t' + t + '_l' + l + '_loop_start');
+        if (lsRaw !== null) S.drumLaneLoopStart[t] = parseInt(lsRaw, 10) | 0;
+        const lsPage = Math.floor(S.drumLaneLoopStart[t] / 16);
+        const winPages = Math.max(1, Math.ceil(S.drumLaneLength[t] / 16));
+        if (S.drumStepPage[t] < lsPage) S.drumStepPage[t] = lsPage;
+        else if (S.drumStepPage[t] > lsPage + winPages - 1) S.drumStepPage[t] = lsPage + winPages - 1;
         const tpsRaw = host_module_get_param('t' + t + '_l' + l + '_tps');
         if (tpsRaw !== null) S.drumLaneTPS[t] = parseInt(tpsRaw, 10) || 24;
     }
@@ -3322,6 +3326,9 @@ function syncClipsFromDsp() {
             const len = host_module_get_param('t' + t + '_c' + c + '_length');
             if (len !== null && len !== undefined)
                 S.clipLength[t][c] = parseInt(len, 10) || 16;
+            const ls = host_module_get_param('t' + t + '_c' + c + '_loop_start');
+            if (ls !== null && ls !== undefined)
+                S.clipLoopStart[t][c] = parseInt(ls, 10) | 0;
             const tpsRaw = host_module_get_param('t' + t + '_c' + c + '_tps');
             if (tpsRaw !== null && tpsRaw !== undefined) {
                 const tpsVal = parseInt(tpsRaw, 10);
