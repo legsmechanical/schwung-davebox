@@ -511,7 +511,7 @@ Bank parameters fall into two categories:
 
 ## 5.1 CLIP bank
 
-Timing and playback settings for the active clip. **K1–K5 are destructive** — they modify the note data directly. K8 (SeqFollow) is a display toggle and non-destructive. (On drum tracks, this slot is replaced by DRUM LANE — see [§6.5](#65-drum-lane-bank).)
+Timing and playback settings for the active clip. **K1–K4 are destructive** — they modify the note data directly. K7 (SeqFollow) is a display toggle and non-destructive. (On drum tracks, this slot is replaced by DRUM LANE — see [§6.5](#65-drum-lane-bank).)
 
 | Knob | Parameter | Notes |
 |---|---|---|
@@ -708,7 +708,7 @@ Per-lane settings for the active lane. (This bank replaces CLIP on drum tracks; 
 | K1 | Stretch | Per-lane beat stretch (one-shot). Blocked if compression impossible. |
 | K2 | Clock Shift / **Nudg** | Plain turn: shifts the active lane by whole steps. **Shift + turn**: nudges the active lane at tick resolution (faster than Clock Shift). Label flips to `Nudg` while Shift is held. |
 | K3 | Resolution / **Zoom** | Plain turn: per-lane playback resolution (1/32 · 1/16 · 1/8 · 1/4 · 1/2 · 1-bar). **Shift + turn**: Zoom mode — keeps absolute note positions, adjusts the step grid around them. Label flips to `Zoom` while Shift is held. |
-| K4 | Eucl (Euclidean) | Per-lane Bjorklund hit count, 0..lane length. Each turn diffs the previous Euclidean pattern against the new one — only changed positions toggle, so hand-placed hits outside the Euclidean set are preserved. Hits placed with the unified step-entry velocity. Persists per-lane. |
+| K4 | Eucl (Euclidean) | Number of hits to spread evenly across the active lane's length (0..length). Turning the knob updates only the positions that change between the old count and the new count, so any hand-placed hits **outside** the Euclidean grid are preserved. Hits are placed at the standard step-entry velocity. Persists per-lane, per-clip. |
 | K5 | Length | Per-lane clip length |
 | K6 | SeqFollow | Per-clip auto-scroll on/off |
 | K7 | Oct (Lane Note) | Shifts the active lane's MIDI note by ±1 octave. OLED shows note name and number. |
@@ -841,9 +841,18 @@ Mixing clip copy and scene-row copy (in the same press-and-paste sequence) is re
 
 ## 7.3 Capture scene from what's playing
 
+Snapshot whatever's currently playing into a scene row, in one gesture.
+
 | Control | Behavior |
 |---|---|
-| Capture + scene row button | Snapshot the current performance into the pressed row: each track's currently-active clip is copied into that row. Tracks where the active clip is empty are skipped (the target keeps its prior content for those tracks). Tracks already on the target row are skipped (no self-copy). OLED shows `CAPTURED / TO ROW N`, or `NOTHING / TO CAPTURE` if nothing applied. Works in both Session View and Track View. |
+| Capture + scene row button | Copies each track's **currently-active clip** into the pressed row. Works in both Session View and Track View. |
+
+Two skip rules keep the target row from being trampled:
+
+- **Empty tracks are skipped** — if a track's active clip has no notes, that cell in the target row is left alone (your existing content stays).
+- **Tracks already on the target row are skipped** — no self-copy.
+
+OLED confirms with `CAPTURED / TO ROW N`. If every track was skipped, you'll see `NOTHING / TO CAPTURE` instead.
 
 ## 7.4 Scene clear
 
@@ -887,6 +896,8 @@ Each track has a **Looper** flag in Track Config:
 
 - **On** — the track feeds the looper and is silenced during loop playback.
 - **Off** — the track plays through normally; the looper ignores it.
+
+**Shortcut.** While Performance Mode is locked, **touch a knob** to toggle that track's Looper flag (K1 = track 1, K2 = track 2, …). The knob LED lights in the track's color when its Looper is on, and goes dark when off. A `LOOPER ON / TRACK N` popup confirms the change.
 
 ## 8.3 The mod grid
 
@@ -1277,8 +1288,30 @@ The first section, showing the **active** track's configuration. Header reads `T
 | Mode | Melodic · Drum | Switches immediately; existing clip data is cleared |
 | VelIn | Live · 1–127 | Live = raw velocity. Fixed value overrides all input velocity on this track, applied pre-sequencer. |
 | Looper | On · Off | Whether this track feeds Performance Mode |
-| **Edit Slot...** | Action | _Requires the patched Schwung shim from [`legsmechanical/schwung`](https://github.com/legsmechanical/schwung) — entry is hidden on stock Schwung._ Visible only on **Schwung-routed tracks** (symmetric with **Edit Synth** on Move-routed tracks). Hands the OLED + jog wheel + track buttons (CC 40-43) over to Schwung's native chain-slot editor while dAVEBOx keeps pads, step buttons, knobs, and transport. First use opens a slot picker (1-4); the choice persists per track. Track buttons inside the editor switch which slot you're editing. Press **Back** to navigate up within the editor, **Menu** to exit co-run entirely. Hold **Shift** while selecting `Edit Slot...` to reopen the slot picker and reassign the track to a different slot. |
-| **Edit Synth...** | Action | _Requires the patched Schwung shim from [`legsmechanical/schwung`](https://github.com/legsmechanical/schwung) — entry is hidden on stock Schwung._ Move-routed tracks only. Hands the OLED + jog + track buttons (CC 40-43) + Shift + Back + device-edit knobs (8 instrument knobs) + master knob over to Move firmware's native preset browser and device-edit pages. **dAVEBOx keeps pads, step buttons, transport, and Menu** — the sequencer keeps firing audibly, so you can audition presets and parameter changes against the playing pattern. On entry, dAVEBOx auto-taps the Move track button that matches this dAVEBOx track's **Channel**: channel 1 → Move Track 1, channel 4 → Move Track 4. On channels outside 1-4 no auto-tap fires and you pick the Move track manually via Move's track buttons. Press **Menu** to exit co-run. **Drum-mode tracks:** tapping a pad in the left 4 columns silently selects that cell in Move's drum-instrument editor (mirrors the native Shift+drum-pad gesture); dAVEBOx still triggers the drum from its sequencer so there's no double trigger. Phase A note: pad and step-button LEDs freeze at their entry-time state during the trip; pads still trigger the sequencer normally (audio output unaffected). |
+| **Edit Slot...** | Action | Open Schwung's native chain-slot editor for this track. Shown only on **Schwung-routed** tracks. See [below](#edit-slot--schwung-chain-editor). |
+| **Edit Synth...** | Action | Open Move firmware's preset browser and device-edit pages for this track. Shown only on **Move-routed** tracks. See [below](#edit-synth--move-device-editor). |
+
+Both `Edit Slot...` and `Edit Synth...` require the patched Schwung shim from [`legsmechanical/schwung`](https://github.com/legsmechanical/schwung); on stock Schwung these entries are hidden.
+
+### Edit Slot... — Schwung chain editor
+
+Available on **Schwung-routed** tracks. Selecting this entry hands the **OLED, jog wheel, and track buttons** over to Schwung's native chain-slot editor while dAVEBOx keeps the pads, step buttons, knobs, and transport. The sequencer keeps playing throughout, so you can audition changes against the running pattern.
+
+- **First use** prompts a slot picker (1–4). Your choice is remembered per track.
+- **Track buttons** inside the editor switch which slot you're editing.
+- **Back** navigates up within the editor.
+- **Menu** exits and returns to dAVEBOx.
+- **Shift + Edit Slot...** (selecting the menu item with Shift held) reopens the slot picker so you can reassign this track to a different slot.
+
+### Edit Synth... — Move device editor
+
+Available on **Move-routed** tracks. Selecting this entry hands the **OLED, jog wheel, track buttons, Shift, Back, the 8 device-edit knobs, and the master knob** over to Move firmware's native preset browser and device-edit pages. dAVEBOx keeps the pads, step buttons, transport, and Menu — the sequencer keeps firing audibly, so you can audition presets and parameter tweaks against the playing pattern.
+
+- **On entry**, dAVEBOx auto-selects the Move track that matches this track's **Channel** (channel 1 → Move Track 1, …, channel 4 → Move Track 4). On channels outside 1–4, no auto-selection happens — pick a Move track manually with Move's own track buttons.
+- **Menu** exits and returns to dAVEBOx.
+- **Drum-mode tracks:** tapping a pad in the left 4 columns silently selects the matching cell in Move's drum-instrument editor (mirroring Move's native Shift + drum-pad gesture). dAVEBOx still fires the drum from its sequencer, so there's no double-trigger.
+
+While Edit Synth is active, the pad and step-button LEDs freeze at their entry-time state — audio output and pad triggering work normally; only the lights are paused.
 
 Below Track Config, a `── Global ──` separator divides Track Config from global items.
 
@@ -1590,7 +1623,8 @@ Dismissed immediately if you touch a knob or enter step edit.
 | Note/Session (hold) | Momentary peek at Session View |
 | Shift + Note/Session | Open Global Menu |
 | K1–K8 | Adjust parameter in active bank |
-| Shift + K4 (CLIP bank) | Resolution Zoom mode |
+| Shift + K2 (CLIP bank) | Nudge (label flips to `Nudg`) |
+| Shift + K3 (CLIP bank) | Resolution Zoom mode |
 | Shift + Step 2 | Open Global Menu at the **Global** section header |
 | Shift + Step 5 | Tap tempo |
 | Shift + Step 6 | Metro toggle (Cnt-In ↔ Always) |
@@ -1660,6 +1694,7 @@ All melodic Track View controls apply except as noted below.
 | Shift + Copy + clip pad | Cut clip |
 | Copy + scene row | Copy scene row |
 | Shift + Copy + scene row | Cut scene row |
+| Capture + scene row | Snapshot active clips into that row (see [§7.3](#73-capture-scene-from-whats-playing)) |
 | Delete + clip pad | Delete clip |
 | Delete + scene row | Clear all notes in row |
 | Shift + Delete + scene row | Hard reset row |
@@ -1687,6 +1722,7 @@ All melodic Track View controls apply except as noted below.
 | R1 pads (magenta) | Pitch mods |
 | R2 pads (yellow) | Velocity / gate mods |
 | R3 pads (cyan) | Wild mods |
+| Knob touch (K1–K8) | Toggle that track's Looper flag (knob LED = looper state in track color) |
 | Tap mod pad (lit) | Clear that mod (works in either latch state) |
 | Step (tap) | Recall preset slot — replaces sticky mods |
 | Step (hold ~0.75s) | Save current mods to slot |
