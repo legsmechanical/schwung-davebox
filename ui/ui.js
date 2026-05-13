@@ -1745,6 +1745,29 @@ function pollDSP() {
                 }
             }
         }
+    } else {
+        /* TARP held-buffer mirror: poll DSP buffer for active melodic track when
+         * latch + style are both on so source pads light up. Cleared when either
+         * is off (style=0 silences the engine — pad lighting follows suit). Drives
+         * only pad LEDs (updateTrackLEDs reads .has() each tick) — no OLED
+         * dependency so no screenDirty needed here. */
+        const _tat = S.activeTrack;
+        const _tLatch = (S.bankParams[_tat][5][7] | 0) !== 0 &&
+                        (S.bankParams[_tat][5][0] | 0) !== 0;
+        if (_tLatch) {
+            const _hRaw = host_module_get_param('t' + _tat + '_tarp_held');
+            const _set = S.tarpHeldNotes[_tat];
+            _set.clear();
+            if (_hRaw) {
+                const _parts = _hRaw.split(' ');
+                for (let _i = 0; _i < _parts.length; _i++) {
+                    const _p = parseInt(_parts[_i], 10);
+                    if (_p >= 0 && _p <= 127) _set.add(_p);
+                }
+            }
+        } else if (S.tarpHeldNotes[_tat].size > 0) {
+            S.tarpHeldNotes[_tat].clear();
+        }
     }
 
     /* SeqFollow: auto-page S.activeTrack to follow playhead */
@@ -2973,7 +2996,17 @@ function drawUI() {
         const keySclX = 128 - 4 - keyScl.length * CHAR_W;
         (S.activeBank === 5 || S.activeBank === 6 ? drawBankHeadingInverted : drawBankHeading)(BANKS[S.activeBank].name + recTag);
         pixelPrint(4, 10, octStr, 1);
-        if (S.bankParams[S.activeTrack][5][0]) pixelPrint(52, 10, 'Arp', 1);
+        if (S.bankParams[S.activeTrack][5][0]) {
+            if (S.bankParams[S.activeTrack][5][7]) {
+                /* Latch on: invert 'Arp' (black on white chip) — pixelPrint
+                 * uses a 5x5 glyph with 6px step; 'Arp' spans x=52..68, y=10..14.
+                 * Chip pads 1px around: x=51..69 (w=19), y=9..15 (h=7). */
+                fill_rect(51, 9, 19, 7, 1);
+                pixelPrint(52, 10, 'Arp', 0);
+            } else {
+                pixelPrint(52, 10, 'Arp', 1);
+            }
+        }
         pixelPrint(keySclX, 10, keyScl, 1);
         if (S.scaleAware) fill_rect(keySclX, 15, keyScl.length * CHAR_W, 1, 1);
         drawMetroIndicator();
@@ -5031,6 +5064,14 @@ function _onCC_buttons(d1, d2) {
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + _lrt + '_tarp_latch', '1');
                 }
+            } else if (S.trackPadMode[_lrt] !== PAD_MODE_DRUM &&
+                       (S.bankParams[_lrt][5][7] | 0) !== 0 &&
+                       S.tarpHeldNotes[_lrt].size > 0) {
+                /* Loop press with no pads held + latch on + notes in buffer:
+                 * clear the latched buffer without changing tarp_latch. */
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + _lrt + '_tarp_clear_latched', '1');
+                S.tarpHeldNotes[_lrt].clear();
             }
             if (S.drumPerformMode[_lrt] === 2) {
                 S.rpt2LoopPadUsed = false;

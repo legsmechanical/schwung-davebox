@@ -494,15 +494,19 @@ export function updateTrackLEDs() {
             }
         } else {
         const rootColor = TRACK_COLORS[S.activeTrack];
+        const _tarpActive = (S.bankParams[S.activeTrack][5][7] | 0) !== 0 &&
+                            (S.bankParams[S.activeTrack][5][0] | 0) !== 0;
+        const _tarpHeld = _tarpActive ? S.tarpHeldNotes[S.activeTrack] : null;
         for (let i = 0; i < 32; i++) {
             let color;
             const pitch    = Math.max(0, Math.min(127, S.padNoteMap[i] + S.trackOctave[S.activeTrack] * 12));
             const sounding = S.liveActiveNotes.has(pitch) || S.seqActiveNotes.has(pitch);
             const inHeld   = S.heldStep >= 0 && S.heldStepNotes.indexOf(pitch) >= 0;
+            const inLatch  = _tarpHeld && _tarpHeld.has(pitch);
             const semitone = ((S.padNoteMap[i] % 12) - S.padKey + 12) % 12;
             const inScale  = S.padScaleSet.has(semitone);
             const chromatic = S.padLayoutChromatic[S.activeTrack];
-            color = (sounding || inHeld) ? White
+            color = (sounding || inHeld || inLatch) ? White
                   : (chromatic && !inScale) ? LED_OFF
                   : (S.padNoteMap[i] % 12 === S.padKey ? rootColor : DarkGrey);
             cachedSetLED(TRACK_PAD_BASE + i, color);

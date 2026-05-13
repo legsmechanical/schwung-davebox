@@ -3577,6 +3577,55 @@ static void tarp_silence(seq8_instance_t *inst, seq8_track_t *tr) {
     }
 }
 
+/* Drop latched (non-physical) entries from TARP held buffer. If nothing is
+ * physically held afterward, fall through to full silence. Used by both
+ * tarp_latch=0 and the explicit tarp_clear_latched user shortcut. */
+static void tarp_drop_latched(seq8_instance_t *inst, seq8_track_t *tr) {
+    arp_engine_t *a = &tr->tarp;
+    int w = 0, r;
+    for (r = 0; r < a->held_count; r++) {
+        if (a->held_physical[r]) {
+            if (w != r) {
+                a->held_pitch[w]    = a->held_pitch[r];
+                a->held_vel[w]      = a->held_vel[r];
+                a->held_order[w]    = a->held_order[r];
+                a->held_physical[w] = a->held_physical[r];
+            }
+            w++;
+        }
+    }
+    for (r = w; r < a->held_count; r++) {
+        a->held_pitch[r]    = 0;
+        a->held_vel[r]      = 0;
+        a->held_order[r]    = 0;
+        a->held_physical[r] = 0;
+    }
+    a->held_count = (uint8_t)w;
+
+    if (a->held_count == 0) {
+        /* No physical pads → full silence via tarp_silence; with latch=1 the
+         * tarp_silence branch resets runtime but keeps the (now empty) buffer
+         * so the engine sits idle until the user plays a new chord. */
+        tarp_silence(inst, tr);
+    } else {
+        /* Physical pads remain → silence current sounding note;
+         * tarp_tick re-fires from the compacted buffer next tick. */
+        if (a->sounding_active) {
+            pfx_note_off_imm(inst, tr, a->sounding_pitch);
+            a->sounding_active = 0;
+        }
+        a->sounding_pitch     = 0;
+        a->gate_remaining     = 0;
+        a->ticks_until_next   = 0;
+        a->pending_first_note = 1;
+        a->pending_retrigger  = 0;
+        a->master_anchor      = 0;
+        a->cyc_pos            = 0;
+        a->cycle_step_count   = 0;
+        a->random_used        = 0;
+    }
+}
+
 /* Resolve effective input velocity for a track.
  * 0=Live (pass raw), 1-127=fixed absolute. */
 static int effective_vel(seq8_track_t *tr, int raw_vel) {
@@ -3828,6 +3877,23 @@ static void live_note_on(seq8_instance_t *inst, seq8_track_t *tr,
             tr->tarp_latch = saved;
         } else {
             tarp_silence(inst, tr); /* preserve branch — buffer kept */
+        }
+    }
+    /* Accumulate + latch: re-press of a latched-only note toggles it off
+     * instead of the default duplicate no-op. Lets the user pluck individual
+     * notes out of a latched chord without dropping the whole buffer. Gated
+     * on retrigger=0 (with retrigger=1 the gesture block above already
+     * replaced the buffer, so there's nothing meaningful to toggle) and
+     * held_physical==0 (don't drop notes the user is actively holding). */
+    if (tr->tarp_latch && !tr->tarp.retrigger) {
+        arp_engine_t *a = &tr->tarp;
+        int _i;
+        for (_i = 0; _i < a->held_count; _i++) {
+            if (a->held_pitch[_i] == pitch && !a->held_physical[_i]) {
+                arp_remove_note(a, pitch);
+                if (a->held_count == 0) tarp_silence(inst, tr);
+                return;
+            }
         }
     }
     arp_add_note(&tr->tarp, pitch, vel);
@@ -5687,6 +5753,21 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
             return snprintf(out, out_len, "%u", tr->drum_lane_solo);
         if (!strcmp(sub, "diq"))
             return snprintf(out, out_len, "%d", (int)tr->drum_inp_quant);
+        /* tarp_held: space-separated MIDI pitches currently in TARP input buffer
+         * (held physical + latched). Empty when buffer is empty. Polled by JS to
+         * light source pads while TARP is latched. */
+        if (!strcmp(sub, "tarp_held")) {
+            int n = (int)tr->tarp.held_count;
+            if (n <= 0) { out[0] = '\0'; return 0; }
+            int pos = 0, i;
+            for (i = 0; i < n; i++) {
+                if (i > 0 && pos < out_len - 1) out[pos++] = ' ';
+                pos += snprintf(out + pos, (size_t)(out_len - pos),
+                                "%d", (int)tr->tarp.held_pitch[i]);
+                if (pos >= out_len - 1) break;
+            }
+            return pos;
+        }
         /* tN_lL_* — drum lane getters (lane_note, note_count, steps, step_S_*) */
         if (sub[0] == 'l' && sub[1] >= '0' && sub[1] <= '9') {
             int lidx = 0;

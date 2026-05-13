@@ -2124,50 +2124,16 @@ static void set_param(void *instance, const char *key, const char *val) {
                 /* Latch ON → OFF: drop latched (non-physical) entries from the
                  * held buffer, keep pads still physically held. If nothing is
                  * physically held, fall through to full silence. */
-                arp_engine_t *a = &tr->tarp;
-                int w = 0, r;
-                for (r = 0; r < a->held_count; r++) {
-                    if (a->held_physical[r]) {
-                        if (w != r) {
-                            a->held_pitch[w]    = a->held_pitch[r];
-                            a->held_vel[w]      = a->held_vel[r];
-                            a->held_order[w]    = a->held_order[r];
-                            a->held_physical[w] = a->held_physical[r];
-                        }
-                        w++;
-                    }
-                }
-                for (r = w; r < a->held_count; r++) {
-                    a->held_pitch[r]    = 0;
-                    a->held_vel[r]      = 0;
-                    a->held_order[r]    = 0;
-                    a->held_physical[r] = 0;
-                }
-                a->held_count = (uint8_t)w;
-
-                if (a->held_count == 0) {
-                    /* No physical pads → full silence. tarp_latch is already 0
-                     * so tarp_silence takes the arp_clear_runtime branch. */
-                    tarp_silence(inst, tr);
-                } else {
-                    /* Physical pads remain → silence current sounding note;
-                     * tarp_tick re-fires from the compacted buffer next tick. */
-                    if (a->sounding_active) {
-                        pfx_note_off_imm(inst, tr, a->sounding_pitch);
-                        a->sounding_active = 0;
-                    }
-                    a->sounding_pitch     = 0;
-                    a->gate_remaining     = 0;
-                    a->ticks_until_next   = 0;
-                    a->pending_first_note = 1;
-                    a->pending_retrigger  = 0;
-                    a->master_anchor      = 0;
-                    a->cyc_pos            = 0;
-                    a->cycle_step_count   = 0;
-                    a->random_used        = 0;
-                }
+                tarp_drop_latched(inst, tr);
             }
             inst->state_dirty = 1;
+            return;
+        }
+        if (!strcmp(sub, "tarp_clear_latched")) {
+            /* User shortcut: drop latched (non-physical) entries from the held
+             * buffer but keep tarp_latch=1. Functionally identical to the
+             * latch-off compaction above, minus toggling tarp_latch. */
+            tarp_drop_latched(inst, tr);
             return;
         }
         if (!strcmp(sub, "tarp_sync")) {

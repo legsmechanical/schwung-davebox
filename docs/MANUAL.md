@@ -595,7 +595,11 @@ A *live* arpeggiator for pad input and external MIDI. **Per-track**, not per-cli
 
 > **Connection point.** ARP IN only sees what you play live; SEQUENCE ARP only sees what's sequenced. They're two independent arpeggiators running in parallel on the same track. You can use both at once for different feels on live vs sequenced material.
 
-**Latch shortcut.** While holding pads with ARP IN active, tap **Loop** to toggle latch on/off without entering the bank. **Delete + Loop** also unlatches.
+**Latch shortcut.** While holding pads with ARP IN active, tap **Loop** to toggle latch on/off without entering the bank. **Delete + Loop** also unlatches. With `Ltch` already on and notes latched, tapping **Loop with no pads held** clears the latched chord without turning latch off — the next chord you play latches as usual.
+
+**Drop one latched note (accumulate mode).** With `Rtrg=Off` and `Ltch=On`, re-pressing a pad whose note is currently latched but not physically held removes that single note from the buffer. Useful for plucking individual voices out of a stacked chord without dropping everything.
+
+**Latch visual feedback.** When `Latch` is on, every pad in the current ARP IN input buffer stays lit white — held *and* latched-after-release — so you can see which notes are feeding the arp. The `Arp` indicator in the Track View header inverts (black-on-white chip) while latched.
 
 | Knob | Parameter | Notes |
 |---|---|---|

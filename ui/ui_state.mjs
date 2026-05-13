@@ -105,6 +105,10 @@ export const S = {
     seqArpStepVel: Array.from({length: 8}, () =>
     Array.from({length: 16}, () => new Array(8).fill(4))),
     tarpStepVel: Array.from({length: 8}, () => new Array(8).fill(4)),
+    /* TARP held-buffer mirror: pitches in DSP tarp.held_pitch[] for each track.
+     * Polled from t{n}_tarp_held when tarp_latch is on; used to light source
+     * pads in melodic Track View while the chord is latched. */
+    tarpHeldNotes: Array.from({length: 8}, () => new Set()),
     noteFXRandomMode: new Array(8).fill(2),
     midiDlyRandomMode: new Array(8).fill(2),
     rndDialogMode: -1,      /* pending algorithm while Rnd knob held; -1 = inactive */

@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com). Add entries to
 the section into a versioned heading at release time.
 
 ## [Unreleased]
+### Performance / UX
+- **ARP IN latch visual feedback.** When `Ltch` is on for the active melodic track, (1) the pad LEDs of every note in the TARP input buffer stay lit white — physical-held *and* latched-after-release — so you can see at a glance which chord is feeding the arpeggiator; (2) the `Arp` indicator on the Track View overview OLED inverts (black on white chip) to signal that the engine is latched. Pad lighting mirrors DSP truth (read from `t{n}_tarp_held`), so it tracks the `Rtrg` setting automatically and includes external-MIDI-driven notes.
+- **Loop clears latched notes (without dropping `Ltch`).** While `Ltch` is on with notes in the TARP input buffer, pressing **Loop** with no pads held drops the latched chord and leaves the arp idle — without toggling `Ltch` off, so the next chord you play latches as expected. The existing Loop+pad-held shortcut (toggle `Ltch`) is unchanged.
+- **Re-press a latched note to drop it (accumulate mode).** With ARP IN `Rtrg=Off` + `Ltch=On`, re-pressing a pad whose note is currently latched-but-not-held removes that single note from the buffer. Lets you pluck individual voices out of a latched chord without dropping everything. The buffer-replacing behavior of `Rtrg=On` is unchanged.
 
 ## [0.3.5] — 2026-05-13
 ### Features
