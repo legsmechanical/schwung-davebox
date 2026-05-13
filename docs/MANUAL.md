@@ -389,7 +389,7 @@ The 16 step buttons represent the current page of the active clip. Steps are eit
 
 | Action | Behavior |
 |---|---|
-| Quick tap (<200ms) on empty step | Activates the step with the **last note played** on the pads, at a fixed velocity of 100 |
+| Quick tap (<200ms) on empty step | Activates the step with the **last note played** on the pads, at velocity 100 (or **VelIn** if set on this track) |
 | Quick tap on active step | Clears it (notes deleted immediately) |
 | Hold (≥200ms) | Opens step edit overlay (see [§4.2](#42-step-edit)) |
 | Tap multiple steps together | Toggles each one |
@@ -663,7 +663,7 @@ Two banks of 16 lanes (A and B) give you 32 lanes total. The active bank is show
 
 **Right 4×4 modes** (cycle by tapping the jog wheel, or **Shift + Step 8**):
 
-- **Velocity** (default). 16 zones from velocity 8 (bottom-left) to velocity 127 (top-right). Used for live monitoring, step-edit velocity, and recording.
+- **Velocity** (default). 16 zones from velocity 8 (bottom-left) to velocity 127 (top-right). Used for live monitoring, step-edit velocity, and recording. Step-tap velocity defaults to 100 until you've pressed a vel-pad on this track; after that the most recently pressed zone is sticky (persists across sessions).
 - **Rpt1.** Single-lane Note Repeat. See [§6.7](#67-note-repeat).
 - **Rpt2.** Multi-lane Note Repeat.
 

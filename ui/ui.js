@@ -976,6 +976,22 @@ function handoffRecordingToTrack(newTrack) {
 
 function effectiveVelocity(rawVel) { return rawVel; }
 
+/* Step-entry velocity. Single source of truth used by every step-write site.
+ *   VelIn (S.trackVelOverride[t] > 0)        →  VelIn value
+ *   live pad press right now (liveVel >= 0)  →  that velocity
+ *   drum step-tap with vel-pad armed         →  sticky zone velocity
+ *   otherwise                                →  100
+ * allowZone is true only for drum step-tap sites where the sticky zone is the
+ * intended fallback. */
+function stepEntryVelocity(t, liveVel, allowZone) {
+    const tvo = S.trackVelOverride[t];
+    if (tvo > 0) return tvo;
+    if (liveVel >= 0) return liveVel;
+    if (allowZone && S.drumVelZoneArmed && S.drumVelZoneArmed[t])
+        return drumVelZoneToVelocity(S.drumLastVelZone[t]);
+    return 100;
+}
+
 function flushChordBatch() {}
 
 /* DSP-side recording: buffer note events; tick() flushes as a single batched set_param so
@@ -3215,6 +3231,10 @@ function restoreUiSidecar(applyDefaultsNow) {
                 const _s = us.ss[_t];
                 S.trackSchwungSlot[_t] = (typeof _s === 'number' && _s >= 0 && _s < 4) ? _s : -1;
             }
+        }
+        if (us.v >= 5 && Array.isArray(us.dva)) {
+            for (let _t = 0; _t < NUM_TRACKS; _t++)
+                S.drumVelZoneArmed[_t] = us.dva[_t] === true;
         }
     } else {
         S.scaleAware   = 1;
@@ -6354,6 +6374,7 @@ function _onPadPressTrackView(status, d1, d2) {
                 /* Velocity pad: which pad determines the zone; zone determines velocity.
                  * Pad pressure is ignored — zone vel used for monitoring, step-edit, recording. */
                 S.drumLastVelZone[t] = velZone;
+                S.drumVelZoneArmed[t] = true;
                 const zoneVel  = drumVelZoneToVelocity(velZone);
                 const lane_vp  = S.activeDrumLane[t];
                 const laneNote = S.drumLaneNote[t][lane_vp];
@@ -6362,9 +6383,11 @@ function _onPadPressTrackView(status, d1, d2) {
                 padPressTick[padIdx] = S.tickCount;
                 S.liveActiveNotes.add(laneNote);
                 if (S.heldStep >= 0 && S.heldStepNotes.length > 0) {
-                    S.stepEditVel = zoneVel;
+                    /* Active vel-pad press while step held → write that zone, unless VelIn forces a value */
+                    const _heldWriteVel = stepEntryVelocity(t, zoneVel, false);
+                    S.stepEditVel = _heldWriteVel;
                     if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + t + '_l' + lane_vp + '_step_' + S.heldStep + '_vel', String(zoneVel));
+                        host_module_set_param('t' + t + '_l' + lane_vp + '_step_' + S.heldStep + '_vel', String(_heldWriteVel));
                     S.stepBtnPressedTick[S.heldStepBtn] = -1;
                 }
                 /* Record hit at zone velocity if armed */
@@ -6494,7 +6517,7 @@ function _onPadPressTrackView(status, d1, d2) {
             const ac    = effectiveClip(S.activeTrack);
             const pitch = Math.max(0, Math.min(127, S.padNoteMap[padIdx] + S.trackOctave[S.activeTrack] * 12));
             if (typeof host_module_set_param === 'function')
-                host_module_set_param('t' + S.activeTrack + '_c' + ac + '_step_' + S.heldStep + '_toggle', pitch + ' ' + effectiveVelocity(d2));
+                host_module_set_param('t' + S.activeTrack + '_c' + ac + '_step_' + S.heldStep + '_toggle', pitch + ' ' + stepEntryVelocity(S.activeTrack, effectiveVelocity(d2), false));
             /* Read back authoritative note list */
             const raw = typeof host_module_get_param === 'function'
                 ? host_module_get_param('t' + S.activeTrack + '_c' + ac + '_step_' + S.heldStep + '_notes')
@@ -7093,7 +7116,7 @@ function _onStepButtons(d1, d2) {
             } else {
                 S.stepWasEmpty  = true;
                 S.heldStepNotes = [];
-                S.stepEditVel   = drumVelZoneToVelocity(S.drumLastVelZone[t]);
+                S.stepEditVel   = stepEntryVelocity(t, -1, true);
                 S.stepEditGate  = S.drumLaneTPS[t] || 24;
                 S.stepEditNudge = 0;
             }
@@ -7104,7 +7127,7 @@ function _onStepButtons(d1, d2) {
             const cur2     = S.drumLaneSteps[t][lane][absStep2];
             if (typeof host_module_set_param === 'function') {
                 if (cur2 !== '1') {
-                    host_module_set_param('t' + t + '_l' + lane + '_step_' + absStep2 + '_toggle', String(drumVelZoneToVelocity(S.drumLastVelZone[t])));
+                    host_module_set_param('t' + t + '_l' + lane + '_step_' + absStep2 + '_toggle', String(stepEntryVelocity(t, -1, true)));
                     S.drumLaneSteps[t][lane][absStep2] = '1';
                     S.drumLaneHasNotes[t][lane] = true;
                 } else {
@@ -7178,7 +7201,7 @@ function _onStepButtons(d1, d2) {
                     step:    absP,
                     wasEmpty: _stepState === 0,
                     pitches: [...S.liveActiveNotes].sort(function(a, b) { return a - b; }),
-                    vel:     effectiveVelocity(S.lastPadVelocity)
+                    vel:     stepEntryVelocity(S.activeTrack, effectiveVelocity(S.lastPadVelocity), false)
                 };
                 S.stepBtnPressedTick[idx] = -1;   /* bypass tap-toggle on release */
                 S.stepWasHeld = true;
@@ -7194,7 +7217,7 @@ function _onStepButtons(d1, d2) {
             if (state_mp === 0) {
                 const assignNote3 = S.lastPlayedNote >= 0 ? S.lastPlayedNote : -1;
                 if (assignNote3 >= 0 && typeof host_module_set_param === 'function') {
-                    host_module_set_param(pref_mp + '_toggle', assignNote3 + ' 100');
+                    host_module_set_param(pref_mp + '_toggle', assignNote3 + ' ' + stepEntryVelocity(S.activeTrack, -1, false));
                     S.clipSteps[S.activeTrack][ac_mp][absStep2] = 1;
                     S.clipNonEmpty[S.activeTrack][ac_mp] = true;
                     refreshSeqNotesIfCurrent(S.activeTrack, ac_mp, absStep2);
@@ -7341,8 +7364,10 @@ function _onPadRelease(status, d1, d2) {
                     S.stepBtnPressedTick[btn] = -1;
                     if (S.stepWasEmpty) {
                         /* Empty step tapped: assign now with current velocity */
+                        const _writeVel = stepEntryVelocity(t, -1, true);
+                        S.stepEditVel = _writeVel;
                         if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_toggle', String(S.stepEditVel));
+                            host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_toggle', String(_writeVel));
                         S.drumLaneSteps[t][lane][S.heldStep] = '1';
                         S.drumLaneHasNotes[t][lane] = true;
                     } else {
@@ -7393,7 +7418,7 @@ function _onPadRelease(status, d1, d2) {
                     /* Tap on empty step: assign lastPlayedNote now */
                     if (S.lastPlayedNote >= 0) {
                         const assignNote_t = S.lastPlayedNote;
-                        const assignVel_t  = 100;
+                        const assignVel_t  = stepEntryVelocity(S.activeTrack, -1, false);
                         if (typeof host_module_set_param === 'function')
                             host_module_set_param('t' + S.activeTrack + '_c' + ac_t + '_step_' + absIdx + '_toggle', assignNote_t + ' ' + assignVel_t);
                         S.clipSteps[S.activeTrack][ac_t][absIdx] = 1;

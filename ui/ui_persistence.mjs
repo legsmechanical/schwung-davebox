@@ -130,12 +130,13 @@ export function saveState() {
     if (typeof host_module_set_param === 'function') host_module_set_param('save', '1');
     if (typeof host_write_file === 'function')
         host_write_file(uuidToUiStatePath(S.currentSetUuid), JSON.stringify({
-            v: 4, at: S.activeTrack, ac: S.trackActiveClip.slice(), sv: S.sessionView ? 1 : 0,
+            v: 5, at: S.activeTrack, ac: S.trackActiveClip.slice(), sv: S.sessionView ? 1 : 0,
             dl: S.activeDrumLane.slice(),
             pm: S.perfModsToggled, lm: S.perfLatchMode ? 1 : 0,
             rs: S.perfRecalledSlot, us: S.perfSnapshots.slice(8),
             bm: S.beatMarkersEnabled ? 1 : 0,
-            ss: S.trackSchwungSlot.slice()
+            ss: S.trackSchwungSlot.slice(),
+            dva: S.drumVelZoneArmed.slice()
         }));
 }
 
@@ -152,6 +153,7 @@ export function doClearSession() {
         S.trackChannel[_t] = 1; S.trackRoute[_t] = 0; S.trackPadMode[_t] = 0;
         S.trackVelOverride[_t] = 0; S.trackLooper[_t] = 1;
         S.trackSchwungSlot[_t] = -1;
+        S.drumVelZoneArmed[_t] = false;
         S.trackCCAssign[_t] = CC_ASSIGN_DEFAULTS.slice();
         S.trackCCVal[_t]    = new Array(8).fill(0);
         S.trackCCAutoBits[_t] = new Array(NUM_CLIPS).fill(0);

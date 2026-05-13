@@ -73,6 +73,7 @@ export const S = {
     drumLaneNote: Array.from({length: 8}, () =>
     Array.from({length: 32}, (_, l) => 36 + l)),
     drumLastVelZone: new Array(8).fill(12),
+    drumVelZoneArmed: new Array(8).fill(false),  /* per-track: has a vel-pad been pressed? gates sticky zone for step entry */
     drumLaneLength: new Array(8).fill(16),
     drumLaneTPS: new Array(8).fill(24),
     drumStepPage: new Array(8).fill(0),
