@@ -653,6 +653,8 @@ function clearClip(t, ac, keepPlaying) {
         if (ac === S.trackActiveClip[t]) {
             S.seqActiveNotes.clear();
             S.drumLaneLength[t] = 16;
+            S.drumLaneLoopStart[t] = 0;
+            S.trackCurrentPage[t] = 0;
         }
         S.pendingClearLengthTrack = t;
         S.pendingClearLengthClip  = ac;
@@ -667,6 +669,8 @@ function clearClip(t, ac, keepPlaying) {
     S.clipNonEmpty[t][ac] = false;
     S.clipLengthManuallySet[t][ac] = false;
     S.clipLength[t][ac] = 16;
+    S.clipLoopStart[t][ac] = 0;
+    if (ac === S.trackActiveClip[t]) S.trackCurrentPage[t] = 0;
     S.pendingClearLengthTrack = t;
     S.pendingClearLengthClip  = ac;
     if (ac === S.trackActiveClip[t]) {
@@ -691,8 +695,10 @@ function hardResetClip(t, ac) {
         S.drumLaneLengthManuallySet[t]  = false;
         if (ac === S.trackActiveClip[t]) {
             S.drumLaneLength[t] = 16;
+            S.drumLaneLoopStart[t] = 0;
             S.drumLaneTPS[t]    = 24;
             S.drumStepPage[t]   = 0;
+            S.trackCurrentPage[t] = 0;
             S.seqActiveNotes.clear();
         }
         return;
@@ -701,6 +707,7 @@ function hardResetClip(t, ac) {
     const defaultLen = 16;
     for (let s = 0; s < NUM_STEPS; s++) S.clipSteps[t][ac][s] = 0;
     S.clipLength[t][ac] = defaultLen;
+    S.clipLoopStart[t][ac] = 0;
     S.clipNonEmpty[t][ac] = false;
     S.clipTPS[t][ac] = 24;
     S.clipLengthManuallySet[t][ac] = false;
@@ -911,8 +918,11 @@ function clearRow(rowIdx) {
         for (let s = 0; s < len; s++) S.clipSteps[t][rowIdx][s] = 0;
         S.clipNonEmpty[t][rowIdx] = false;
         S.drumClipNonEmpty[t][rowIdx] = false;
+        S.clipLoopStart[t][rowIdx] = 0;
         if (rowIdx === S.trackActiveClip[t]) {
             S.seqActiveNotes.clear(); S.seqLastStep = -1;
+            S.trackCurrentPage[t] = 0;
+            if (S.trackPadMode[t] === PAD_MODE_DRUM) S.drumLaneLoopStart[t] = 0;
             resetPerClipBankParamsToDefault(t);
             if (S.trackPadMode[t] === PAD_MODE_DRUM) {
                 S.pendingDrumResync = 2; S.pendingDrumResyncTrack = t;
@@ -3365,6 +3375,24 @@ function syncClipsFromDsp() {
             syncDrumLanesMeta(t);
             syncDrumLaneSteps(t, S.activeDrumLane[t]);
             refreshDrumLaneBankParams(t, S.activeDrumLane[t]);
+        }
+        /* Clamp the visible page into the (possibly non-zero) window so that
+         * the step LEDs aren't stuck at absolute page 0 on session load when
+         * the active clip has a loop_start > 0. */
+        {
+            const _ac = S.trackActiveClip[t];
+            const _ls = (S.trackPadMode[t] === PAD_MODE_DRUM)
+                ? (S.drumLaneLoopStart[t] | 0)
+                : (S.clipLoopStart[t][_ac] | 0);
+            const _ln = (S.trackPadMode[t] === PAD_MODE_DRUM)
+                ? (S.drumLaneLength[t] | 0)
+                : (S.clipLength[t][_ac] | 0);
+            if (_ln > 0) {
+                const _startPage = Math.floor(_ls / 16);
+                const _lastPage  = Math.floor((_ls + _ln - 1) / 16);
+                if (S.trackCurrentPage[t] < _startPage || S.trackCurrentPage[t] > _lastPage)
+                    S.trackCurrentPage[t] = _startPage;
+            }
         }
     }
     const kp = host_module_get_param('key');

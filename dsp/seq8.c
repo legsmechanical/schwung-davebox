@@ -1246,7 +1246,9 @@ static void seq8_load_state(seq8_instance_t *inst) {
                 const char *p = strstr(buf, search);
                 if (p) {
                     p += strlen(search);
-                    uint32_t max_tick = (uint32_t)cl->length * cl->ticks_per_step;
+                    /* Accept any tick within storage capacity. Notes outside the
+                     * loop window are preserved; clip_len bound would drop them. */
+                    uint32_t max_tick = (uint32_t)SEQ_STEPS * cl->ticks_per_step;
                     while (*p && *p != '"') {
                         unsigned long tick_val = 0;
                         while (*p >= '0' && *p <= '9')
@@ -1504,7 +1506,9 @@ static void seq8_load_state(seq8_instance_t *inst) {
                 {
                     const char *p = strstr(buf, search);
                     p += strlen(search);
-                    uint32_t max_tick = (uint32_t)dlc->length * dlc->ticks_per_step;
+                    /* Accept any tick within storage capacity. Notes outside the
+                     * loop window are preserved; length bound would drop them. */
+                    uint32_t max_tick = (uint32_t)SEQ_STEPS * dlc->ticks_per_step;
                     while (*p && *p != '"') {
                         unsigned long tick_val = 0;
                         while (*p >= '0' && *p <= '9')
@@ -4356,10 +4360,16 @@ static void drum_track_init(seq8_track_t *tr, int track_idx) {
 /* Note-centric helpers (Stage B+)                                     */
 /* ------------------------------------------------------------------ */
 
-/* Logical step for an absolute clip tick using midpoint assignment. */
+/* Logical step for an absolute clip tick using midpoint assignment.
+ * Modulo is against SEQ_STEPS (storage capacity), not clip_len: with a
+ * non-zero loop_start, clip_len is the window *size* and a note at an
+ * absolute tick outside the window must still report its true step index
+ * so the playhead (also absolute) can match it. The `clip_len` argument
+ * is kept for source compatibility but ignored. */
 static uint16_t note_step(uint32_t tick, uint16_t clip_len, uint16_t tps) {
+    (void)clip_len;
     uint32_t shifted = tick + (uint32_t)(tps / 2);
-    return (uint16_t)((shifted / (uint32_t)tps) % (uint32_t)clip_len);
+    return (uint16_t)((shifted / (uint32_t)tps) % (uint32_t)SEQ_STEPS);
 }
 
 /* Find all active note indices in step S; returns count. */
@@ -4498,8 +4508,11 @@ static void clip_migrate_to_notes(clip_t *cl) {
     memset(cl->notes, 0, sizeof(cl->notes));
     cl->occ_dirty = 1;
     int tps = (int)cl->ticks_per_step;
-    int clip_ticks = (int)cl->length * tps;
-    for (s = 0; s < (int)cl->length; s++) {
+    /* Iterate full storage extent, not just the loop window: with a non-zero
+     * loop_start the window is a playback subset and step_notes[] outside it
+     * must still rebuild into cl->notes[] to preserve out-of-window content. */
+    int clip_ticks = SEQ_STEPS * tps;
+    for (s = 0; s < SEQ_STEPS; s++) {
         if (cl->step_note_count[s] == 0) continue;
         for (ni = 0; ni < (int)cl->step_note_count[s]; ni++) {
             int32_t abs_tick = (int32_t)s * tps
@@ -6093,7 +6106,11 @@ static uint32_t effective_note_tick(const note_t *n, const clip_t *cl, int quant
     int32_t delta = (int32_t)n->tick - step_grid;
     int32_t eff_delta = (quantize >= 100) ? 0 : delta * (100 - quantize) / 100;
     int32_t eff_tick = step_grid + eff_delta;
-    int32_t clip_ticks = (int32_t)cl->length * cl->ticks_per_step;
+    /* Wrap against storage extent, not window: n->tick is absolute within
+     * [0, SEQ_STEPS*tps), and cct (the comparison value at fire time) is
+     * also absolute. A length-bound wrap maps in-window notes at high
+     * absolute ticks to low ticks that never match cct. */
+    int32_t clip_ticks = (int32_t)SEQ_STEPS * cl->ticks_per_step;
     if (eff_tick < 0) eff_tick += clip_ticks;
     if (eff_tick >= clip_ticks) eff_tick -= clip_ticks;
     return (uint32_t)eff_tick;
@@ -6203,12 +6220,20 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 inst->global_tick         = 0;
                 inst->arp_master_tick     = 0;
                 for (t = 0; t < NUM_TRACKS; t++) {
-                    inst->tracks[t].current_step      = 0;
-                    inst->tracks[t].tick_in_step      = 0;
-                    inst->tracks[t].note_active        = 0;
-                    inst->tracks[t].pfx.sample_counter = 0;
-                    memset(inst->tracks[t].drum_current_step, 0, sizeof(inst->tracks[t].drum_current_step));
-                    memset(inst->tracks[t].drum_tick_in_step,  0, sizeof(inst->tracks[t].drum_tick_in_step));
+                    seq8_track_t *_tr = &inst->tracks[t];
+                    /* Start each track inside its window: melodic at the active
+                     * clip's loop_start, drum per-lane at each lane's loop_start. */
+                    _tr->current_step       = _tr->clips[_tr->active_clip].loop_start;
+                    _tr->tick_in_step       = 0;
+                    _tr->note_active        = 0;
+                    _tr->pfx.sample_counter = 0;
+                    {
+                        int _dl;
+                        for (_dl = 0; _dl < DRUM_LANES; _dl++)
+                            _tr->drum_current_step[_dl] =
+                                _tr->drum_clips[_tr->active_clip].lanes[_dl].clip.loop_start;
+                    }
+                    memset(_tr->drum_tick_in_step, 0, sizeof(_tr->drum_tick_in_step));
                     if (inst->tracks[t].will_relaunch) {
                         inst->tracks[t].clip_playing      = 1;
                         inst->tracks[t].will_relaunch     = 0;
@@ -6344,6 +6369,42 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
             seq8_track_t *tr = &inst->tracks[t];
             clip_t *cl = &tr->clips[tr->active_clip];
 
+            /* Safety net: snap playhead into window before emission. Catches
+             * any OOB write that slips past per-handler clamps so out-of-window
+             * notes can never fire. Logs once per snap event as a breadcrumb. */
+            if (tr->clip_playing) {
+                if (tr->pad_mode == PAD_MODE_DRUM) {
+                    int _dl;
+                    for (_dl = 0; _dl < DRUM_LANES; _dl++) {
+                        clip_t *_dlc = &tr->drum_clips[tr->active_clip].lanes[_dl].clip;
+                        uint16_t _dle = (uint16_t)(_dlc->loop_start + _dlc->length);
+                        if (tr->drum_current_step[_dl] < _dlc->loop_start
+                                || tr->drum_current_step[_dl] >= _dle) {
+                            char _msg[160];
+                            snprintf(_msg, sizeof(_msg),
+                                "WINDOW SNAP: t%d lane%d playhead %u -> %u (window [%u,%u))",
+                                t, _dl, (unsigned)tr->drum_current_step[_dl],
+                                (unsigned)_dlc->loop_start,
+                                (unsigned)_dlc->loop_start, (unsigned)_dle);
+                            seq8_ilog(inst, _msg);
+                            tr->drum_current_step[_dl] = _dlc->loop_start;
+                        }
+                    }
+                } else {
+                    uint16_t _le = (uint16_t)(cl->loop_start + cl->length);
+                    if (tr->current_step < cl->loop_start || tr->current_step >= _le) {
+                        char _msg[160];
+                        snprintf(_msg, sizeof(_msg),
+                            "WINDOW SNAP: t%d melodic playhead %u -> %u (window [%u,%u))",
+                            t, (unsigned)tr->current_step,
+                            (unsigned)cl->loop_start,
+                            (unsigned)cl->loop_start, (unsigned)_le);
+                        seq8_ilog(inst, _msg);
+                        tr->current_step = cl->loop_start;
+                    }
+                }
+            }
+
             /* Gate countdown: decrement each play_pending slot; fire note-off at 0.
              * Runs before note-on so a gate expiring at step boundary doesn't double-fire. */
             {
@@ -6374,13 +6435,16 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                     tr->queued_clip  = -1;
                     tr->clip_playing = 1;
                     if (tr->pad_mode == PAD_MODE_DRUM) {
-                        memset(tr->drum_current_step, 0, sizeof(tr->drum_current_step));
-                        memset(tr->drum_tick_in_step,  0, sizeof(tr->drum_tick_in_step));
+                        int _dl;
+                        for (_dl = 0; _dl < DRUM_LANES; _dl++)
+                            tr->drum_current_step[_dl] =
+                                tr->drum_clips[tr->active_clip].lanes[_dl].clip.loop_start;
+                        memset(tr->drum_tick_in_step, 0, sizeof(tr->drum_tick_in_step));
                     } else {
                         pfx_sync_from_clip(tr);
-                        tr->current_step = 0;
-                        tr->tick_in_step = 0;
                         cl = &tr->clips[tr->active_clip];
+                        tr->current_step = cl->loop_start;
+                        tr->tick_in_step = 0;
                     }
                     if (tr->record_armed) {
                         memset(tr->cc_auto_touch_frame, 0, sizeof(tr->cc_auto_touch_frame));
@@ -6400,13 +6464,16 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                         tr->queued_clip  = -1;
                         tr->clip_playing = 1;
                         if (tr->pad_mode == PAD_MODE_DRUM) {
-                            memset(tr->drum_current_step, 0, sizeof(tr->drum_current_step));
-                            memset(tr->drum_tick_in_step,  0, sizeof(tr->drum_tick_in_step));
+                            int _dl;
+                            for (_dl = 0; _dl < DRUM_LANES; _dl++)
+                                tr->drum_current_step[_dl] =
+                                    tr->drum_clips[tr->active_clip].lanes[_dl].clip.loop_start;
+                            memset(tr->drum_tick_in_step, 0, sizeof(tr->drum_tick_in_step));
                         } else {
                             pfx_sync_from_clip(tr);
-                            tr->current_step = 0;
-                            tr->tick_in_step = 0;
                             cl = &tr->clips[tr->active_clip];
+                            tr->current_step = cl->loop_start;
+                            tr->tick_in_step = 0;
                         }
                         if (tr->record_armed) {
                             memset(tr->cc_auto_touch_frame, 0, sizeof(tr->cc_auto_touch_frame));

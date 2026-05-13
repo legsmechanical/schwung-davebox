@@ -252,16 +252,22 @@ static void set_param(void *instance, const char *key, const char *val) {
                 inst->master_tick_in_step = 0;
                 inst->arp_master_tick     = 0;
                 for (t = 0; t < NUM_TRACKS; t++) {
-                    inst->tracks[t].current_step      = 0;
-                    inst->tracks[t].tick_in_step      = 0;
-                    inst->tracks[t].note_active        = 0;
-                    inst->tracks[t].pfx.sample_counter = 0;
-                    memset(inst->tracks[t].drum_current_step, 0, sizeof(inst->tracks[t].drum_current_step));
-                    memset(inst->tracks[t].drum_tick_in_step,  0, sizeof(inst->tracks[t].drum_tick_in_step));
-                    if (inst->tracks[t].will_relaunch) {
-                        inst->tracks[t].clip_playing      = 1;
-                        inst->tracks[t].will_relaunch     = 0;
-                        inst->tracks[t].pending_page_stop = 0;
+                    seq8_track_t *_tr = &inst->tracks[t];
+                    _tr->current_step       = _tr->clips[_tr->active_clip].loop_start;
+                    _tr->tick_in_step       = 0;
+                    _tr->note_active        = 0;
+                    _tr->pfx.sample_counter = 0;
+                    {
+                        int _dl;
+                        for (_dl = 0; _dl < DRUM_LANES; _dl++)
+                            _tr->drum_current_step[_dl] =
+                                _tr->drum_clips[_tr->active_clip].lanes[_dl].clip.loop_start;
+                    }
+                    memset(_tr->drum_tick_in_step, 0, sizeof(_tr->drum_tick_in_step));
+                    if (_tr->will_relaunch) {
+                        _tr->clip_playing      = 1;
+                        _tr->will_relaunch     = 0;
+                        _tr->pending_page_stop = 0;
                     }
                 }
                 inst->playing = 1;
@@ -340,16 +346,22 @@ static void set_param(void *instance, const char *key, const char *val) {
             inst->arp_master_tick     = 0;
             inst->count_in_ticks      = 0;
             for (t = 0; t < NUM_TRACKS; t++) {
-                inst->tracks[t].current_step      = 0;
-                inst->tracks[t].tick_in_step      = 0;
-                inst->tracks[t].note_active        = 0;
-                inst->tracks[t].pfx.sample_counter = 0;
-                memset(inst->tracks[t].drum_current_step, 0, sizeof(inst->tracks[t].drum_current_step));
-                memset(inst->tracks[t].drum_tick_in_step,  0, sizeof(inst->tracks[t].drum_tick_in_step));
-                if (inst->tracks[t].will_relaunch) {
-                    inst->tracks[t].clip_playing      = 1;
-                    inst->tracks[t].will_relaunch     = 0;
-                    inst->tracks[t].pending_page_stop = 0;
+                seq8_track_t *_tr = &inst->tracks[t];
+                _tr->current_step       = _tr->clips[_tr->active_clip].loop_start;
+                _tr->tick_in_step       = 0;
+                _tr->note_active        = 0;
+                _tr->pfx.sample_counter = 0;
+                {
+                    int _dl;
+                    for (_dl = 0; _dl < DRUM_LANES; _dl++)
+                        _tr->drum_current_step[_dl] =
+                            _tr->drum_clips[_tr->active_clip].lanes[_dl].clip.loop_start;
+                }
+                memset(_tr->drum_tick_in_step, 0, sizeof(_tr->drum_tick_in_step));
+                if (_tr->will_relaunch) {
+                    _tr->clip_playing      = 1;
+                    _tr->will_relaunch     = 0;
+                    _tr->pending_page_stop = 0;
                 }
             }
             inst->playing = 1;
@@ -412,7 +424,8 @@ static void set_param(void *instance, const char *key, const char *val) {
                 uint16_t ttps = cl->ticks_per_step ? cl->ticks_per_step : TICKS_PER_STEP;
                 uint32_t clip_ticks = (uint32_t)cl->length * ttps;
                 uint32_t track_off  = clip_ticks ? (uint32_t)(master_off % clip_ticks) : 0;
-                tr->current_step = (uint16_t)(track_off / ttps);
+                /* Window-aware: place within [loop_start, loop_start+length). */
+                tr->current_step = (uint16_t)(cl->loop_start + track_off / ttps);
                 tr->tick_in_step = track_off % ttps;
                 int l;
                 for (l = 0; l < DRUM_LANES; l++) {
@@ -420,7 +433,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                     uint16_t dtps = dcl->ticks_per_step ? dcl->ticks_per_step : TICKS_PER_STEP;
                     uint32_t dct  = (uint32_t)dcl->length * dtps;
                     uint32_t dto  = dct ? (uint32_t)(master_off % dct) : 0;
-                    tr->drum_current_step[l] = (uint16_t)(dto / dtps);
+                    tr->drum_current_step[l] = (uint16_t)(dcl->loop_start + dto / dtps);
                     tr->drum_tick_in_step[l] = dto % dtps;
                 }
                 tr->note_active        = 0;
@@ -574,10 +587,12 @@ static void set_param(void *instance, const char *key, const char *val) {
             for (t = 0; t < NUM_TRACKS; t++) {
                 seq8_track_t *tr2 = &inst->tracks[t];
                 if (tr2->queued_clip >= 0) {
-                    uint16_t newlen = tr2->clips[tr2->queued_clip].length;
+                    clip_t  *_qcl   = &tr2->clips[tr2->queued_clip];
+                    uint16_t newlen = _qcl->length;
+                    uint16_t _qls   = _qcl->loop_start;
                     tr2->current_step     = tr2->clip_playing
-                                           ? (uint16_t)(tr2->current_step % newlen)
-                                           : (uint16_t)(inst->global_tick % newlen);
+                                           ? (uint16_t)(_qls + tr2->current_step % newlen)
+                                           : (uint16_t)(_qls + inst->global_tick % newlen);
                     tr2->active_clip      = (uint8_t)tr2->queued_clip;
                     pfx_sync_from_clip(tr2);
                     tr2->clip_playing     = 1;
@@ -840,10 +855,12 @@ static void set_param(void *instance, const char *key, const char *val) {
             /* Now + transport running: fire per-track immediately */
             for (t = 0; t < NUM_TRACKS; t++) {
                 seq8_track_t *tr2 = &inst->tracks[t];
-                uint16_t newlen = tr2->clips[cidx].length;
+                clip_t  *_ncl   = &tr2->clips[cidx];
+                uint16_t newlen = _ncl->length;
+                uint16_t _nls   = _ncl->loop_start;
                 tr2->current_step     = tr2->clip_playing
-                                       ? (uint16_t)(tr2->current_step % newlen)
-                                       : (uint16_t)(inst->global_tick % newlen);
+                                       ? (uint16_t)(_nls + tr2->current_step % newlen)
+                                       : (uint16_t)(_nls + inst->global_tick % newlen);
                 tr2->active_clip      = (uint8_t)cidx;
                 pfx_sync_from_clip(tr2);
                 tr2->clip_playing     = 1;
@@ -1241,6 +1258,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             cl->clock_shift_pos = 0;
             cl->nudge_pos       = 0;
             cl->ticks_per_step  = TICKS_PER_STEP;
+            cl->loop_start      = 0;
             clip_pfx_params_init(&cl->pfx_params);
             cl->note_count = 0;
             memset(cl->notes, 0, sizeof(cl->notes));
@@ -1464,10 +1482,12 @@ static void set_param(void *instance, const char *key, const char *val) {
             if (inst->launch_quant == 0 && (tr->clip_playing || inst->playing)) {
                 /* Now + transport active: fire immediately */
                 silence_track_notes_v2(inst, tr);
-                uint16_t newlen = tr->clips[new_cidx].length;
+                clip_t  *_ncl   = &tr->clips[new_cidx];
+                uint16_t newlen = _ncl->length;
+                uint16_t _nls   = _ncl->loop_start;
                 tr->current_step     = tr->clip_playing
-                                       ? (uint16_t)(tr->current_step % newlen)
-                                       : (uint16_t)(inst->global_tick % newlen);
+                                       ? (uint16_t)(_nls + tr->current_step % newlen)
+                                       : (uint16_t)(_nls + inst->global_tick % newlen);
                 tr->active_clip      = (uint8_t)new_cidx;
                 pfx_sync_from_clip(tr);
                 if (tr->tick_in_step >= tr->clips[new_cidx].ticks_per_step)
@@ -1477,9 +1497,11 @@ static void set_param(void *instance, const char *key, const char *val) {
                     for (dl = 0; dl < DRUM_LANES; dl++) {
                         drum_lane_t *dln = &tr->drum_clips[new_cidx].lanes[dl];
                         uint16_t dllen = dln->clip.length > 0 ? dln->clip.length : 1;
+                        uint16_t dlls  = dln->clip.loop_start;
                         uint16_t dltps = dln->clip.ticks_per_step > 0 ? dln->clip.ticks_per_step : 24;
-                        if (tr->drum_current_step[dl] >= dllen)
-                            tr->drum_current_step[dl] = (uint16_t)(tr->drum_current_step[dl] % dllen);
+                        uint16_t dle   = (uint16_t)(dlls + dllen);
+                        if (tr->drum_current_step[dl] < dlls || tr->drum_current_step[dl] >= dle)
+                            tr->drum_current_step[dl] = (uint16_t)(dlls + tr->drum_current_step[dl] % dllen);
                         if (tr->drum_tick_in_step[dl] >= (uint32_t)dltps)
                             tr->drum_tick_in_step[dl] = 0;
                     }
@@ -1902,6 +1924,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 cl->clock_shift_pos = 0;
                 cl->nudge_pos       = 0;
                 cl->ticks_per_step  = TICKS_PER_STEP;
+                cl->loop_start      = 0;
                 clip_pfx_params_init(&cl->pfx_params);
                 cl->note_count = 0;
                 memset(cl->notes, 0, sizeof(cl->notes));
@@ -1939,6 +1962,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 cl->clock_shift_pos = 0;
                 cl->nudge_pos       = 0;
                 cl->ticks_per_step  = TICKS_PER_STEP;
+                cl->loop_start      = 0;
                 clip_pfx_params_init(&cl->pfx_params);
                 cl->note_count = 0;
                 memset(cl->notes, 0, sizeof(cl->notes));
@@ -2070,9 +2094,12 @@ static void set_param(void *instance, const char *key, const char *val) {
             cl->length = (uint16_t)new_len32;
             tr->current_step = (uint16_t)(abs_clip_tick / (uint32_t)new_tps);
             tr->tick_in_step  = abs_clip_tick % (uint32_t)new_tps;
-            if (tr->current_step >= cl->length) {
-                tr->current_step = (uint16_t)(cl->length - 1);
-                tr->tick_in_step = 0;
+            {
+                uint16_t _le = (uint16_t)(cl->loop_start + cl->length);
+                if (tr->current_step < cl->loop_start || tr->current_step >= _le) {
+                    tr->current_step = cl->loop_start;
+                    tr->tick_in_step = 0;
+                }
             }
             clip_build_steps_from_notes(cl);
             inst->state_dirty = 1;
@@ -2441,8 +2468,12 @@ static void set_param(void *instance, const char *key, const char *val) {
                     memcpy(dlc->note_tick_offset[len + i], dlc->note_tick_offset[i], 8 * sizeof(int16_t));
                 }
                 dlc->length = (uint16_t)(len * 2);
-                if (tr->drum_current_step[lane_idx] >= dlc->length)
-                    tr->drum_current_step[lane_idx] = (uint16_t)(dlc->length - 1);
+                {
+                    uint16_t _le = (uint16_t)(dlc->loop_start + dlc->length);
+                    if (tr->drum_current_step[lane_idx] < dlc->loop_start
+                            || tr->drum_current_step[lane_idx] >= _le)
+                        tr->drum_current_step[lane_idx] = dlc->loop_start;
+                }
                 clip_migrate_to_notes(dlc);
                 inst->state_dirty = 1;
                 return;
@@ -2593,8 +2624,12 @@ static void set_param(void *instance, const char *key, const char *val) {
                       dlc->stretch_exp--;
                   }
                 } /* end gmax_bs/off_clamp block */
-                if (tr->drum_current_step[lane_idx] >= dlc->length)
-                    tr->drum_current_step[lane_idx] = (uint16_t)(dlc->length - 1);
+                {
+                    uint16_t _le = (uint16_t)(dlc->loop_start + dlc->length);
+                    if (tr->drum_current_step[lane_idx] < dlc->loop_start
+                            || tr->drum_current_step[lane_idx] >= _le)
+                        tr->drum_current_step[lane_idx] = dlc->loop_start;
+                }
                 any = 0;
                 for (i = 0; i < (int)dlc->length; i++)
                     if (dlc->steps[i]) { any = 1; break; }
@@ -2753,9 +2788,13 @@ static void set_param(void *instance, const char *key, const char *val) {
                 dlc->length = (uint16_t)new_len32;
                 tr->drum_current_step[lane_idx] = (uint16_t)(abs_tick / (uint32_t)new_tps);
                 tr->drum_tick_in_step[lane_idx] = abs_tick % (uint32_t)new_tps;
-                if (tr->drum_current_step[lane_idx] >= dlc->length) {
-                    tr->drum_current_step[lane_idx] = (uint16_t)(dlc->length - 1);
-                    tr->drum_tick_in_step[lane_idx] = 0;
+                {
+                    uint16_t _le = (uint16_t)(dlc->loop_start + dlc->length);
+                    if (tr->drum_current_step[lane_idx] < dlc->loop_start
+                            || tr->drum_current_step[lane_idx] >= _le) {
+                        tr->drum_current_step[lane_idx] = dlc->loop_start;
+                        tr->drum_tick_in_step[lane_idx] = 0;
+                    }
                 }
                 clip_build_steps_from_notes(dlc);
                 inst->state_dirty = 1;
@@ -3529,8 +3568,12 @@ static void set_param(void *instance, const char *key, const char *val) {
                     dlc->length = (uint16_t)new_len;
                     dlc->stretch_exp--;
                 }
-                if (tr->drum_current_step[l_al] >= dlc->length)
-                    tr->drum_current_step[l_al] = (uint16_t)(dlc->length - 1);
+                {
+                    uint16_t _le = (uint16_t)(dlc->loop_start + dlc->length);
+                    if (tr->drum_current_step[l_al] < dlc->loop_start
+                            || tr->drum_current_step[l_al] >= _le)
+                        tr->drum_current_step[l_al] = dlc->loop_start;
+                }
                 any = 0;
                 for (i = 0; i < (int)dlc->length; i++)
                     if (dlc->steps[i]) { any = 1; break; }
@@ -3772,8 +3815,12 @@ static void set_param(void *instance, const char *key, const char *val) {
                     memcpy(dlc->note_tick_offset[len + i], dlc->note_tick_offset[i], 8 * sizeof(int16_t));
                 }
                 dlc->length = (uint16_t)(len * 2);
-                if (tr->drum_current_step[l_al] >= dlc->length)
-                    tr->drum_current_step[l_al] = (uint16_t)(dlc->length - 1);
+                {
+                    uint16_t _le = (uint16_t)(dlc->loop_start + dlc->length);
+                    if (tr->drum_current_step[l_al] < dlc->loop_start
+                            || tr->drum_current_step[l_al] >= _le)
+                        tr->drum_current_step[l_al] = dlc->loop_start;
+                }
                 clip_migrate_to_notes(dlc);
             }
             inst->state_dirty = 1;
@@ -4077,9 +4124,14 @@ static void set_param(void *instance, const char *key, const char *val) {
 
         if (!strcmp(sub, "clip_length")) {
             clip_t *cl = &tr->clips[tr->active_clip];
-            cl->length = (uint16_t)clamp_i(my_atoi(val), 1, SEQ_STEPS);
-            if (tr->current_step >= cl->length)
-                tr->current_step = (uint16_t)(cl->length - 1);
+            int max_len = SEQ_STEPS - (int)cl->loop_start;
+            if (max_len < 1) max_len = 1;
+            cl->length = (uint16_t)clamp_i(my_atoi(val), 1, max_len);
+            {
+                uint16_t _le = (uint16_t)(cl->loop_start + cl->length);
+                if (tr->current_step < cl->loop_start || tr->current_step >= _le)
+                    tr->current_step = cl->loop_start;
+            }
             return;
         }
 
@@ -4353,8 +4405,11 @@ static void set_param(void *instance, const char *key, const char *val) {
             }
             } /* end gmax_bs/off_clamp block */
 
-            if (tr->current_step >= cl->length)
-                tr->current_step = (uint16_t)(cl->length - 1);
+            {
+                uint16_t _le = (uint16_t)(cl->loop_start + cl->length);
+                if (tr->current_step < cl->loop_start || tr->current_step >= _le)
+                    tr->current_step = cl->loop_start;
+            }
 
             any = 0;
             for (i = 0; i < (int)cl->length; i++)
@@ -4380,8 +4435,11 @@ static void set_param(void *instance, const char *key, const char *val) {
                 memcpy(cl->note_tick_offset[len + i], cl->note_tick_offset[i], 8 * sizeof(int16_t));
             }
             cl->length = (uint16_t)(len * 2);
-            if (tr->current_step >= cl->length)
-                tr->current_step = (uint16_t)(cl->length - 1);
+            {
+                uint16_t _le = (uint16_t)(cl->loop_start + cl->length);
+                if (tr->current_step < cl->loop_start || tr->current_step >= _le)
+                    tr->current_step = cl->loop_start;
+            }
             clip_migrate_to_notes(cl);
             inst->state_dirty = 1;
             return;
