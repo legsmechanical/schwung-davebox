@@ -5101,6 +5101,9 @@ function _onCC_buttons(d1, d2) {
             S.sessionStepHeldCtx = 0;
         } else {
             S.loopJogActive = false;
+            /* Loop released before the held start step — treat as aborted
+             * gesture and fire the length-only fallback (single-tap semantics). */
+            if (S.loopGestureStart >= 0) _resolveLoopGesture(true);
         }
         forceRedraw();
     }
@@ -7066,6 +7069,78 @@ function _doShiftStepCommon(idx) {
     else if (idx === 8) _jumpToMenuLabel('Scale');
 }
 
+/* Loop+step gesture fire helpers — both the deferred fallback (length-only,
+ * loop_start=0) and the active range gesture (loop_start=a*16, length=(b-a+1)*16)
+ * route through the new atomic `*_loop_set` DSP keys so there is exactly one
+ * DSP write path. Packed encoding mirrors seq8_set_param.c: ls<<16 | length. */
+function _fireLoopWindowSet(track, ctx, startStep, lenSteps) {
+    if (typeof host_module_set_param !== 'function') return;
+    const packed = (startStep << 16) | (lenSteps & 0xFFFF);
+    if (ctx === 0) {
+        /* Melodic per-active-clip */
+        const ac = effectiveClip(track);
+        S.clipLength[track][ac]     = lenSteps;
+        S.clipLoopStart[track][ac]  = startStep;
+        S.clipLengthManuallySet[track][ac] = true;
+        const startPage = startStep >> 4;
+        const lastPage  = startPage + ((lenSteps + 15) >> 4) - 1;
+        if (S.trackCurrentPage[track] < startPage) S.trackCurrentPage[track] = startPage;
+        else if (S.trackCurrentPage[track] > lastPage) S.trackCurrentPage[track] = lastPage;
+        host_module_set_param('t' + track + '_c' + ac + '_loop_set', String(packed));
+    } else if (ctx === 1) {
+        /* Drum lane (active lane on this track) */
+        const lane = S.activeDrumLane[track];
+        S.drumLaneLength[track]    = lenSteps;
+        S.drumLaneLoopStart[track] = startStep;
+        S.drumLaneLengthManuallySet[track] = true;
+        const startPage = startStep >> 4;
+        const lastPage  = startPage + ((lenSteps + 15) >> 4) - 1;
+        if (S.drumStepPage[track] < startPage) S.drumStepPage[track] = startPage;
+        else if (S.drumStepPage[track] > lastPage) S.drumStepPage[track] = lastPage;
+        host_module_set_param('t' + track + '_l' + lane + '_loop_set', String(packed));
+    } else {
+        /* ALL LANES: all 32 drum lanes of the active drum clip get the same window */
+        S.drumLaneLength[track]    = lenSteps;
+        S.drumLaneLoopStart[track] = startStep;
+        S.drumLaneLengthManuallySet[track] = true;
+        const startPage = startStep >> 4;
+        const lastPage  = startPage + ((lenSteps + 15) >> 4) - 1;
+        if (S.drumStepPage[track] < startPage) S.drumStepPage[track] = startPage;
+        else if (S.drumStepPage[track] > lastPage) S.drumStepPage[track] = lastPage;
+        S.pendingDrumResync = 2; S.pendingDrumResyncTrack = track;
+        host_module_set_param('t' + track + '_all_lanes_loop_set', String(packed));
+    }
+}
+
+/* Snapshot the gesture context at press-time so a later release fires in the
+ * same context the user started in (immune to track/lane/bank flips). */
+function _loopGestureCtxFor(track) {
+    if (S.trackPadMode[track] !== PAD_MODE_DRUM) return 0;
+    return S.activeBank === 7 ? 2 : 1;
+}
+
+/* Drop any partial Loop+step gesture, optionally firing the length-only
+ * fallback if a B-tap never landed. Called on step release of the held
+ * start page AND on Loop button release. */
+function _resolveLoopGesture(fireFallback) {
+    const a = S.loopGestureStart;
+    if (a < 0) return;
+    const ctx   = S.loopGestureCtx;
+    const trk   = S.loopGestureTrack;
+    const fired = S.loopGestureFired;
+    S.loopGestureStart = -1;
+    S.loopGestureFired = false;
+    S.loopGestureTrack = -1;
+    S.loopGestureClip  = -1;
+    S.loopGestureLane  = -1;
+    if (fired) { forceRedraw(); return; }
+    if (fireFallback) {
+        /* Existing single-tap semantics: length=(a+1)*16, loop_start=0 */
+        _fireLoopWindowSet(trk, ctx, 0, (a + 1) * 16);
+    }
+    forceRedraw();
+}
+
 function _onStepButtons(d1, d2) {
     if (S.tapTempoOpen) return;
     if (d2 > 0 && S.shiftTrackLEDActive) { S.shiftTrackLEDActive = false; S.screenDirty = true; }
@@ -7111,37 +7186,31 @@ function _onStepButtons(d1, d2) {
     } else if (S.loopHeld) {
         if (S.recordArmed && !S.recordCountingIn) {
             /* Block length changes during active recording */
-        } else if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
+        } else if (S.loopGestureStart < 0) {
+            /* First press: arm the gesture. Defer the actual DSP write to
+             * either a B-tap (range) or this step's release (length-only
+             * fallback) so a single tap retains its existing semantics. */
             const t = S.activeTrack;
-            const newLen = (idx + 1) * 16;
-            if (S.activeBank === 7) {
-                /* ALL LANES: set length on all drum lanes */
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('t' + t + '_all_lanes_length', String(newLen));
-                S.drumLaneLengthManuallySet[t] = true;
-                S.pendingDrumResync = 2; S.pendingDrumResyncTrack = t;
-            } else {
-                /* Drum: set active lane clip length */
-                const lane = S.activeDrumLane[t];
-                S.drumLaneLength[t] = newLen;
-                S.drumLaneLengthManuallySet[t] = true;
-                const maxPage = Math.max(0, Math.ceil(newLen / 16) - 1);
-                if (S.drumStepPage[t] > maxPage) S.drumStepPage[t] = maxPage;
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('t' + t + '_l' + lane + '_clip_length', String(newLen));
-            }
-        } else {
-        const ac      = effectiveClip(S.activeTrack);
-        const newLen  = (idx + 1) * 16;
-        S.clipLength[S.activeTrack][ac] = newLen;
-        S.clipLengthManuallySet[S.activeTrack][ac] = true;
-        const maxPage = Math.max(0, Math.ceil(newLen / 16) - 1);
-        if (S.trackCurrentPage[S.activeTrack] > maxPage)
-            S.trackCurrentPage[S.activeTrack] = maxPage;
-        if (typeof host_module_set_param === 'function')
-            host_module_set_param('t' + S.activeTrack + '_c' + ac + '_length', String(newLen));
+            S.loopGestureStart = idx;
+            S.loopGestureFired = false;
+            S.loopGestureCtx   = _loopGestureCtxFor(t);
+            S.loopGestureTrack = t;
+            S.loopGestureClip  = (S.loopGestureCtx === 0) ? effectiveClip(t) : -1;
+            S.loopGestureLane  = (S.loopGestureCtx === 1) ? S.activeDrumLane[t] : -1;
+            forceRedraw();
+        } else if (idx !== S.loopGestureStart) {
+            /* Second tap while holding start — fire the range. B<A swaps so
+             * the window is always [min, max]. Multiple B taps re-fire (last
+             * tap wins, allowing scrub without releasing the start page). */
+            const a = Math.min(S.loopGestureStart, idx);
+            const b = Math.max(S.loopGestureStart, idx);
+            const startStep = a * 16;
+            const lenSteps  = (b - a + 1) * 16;
+            _fireLoopWindowSet(S.loopGestureTrack, S.loopGestureCtx, startStep, lenSteps);
+            S.loopGestureFired = true;
+            forceRedraw();
         }
-        forceRedraw();
+        /* idx === loopGestureStart while held: ignore (same-page tap is a no-op) */
     } else if (S.copyHeld) {
         /* Copy + step button (Track View): step-to-step copy within active clip */
         const ac     = effectiveClip(S.activeTrack);
@@ -7413,6 +7482,15 @@ function _onStepButtons(d1, d2) {
 
 function _onPadRelease(status, d1, d2) {
     if (S.tapTempoOpen && d1 >= 68 && d1 <= 99) return;
+    /* Step buttons (notes 16-31): if a Loop+step gesture is in flight and
+     * the released step is the held start, resolve the gesture — fire the
+     * length-only fallback when no B-tap landed, or just clear state when
+     * the range already fired on the B-tap. */
+    if (d1 >= 16 && d1 <= 31 && S.loopGestureStart >= 0) {
+        const idx = d1 - 16;
+        if (idx === S.loopGestureStart) _resolveLoopGesture(true);
+        return;
+    }
     /* Swallow pad releases while SEQ ARP step-level editor is open. */
     if (!S.sessionView && S.activeBank === 4 && S.knobTouched === 4 &&
             (S.bankParams[S.activeTrack][4][4] | 0) !== 0 &&
