@@ -565,6 +565,8 @@ typedef struct {
     uint32_t global_tick;             /* steps elapsed since transport play; bar boundary = global_tick % 16 == 0 */
     uint32_t arp_master_tick;         /* free-running master tick for SEQ ARP; advances even while stopped, resets on transport play / count-in fire */
     int      emit_bypass_swing;       /* set to 1 around live-tap emissions; pfx_send/drum_pfx_send skip swing when nonzero */
+    int      in_queue_drain;          /* set inside pfx_q_fire/drum_pfx_q_fire so re-entered pfx_send/drum_pfx_send skip the swing block (preserving arp/looper/merge hooks but preventing re-queue) */
+    uint64_t swing_step_delay_offbeat;/* offbeat-step swing offset in samples; kept current independent of which step we're on so schedule-time swing helper doesn't recompute */
 
     /* DSP-side count-in: counts down in DSP ticks; fires transport+recording when done */
     int32_t  count_in_ticks;        /* remaining ticks; 0 = inactive */
@@ -1800,8 +1802,12 @@ static void pfx_send(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
      * directly (bypass_swing) so they don't re-enter pfx_send on fire.
      * Applies whether transport is playing or stopped (so ARP IN, SEQ ARP, and
      * drum repeats still swing with transport off). Live one-shot pad taps
-     * bypass via emit_bypass_swing so they never feel laggy. */
-    if (g_inst && g_inst->swing_step_delay > 0 && !g_inst->emit_bypass_swing) {
+     * bypass via emit_bypass_swing so they never feel laggy. Events re-entering
+     * from a queue drain (in_queue_drain) skip swing here — schedule-time swing
+     * already baked their fire_at, so re-queueing would scramble pair order. */
+    if (g_inst && g_inst->swing_step_delay > 0
+            && !g_inst->emit_bypass_swing
+            && !g_inst->in_queue_drain) {
         uint8_t st = status & 0xF0;
         if (st == 0x90 || st == 0x80) {
             pfx_q_insert(fx, fx->sample_counter + g_inst->swing_step_delay,
@@ -2365,7 +2371,34 @@ static void pfx_q_insert(play_fx_t *fx, uint64_t fire_at,
     fx->event_count++;
 }
 
+/* Schedule-time swing: returns the swing offset (samples) to add to fire_at if
+ * its target step is offbeat. Used at MIDI DLY echo, unison stagger, and
+ * deferred note-off schedule sites so each event individually evaluates its
+ * own swing based on where its fire_at lands — instead of being auto-shifted
+ * at fire time (which could reorder on/off pairs and produce hanging notes). */
+static uint64_t swing_offset_for_fire_at(seq8_instance_t *inst,
+                                         uint64_t fx_sample_counter,
+                                         uint64_t fire_at) {
+    if (!inst) return 0;
+    if (inst->swing_amt == 0) return 0;
+    if (inst->swing_step_delay_offbeat == 0) return 0;
+    if (inst->tick_delta == 0) return 0;
+    double spt = (double)MOVE_FRAMES_PER_BLOCK
+                 * (double)inst->tick_threshold / (double)inst->tick_delta;
+    if (spt <= 0.0) return 0;
+    int64_t delta_samples = (int64_t)fire_at - (int64_t)fx_sample_counter;
+    int64_t target_tick   = (int64_t)inst->arp_master_tick
+                            + (int64_t)((double)delta_samples / spt);
+    if (target_tick < 0) return 0;
+    uint64_t target_step = (uint64_t)target_tick / (uint64_t)TICKS_PER_STEP;
+    int offbeat = (inst->swing_res == 0)
+        ? (int)(target_step % 2 == 1)
+        : (int)((target_step / 2) % 2 == 1);
+    return offbeat ? inst->swing_step_delay_offbeat : (uint64_t)0;
+}
+
 static void pfx_q_fire(play_fx_t *fx, uint64_t now) {
+    if (g_inst) g_inst->in_queue_drain = 1;
     int f = 0;
     while (f < fx->event_count && fx->events[f].fire_at <= now) {
         if (fx->events[f].flags & PFX_EV_BYPASS_SWING)
@@ -2380,6 +2413,7 @@ static void pfx_q_fire(play_fx_t *fx, uint64_t now) {
             memmove(&fx->events[0], &fx->events[f],
                     (size_t)fx->event_count * sizeof(pfx_event_t));
     }
+    if (g_inst) g_inst->in_queue_drain = 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -2584,6 +2618,7 @@ static void pfx_sched_delay_ons(seq8_instance_t *inst, int scale_aware,
         an->reps[i].cumul_delay = (uint64_t)(cumul + 0.5);
 
         uint64_t ft   = base_time + an->reps[i].cumul_delay;
+        ft += swing_offset_for_fire_at(g_inst, fx->sample_counter, ft);
 
         uint8_t  on_s = (uint8_t)(0x90 | an->channel);
         int j;
@@ -2610,6 +2645,7 @@ static void pfx_sched_delay_offs(play_fx_t *fx, pfx_active_t *an,
             : -an->reps[i].gate_factor;
         if (rg < 1.0) rg = 1.0;
         uint64_t off = base_time + an->reps[i].cumul_delay + (uint64_t)(rg + 0.5);
+        off += swing_offset_for_fire_at(g_inst, fx->sample_counter, off);
         int j;
         for (j = 0; j < an->gen_count; j++) {
             int note = (int)an->gen_notes[j] + an->reps[i].pitch_offset;
@@ -2741,6 +2777,7 @@ static void pfx_note_on(seq8_instance_t *inst, seq8_track_t *tr,
     int c;
     for (c = 0; c < fx->unison; c++) {
         uint64_t stagger = now + (uint64_t)(UNISON_STAGGER * (c + 1));
+        stagger += swing_offset_for_fire_at(g_inst, fx->sample_counter, stagger);
         for (i = 0; i < gc; i++)
             pfx_q_insert(fx, stagger, on_s, gen[i], (uint8_t)v, 0);
     }
@@ -2774,10 +2811,12 @@ static void pfx_note_off(seq8_instance_t *inst, seq8_track_t *tr,
 
     int i;
     for (i = 0; i < an->gen_count; i++) {
-        if (off_time <= now)
+        if (off_time <= now) {
             pfx_send(fx, off_s, an->gen_notes[i], 0);
-        else
-            pfx_q_insert(fx, off_time, off_s, an->gen_notes[i], 0, 0);
+        } else {
+            uint64_t ft = off_time + swing_offset_for_fire_at(g_inst, now, off_time);
+            pfx_q_insert(fx, ft, off_s, an->gen_notes[i], 0, 0);
+        }
     }
 
     pfx_sched_delay_offs(fx, an, an->on_time + uni_ext, gate_smp);
@@ -2951,8 +2990,12 @@ static void drum_pfx_send(drum_pfx_t *px, uint8_t status, uint8_t d1, uint8_t d2
         }
     }
     /* Swing deferral. Mirrors pfx_send: applies in both transport states so
-     * Rpt1/Rpt2 swing while stopped; live drum taps bypass via emit_bypass_swing. */
-    if (g_inst && g_inst->swing_step_delay > 0 && !g_inst->emit_bypass_swing) {
+     * Rpt1/Rpt2 swing while stopped; live drum taps bypass via emit_bypass_swing.
+     * Events re-entering from the drum drain skip swing — schedule-time swing
+     * already baked their fire_at, so re-queueing would scramble pair order. */
+    if (g_inst && g_inst->swing_step_delay > 0
+            && !g_inst->emit_bypass_swing
+            && !g_inst->in_queue_drain) {
         uint8_t st = status & 0xF0;
         if (st == 0x90 || st == 0x80) {
             drum_pfx_q_insert(px, px->sample_counter + g_inst->swing_step_delay,
@@ -2964,6 +3007,7 @@ static void drum_pfx_send(drum_pfx_t *px, uint8_t status, uint8_t d1, uint8_t d2
 }
 
 static void drum_pfx_q_fire(drum_pfx_t *px, uint64_t now) {
+    if (g_inst) g_inst->in_queue_drain = 1;
     int f = 0;
     while (f < px->event_count && px->events[f].fire_at <= now) {
         if (px->events[f].flags & PFX_EV_BYPASS_SWING)
@@ -2978,6 +3022,7 @@ static void drum_pfx_q_fire(drum_pfx_t *px, uint64_t now) {
             memmove(&px->events[0], &px->events[f],
                     (size_t)px->event_count * sizeof(pfx_event_t));
     }
+    if (g_inst) g_inst->in_queue_drain = 0;
 }
 
 static double drum_pfx_spc(seq8_instance_t *inst, drum_pfx_t *px) {
@@ -3028,7 +3073,11 @@ static void drum_pfx_sched_delay_ons(drum_pfx_t *px, pfx_active_t *an,
         else
             an->reps[i].gate_factor = 1.0;
         an->reps[i].cumul_delay = (uint64_t)(cumul + 0.5);
-        drum_pfx_q_insert(px, base_time + an->reps[i].cumul_delay, on_s, note, (uint8_t)rep_vel, 0);
+        {
+            uint64_t ft = base_time + an->reps[i].cumul_delay;
+            ft += swing_offset_for_fire_at(g_inst, px->sample_counter, ft);
+            drum_pfx_q_insert(px, ft, on_s, note, (uint8_t)rep_vel, 0);
+        }
         cur_delay *= (1.0 + px->fb_clock / 100.0);
         if (cur_delay < 1.0) cur_delay = 1.0;
     }
@@ -3045,6 +3094,7 @@ static void drum_pfx_sched_delay_offs(drum_pfx_t *px, pfx_active_t *an,
             : -an->reps[i].gate_factor;
         if (rg < 1.0) rg = 1.0;
         uint64_t off = base_time + an->reps[i].cumul_delay + (uint64_t)(rg + 0.5);
+        off += swing_offset_for_fire_at(g_inst, px->sample_counter, off);
         drum_pfx_q_insert(px, off, off_s, note, 0, 0);
     }
 }
@@ -6027,18 +6077,16 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                     int sw_even = (inst->swing_res == 0)
                         ? (int)(step_counter % 2 == 1)
                         : (int)((step_counter / 2) % 2 == 1);
-                    if (sw_even) {
-                        uint32_t pair_ticks = (inst->swing_res == 0)
-                            ? (uint32_t)TICKS_PER_STEP * 2 : (uint32_t)TICKS_PER_STEP * 4;
-                        uint32_t off_ticks = (uint32_t)inst->swing_amt * pair_ticks / 400;
-                        double spt = (double)MOVE_FRAMES_PER_BLOCK
-                                     * (double)inst->tick_threshold / (double)inst->tick_delta;
-                        inst->swing_step_delay = (uint64_t)(off_ticks * spt + 0.5);
-                    } else {
-                        inst->swing_step_delay = 0;
-                    }
+                    uint32_t pair_ticks = (inst->swing_res == 0)
+                        ? (uint32_t)TICKS_PER_STEP * 2 : (uint32_t)TICKS_PER_STEP * 4;
+                    uint32_t off_ticks = (uint32_t)inst->swing_amt * pair_ticks / 400;
+                    double spt = (double)MOVE_FRAMES_PER_BLOCK
+                                 * (double)inst->tick_threshold / (double)inst->tick_delta;
+                    inst->swing_step_delay_offbeat = (uint64_t)(off_ticks * spt + 0.5);
+                    inst->swing_step_delay = sw_even ? inst->swing_step_delay_offbeat : (uint64_t)0;
                 } else {
-                    inst->swing_step_delay = 0;
+                    inst->swing_step_delay         = 0;
+                    inst->swing_step_delay_offbeat = 0;
                 }
             }
             looper_tick(inst);
@@ -6085,18 +6133,16 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 int sw_even = (inst->swing_res == 0)
                     ? (int)(inst->global_tick % 2 == 1)
                     : (int)((inst->global_tick / 2) % 2 == 1);
-                if (sw_even) {
-                    uint32_t pair_ticks = (inst->swing_res == 0)
-                        ? (uint32_t)TICKS_PER_STEP * 2 : (uint32_t)TICKS_PER_STEP * 4;
-                    uint32_t off_ticks = (uint32_t)inst->swing_amt * pair_ticks / 400;
-                    double spt = (double)MOVE_FRAMES_PER_BLOCK
-                                 * (double)inst->tick_threshold / (double)inst->tick_delta;
-                    inst->swing_step_delay = (uint64_t)(off_ticks * spt + 0.5);
-                } else {
-                    inst->swing_step_delay = 0;
-                }
+                uint32_t pair_ticks = (inst->swing_res == 0)
+                    ? (uint32_t)TICKS_PER_STEP * 2 : (uint32_t)TICKS_PER_STEP * 4;
+                uint32_t off_ticks = (uint32_t)inst->swing_amt * pair_ticks / 400;
+                double spt = (double)MOVE_FRAMES_PER_BLOCK
+                             * (double)inst->tick_threshold / (double)inst->tick_delta;
+                inst->swing_step_delay_offbeat = (uint64_t)(off_ticks * spt + 0.5);
+                inst->swing_step_delay = sw_even ? inst->swing_step_delay_offbeat : (uint64_t)0;
             } else {
-                inst->swing_step_delay = 0;
+                inst->swing_step_delay         = 0;
+                inst->swing_step_delay_offbeat = 0;
             }
         }
 
