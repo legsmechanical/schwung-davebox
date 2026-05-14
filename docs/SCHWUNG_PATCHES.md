@@ -66,12 +66,25 @@ Verify each commit is present before deploying:
 cd ~/schwung && git log --oneline | grep <sha>
 ```
 
-Build and deploy shim:
+Build and deploy:
 ```sh
 cd ~/schwung && ./scripts/build.sh
+
+# shim — required for any change to schwung_shim.c or shadow_constants.h:
 scp ~/schwung/build/schwung-shim.so root@move.local:/data/UserData/schwung/schwung-shim.so
+
+# shadow_ui binary + shadow_ui.js — REQUIRED for any change to shadow_ui.c or shadow_ui.js
+# (e.g. co-run features add JS bindings that are compiled into the shadow_ui binary).
+# Must kill the running shadow_ui first; binary mmap holds the inode otherwise.
+ssh root@move.local "killall -9 shadow_ui 2>/dev/null; true"
+scp ~/schwung/build/shadow/shadow_ui ~/schwung/build/shadow/shadow_ui.js root@move.local:/tmp/
+ssh root@move.local "mv /tmp/shadow_ui /data/UserData/schwung/shadow/shadow_ui \
+                  && mv /tmp/shadow_ui.js /data/UserData/schwung/shadow/shadow_ui.js \
+                  && chmod +x /data/UserData/schwung/shadow/shadow_ui"
 ```
-Then restart Move. Deploy to `/data/UserData/schwung/schwung-shim.so` (data partition), not `/usr/lib/schwung-shim.so` (symlink recreated on every boot by `schwung-heal`).
+Then restart Move. All deploy paths are under `/data/UserData/schwung/` (data partition); NEVER touch `/usr/lib/schwung-shim.so` or `/usr/lib/schwung/shadow/*` (symlinks recreated on every boot by `schwung-heal`).
+
+**Common gotcha:** deploying only the shim after a co-run change makes the menu items silently disappear — the capability-gate checks `typeof shadow_set_corun_chain_edit === 'function'` look at the running `shadow_ui` binary, not the shim. If `Edit Slot...` / `Edit Synth...` are missing after a rebase deploy, you forgot the shadow_ui step.
 
 ## Patch table
 
