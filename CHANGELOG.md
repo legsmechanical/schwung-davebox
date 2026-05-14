@@ -7,6 +7,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com). Add entries to
 the section into a versioned heading at release time.
 
 ## [Unreleased]
+### Documentation
+- **MANUAL.md crash disclaimers softened to reflect Schwung v0.9.13.** §12.4 and §15 previously warned that routing live external MIDI through pfx on a Move-routed track would crash the device. Schwung v0.9.13 (Vestal, May 14 2026) ships the upstream fixes — `EXT_MIDI_REMAP_BLOCK` (PR #76), the inject SIGABRT guard (PR #77), and a follow-up dedup pass (commit `62a04135`) that's explicitly gated as a no-op when dAVEBOx is loaded. dAVEBOx still bypasses the chain for ROUTE_MOVE live input by design; the disclaimer no longer warns of a hard crash on current Schwung versions.
+
 ### Fixes
 - **Drum clip switches keep polyrhythmic lanes in phase.** Switching between drum clips on the same track during playback used to jolt lanes whose loop length is shorter than 16 steps (e.g. 5, 7, 9, 12) — the immediate-launch path preserved the old lane's wrapped step (often arbitrary in the new clip), and the quantized-launch / page-stop / scene-launch / launch-quant-switch-to-Now paths reset every lane to `loop_start` mid-cycle. All five DSP launch sites now anchor each lane's playhead to where the new clip's lane params would put it if they had been driving the lane since transport start (`loop_start + (elapsed_render_ticks / lane.tps) % lane.length`). For the common case of length=16 + tps=24, the anchor coincides with `loop_start` at every quant boundary — no behavior change there. Short non-aligned lanes now stay phase-locked across switches in both Now and quantized modes, including across Scene launches.
 

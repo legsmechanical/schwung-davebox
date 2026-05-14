@@ -1268,7 +1268,7 @@ dAVEBOx rechannelizes incoming MIDI to match the active track's configured chann
 | **Move** | The effects chain does **not** apply. Notes reach the Move instrument directly, on the channel matching your controller's output. |
 | **External** | The chain applies; output goes back out via USB-A. |
 
-> **⚠ Important.** Routing live external MIDI through dAVEBOx's effect chain on Move-routed tracks causes an echo cascade that crashes the device. This is an architectural constraint and is the reason ROUTE_MOVE bypasses the chain for live input. Use **Schwung** routing if you need effects processing on a live external controller.
+> **⚠ Important.** Routing live external MIDI through dAVEBOx's effect chain on Move-routed tracks creates an echo cascade. Schwung **v0.9.13** suppresses it upstream; earlier Schwung versions would crash on this. dAVEBOx bypasses the chain for live input on ROUTE_MOVE tracks regardless — both as a safety net on older Schwung and to keep behavior predictable across versions. Use **Schwung** routing if you need effects processing on a live external controller.
 
 ## 12.5 External MIDI output
 
@@ -1407,7 +1407,7 @@ These are real-world quirks worth knowing.
 
 | Limitation | Notes |
 |---|---|
-| **External MIDI into Move-routed tracks bypasses the effects chain** | Routing live external MIDI through pfx on a Move-routed track causes an echo cascade and crashes the device. dAVEBOx skips the chain for live input on Move-routed tracks; the keyboard plays the Move track whose MIDI In matches the keyboard's channel. Use **Schwung** routing if you need effects on live external MIDI. |
+| **External MIDI into Move-routed tracks bypasses the effects chain** | Routing live external MIDI through pfx on a Move-routed track creates an echo cascade. Schwung **v0.9.13** suppresses it upstream; earlier Schwung versions would crash on this. dAVEBOx skips the chain for live input on Move-routed tracks regardless; the keyboard plays the Move track whose MIDI In matches the keyboard's channel. Use **Schwung** routing if you need effects on live external MIDI. |
 | **Hardware volume knob briefly interrupts MIDI** when turned. Avoid adjusting during performance-critical moments. |
 | **Powering Move off from within dAVEBOx causes a brief hang** before shutdown. |
 | **CC automation lanes are not swung** (intentional — keeps automation precisely on the grid). |
