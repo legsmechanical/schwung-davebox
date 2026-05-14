@@ -2219,19 +2219,17 @@ function applyBankParam(t, bankIdx, knobIdx, val) {
 }
 
 
-/* Microtask-batched live-note dispatch. Multiple set_param calls within a
- * single JS turn / audio buffer coalesce to the last write — regardless of
- * key. Distinct keys do NOT defeat this (verified empirically: a 3-key
- * chord firing 3 distinct keys saw DSP receive only the first and last).
- * Defeat: call set_param exactly once per turn, with the full chord batched
- * into the existing tN_live_notes omnibus payload ("on p1 v1 on p2 v2 ...").
- * We queue events synchronously and drain via one microtask scheduled per
- * turn — runs after the current handler returns but before the next event
- * handler. Net vs the original tick-based drain: zero JS tick deferral and
- * full chord survival. */
-let _liveNoteDrainScheduled = false;
+/* Tick-batched live-note dispatch. Multiple set_param calls within a single
+ * audio buffer coalesce to the last write — regardless of key — so a 3-pad
+ * chord that fires 3 separate tN_live_notes microtasks within one buffer
+ * loses two of them. We previously batched via a Promise microtask which
+ * runs once per JS turn, but the host dispatches each onMidiMessage as its
+ * own turn — so multiple pad CCs in one buffer still produced multiple
+ * coalescing set_params. Drain on tick instead: events queue synchronously
+ * from any number of onMidiMessage calls; tick() drains once per audio
+ * buffer into one set_param per track. Cost: up to ~10 ms (one tick) of
+ * live-monitor latency. Benefit: chord-press survives intact. */
 function _drainLiveNotes() {
-    _liveNoteDrainScheduled = false;
     if (typeof host_module_set_param !== 'function') return;
     for (let _t = 0; _t < NUM_TRACKS; _t++) {
         if (pendingLiveNotes[_t].length === 0) continue;
@@ -2245,18 +2243,11 @@ function _drainLiveNotes() {
         host_module_set_param('t' + _t + '_live_notes', parts.join(' '));
     }
 }
-function _scheduleLiveNoteDrain() {
-    if (_liveNoteDrainScheduled) return;
-    _liveNoteDrainScheduled = true;
-    Promise.resolve().then(_drainLiveNotes);
-}
 function queueLiveNoteOn(t, pitch, vel) {
     pendingLiveNotes[t].push({ isOff: false, pitch, vel });
-    _scheduleLiveNoteDrain();
 }
 function queueLiveNoteOff(t, pitch) {
     pendingLiveNotes[t].push({ isOff: true, pitch });
-    _scheduleLiveNoteDrain();
 }
 
 function liveSendNote(t, type, pitch, vel, rawVel) {
@@ -3649,6 +3640,11 @@ var _lastSessionView = false;
 
 globalThis.tick = function () {
     S.tickCount++;
+
+    /* Drain live-note events queued by onMidiMessage handlers since the last
+     * tick. One set_param per track per tick — survives same-buffer
+     * coalescing of multiple pad presses in one audio buffer. */
+    _drainLiveNotes();
 
     /* Reapply cable-2 channel remap if anything affecting it changed. */
     {
@@ -6650,8 +6646,9 @@ function _onPadPressTrackView(status, d1, d2) {
                 /* Record hit at zone velocity if armed */
                 if (S.recordArmed && !S.recordCountingIn && t === S.recordArmedTrack) {
                     _drumRecNoteOns.push({ track: t, laneNote: laneNote, vel: zoneVel });
-                    if (S.trackRoute[t] === 1)
-                        queueLiveNoteOn(t, laneNote, zoneVel);
+                    /* Monitor: DSP drum_record_note_on inline-fires live_note_on for
+                     * ROUTE_MOVE, so a separate live_notes set_param here would just
+                     * coalesce with the record payload. Mirrors melodic recording. */
                     S.pendingDrumLaneResync      = 3;
                     S.pendingDrumLaneResyncTrack = t;
                     S.pendingDrumLaneResyncLane  = lane_vp;
@@ -6747,8 +6744,8 @@ function _onPadPressTrackView(status, d1, d2) {
                         const tvo = S.trackVelOverride[t];
                         const recVel = tvo > 0 ? tvo : vel;
                         _drumRecNoteOns.push({ track: t, laneNote: laneNote, vel: recVel });
-                        if (S.trackRoute[t] === 1)
-                            queueLiveNoteOn(t, laneNote, recVel);
+                        /* Monitor: DSP drum_record_note_on inline-fires live_note_on for
+                         * ROUTE_MOVE; explicit queueLiveNoteOn here would coalesce. */
                         S.pendingDrumLaneResync      = 3;
                         S.pendingDrumLaneResyncTrack = t;
                         S.pendingDrumLaneResyncLane  = lane;

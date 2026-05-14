@@ -4054,6 +4054,12 @@ static void set_param(void *instance, const char *key, const char *val) {
                         tr->drum_rec_pending_step[lane]   = step;
                         tr->drum_rec_pending_active[lane] = 1;
                     }
+                    /* Live monitoring for ROUTE_MOVE: play note immediately so the
+                     * performer hears it without a separate live_notes set_param that
+                     * would race/coalesce with this drum_record_note_on call. Mirrors
+                     * the melodic record_note_on pattern. */
+                    if (tr->pfx.route == ROUTE_MOVE)
+                        live_note_on(inst, tr, (uint8_t)pitch, (uint8_t)vel);
                     }
                 }
             }
