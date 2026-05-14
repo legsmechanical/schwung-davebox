@@ -2,7 +2,7 @@
 
 Local patches applied to `~/schwung/` that must be re-applied after any Schwung upgrade.
 
-Current base: **v0.9.11** (`62529d77`), branch `main` on the `legsmechanical/schwung` fork. (Chain-edit co-run work landed via `feat/ui-split` and was merged to fork `main` on 2026-05-12.)
+Current base: **v0.9.13** (`ef51938b`), branch `main` on the `legsmechanical/schwung` fork. Rebased onto v0.9.13 on 2026-05-14 — inject-race, `EXT_MIDI_REMAP_BLOCK`, and cable-2 routing patches all dropped from the local patch set (now upstream in v0.9.13 via PRs #76 / #77 / #78 + maintainer follow-up `62a04135`). Only the co-run features remain local.
 
 ## Why this is split into two repos
 
@@ -28,7 +28,7 @@ All downstream calls (`shadow_set_corun_chain_edit`, `shadow_get_corun_chain_edi
 
 Day-to-day dAVEBOx development is normal — work on `main`, commit, release via `scripts/cut_release.sh`. The patched-Schwung side has its own cadence:
 
-1. **When upstream Schwung tags a new release** (e.g. `v0.9.12`):
+1. **When upstream Schwung tags a new release** (e.g. `v0.9.14`):
    - Fetch and check out the new tag in `~/schwung`.
    - Cherry-pick the local commits from the previous fork-`main` onto the new tag (or rebase). Resolve any conflicts.
    - Regenerate the patch:
@@ -75,20 +75,24 @@ Then restart Move. Deploy to `/data/UserData/schwung/schwung-shim.so` (data part
 
 ## Patch table
 
-| PR | Commit (on fork/main) | File | Description |
-|----|----------------------------|------|-------------|
-| [#71](https://github.com/charlesvestal/schwung/pull/71) | `e70d7340` | `src/host/shadow_midi.c` | Defer cable-2 inject when cable-0 or cable-2 hardware is active — prevents SIGABRT in ROUTE_MOVE external MIDI monitoring |
-| [#72](https://github.com/charlesvestal/schwung/pull/72) | `5b74e6cc` + `4a95b4d6` | `src/host/shadow_midi.c` | Hold inject drain for 2 frames (~6ms) after overtake exit — prevents SIGABRT when suspending (Back) with a ROUTE_MOVE drum pattern playing |
-| (local) | `7c31d048` | `src/host/shadow_midi.c` | Defer on ANY MIDI_IN event (not just cable-0/2) — external controller + ROUTE_MOVE clip crash |
-| (local) | `8f1a9d87` | `src/host/shadow_midi.c` | Bail inject if existing events must be skipped (`saw_existing`) — prevents write at non-zero offset |
-| (local) | `3ae7e206` | `src/host/shadow_midi.c` | Strengthen any-cable guard — scan all MIDI_IN slots, not just slot 0 |
-| (local) | `9ac557c5` + `b01a1e2e` | `src/schwung_shim.c`, `src/host/shadow_constants.h`, `src/shadow/shadow_ui.c` | EXT_MIDI_REMAP_BLOCK: suppress cable-2 note-ons from Move on non-ROUTE_MOVE tracks; patches sh_midi (not hardware) to avoid crash |
-| (local) | `743bb18f` | `src/schwung_shim.c`, `src/host/shadow_midi.c`, `src/host/shadow_midi.h` | Cable-2 passthrough: inject cable-2 as cable-0 for Move native routing + dispatch to Schwung chain slots by channel when no tool active (overtake_mode==0 or suspend_overtake==1) |
-| (local) | `456c0a9e` | `src/schwung_shim.c` | Remove THRU-slot gate from cable-2 remap: `any_thru_slot_active()` was silently blocking rechannelization whenever any THRU slot existed |
-| (local) | `c31cf29c` → `9f0d2c8c` (5 commits) | `src/host/shadow_constants.h`, `src/schwung_shim.c`, `src/shadow/shadow_ui.c`, `src/shadow/shadow_ui.js` | **Chain-edit co-run mode.** Lets shadow_ui's chain editor (slot settings, hierarchy editor, preset browser) render and accept input while an overtake tool module (dAVEBOx) is still loaded and ticking. See [Co-run architecture](#co-run-architecture) below. |
-| (local) | `9a32ccf6` + `1e27f983` (2 commits) | `src/host/shadow_constants.h`, `src/schwung_shim.c`, `src/shadow/shadow_ui.c` | **Move-native co-run mode.** Lets Move firmware's preset browser + device-edit pages render to the OLED and accept jog/track-button/knob/Shift/Back input while an overtake tool (dAVEBOx) keeps pads, step buttons, transport, and Menu. Pure shim-level split — no `shadow_ui.js` change because Move firmware is a separate process reading the shadow_mailbox MIDI_IN region directly. See [Move-native co-run architecture](#move-native-co-run-architecture) below. |
+| Commit (on fork/main) | Files | Description |
+|---|---|---|
+| `97e05e7e` → `b5d83ec4` (5 commits) | `src/host/shadow_constants.h`, `src/schwung_shim.c`, `src/shadow/shadow_ui.c`, `src/shadow/shadow_ui.js` | **Chain-edit co-run mode.** Lets shadow_ui's chain editor (slot settings, hierarchy editor, preset browser) render and accept input while an overtake tool module (dAVEBOx) is still loaded and ticking. See [Co-run architecture](#co-run-architecture) below. |
+| `add063c3` + `f0f4cd6c` (2 commits) | `src/host/shadow_constants.h`, `src/schwung_shim.c`, `src/shadow/shadow_ui.c` | **Move-native co-run mode.** Lets Move firmware's preset browser + device-edit pages render to the OLED and accept jog/track-button/knob/Shift/Back input while an overtake tool (dAVEBOx) keeps pads, step buttons, transport, and Menu. Pure shim-level split — no `shadow_ui.js` change because Move firmware is a separate process reading the shadow_mailbox MIDI_IN region directly. See [Move-native co-run architecture](#move-native-co-run-architecture) below. |
 
-PRs #71/#72 are upstream patches. Local commits fix inject races, add cable-2 BLOCK support for external MIDI isolation, and add the chain-edit + Move-native co-run features for dAVEBOx.
+Local commits add the chain-edit + Move-native co-run features for dAVEBOx; all previous inject-race, `EXT_MIDI_REMAP_BLOCK`, and cable-2 routing patches were upstreamed into Schwung v0.9.13 and are no longer carried locally.
+
+### Historical patches now upstream in v0.9.13
+
+The following local commits were retired when their upstream equivalents shipped:
+
+- Inject-race deferrals (4 commits) → PR #77 (`99f4e6c2`) + maintainer follow-up `62a04135`
+- `EXT_MIDI_REMAP_BLOCK` (2 commits) → PR #76 (`a08398db`)
+- Cable-2 passthrough to Move + chain slots (1 commit) → PR #78 (`f3b27227`) + `62a04135`
+- THRU-slot gate removal from cable-2 remap (1 commit) → also covered upstream
+- Earlier inject-drain defer variants (4 commits) → superseded by PR #77
+
+PRs #71 / #72 (earlier defer/hold variants) were closed unmerged in favor of PR #77.
 
 ## Co-run architecture
 
