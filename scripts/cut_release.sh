@@ -39,7 +39,7 @@ if git rev-parse "$TAG" >/dev/null 2>&1; then
     exit 1
 fi
 
-# --- update CHANGELOG.md + release.json (atomic via Python) -----------------
+# --- update CHANGELOG.md + release.json + module.json (atomic via Python) ---
 python3 - "$VERSION" "$DATE" <<'PYEOF'
 import sys, re, json, pathlib
 
@@ -71,6 +71,16 @@ data["download_url"] = (
 )
 rj.write_text(json.dumps(data, indent=2) + "\n")
 print(f"  release.json: version → {version}")
+
+# module.json: bump version so the tarball that build.sh produces reports
+# the correct version. Without this the Module Store advertises v$VERSION
+# (from release.json), downloads the tarball, finds the bundled module.json
+# still pinned at the previous version, and re-offers the update forever.
+mj = pathlib.Path("module.json")
+mdata = json.loads(mj.read_text())
+mdata["version"] = version
+mj.write_text(json.dumps(mdata, indent=4) + "\n")
+print(f"  module.json: version → {version}")
 PYEOF
 
 # --- build fresh tarball ----------------------------------------------------
@@ -79,7 +89,7 @@ echo "Building release tarball..."
 ./scripts/build.sh
 
 # --- commit, tag, push ------------------------------------------------------
-git add CHANGELOG.md release.json
+git add CHANGELOG.md release.json module.json
 git commit -m "release: $TAG"
 git tag -a "$TAG" -m "Release $TAG"
 
