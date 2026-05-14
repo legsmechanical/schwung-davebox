@@ -3979,32 +3979,38 @@ static void set_param(void *instance, const char *key, const char *val) {
         }
 
         if (!strcmp(sub, "drum_record_note_on")) {
-            /* tN_drum_record_note_on "pitch vel"
-             * Routes to the drum lane whose midi_note matches pitch.
-             * Inserts a step hit at the lane's current playback position.
-             * Gate initially GATE_TICKS; updated to actual hold time on drum_record_note_off. */
+            /* tN_drum_record_note_on "p1 v1 [p2 v2 ...]"
+             * JS batches all queued drum note-ons for the recordArmedTrack into
+             * one call so a chord-press lands in DSP within a single audio
+             * buffer (previously trickled one-per-tick via .shift()).
+             * Each pitch routes to the drum lane whose midi_note matches and
+             * inserts a step hit at that lane's current playback position.
+             * Gate initially GATE_TICKS; updated to actual hold time on
+             * drum_record_note_off. */
             if (!tr->recording) return;
             {
                 int ac = (int)tr->active_clip;
                 drum_clip_t *dc = &tr->drum_clips[ac];
                 const char *sp = val;
-                while (*sp == ' ') sp++;
-                int pitch = 0;
-                while (*sp >= '0' && *sp <= '9') { pitch = pitch * 10 + (*sp++ - '0'); }
-                pitch = clamp_i(pitch, 0, 127);
-                while (*sp == ' ') sp++;
-                int vel = SEQ_VEL;
-                if (*sp >= '0' && *sp <= '9') {
-                    vel = 0;
-                    while (*sp >= '0' && *sp <= '9') { vel = vel * 10 + (*sp++ - '0'); }
-                }
-                vel = clamp_i(vel, 1, 127);
-                /* Find lane by matching midi_note */
-                int lane = -1;
-                { int l; for (l = 0; l < DRUM_LANES; l++) {
-                    if (dc->lanes[l].midi_note == (uint8_t)pitch) { lane = l; break; }
-                }}
-                if (lane >= 0) {
+                while (*sp) {
+                    while (*sp == ' ') sp++;
+                    if (!*sp) break;
+                    int pitch = 0;
+                    while (*sp >= '0' && *sp <= '9') { pitch = pitch * 10 + (*sp++ - '0'); }
+                    pitch = clamp_i(pitch, 0, 127);
+                    while (*sp == ' ') sp++;
+                    int vel = SEQ_VEL;
+                    if (*sp >= '0' && *sp <= '9') {
+                        vel = 0;
+                        while (*sp >= '0' && *sp <= '9') { vel = vel * 10 + (*sp++ - '0'); }
+                    }
+                    vel = clamp_i(vel, 1, 127);
+                    /* Find lane by matching midi_note */
+                    int lane = -1;
+                    { int l; for (l = 0; l < DRUM_LANES; l++) {
+                        if (dc->lanes[l].midi_note == (uint8_t)pitch) { lane = l; break; }
+                    }}
+                    if (lane >= 0) {
                     clip_t   *dlc  = &dc->lanes[lane].clip;
                     uint16_t  step = tr->drum_current_step[lane];
                     if (step < dlc->length && dlc->step_note_count[step] == 0) {
@@ -4048,42 +4054,52 @@ static void set_param(void *instance, const char *key, const char *val) {
                         tr->drum_rec_pending_step[lane]   = step;
                         tr->drum_rec_pending_active[lane] = 1;
                     }
+                    }
                 }
             }
             return;
         }
 
         if (!strcmp(sub, "drum_record_note_off")) {
-            /* tN_drum_record_note_off "pitch"
-             * Closes the gate for the last drum_record_note_on on the matching lane,
-             * computing actual hold duration from elapsed render ticks. */
+            /* tN_drum_record_note_off "p1 [p2 ...]"
+             * JS batches all queued drum note-offs for the recordArmedTrack into
+             * one call. Each pitch closes the gate for the last
+             * drum_record_note_on on the matching lane, computing actual hold
+             * duration from elapsed render ticks. */
             if (!tr->recording) return;
             {
-                int pitch2 = clamp_i(my_atoi(val), 0, 127);
                 int ac2    = (int)tr->active_clip;
                 drum_clip_t *dc2 = &tr->drum_clips[ac2];
-                int lane2  = -1;
-                { int l2; for (l2 = 0; l2 < DRUM_LANES; l2++) {
-                    if (dc2->lanes[l2].midi_note == (uint8_t)pitch2) { lane2 = l2; break; }
-                }}
-                if (lane2 >= 0 && tr->drum_rec_pending_active[lane2]) {
-                    clip_t   *dlc2     = &dc2->lanes[lane2].clip;
-                    uint16_t  step2    = tr->drum_rec_pending_step[lane2];
-                    uint32_t  tps2     = TICKS_PER_STEP;
-                    uint32_t  on_tick  = tr->drum_rec_pending_tick[lane2];
-                    uint32_t  off_tick = (uint32_t)tr->drum_current_step[lane2] * tps2
-                                        + tr->drum_tick_in_step[lane2];
-                    uint32_t  clip_ticks = (uint32_t)dlc2->length * tps2;
-                    uint32_t  gate;
-                    if (off_tick >= on_tick) gate = off_tick - on_tick;
-                    else                     gate = clip_ticks - on_tick + off_tick;
-                    if (gate < 1)          gate = 1;
-                    if (gate > clip_ticks) gate = clip_ticks;
-                    if (step2 < dlc2->length) {
-                        dlc2->step_gate[step2] = (uint16_t)gate;
-                        clip_migrate_to_notes(dlc2);
+                const char *sp2 = val;
+                while (*sp2) {
+                    while (*sp2 == ' ') sp2++;
+                    if (!*sp2) break;
+                    int pitch2 = 0;
+                    while (*sp2 >= '0' && *sp2 <= '9') { pitch2 = pitch2 * 10 + (*sp2++ - '0'); }
+                    pitch2 = clamp_i(pitch2, 0, 127);
+                    int lane2  = -1;
+                    { int l2; for (l2 = 0; l2 < DRUM_LANES; l2++) {
+                        if (dc2->lanes[l2].midi_note == (uint8_t)pitch2) { lane2 = l2; break; }
+                    }}
+                    if (lane2 >= 0 && tr->drum_rec_pending_active[lane2]) {
+                        clip_t   *dlc2     = &dc2->lanes[lane2].clip;
+                        uint16_t  step2    = tr->drum_rec_pending_step[lane2];
+                        uint32_t  tps2     = TICKS_PER_STEP;
+                        uint32_t  on_tick  = tr->drum_rec_pending_tick[lane2];
+                        uint32_t  off_tick = (uint32_t)tr->drum_current_step[lane2] * tps2
+                                            + tr->drum_tick_in_step[lane2];
+                        uint32_t  clip_ticks = (uint32_t)dlc2->length * tps2;
+                        uint32_t  gate;
+                        if (off_tick >= on_tick) gate = off_tick - on_tick;
+                        else                     gate = clip_ticks - on_tick + off_tick;
+                        if (gate < 1)          gate = 1;
+                        if (gate > clip_ticks) gate = clip_ticks;
+                        if (step2 < dlc2->length) {
+                            dlc2->step_gate[step2] = (uint16_t)gate;
+                            clip_migrate_to_notes(dlc2);
+                        }
+                        tr->drum_rec_pending_active[lane2] = 0;
                     }
-                    tr->drum_rec_pending_active[lane2] = 0;
                 }
             }
             return;
@@ -4091,11 +4107,12 @@ static void set_param(void *instance, const char *key, const char *val) {
 
         if (!strcmp(sub, "live_notes")) {
             /* tN_live_notes "off p ... on p v ... [off p|on p v]..."
-             * Batched live note events processed left-to-right.
-             * JS ordering: offs first then ons for pitches that appear only once;
-             * pitches that have BOTH off and on in the batch emit in arrival order
-             * (after the offs/ons block) so a same-tick press+release isn't inverted
-             * into off→on (which would no-op the off and leave the note stuck).
+             * Batched live note events processed left-to-right. JS queues all
+             * note events from one JS turn into pendingLiveNotes and drains
+             * them into a single tN_live_notes payload via a microtask at
+             * end-of-turn, so chord-press survives the host's same-buffer
+             * set_param coalescing (which is per-buffer last-wins regardless
+             * of key — distinct keys do NOT defeat it).
              * Routes through pfx_note_on/pfx_note_off_imm so play effects apply. */
             const char *sp = val;
             while (*sp) {

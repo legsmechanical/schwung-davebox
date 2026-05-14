@@ -2219,6 +2219,46 @@ function applyBankParam(t, bankIdx, knobIdx, val) {
 }
 
 
+/* Microtask-batched live-note dispatch. Multiple set_param calls within a
+ * single JS turn / audio buffer coalesce to the last write — regardless of
+ * key. Distinct keys do NOT defeat this (verified empirically: a 3-key
+ * chord firing 3 distinct keys saw DSP receive only the first and last).
+ * Defeat: call set_param exactly once per turn, with the full chord batched
+ * into the existing tN_live_notes omnibus payload ("on p1 v1 on p2 v2 ...").
+ * We queue events synchronously and drain via one microtask scheduled per
+ * turn — runs after the current handler returns but before the next event
+ * handler. Net vs the original tick-based drain: zero JS tick deferral and
+ * full chord survival. */
+let _liveNoteDrainScheduled = false;
+function _drainLiveNotes() {
+    _liveNoteDrainScheduled = false;
+    if (typeof host_module_set_param !== 'function') return;
+    for (let _t = 0; _t < NUM_TRACKS; _t++) {
+        if (pendingLiveNotes[_t].length === 0) continue;
+        const evts = pendingLiveNotes[_t];
+        pendingLiveNotes[_t] = [];
+        const parts = [];
+        for (const e of evts) {
+            if (e.isOff) parts.push('off ' + e.pitch);
+            else parts.push('on ' + e.pitch + ' ' + e.vel);
+        }
+        host_module_set_param('t' + _t + '_live_notes', parts.join(' '));
+    }
+}
+function _scheduleLiveNoteDrain() {
+    if (_liveNoteDrainScheduled) return;
+    _liveNoteDrainScheduled = true;
+    Promise.resolve().then(_drainLiveNotes);
+}
+function queueLiveNoteOn(t, pitch, vel) {
+    pendingLiveNotes[t].push({ isOff: false, pitch, vel });
+    _scheduleLiveNoteDrain();
+}
+function queueLiveNoteOff(t, pitch) {
+    pendingLiveNotes[t].push({ isOff: true, pitch });
+    _scheduleLiveNoteDrain();
+}
+
 function liveSendNote(t, type, pitch, vel, rawVel) {
     const ch    = (S.trackChannel[t] - 1) & 0x0F;
     const route = S.trackRoute[t];
@@ -2232,24 +2272,32 @@ function liveSendNote(t, type, pitch, vel, rawVel) {
         if (typeof move_midi_external_send === 'function')
             move_midi_external_send([cin, status, pitch, vel]);
     } else if (route === 1) {
-        /* Suppress note-ons during recording — melodic: record_note_on DSP handler does live
-         * monitoring inline; drum: fired directly from the press handler via live_notes set_param.
-         * Note-offs always pass through so sounds stop when pads are released. */
+        /* ROUTE_MOVE. Queue note events for microtask-batched drain into one
+         * tN_live_notes payload at end of the current JS turn. Recording
+         * suppression: melodic record_note_on inline-monitors via DSP; drum
+         * recording handled by press-handler direct-fire (also routes through
+         * queueLiveNoteOn). Suppress here to avoid double-monitoring. */
         const activelyRecording = S.recordArmed && !S.recordCountingIn && S.recordArmedTrack === t;
         const isOff = (type === 0x80) || (type === 0x90 && vel === 0);
-        if (!activelyRecording || isOff) {
-            pendingLiveNotes[t].push(isOff ? { isOff: true, pitch } : { isOff: false, pitch, vel });
+        if (isOff) {
+            queueLiveNoteOff(t, pitch);
+        } else if (!activelyRecording) {
+            queueLiveNoteOn(t, pitch, vel);
         }
     } else {
-        /* ROUTE_SCHWUNG: route note events through live_note_on so pfx chain (TARP,
-         * NOTE FX, HARMZ, MIDI DLY) applies to live input, matching ROUTE_MOVE behaviour.
-         * No activelyRecording filter — record_note_on DSP handler does not call
-         * live_note_on() inline for ROUTE_SCHWUNG, so no double-monitoring risk.
-         * Non-note events (CC, aftertouch, pitch bend) pass through raw — pendingLiveNotes
-         * only represents note on/off and would corrupt CCs into spurious note-ons. */
+        /* ROUTE_SCHWUNG: route note events through live_note_on so pfx chain
+         * (TARP, NOTE FX, HARMZ, MIDI DLY) applies. No activelyRecording filter
+         * — record_note_on DSP handler does not call live_note_on() inline for
+         * ROUTE_SCHWUNG, so no double-monitoring risk. Non-note events (CC, AT,
+         * PB) pass through raw — only note on/off go through the live-notes
+         * payload parser. */
         if (type === 0x90 || type === 0x80) {
             const isOff = type === 0x80 || vel === 0;
-            pendingLiveNotes[t].push(isOff ? { isOff: true, pitch } : { isOff: false, pitch, vel });
+            if (isOff) {
+                queueLiveNoteOff(t, pitch);
+            } else {
+                queueLiveNoteOn(t, pitch, vel);
+            }
         } else {
             if (typeof shadow_send_midi_to_dsp === 'function') shadow_send_midi_to_dsp([status, pitch, vel]);
         }
@@ -4321,16 +4369,23 @@ globalThis.tick = function () {
             host_module_set_param('t' + rt + '_record_note_on', pairs);
             S._recNoteOns.length = 0;
         } else if (_drumRecNoteOns.length > 0) {
-            const dn = _drumRecNoteOns.shift();
-            host_module_set_param('t' + dn.track + '_drum_record_note_on', dn.laneNote + ' ' + dn.vel);
+            /* Batch all queued drum note-ons (same recordArmedTrack) into one
+             * payload so a chord-press lands in DSP in a single audio buffer
+             * rather than trickling out one-per-tick. */
+            const rt = _drumRecNoteOns[0].track;
+            const pairs = _drumRecNoteOns.map(function(n) { return n.laneNote + ' ' + n.vel; }).join(' ');
+            host_module_set_param('t' + rt + '_drum_record_note_on', pairs);
+            _drumRecNoteOns.length = 0;
         } else if (S._recNoteOffs.length > 0) {
             const rt     = S._recNoteOffs[0].rt;
             const pitches = S._recNoteOffs.map(function(n) { return n.pitch; }).join(' ');
             host_module_set_param('t' + rt + '_record_note_off', pitches);
             S._recNoteOffs.length = 0;
         } else if (_drumRecNoteOffs.length > 0) {
-            const dn = _drumRecNoteOffs.shift();
-            host_module_set_param('t' + dn.track + '_drum_record_note_off', String(dn.laneNote));
+            const rt = _drumRecNoteOffs[0].track;
+            const pitches = _drumRecNoteOffs.map(function(n) { return String(n.laneNote); }).join(' ');
+            host_module_set_param('t' + rt + '_drum_record_note_off', pitches);
+            _drumRecNoteOffs.length = 0;
         } else if (S.pendingPrerollGate !== null) {
             const pg = S.pendingPrerollGate;
             S.pendingPrerollGate = null;
@@ -6596,7 +6651,7 @@ function _onPadPressTrackView(status, d1, d2) {
                 if (S.recordArmed && !S.recordCountingIn && t === S.recordArmedTrack) {
                     _drumRecNoteOns.push({ track: t, laneNote: laneNote, vel: zoneVel });
                     if (S.trackRoute[t] === 1)
-                        host_module_set_param('t' + t + '_live_notes', 'on ' + laneNote + ' ' + zoneVel);
+                        queueLiveNoteOn(t, laneNote, zoneVel);
                     S.pendingDrumLaneResync      = 3;
                     S.pendingDrumLaneResyncTrack = t;
                     S.pendingDrumLaneResyncLane  = lane_vp;
@@ -6693,7 +6748,7 @@ function _onPadPressTrackView(status, d1, d2) {
                         const recVel = tvo > 0 ? tvo : vel;
                         _drumRecNoteOns.push({ track: t, laneNote: laneNote, vel: recVel });
                         if (S.trackRoute[t] === 1)
-                            host_module_set_param('t' + t + '_live_notes', 'on ' + laneNote + ' ' + recVel);
+                            queueLiveNoteOn(t, laneNote, recVel);
                         S.pendingDrumLaneResync      = 3;
                         S.pendingDrumLaneResyncTrack = t;
                         S.pendingDrumLaneResyncLane  = lane;
