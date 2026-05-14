@@ -4313,6 +4313,26 @@ static void pfx_sync_from_clip(seq8_track_t *tr) {
     pfx_apply_params(&tr->pfx, &tr->clips[tr->active_clip].pfx_params);
 }
 
+/* Anchor a drum lane's playhead to where it would be if the new clip's lane
+ * params had been driving it since transport start. Keeps polyrhythmic lanes
+ * (length<16, non-aligned cycles) in phase across clip switches mid-playback. */
+static inline void drum_lane_anchor_playhead(seq8_instance_t *inst,
+                                             seq8_track_t *tr, int dl,
+                                             clip_t *ncl) {
+    uint16_t dlls  = ncl->loop_start;
+    uint16_t dllen = ncl->length > 0 ? ncl->length : 1;
+    uint16_t dltps = ncl->ticks_per_step > 0 ? ncl->ticks_per_step
+                                             : (uint16_t)TICKS_PER_STEP;
+    uint32_t elapsed = (uint32_t)inst->global_tick * (uint32_t)TICKS_PER_STEP
+                       + (uint32_t)inst->master_tick_in_step;
+    uint32_t steps   = elapsed / dltps;
+    tr->drum_current_step[dl] = (uint16_t)(dlls + (steps % dllen));
+    tr->drum_tick_in_step[dl] = elapsed % dltps;
+    uint16_t ni;
+    for (ni = 0; ni < ncl->note_count; ni++)
+        ncl->notes[ni].suppress_until_wrap = 0;
+}
+
 static void clip_init(clip_t *cl) {
     int s;
     cl->length         = SEQ_STEPS_DEFAULT;
@@ -6437,9 +6457,8 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                     if (tr->pad_mode == PAD_MODE_DRUM) {
                         int _dl;
                         for (_dl = 0; _dl < DRUM_LANES; _dl++)
-                            tr->drum_current_step[_dl] =
-                                tr->drum_clips[tr->active_clip].lanes[_dl].clip.loop_start;
-                        memset(tr->drum_tick_in_step, 0, sizeof(tr->drum_tick_in_step));
+                            drum_lane_anchor_playhead(inst, tr, _dl,
+                                &tr->drum_clips[tr->active_clip].lanes[_dl].clip);
                     } else {
                         pfx_sync_from_clip(tr);
                         cl = &tr->clips[tr->active_clip];
@@ -6466,9 +6485,8 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                         if (tr->pad_mode == PAD_MODE_DRUM) {
                             int _dl;
                             for (_dl = 0; _dl < DRUM_LANES; _dl++)
-                                tr->drum_current_step[_dl] =
-                                    tr->drum_clips[tr->active_clip].lanes[_dl].clip.loop_start;
-                            memset(tr->drum_tick_in_step, 0, sizeof(tr->drum_tick_in_step));
+                                drum_lane_anchor_playhead(inst, tr, _dl,
+                                    &tr->drum_clips[tr->active_clip].lanes[_dl].clip);
                         } else {
                             pfx_sync_from_clip(tr);
                             cl = &tr->clips[tr->active_clip];

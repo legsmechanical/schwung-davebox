@@ -595,6 +595,12 @@ static void set_param(void *instance, const char *key, const char *val) {
                                            : (uint16_t)(_qls + inst->global_tick % newlen);
                     tr2->active_clip      = (uint8_t)tr2->queued_clip;
                     pfx_sync_from_clip(tr2);
+                    if (tr2->pad_mode == PAD_MODE_DRUM) {
+                        int _dl;
+                        for (_dl = 0; _dl < DRUM_LANES; _dl++)
+                            drum_lane_anchor_playhead(inst, tr2, _dl,
+                                &tr2->drum_clips[tr2->active_clip].lanes[_dl].clip);
+                    }
                     tr2->clip_playing     = 1;
                     tr2->queued_clip      = -1;
                     tr2->pending_page_stop = 0;
@@ -863,6 +869,12 @@ static void set_param(void *instance, const char *key, const char *val) {
                                        : (uint16_t)(_nls + inst->global_tick % newlen);
                 tr2->active_clip      = (uint8_t)cidx;
                 pfx_sync_from_clip(tr2);
+                if (tr2->pad_mode == PAD_MODE_DRUM) {
+                    int _dl;
+                    for (_dl = 0; _dl < DRUM_LANES; _dl++)
+                        drum_lane_anchor_playhead(inst, tr2, _dl,
+                            &tr2->drum_clips[cidx].lanes[_dl].clip);
+                }
                 tr2->clip_playing     = 1;
                 tr2->queued_clip      = -1;
                 tr2->pending_page_stop = 0;
@@ -1494,17 +1506,9 @@ static void set_param(void *instance, const char *key, const char *val) {
                     tr->tick_in_step = 0;
                 if (tr->pad_mode == PAD_MODE_DRUM) {
                     int dl;
-                    for (dl = 0; dl < DRUM_LANES; dl++) {
-                        drum_lane_t *dln = &tr->drum_clips[new_cidx].lanes[dl];
-                        uint16_t dllen = dln->clip.length > 0 ? dln->clip.length : 1;
-                        uint16_t dlls  = dln->clip.loop_start;
-                        uint16_t dltps = dln->clip.ticks_per_step > 0 ? dln->clip.ticks_per_step : 24;
-                        uint16_t dle   = (uint16_t)(dlls + dllen);
-                        if (tr->drum_current_step[dl] < dlls || tr->drum_current_step[dl] >= dle)
-                            tr->drum_current_step[dl] = (uint16_t)(dlls + tr->drum_current_step[dl] % dllen);
-                        if (tr->drum_tick_in_step[dl] >= (uint32_t)dltps)
-                            tr->drum_tick_in_step[dl] = 0;
-                    }
+                    for (dl = 0; dl < DRUM_LANES; dl++)
+                        drum_lane_anchor_playhead(inst, tr, dl,
+                            &tr->drum_clips[new_cidx].lanes[dl].clip);
                 }
                 tr->clip_playing     = 1;
                 tr->queued_clip      = -1;
