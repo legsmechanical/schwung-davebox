@@ -48,10 +48,14 @@ dAVEBOx was built by AI goblins and meticulously designed by a human who is not 
 - 8 assignable CC lanes per track with per-clip automation at 1/32 resolution (interpolated)
 - Per-track MIDI channel and routing (Move · Schwung · External)
 
+  
+## Requirements
+
+Schwung **v0.9.13 or later**
+
 ## Known Limitations
 
-- External MIDI input into Move-routed tracks will cause Move to crash. Use Schwung routing if you need effects on live MIDI input.
-- Pressing Back to suspend dAVEBOx while a Move-routed drum track is actively playing can crash Move. Stop transport first.
+- Live record note duration is not accurately recorded in some instances
 - The hardware volume knob briefly interrupts MIDI output when turned.
 - Powering Move off from within dAVEBOx causes a brief hang.
 
