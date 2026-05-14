@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com). Add entries to
 the section into a versioned heading at release time.
 
 ## [Unreleased]
+
+## [0.3.7] — 2026-05-14
 ### Fixes
 - **Chord-press monitoring now plays every note.** Tapping multiple pads simultaneously (drum or melodic, ROUTE_MOVE or ROUTE_SCHWUNG) used to silently drop notes — same-buffer set_param calls coalesce to last-write-wins regardless of key, so each chord press was reduced to whichever press the host happened to deliver last. Live note events queue synchronously into `pendingLiveNotes` and drain once per tick from `globalThis.tick()` into a single batched `tN_live_notes` payload (`on p1 v1 on p2 v2 ...`). One set_param call per audio buffer = no coalescing = full chord survival. Costs up to ~10 ms of monitor latency on the worst-case-aligned tap, but eliminates the unpredictable dropouts that microtask-per-onMidiMessage scheduling produced when multiple pad CCs landed in one audio buffer.
 - **Drum chord recording lands in one DSP buffer.** Queued `_drumRecNoteOns` / `_drumRecNoteOffs` now batch into a single `tN_drum_record_note_on` / `_off` payload per tick (mirroring melodic record batching), instead of trickling one entry per tick via `.shift()`. A 4-pad chord previously took 4 ticks (~42 ms) to fully ingest into DSP; press-time correctness was preserved via `drum_current_step[lane]`, but DSP-side state lagged. DSP `tN_drum_record_note_on` / `_off` parsers extended to loop over `"p1 v1 p2 v2 ..."` and `"p1 p2 ..."` payloads respectively.

@@ -1,7 +1,7 @@
 {
     "id": "davebox",
     "name": "dAVEBOx",
-    "version": "0.3.6",
+    "version": "0.3.7",
     "abbrev": "dAVEBOx",
     "description": "Creative 8-track MIDI sequencer with per-clip effects chains and live performance modes.",
     "author": "legsmechanical",
@@ -18,7 +18,9 @@
         "midi_in": true,
         "midi_out": true,
         "aftertouch": true,
-        "button_passthrough": [79],
+        "button_passthrough": [
+            79
+        ],
         "claims_master_knob": true,
         "suspend_keeps_js": true
     }
