@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com). Add entries to
 the section into a versioned heading at release time.
 
 ## [Unreleased]
+
+## [0.3.6] — 2026-05-14
 ### Documentation
 - **MANUAL.md crash disclaimers softened to reflect Schwung v0.9.13.** §12.4 and §15 previously warned that routing live external MIDI through pfx on a Move-routed track would crash the device. Schwung v0.9.13 (Vestal, May 14 2026) ships the upstream fixes — `EXT_MIDI_REMAP_BLOCK` (PR #76), the inject SIGABRT guard (PR #77), and a follow-up dedup pass (commit `62a04135`) that's explicitly gated as a no-op when dAVEBOx is loaded. dAVEBOx still bypasses the chain for ROUTE_MOVE live input by design; the disclaimer no longer warns of a hard crash on current Schwung versions.
 
