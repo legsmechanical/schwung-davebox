@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com). Add entries to
 the section into a versioned heading at release time.
 
 ## [Unreleased]
+
+## [0.4.0] — 2026-05-15
 ### Fixes
 - **Input Quantize / Step Grid Misalignment:** Drum recording now assigns unquantized notes using a midpoint-rounding step window (`[-12, +11]` tick offsets) rather than truncating them to the current step (which produced illegal `+19` offsets and caused the LED to jump when the DSP later re-evaluated the step index). Additionally, Input Quantize now correctly rounds to the *nearest* step boundary across all live recording paths (melodic, drum, and tarp), eliminating the bug where notes played slightly early would drastically snap backwards to the previous step.
 ## [0.3.7] — 2026-05-14
