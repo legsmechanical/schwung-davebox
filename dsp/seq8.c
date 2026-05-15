@@ -3715,6 +3715,12 @@ static void drum_repeat_tick(seq8_instance_t *inst, seq8_track_t *tr) {
                 uint16_t rs = tr->drum_current_step[lane];
                 if (rs < rlc->length) {
                     int inq_on = (inst->inp_quant || tr->drum_inp_quant) ? 1 : 0;
+                    int16_t off = (int16_t)tr->drum_tick_in_step[lane];
+                    if (off >= (int16_t)(TICKS_PER_STEP / 2)) {
+                        rs = (rs + 1) % rlc->length;
+                        off -= (int16_t)TICKS_PER_STEP;
+                    }
+                    if (inq_on) off = 0;
                     int new_step_this_pass = (tr->drum_last_rec_step[lane] != (int16_t)rs);
                     int can_write = 0;
                     if (new_step_this_pass) {
@@ -3726,8 +3732,7 @@ static void drum_repeat_tick(seq8_instance_t *inst, seq8_track_t *tr) {
                     if (can_write) {
                         int slot = (int)rlc->step_note_count[rs];
                         rlc->step_notes[rs][slot]       = pitch;
-                        rlc->note_tick_offset[rs][slot] = inq_on
-                            ? 0 : (int16_t)tr->drum_tick_in_step[lane];
+                        rlc->note_tick_offset[rs][slot] = off;
                         if (slot == 0) {
                             rlc->step_vel[rs]  = (uint8_t)vel;
                             rlc->step_gate[rs] = (uint16_t)GATE_TICKS;
@@ -3821,6 +3826,12 @@ static void drum_repeat2_tick(seq8_instance_t *inst, seq8_track_t *tr) {
                 uint16_t rs = tr->drum_current_step[l];
                 if (rs < rlc->length) {
                     int inq_on = (inst->inp_quant || tr->drum_inp_quant) ? 1 : 0;
+                    int16_t off = (int16_t)tr->drum_tick_in_step[l];
+                    if (off >= (int16_t)(TICKS_PER_STEP / 2)) {
+                        rs = (rs + 1) % rlc->length;
+                        off -= (int16_t)TICKS_PER_STEP;
+                    }
+                    if (inq_on) off = 0;
                     int new_step_this_pass = (tr->drum_last_rec_step[l] != (int16_t)rs);
                     int can_write = 0;
                     if (new_step_this_pass) {
@@ -3832,8 +3843,7 @@ static void drum_repeat2_tick(seq8_instance_t *inst, seq8_track_t *tr) {
                     if (can_write) {
                         int slot = (int)rlc->step_note_count[rs];
                         rlc->step_notes[rs][slot]       = pitch;
-                        rlc->note_tick_offset[rs][slot] = inq_on
-                            ? 0 : (int16_t)tr->drum_tick_in_step[l];
+                        rlc->note_tick_offset[rs][slot] = off;
                         if (slot == 0) {
                             rlc->step_vel[rs]  = (uint8_t)vel;
                             rlc->step_gate[rs] = (uint16_t)GATE_TICKS;
@@ -4038,7 +4048,7 @@ static void tarp_fire_step(seq8_instance_t *inst, seq8_track_t *tr) {
         if (clip_ticks > 0) {
             uint32_t abs_tick = tr->current_clip_tick % clip_ticks;
             if (inst->inp_quant)
-                abs_tick = (abs_tick / tps) * tps;
+                abs_tick = ((abs_tick + tps / 2) / tps) * tps;
             uint16_t gticks = (uint16_t)(gate > 65535u ? 65535u : gate);
             int rni = clip_insert_note(cl, abs_tick, gticks, pitch, (uint8_t)v);
             if (rni >= 0) {
@@ -5140,10 +5150,14 @@ static int bake_stage_arp_out(play_fx_t *fx, uint32_t clip_ticks,
 
 /* Apply NOTE FX quantize to a raw clip tick, mirroring the effective_note_tick playback formula. */
 static uint32_t bake_apply_quantize(uint32_t tick, uint16_t tps, uint16_t length, int quantize) {
+    if (quantize <= 0) return tick;
     uint32_t clip_ticks = (uint32_t)length * tps;
     uint32_t sn = (tick + (uint32_t)(tps / 2)) / (uint32_t)tps % (uint32_t)length;
     int32_t step_grid = (int32_t)(sn * (uint32_t)tps);
     int32_t delta = (int32_t)tick - step_grid;
+    if (delta > (int32_t)clip_ticks / 2) delta -= (int32_t)clip_ticks;
+    else if (delta < -((int32_t)clip_ticks / 2)) delta += (int32_t)clip_ticks;
+    if (delta == 0) return tick;
     int32_t eff_delta = (quantize >= 100) ? 0 : delta * (100 - quantize) / 100;
     int32_t eff = step_grid + eff_delta;
     if (eff < 0) eff += (int32_t)clip_ticks;

@@ -3231,7 +3231,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             if (clip_ticks == 0) return;
             abs_tick = abs_tick % clip_ticks;
             if (inst->inp_quant)
-                abs_tick = (abs_tick / tps) * tps;
+                abs_tick = ((abs_tick + tps / 2) / tps) * tps;
 
             const char *sp = val;
             while (*sp) {
@@ -4013,6 +4013,27 @@ static void set_param(void *instance, const char *key, const char *val) {
                     if (lane >= 0) {
                     clip_t   *dlc  = &dc->lanes[lane].clip;
                     uint16_t  step = tr->drum_current_step[lane];
+                    uint8_t diq = tr->drum_inp_quant;
+                    int16_t off = (int16_t)tr->drum_tick_in_step[lane];
+                    if (off >= (int16_t)(TICKS_PER_STEP / 2)) {
+                        step = (step + 1) % dlc->length;
+                        off -= (int16_t)TICKS_PER_STEP;
+                    }
+
+                    if (diq > 0) {
+                        int qt  = (int)DRUM_INQ_TICKS[diq];
+                        int tis = (int)tr->drum_tick_in_step[lane];
+                        int sn  = (tis + qt / 2) / qt * qt;
+                        if (sn >= (int)TICKS_PER_STEP / 2) {
+                            step = (tr->drum_current_step[lane] + 1) % dlc->length;
+                            off = (int16_t)(sn - (int)TICKS_PER_STEP);
+                        } else {
+                            step = tr->drum_current_step[lane];
+                            off = (int16_t)sn;
+                        }
+                    } else if (inst->inp_quant) {
+                        off = 0;
+                    }
                     if (step < dlc->length && dlc->step_note_count[step] == 0) {
                         dlc->step_notes[step][0]       = (uint8_t)pitch;
                         dlc->step_note_count[step]     = 1;
@@ -4022,20 +4043,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                          * InQ: nearest quant boundary within step (rounds to nearest multiple).
                          * global inp_quant ON: snap to step boundary (offset=0).
                          * Both Off: capture raw sub-step timing. */
-                        { uint8_t diq = tr->drum_inp_quant;
-                          int16_t off;
-                          if (diq > 0) {
-                              int qt  = (int)DRUM_INQ_TICKS[diq];
-                              int tis = (int)tr->drum_tick_in_step[lane];
-                              int sn  = (tis + qt / 2) / qt * qt;
-                              off = (int16_t)(sn % (int)TICKS_PER_STEP);
-                          } else if (inst->inp_quant) {
-                              off = 0;
-                          } else {
-                              off = (int16_t)tr->drum_tick_in_step[lane];
-                          }
-                          dlc->note_tick_offset[step][0] = off;
-                        }
+                        dlc->note_tick_offset[step][0] = off;
                         dlc->steps[step]               = 1;
                         dlc->active                    = 1;
                         clip_migrate_to_notes(dlc);
