@@ -56,7 +56,7 @@ Schwung **v0.9.13 or later**
 ## Known Limitations
 
 - Live record note duration is not accurately recorded in some instances.
-- Live note recording is generally pretty wonky (should be fixed soon).
+- Live recording accuracy has some jitter when playing unquantized (improvements coming soon).
 - The hardware volume knob briefly interrupts MIDI output when turned.
 - Powering Move off from within dAVEBOx causes a brief hang.
 
@@ -65,4 +65,8 @@ Schwung **v0.9.13 or later**
 
 ## Status
 
-Active development. Expect breaking changes.
+Active development. 
+
+## Disclaimer
+
+If dAVEBOx breaks your Move, makes your child cry, or cleans out your fridge, that's on you. dAVEBOx has proven safe, joy-inducing, and satiated in testing but comes with no warranties, implied, express, or otherwise. 
