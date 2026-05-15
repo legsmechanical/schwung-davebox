@@ -56,7 +56,7 @@ Schwung **v0.9.13 or later**
 ## Known Limitations
 
 - Live record note duration is not accurately recorded in some instances.
-- Live note recording can lag behind input on certain input routes (should be fixed soon)..
+- Live note recording is generally pretty wonky (should be fixed soon).
 - The hardware volume knob briefly interrupts MIDI output when turned.
 - Powering Move off from within dAVEBOx causes a brief hang.
 
