@@ -58,16 +58,19 @@ Builds: dist/davebox-module.tar.gz current. `~/schwung/build/shadow/shadow_ui` d
 
 ### Open work
 
-1. **Bundle 1.6 scope-guard investigation (next).** Bundle 1.6 deliberately left `looper_tick`, `drum_repeat_tick`, `drum_repeat2_tick`, and SEQ-ARP (`arp_tick`) dormant during count-in. Need to evaluate whether each is a real omission (live drum repeats / SEQ-ARP-on-live-input should sound through count-in) or hypothetical (playback-side only, correctly dormant). User asked for this immediately after Bundle 1.6 lands.
+1. **Bundle 2 — VelIn + drum velocity zones + Note Repeat audio-thread path.** Per the original Phase 1 plan. Currently these features live in the JS path which Bundle 1 suppresses for note events on patched Schwung. See `notes/phase-1-plan.md` for the bundle breakdown.
 
-2. **Bundle 2 — VelIn + drum velocity zones + Note Repeat audio-thread path.** Per the original Phase 1 plan. Currently these features live in the JS path which Bundle 1 suppresses for note events on patched Schwung. See `notes/phase-1-plan.md` for the bundle breakdown.
-
-3. **End-of-refactor coordinated drop** — when ALL phase-1 bundles are done:
+2. **End-of-refactor coordinated drop** — when ALL phase-1 bundles are done:
+   *(See also: "Parked — explicitly out of scope for this refactor" below for the drum-repeats-during-count-in followup that came out of Bundle 1.6.)*
    - Merge `legsmechanical/schwung:phase-1-inbound` → `legsmechanical/schwung:main`, push fork.
    - Merge `phase-1-bundle-1` (+ later bundle branches) → `legsmechanical/schwung-davebox:main`, push origin.
    - Regenerate `patches/davebox-local.patch` via `git -C ~/schwung diff v0.9.13..main -- src/` and commit on dAVEBOx main.
    - Cut release (probably `0.5.0`+).
    - Do NOT do any of this mid-refactor — see `feedback_phase_1_no_main_until_done.md`.
+
+### Parked — explicitly out of scope for this refactor
+
+- **Drum repeats (Rpt1 / Rpt2) and looper during count-in.** Bundle 1.6 deliberately left `looper_tick`, `drum_repeat_tick`, and `drum_repeat2_tick` dormant during count-in (only `tarp_tick` was wired in). The likely-real omission is **drum repeats** — same input-side parallel as TARP, so holding a drum pad with repeat armed through count-in is silent today even though it sounds correctly with transport stopped. Looper-during-count-in is more design-question than bug. **SEQ ARP (`arp_tick`) is correctly dormant** — it's playback-side and there's no clip playback during count-in. User flagged on 2026-05-16 to defer past Phase 1; do NOT pick this up inside the Phase 1 refactor. Pattern to follow when revisiting: copy the per-track `tarp_tick` loop inside the count-in inner-while at `seq8.c` ~L6414 and add the corresponding tick call(s); audit each engine's reset needs at count-in fire (mirroring the TARP runtime reset in the fire branch).
 
 ### Already done (confirmed)
 
