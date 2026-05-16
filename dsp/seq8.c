@@ -4080,7 +4080,8 @@ static void tarp_fire_step(seq8_instance_t *inst, seq8_track_t *tr) {
         uint16_t tps        = cl->ticks_per_step;
         uint32_t clip_ticks = (uint32_t)cl->length * tps;
         if (clip_ticks > 0) {
-            uint32_t abs_tick = tr->current_clip_tick % clip_ticks;
+            /* Window-anchored — see record_note_on in seq8_set_param.c. */
+            uint32_t abs_tick = tr->current_clip_tick;
             if (inst->inp_quant)
                 abs_tick = ((abs_tick + tps / 2) / tps) * tps;
             uint16_t gticks = (uint16_t)(gate > 65535u ? 65535u : gate);
@@ -4472,7 +4473,8 @@ static void finalize_pending_notes(clip_t *cl, seq8_track_t *tr) {
     uint16_t tps = cl->ticks_per_step;
     uint32_t clip_ticks = (uint32_t)cl->length * tps;
     if (clip_ticks == 0) { tr->rec_pending_count = 0; return; }
-    uint32_t off_tick = tr->current_clip_tick % clip_ticks;
+    /* Window-anchored — see record_note_on. */
+    uint32_t off_tick = tr->current_clip_tick;
     uint32_t gmax = (uint32_t)SEQ_STEPS * tps;
     if (gmax > 65535) gmax = 65535;
     int ri;
@@ -4838,13 +4840,25 @@ static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
 
     seq8_track_t *tr = &inst->tracks[t];
 
-    /* PHASE-1: when armed, snapshot the actual press/release moment so the
-     * record-path handlers use this tick (audio-thread, single-buffer
-     * precision) instead of their own current_clip_tick at set_param arrival
-     * (1-2 audio buffers late due to the JS → tick → set_param hop). This
-     * preserves real hold duration even when press+release land in the same
-     * audio buffer of set_param processing. */
-    if (tr->recording) {
+    /* PHASE-1: snapshot the actual press/release moment so the record-path
+     * handlers use this tick (audio-thread, single-buffer precision) instead
+     * of their own current_clip_tick at set_param arrival (1-2 audio buffers
+     * late due to the JS → tick → set_param hop). Two cases:
+     *   - tr->recording: live recording. Snapshot tr->current_clip_tick.
+     *   - count_in_ticks > 0 && count_in_track == t: preroll. Snapshot a
+     *     synthetic tick at the clip's loop_start so the note lands at the
+     *     start of the loop window when recording begins (clips with custom
+     *     loop windows would otherwise record outside the window).
+     * Both cases preserve real hold duration even when press+release land in
+     * the same audio buffer of set_param processing. */
+    /* Preroll capture is limited to the last 1/8 note of count-in (final half
+     * of the 4th quarter). Earlier presses are warm-up — monitored but not
+     * recorded. count_in_ticks counts DOWN from 4*PPQN, so "<= PPQN/2" means
+     * "less than 1/8 note remaining". */
+    int _is_preroll = (!tr->recording && inst->count_in_ticks > 0 &&
+                       inst->count_in_ticks <= (int32_t)(PPQN / 2) &&
+                       (int)inst->count_in_track == (int)t);
+    if (tr->recording || _is_preroll) {
         if (tr->pad_mode == PAD_MODE_DRUM) {
             int ac = (int)tr->active_clip;
             drum_clip_t *dc = &tr->drum_clips[ac];
@@ -4853,22 +4867,34 @@ static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
                 if (dc->lanes[l].midi_note == pitch) { lane = l; break; }
             }}
             if (lane >= 0) {
+                uint16_t snap_step = _is_preroll
+                    ? dc->lanes[lane].clip.loop_start
+                    : tr->drum_current_step[lane];
+                int16_t  snap_off  = _is_preroll ? (int16_t)0
+                    : (int16_t)tr->drum_tick_in_step[lane];
                 if (is_on) {
-                    inst->on_midi_drum_press_step[t][lane]   = tr->drum_current_step[lane];
-                    inst->on_midi_drum_press_off[t][lane]    = (int16_t)tr->drum_tick_in_step[lane];
+                    inst->on_midi_drum_press_step[t][lane]   = snap_step;
+                    inst->on_midi_drum_press_off[t][lane]    = snap_off;
                     inst->on_midi_drum_press_active[t][lane] = 1;
                 } else {
-                    inst->on_midi_drum_release_step[t][lane]   = tr->drum_current_step[lane];
-                    inst->on_midi_drum_release_off[t][lane]    = (int16_t)tr->drum_tick_in_step[lane];
+                    inst->on_midi_drum_release_step[t][lane]   = snap_step;
+                    inst->on_midi_drum_release_off[t][lane]    = snap_off;
                     inst->on_midi_drum_release_active[t][lane] = 1;
                 }
             }
         } else {
+            uint32_t snap_tick;
+            if (_is_preroll) {
+                clip_t *cl_p = &tr->clips[tr->active_clip];
+                snap_tick = (uint32_t)cl_p->loop_start * cl_p->ticks_per_step;
+            } else {
+                snap_tick = tr->current_clip_tick;
+            }
             if (is_on) {
-                inst->on_midi_press_tick[t][pitch]   = tr->current_clip_tick;
+                inst->on_midi_press_tick[t][pitch]   = snap_tick;
                 inst->on_midi_press_active[t][pitch] = 1;
             } else {
-                inst->on_midi_release_tick[t][pitch]   = tr->current_clip_tick;
+                inst->on_midi_release_tick[t][pitch]   = snap_tick;
                 inst->on_midi_release_active[t][pitch] = 1;
             }
         }

@@ -6943,17 +6943,13 @@ function _onPadPressTrackView(status, d1, d2) {
             S.lastPadVelocity = effectiveVelocity(d2);
             S.liveActiveNotes.add(pitch);
             liveSendNote(S.activeTrack, 0x90, pitch, effectiveVelocity(d2));
-            /* Pre-roll capture: any press during count-in → deferred to step 0 after transport starts */
-            if (S.recordArmed && S.recordCountingIn &&
-                    S.activeTrack === S.recordArmedTrack &&
-                    typeof host_module_set_param === 'function') {
-                const rt   = S.recordArmedTrack;
-                const ac_r = S.trackActiveClip[rt];
-                S.pendingPrerollNotes.push({ track: rt, clip: ac_r, pitch: pitch, vel: effectiveVelocity(d2),
-                                             pressedAtTick: S.tickCount, countInStart: S.countInStartTick });
-            }
-            /* Overdub capture: add to current step of armed track with tick offset + velocity */
-            if (S.recordArmed && !S.recordCountingIn && S.activeTrack === S.recordArmedTrack)
+            /* Record capture: queue into _recNoteOns regardless of count-in
+             * state. Flush is gated on !S.recordCountingIn so events accumulate
+             * during count-in and drain at the count-in→recording transition.
+             * DSP authoritatively filters: on patched Schwung, presses without
+             * an active on_midi slot are dropped (early count-in window etc.),
+             * so JS doesn't need its own (rate-mismatched) timing filter. */
+            if (S.recordArmed && S.activeTrack === S.recordArmedTrack)
                 recordNoteOn(pitch, effectiveVelocity(d2), S.recordArmedTrack);
         }
     }
@@ -7993,7 +7989,7 @@ function _onPadRelease(status, d1, d2) {
                 liveSendNote(t, 0x80, pitch, 0);
         }
         padPressTick[padIdx] = -1;
-        if (S.recordArmed && !S.recordCountingIn) {
+        if (S.recordArmed) {
             const _t = S.activeTrack;
             if (S.trackPadMode[_t] === PAD_MODE_DRUM) {
                 if (_t === S.recordArmedTrack)
