@@ -1368,15 +1368,25 @@ function computePadNoteMap() {
      * stays dormant, and the JS pendingLiveNotes path keeps working unchanged.
      * Remove this gate when patches upstreamed. */
     if (S.dspInboundEnabled && typeof host_module_set_param === 'function') {
+        /* JS dispatch today adds S.trackOctave * 12 at the pad-press site
+         * (lines ~6838, ~6909). Phase 1's on_midi reads pad_note_map as-is,
+         * so we bake the runtime octave offset into the pushed payload while
+         * leaving S.padNoteMap itself unshifted (the stock-Schwung fallback
+         * path still adds the offset at dispatch). Drum tracks ignore the
+         * offset (lane midi_notes are fixed). */
+        const isDrum = S.trackPadMode[t] === PAD_MODE_DRUM;
+        const octShift = isDrum ? 0 : ((S.trackOctave[t] | 0) * 12);
         let payload = '';
         for (let i = 0; i < 32; i++) {
-            payload += (i ? ' ' : '') + S.padNoteMap[i];
+            const p = S.padNoteMap[i];
+            const out = (p === 0xFF) ? 0xFF : Math.max(0, Math.min(127, p + octShift));
+            payload += (i ? ' ' : '') + out;
         }
         /* The tN_padmap key encodes the active track index — DSP's
          * tN_padmap handler updates inst->active_track + dsp_inbound_enabled
          * from it. (Schwung host silently drops module-defined global keys,
          * so we piggyback signals onto the per-track padmap push.) */
-        host_module_set_param('t' + S.activeTrack + '_padmap', payload);
+        host_module_set_param('t' + t + '_padmap', payload);
     }
 }
 
@@ -5620,9 +5630,11 @@ function _onCC_transport(d1, d2) {
             S.drumLanePage[S.activeTrack] = 1;
             syncDrumLanesMeta(S.activeTrack);
             syncDrumLaneSteps(S.activeTrack, S.activeDrumLane[S.activeTrack]);
+            computePadNoteMap();  /* PHASE-1: drum page change shifts lane mapping; re-push */
             forceRedraw();
         } else {
         S.trackOctave[S.activeTrack] = Math.min(4, S.trackOctave[S.activeTrack] + 1);
+        computePadNoteMap();  /* PHASE-1: re-bake octave offset into DSP padmap */
         S.screenDirty = true;
         if (S.heldStep >= 0) forceRedraw();
         }
@@ -5632,9 +5644,11 @@ function _onCC_transport(d1, d2) {
             S.drumLanePage[S.activeTrack] = 0;
             syncDrumLanesMeta(S.activeTrack);
             syncDrumLaneSteps(S.activeTrack, S.activeDrumLane[S.activeTrack]);
+            computePadNoteMap();  /* PHASE-1: drum page change shifts lane mapping; re-push */
             forceRedraw();
         } else {
         S.trackOctave[S.activeTrack] = Math.max(-4, S.trackOctave[S.activeTrack] - 1);
+        computePadNoteMap();  /* PHASE-1: re-bake octave offset into DSP padmap */
         S.screenDirty = true;
         if (S.heldStep >= 0) forceRedraw();
         }
