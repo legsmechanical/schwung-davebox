@@ -1315,25 +1315,45 @@ function clipHasContent(t, c) {
 
 
 function computePadNoteMap() {
-    const root = S.padOctave[S.activeTrack] * 12 + S.padKey;
-    const intervals = SCALE_INTERVALS[S.padScale] || SCALE_INTERVALS[0];
-    S.padScaleSet.clear();
-    for (let i = 0; i < intervals.length; i++) S.padScaleSet.add(intervals[i]);
-    if (S.padLayoutChromatic[S.activeTrack]) {
+    const t = S.activeTrack;
+    if (S.trackPadMode[t] === PAD_MODE_DRUM) {
+        /* Drum mode: left half (cols 0-3) maps to drum lanes via drumPadToLane;
+         * right half (cols 4-7) is velocity zones (no note dispatch).
+         * For each pad we store the corresponding lane's midi_note, or 0xFF
+         * for velocity-zone slots so DSP on_midi skips dispatch (JS still
+         * handles vel-zone arming as state, independent of note routing). */
+        const page = S.drumLanePage[t] | 0;
         for (let i = 0; i < 32; i++) {
             const col = i % 8;
+            if (col >= 4) { S.padNoteMap[i] = 0xFF; continue; }
             const row = Math.floor(i / 8);
-            S.padNoteMap[i] = Math.max(0, Math.min(127, root + col + row * 8));
+            const lane = page * 16 + row * 4 + col;
+            const note = (lane >= 0 && lane < DRUM_LANES)
+                ? ((S.drumLaneNote[t][lane] | 0) || (DRUM_BASE_NOTE + lane))
+                : 0xFF;
+            S.padNoteMap[i] = note & 0xFF;
         }
     } else {
-        const n = intervals.length;
-        for (let i = 0; i < 32; i++) {
-            const col = i % 8;
-            const row = Math.floor(i / 8);
-            const deg = col + row * 3;
-            const oct = Math.floor(deg / n);
-            const semitone = oct * 12 + intervals[deg % n];
-            S.padNoteMap[i] = Math.max(0, Math.min(127, root + semitone));
+        const root = S.padOctave[t] * 12 + S.padKey;
+        const intervals = SCALE_INTERVALS[S.padScale] || SCALE_INTERVALS[0];
+        S.padScaleSet.clear();
+        for (let i = 0; i < intervals.length; i++) S.padScaleSet.add(intervals[i]);
+        if (S.padLayoutChromatic[t]) {
+            for (let i = 0; i < 32; i++) {
+                const col = i % 8;
+                const row = Math.floor(i / 8);
+                S.padNoteMap[i] = Math.max(0, Math.min(127, root + col + row * 8));
+            }
+        } else {
+            const n = intervals.length;
+            for (let i = 0; i < 32; i++) {
+                const col = i % 8;
+                const row = Math.floor(i / 8);
+                const deg = col + row * 3;
+                const oct = Math.floor(deg / n);
+                const semitone = oct * 12 + intervals[deg % n];
+                S.padNoteMap[i] = Math.max(0, Math.min(127, root + semitone));
+            }
         }
     }
     /* Phase 1: push the resolved active-track map to DSP for audio-thread
