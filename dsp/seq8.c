@@ -4815,13 +4815,11 @@ static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
     if (pitch == 0xFF) return;          /* map not yet populated for this track */
 
     seq8_track_t *tr = &inst->tracks[t];
-    /* On ROUTE_MOVE the JS record_note_on path inline-monitors via DSP, so
-     * dispatching note-on here would double the monitor — skip. On
-     * ROUTE_SCHWUNG record_note_on records but does NOT monitor (the JS
-     * path used to monitor via queueLiveNoteOn, which Phase 1 suppresses),
-     * so we MUST dispatch here for the user to hear armed input. Note-off
-     * always dispatches (pfx_note_off_imm is idempotent). */
-    if (is_on && tr->recording && tr->pfx.route == ROUTE_MOVE) return;
+    /* Audio-thread monitor: fire live_note_on/off regardless of recording
+     * state. The record-path handlers (record_note_on / record_note_off /
+     * drum_record_note_on) suppress their inline-monitor when
+     * dsp_inbound_enabled so we don't double-fire — this gives armed input
+     * the same single-buffer latency as unarmed. */
     if (is_on) {
         live_note_on(inst, tr, pitch, d2);
     } else {

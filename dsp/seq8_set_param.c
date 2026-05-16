@@ -3252,9 +3252,12 @@ static void set_param(void *instance, const char *key, const char *val) {
                 vel = effective_vel(tr, vel);
 
                 /* TRACK ARP active: arp output will be recorded in tarp_fire_step.
-                 * Feed raw input only into the arp held buffer. */
+                 * Feed raw input only into the arp held buffer. PHASE-1: on
+                 * patched Schwung on_midi already called live_note_on (which
+                 * feeds the arp held buffer), so skip to avoid double-feed. */
                 if (tr->tarp_on && tr->pad_mode != PAD_MODE_DRUM) {
-                    live_note_on(inst, tr, (uint8_t)pitch, (uint8_t)vel);
+                    if (!inst->dsp_inbound_enabled)
+                        live_note_on(inst, tr, (uint8_t)pitch, (uint8_t)vel);
                     continue;
                 }
 
@@ -3306,8 +3309,10 @@ static void set_param(void *instance, const char *key, const char *val) {
                 }
                 /* Live monitoring for ROUTE_MOVE: play note immediately so the
                  * performer hears it without a separate live_notes set_param that
-                 * would race/coalesce with this record_note_on call. */
-                if (tr->pfx.route == ROUTE_MOVE)
+                 * would race/coalesce with this record_note_on call. PHASE-1:
+                 * on patched Schwung on_midi already fired live_note_on on the
+                 * audio thread (faster), so skip to avoid double monitor. */
+                if (tr->pfx.route == ROUTE_MOVE && !inst->dsp_inbound_enabled)
                     live_note_on(inst, tr, (uint8_t)pitch, (uint8_t)vel);
             }
             return;
@@ -3336,9 +3341,12 @@ static void set_param(void *instance, const char *key, const char *val) {
                 pitch = clamp_i(pitch, 0, 127);
 
                 /* TRACK ARP active: note was never written to rec_pending; update
-                 * arp held buffer and let tarp_fire_step own clip recording. */
+                 * arp held buffer and let tarp_fire_step own clip recording.
+                 * PHASE-1: on patched Schwung on_midi already fired live_note_off
+                 * (which updates the arp held buffer), so skip. */
                 if (tr->tarp_on && tr->pad_mode != PAD_MODE_DRUM) {
-                    live_note_off(inst, tr, (uint8_t)pitch);
+                    if (!inst->dsp_inbound_enabled)
+                        live_note_off(inst, tr, (uint8_t)pitch);
                     continue;
                 }
 
@@ -3393,8 +3401,9 @@ static void set_param(void *instance, const char *key, const char *val) {
                 tr->rec_pending[ri] = tr->rec_pending[tr->rec_pending_count - 1];
                 tr->rec_pending_count--;
 
-                /* Live monitoring for ROUTE_MOVE */
-                if (tr->pfx.route == ROUTE_MOVE)
+                /* Live monitoring for ROUTE_MOVE. PHASE-1: on patched Schwung
+                 * on_midi already fired live_note_off on the audio thread. */
+                if (tr->pfx.route == ROUTE_MOVE && !inst->dsp_inbound_enabled)
                     live_note_off(inst, tr, (uint8_t)pitch);
             }
             return;
@@ -4065,8 +4074,10 @@ static void set_param(void *instance, const char *key, const char *val) {
                     /* Live monitoring for ROUTE_MOVE: play note immediately so the
                      * performer hears it without a separate live_notes set_param that
                      * would race/coalesce with this drum_record_note_on call. Mirrors
-                     * the melodic record_note_on pattern. */
-                    if (tr->pfx.route == ROUTE_MOVE)
+                     * the melodic record_note_on pattern. PHASE-1: on patched
+                     * Schwung on_midi already fired live_note_on on the audio
+                     * thread (faster), so skip to avoid double monitor. */
+                    if (tr->pfx.route == ROUTE_MOVE && !inst->dsp_inbound_enabled)
                         live_note_on(inst, tr, (uint8_t)pitch, (uint8_t)vel);
                     }
                 }
