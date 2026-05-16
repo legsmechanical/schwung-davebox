@@ -1341,15 +1341,21 @@ function computePadNoteMap() {
      * pushing the one active track's map on every recompute is sufficient.
      * Dormant until the capability gate flips dsp_inbound_enabled in
      * piece 3. */
-    if (typeof host_module_set_param === 'function') {
+    /* PHASE-1: only push on patched Schwung. The DSP padmap handler doubles
+     * as the capability signal — its presence sets inst->dsp_inbound_enabled,
+     * gating on_midi dispatch. On stock Schwung S.dspInboundEnabled stays
+     * false, the push is skipped, on_midi (which isn't called on stock anyway)
+     * stays dormant, and the JS pendingLiveNotes path keeps working unchanged.
+     * Remove this gate when patches upstreamed. */
+    if (S.dspInboundEnabled && typeof host_module_set_param === 'function') {
         let payload = '';
         for (let i = 0; i < 32; i++) {
             payload += (i ? ' ' : '') + S.padNoteMap[i];
         }
         /* The tN_padmap key encodes the active track index — DSP's
-         * tN_padmap handler also updates inst->active_track from it.
-         * (Schwung host silently drops module-defined global keys, so we
-         * piggyback active-track sync onto the per-track padmap push.) */
+         * tN_padmap handler updates inst->active_track + dsp_inbound_enabled
+         * from it. (Schwung host silently drops module-defined global keys,
+         * so we piggyback signals onto the per-track padmap push.) */
         host_module_set_param('t' + S.activeTrack + '_padmap', payload);
     }
 }
@@ -2284,12 +2290,19 @@ function liveSendNote(t, type, pitch, vel, rawVel) {
          * suppression: melodic record_note_on inline-monitors via DSP; drum
          * recording handled by press-handler direct-fire (also routes through
          * queueLiveNoteOn). Suppress here to avoid double-monitoring. */
-        const activelyRecording = S.recordArmed && !S.recordCountingIn && S.recordArmedTrack === t;
-        const isOff = (type === 0x80) || (type === 0x90 && vel === 0);
-        if (isOff) {
-            queueLiveNoteOff(t, pitch);
-        } else if (!activelyRecording) {
-            queueLiveNoteOn(t, pitch, vel);
+        if (S.dspInboundEnabled && (type === 0x90 || type === 0x80)) {
+            /* PHASE-1: DSP on_midi owns note dispatch when capability gate is
+             * active. on_midi also gates on tr->recording for note-on to
+             * preserve the record_note_on monitor path. Remove this branch
+             * (and queueLiveNoteOn/Off below) when patches upstreamed. */
+        } else {
+            const activelyRecording = S.recordArmed && !S.recordCountingIn && S.recordArmedTrack === t;
+            const isOff = (type === 0x80) || (type === 0x90 && vel === 0);
+            if (isOff) {
+                queueLiveNoteOff(t, pitch);
+            } else if (!activelyRecording) {
+                queueLiveNoteOn(t, pitch, vel);
+            }
         }
     } else {
         /* ROUTE_SCHWUNG: route note events through live_note_on so pfx chain
@@ -2299,11 +2312,16 @@ function liveSendNote(t, type, pitch, vel, rawVel) {
          * PB) pass through raw — only note on/off go through the live-notes
          * payload parser. */
         if (type === 0x90 || type === 0x80) {
-            const isOff = type === 0x80 || vel === 0;
-            if (isOff) {
-                queueLiveNoteOff(t, pitch);
+            if (S.dspInboundEnabled) {
+                /* PHASE-1: DSP on_midi owns note dispatch when capability
+                 * gate is active. Remove this branch when patches upstreamed. */
             } else {
-                queueLiveNoteOn(t, pitch, vel);
+                const isOff = type === 0x80 || vel === 0;
+                if (isOff) {
+                    queueLiveNoteOff(t, pitch);
+                } else {
+                    queueLiveNoteOn(t, pitch, vel);
+                }
             }
         } else {
             if (typeof shadow_send_midi_to_dsp === 'function') shadow_send_midi_to_dsp([status, pitch, vel]);
@@ -3632,6 +3650,18 @@ globalThis.init = function () {
      * Deferred if pendingSetLoad: DSP hasn't loaded the new set yet, restoreUiSidecar
      * will be called again from the pendingDspSync completion path after the full resync. */
     restoreUiSidecar(!S.pendingSetLoad);
+
+    /* PHASE-1: capability gate for DSP-owned input. On patched Schwung the
+     * shim delivers pad MIDI to overtake DSP's on_midi on the audio thread,
+     * removing the slow-brain JS hop. We detect via shadow_inbound_pad_midi_active
+     * (added in legsmechanical/schwung phase-1-inbound). When active, we suppress
+     * queueLiveNoteOn/Off in liveSendNote AND push tN_padmap to DSP — which
+     * doubles as the DSP-side capability signal (its padmap handler sets
+     * inst->dsp_inbound_enabled). The push happens on every computePadNoteMap
+     * recompute, so it survives DSP instance recreate (state_load path).
+     * Stock Schwung: function undefined, flag stays false, padmap never pushed,
+     * existing JS path keeps working. Remove the gate when patches upstreamed. */
+    S.dspInboundEnabled = (typeof shadow_inbound_pad_midi_active === 'function');
 
     computePadNoteMap();
 

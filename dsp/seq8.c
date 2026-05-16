@@ -4804,20 +4804,29 @@ static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
     int     is_on   = (type == 0x90) && (d2 > 0);
     int     padIdx  = (int)d1 - 68;
     uint8_t t       = inst->active_track;
-    uint8_t pitch   = (t < NUM_TRACKS) ? inst->pad_note_map[t][padIdx] : 0xFF;
+    if (t >= NUM_TRACKS) return;
+    uint8_t pitch   = inst->pad_note_map[t][padIdx];
 
-    {
-        char buf[128];
-        snprintf(buf, sizeof(buf),
-                 "[inbound] %s t=%u pad=%d note=%u vel=%u pitch=%u en=%u",
-                 is_on ? "on" : "off",
-                 (unsigned)t, padIdx, (unsigned)d1, (unsigned)d2,
-                 (unsigned)pitch, (unsigned)inst->dsp_inbound_enabled);
-        seq8_ilog(inst, buf);
+    /* Dormant unless JS has signalled capability via tN_padmap. Until then
+     * on_midi is no-op (JS pendingLiveNotes owns dispatch). The tN_padmap
+     * handler is what sets dsp_inbound_enabled; JS only pushes tN_padmap
+     * when shadow_inbound_pad_midi_active is exposed (patched Schwung). */
+    if (!inst->dsp_inbound_enabled) return;
+    if (pitch == 0xFF) return;          /* map not yet populated for this track */
+
+    seq8_track_t *tr = &inst->tracks[t];
+    /* On ROUTE_MOVE the JS record_note_on path inline-monitors via DSP, so
+     * dispatching note-on here would double the monitor — skip. On
+     * ROUTE_SCHWUNG record_note_on records but does NOT monitor (the JS
+     * path used to monitor via queueLiveNoteOn, which Phase 1 suppresses),
+     * so we MUST dispatch here for the user to hear armed input. Note-off
+     * always dispatches (pfx_note_off_imm is idempotent). */
+    if (is_on && tr->recording && tr->pfx.route == ROUTE_MOVE) return;
+    if (is_on) {
+        live_note_on(inst, tr, pitch, d2);
+    } else {
+        live_note_off(inst, tr, pitch);
     }
-
-    /* Piece 3 will add the live_note_on / live_note_off dispatch here,
-     * gated on inst->dsp_inbound_enabled && pitch != 0xFF. */
 }
 
 /* ------------------------------------------------------------------ */

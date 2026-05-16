@@ -1482,15 +1482,6 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
 
-    /* Phase 1: capability gate for audio-thread inbound pad MIDI.
-     * Set to 1 by JS once it confirms the patched Schwung shim is delivering
-     * pad presses to on_midi. While 0, on_midi only logs (the JS-side
-     * pendingLiveNotes path owns dispatch). Read on every audio block. */
-    if (!strcmp(key, "dsp_inbound_enabled")) {
-        inst->dsp_inbound_enabled = (uint8_t)(my_atoi(val) ? 1 : 0);
-        return;
-    }
-
     /* --- Track-prefixed params: tN_<subkey> --- */
     if (key[0] == 't' && key[1] >= '0' && key[1] <= '7' && key[2] == '_') {
         int tidx = key[1] - '0';
@@ -4191,8 +4182,16 @@ static void set_param(void *instance, const char *key, const char *val) {
              * signals "this is now the active track." We piggyback active-
              * track sync here because the Schwung host drops module-defined
              * global set_param keys (only per-track-prefixed keys reach DSP
-             * reliably). */
+             * reliably).
+             *
+             * The push also serves as the capability signal for Phase 1:
+             * JS only pushes tN_padmap when shadow_inbound_pad_midi_active
+             * is present (patched Schwung). Pushing it survives DSP instance
+             * recreate (state_load destroy/recreate path) because JS pushes
+             * on every computePadNoteMap recompute, not just at init.
+             * PHASE-1: remove the enable line when patches upstreamed. */
             inst->active_track = (uint8_t)tidx;
+            inst->dsp_inbound_enabled = 1;
             return;
         }
 
