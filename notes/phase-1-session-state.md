@@ -1,11 +1,32 @@
 # Phase 1 Bundle 1 — Session Checkpoint
 
-**Saved:** 2026-05-15. Pause point before usage-limit reset.
-**Status:** Feasibility probe in progress. Uncommitted changes on two branches. Latest correction NOT yet built or deployed.
+**Saved:** 2026-05-15 → updated 2026-05-16.
+**Status:** **✓ FEASIBILITY CONFIRMED.** Pad presses on Move reach overtake DSP's `on_midi` on the audio thread with full velocity, source = `MOVE_MIDI_SOURCE_INTERNAL`. Phase 1 architecture is proven viable. Bundle 1 implementation can proceed.
 
-> ⚠️ **MAIN MOVED:** Between this session's start and pause, `main` got two new commits (drum-step quantization fix + `v0.4.0` release). `phase-1-bundle-1` is based on the older commit `0972aa1`. **Consider rebasing onto current main** before continuing. The user did this work in another session; if it conflicts with anything Phase 1 needs, raise it before resuming.
+> ✓ **Both branches now have durable commits.** `schwung-davebox:phase-1-bundle-1` at `61f3086` (rebased onto v0.4.0). `legsmechanical/schwung:phase-1-inbound` at `8a853010`. Branch-swap-clobber risk eliminated.
 
-> ⚠️ **DSP edit was lost once and re-applied.** During the v0.3.6 checkout / main pull cycle that produced v0.4.0, the working-tree `on_midi` body got overwritten because it was never committed. Re-applied 2026-05-15. **Strongly recommend committing the WIP to `phase-1-bundle-1` before any further branch swap.** Suggested message: `wip(phase-1-bundle-1): probe — on_midi log body`. Same applies to the fork's `phase-1-inbound` branch.
+> ✓ **Builds done locally.**
+> - Shim: `~/schwung/build/schwung-shim.so` — has the corrected insertion in `shadow_inprocess_process_midi`.
+> - dAVEBOx: `dist/davebox/dsp.so` + `dist/davebox-module.tar.gz` — has the `on_midi` log body via `seq8_ilog`.
+
+> ⏸ **Deploy + test deferred** — Move was offline at multiple deploy attempts in this session, and the user is now away from the device.
+
+---
+
+## ✓ Feasibility-confirmed evidence (2026-05-16)
+
+After resolving the deploy-path bug (see Lesson 6 below), with the patched shim actually loaded into `MoveOriginal`:
+
+```
+[probe] on_midi src=0 len=3 90 57 28   ← pad note 0x57 (87) on, vel 0x28 (40)
+[probe] on_midi src=0 len=3 80 57 00   ← pad note 0x57 off
+[probe] on_midi src=0 len=3 90 5a 21   ← pad note 0x5a (90) on, vel 0x21 (33)
+... (36 pad events total during a few presses)
+```
+
+All events: cable 0 internal, status 0x80/0x90, d1 in pad range 0x44–0x5F (68–95), velocities 0x01–0x37. Clean on/off pairs. `MOVE_MIDI_SOURCE_INTERNAL == 0` (not 1 as I'd assumed). The audio-thread MIDI hook works exactly as Phase 1 needs.
+
+**Working insertion location:** `~/schwung/src/schwung_shim.c` inside `shim_post_transfer`'s overtake branch (just before `shadow_ui_midi_publish` at ~line 6674). Reads from `src = hardware_mmap_addr + MIDI_IN_OFFSET`. Filter: `overtake_mode == 2 && cable == 0 && (type == 0x90 || type == 0x80) && d1 >= 10`. Commit `a58f557f` on `legsmechanical/schwung:phase-1-inbound`.
 
 ---
 
@@ -61,24 +82,20 @@ mkdir at the top of `on_midi` did not create `/tmp/onmidi_called` — but `seq8_
 
 ## Next step — exactly what to do
 
-1. **In `~/schwung` on `phase-1-inbound` branch:**
-   ```sh
-   ./scripts/build.sh
-   ```
-2. **Deploy + restart:**
-   ```sh
-   scp ~/schwung/build/schwung-shim.so root@move.local:/data/UserData/schwung/schwung-shim.so
-   ssh root@move.local "for name in MoveOriginal Move MoveLauncher MoveMessageDisplay shadow_ui schwung link-subscriber display-server schwung-manager; do pids=\$(pidof \$name 2>/dev/null || true); [ -n \"\$pids\" ] && kill -9 \$pids 2>/dev/null || true; done && /etc/init.d/move start >/dev/null 2>&1"
-   ```
-3. Wait ~15s for Move. Launch dAVEBOx. Press a few pads.
-4. **Check:**
-   ```sh
-   ssh root@move.local "grep '\[probe\] on_midi src=1' /data/UserData/schwung/seq8.log | tail -20"
-   ```
-   - `src=1` = `MOVE_MIDI_SOURCE_INTERNAL`. If lines appear with status `0x90 XX YY` where XX is in 68–99 (pad note range), **feasibility CONFIRMED**.
-   - If only `src=2` (external) lines appear → internal pads still aren't visible from `shadow_inprocess_process_midi`. Diagnosis: shadow_ui process might read MIDI_IN before the shim gets a chance, or the buffer is cleared by an earlier shim site. Next move: call advisor with these findings.
+**Probe is complete; feasibility confirmed.** The fork has commit `a58f557f` with the working pad-delivery. Start Bundle 1 implementation per `notes/phase-1-plan.md`:
 
-5. **If confirmed:** mark task #8 + #12 complete. Start full Bundle 1 implementation per `notes/phase-1-plan.md` (skeleton + scale-aware port + capability gate + JS cleanup).
+1. **Replace the DSP-side probe** at `dsp/seq8.c::on_midi` (currently just `seq8_ilog` logging) with real pad-handling logic:
+   - Extract source (INTERNAL vs EXTERNAL), pitch, velocity from `msg[]`.
+   - For pad-note range (68–99) and `source == MOVE_MIDI_SOURCE_INTERNAL`, derive `padIdx = note - 68` and look up `pad_note_map[track][padIdx]` for the resolved pitch.
+   - Route to `live_note_on`/`live_note_off` (melodic) or drum equivalent.
+
+2. **Port `computePadNoteMap`** from JS to C. Rebake the per-track cache on `key` / `scale` / `scale_aware` / `pad_octave` / `pad_layout_chromatic` set_param.
+
+3. **Add the capability gate in JS**: on init, dAVEBOx queries whether the patched shim's audio-thread pad-delivery is active (e.g. via a one-shot `get_param("dsp_inbound_audio_thread")`). If yes, JS skips `pendingLiveNotes` enqueue for pad notes. If no, falls back to today's JS path.
+
+4. **Deploy + verify on device** at every step (use the dual-path deploy: `cp` to both `/data/UserData/schwung/` AND `/usr/lib/`).
+
+5. **Cleanup pass at the end of Bundle 1**: delete `pendingLiveNotes`, `_drainLiveNotes`, `queueLiveNoteOn/Off`, and the `tN_live_notes` payload parser per `notes/phase-1-plan.md`'s cleanup section.
 
 ---
 
@@ -119,8 +136,11 @@ After "Next step" deploy, the device shim will match the new local code.
 
 ## Lessons / patterns to remember
 
-- The audit cited file-line ranges for `shadow_filter_move_input`. The label exists in comments; the function doesn't. **Always verify a function name with grep before basing an insertion on it.**
-- mkdir-to-`/tmp` for debug markers fails silently on Move. **Use seq8_ilog or fopen-to-`/data/UserData/schwung/probe.txt`.**
-- The advisor saved at least one full iteration by pointing out: deploy-symlink-conflict check + JS-pads-actually-working check + per-block-cadence check before another speculative shim variant. **Settle observable facts before pivoting code.**
-- The actual diagnostic loop here was: probe → 0 events → narrower probe → still 0 → confirm signal reliability → call advisor → reframe → find right function. About 6 iterations. Could have been 2-3 if we'd grepped for `shadow_filter_move_input` (function vs label) at the start, before writing any code.
-- **Uncommitted probe code is fragile.** Multi-session probe work on a branch should be committed at every save point (`wip:` is fine), not left in the working tree. Lost a DSP edit during a v0.3.6 → v0.4.0 release cycle because the file change was sitting uncommitted on `phase-1-bundle-1`. The release work touched main but the branch swap clobbered the working tree.
+1. **`shadow_filter_move_input` is a label, not a function.** The audit cited line ranges referencing it; the actual function name is `shim_post_transfer`. Always grep for a function name before basing an insertion on it.
+2. **mkdir-to-`/tmp` for debug markers fails silently** on Move (the DSP process has an isolated `/tmp` namespace). Use `seq8_ilog` via `on_midi` sentinels — that's the only reliable signal across the audio thread.
+3. **Settle observable facts before pivoting code.** The advisor saved at least one full iteration by pointing out: deploy-binary-check + JS-pads-actually-working check + per-block-cadence check before another speculative shim variant.
+4. **Uncommitted probe code is fragile.** Multi-session probe work on a branch should be committed at every save point (`wip:` is fine). Lost a DSP edit during a v0.3.6 → v0.4.0 release cycle because the file change was sitting uncommitted on `phase-1-bundle-1`.
+5. **`shadow_inprocess_process_midi` and `shim_post_transfer` read DIFFERENT MIDI_IN buffers.** The former reads `global_mmap_addr + MIDI_IN_OFFSET` (stale); the latter reads `hardware_mmap_addr + MIDI_IN_OFFSET` (fresh, post-ioctl). For pad-press delivery, only `shim_post_transfer`'s buffer has the events. The existing cable-2 site at line 1245 in `shadow_inprocess_process_midi` works because it reads `global_mmap_addr + MIDI_**OUT**_OFFSET` (a third buffer entirely — Move's own output).
+6. **`/usr/lib/schwung-shim.so` is the path MoveOriginal actually loads — NOT `/data/UserData/schwung/schwung-shim.so` as memory previously claimed.** In v0.9.13, the schwung-heal symlink-restoration behavior doesn't apply (verified empirically via `/proc/<pid>/maps`). Always deploy to BOTH paths and verify with `cat /proc/$(pidof MoveOriginal)/maps | grep schwung-shim`. Memory `[[schwung-shim-deploy-path]]` updated 2026-05-16.
+7. **`MOVE_MIDI_SOURCE_INTERNAL == 0`**, not 1. Internal pad-source events log as `src=0`.
+8. **The diagnostic discriminator pattern is invaluable:** when "didn't fire" could mean either "function not reached" or "filter conditions don't match," add a counter-gated sentinel `on_midi` call at the function entry with a distinguishable byte pattern (e.g. `0xFE 0xA1 0xA1`). The reliable signal that emerges tells you which half of the search space to keep investigating.
