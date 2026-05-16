@@ -163,15 +163,20 @@ Bundle 1.6 (commit `eaa0af9`) closes the "TARP + count-in" gap surfaced during B
 ## File state at end of session
 
 ```
-On branch phase-1-bundle-1 (commit eaa0af9 ahead of origin/phase-1-bundle-1 — not yet pushed)
-Working tree: this session-state update is the only uncommitted file at the time of writing.
+On branch phase-1-bundle-1 (HEAD = 2b319a2, in sync with origin/phase-1-bundle-1)
+Working tree clean.
 Untracked (notes, intentionally not committed):
   notes/DISCORD_INTRO_POST.md
   notes/RECORDING_LATENCY_EXPERIMENT.md
   notes/audit-davebox-arch.md
 ```
 
-All Bundle 1 + 1.5 + 1.6 work committed. Resume next session from this branch — do NOT merge to main per discipline rule above.
+Final three commits this session, in order:
+- `eaa0af9` Bundle 1.6 code + CHANGELOG `[Unreleased]` + MANUAL `Count-in pre-roll` update.
+- `0a82eaa` Session-state checkpoint reflecting Bundle 1.6 shipped.
+- `2b319a2` Park drum-repeats-during-count-in out of refactor scope.
+
+All Bundle 1 + 1.5 + 1.6 work committed and pushed. Resume next session from this branch (Bundle 2 = VelIn + drum velocity zones + Note Repeat audio-thread path). Do NOT merge to main per discipline rule above.
 
 ## Verification scenarios run this session
 
