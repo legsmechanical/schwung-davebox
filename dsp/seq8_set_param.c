@@ -4184,7 +4184,15 @@ static void set_param(void *instance, const char *key, const char *val) {
                 inst->pad_note_map[tidx][i] = (uint8_t)p;
             }
             /* Anything we didn't read stays at its previous value. JS is
-             * expected to always send the full 32-entry payload. */
+             * expected to always send the full 32-entry payload.
+             *
+             * JS only ever pushes tN_padmap for the *currently active* track
+             * (computePadNoteMap uses S.activeTrack), so the act of pushing
+             * signals "this is now the active track." We piggyback active-
+             * track sync here because the Schwung host drops module-defined
+             * global set_param keys (only per-track-prefixed keys reach DSP
+             * reliably). */
+            inst->active_track = (uint8_t)tidx;
             return;
         }
 

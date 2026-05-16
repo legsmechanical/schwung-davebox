@@ -1325,16 +1325,32 @@ function computePadNoteMap() {
             const row = Math.floor(i / 8);
             S.padNoteMap[i] = Math.max(0, Math.min(127, root + col + row * 8));
         }
-        return;
+    } else {
+        const n = intervals.length;
+        for (let i = 0; i < 32; i++) {
+            const col = i % 8;
+            const row = Math.floor(i / 8);
+            const deg = col + row * 3;
+            const oct = Math.floor(deg / n);
+            const semitone = oct * 12 + intervals[deg % n];
+            S.padNoteMap[i] = Math.max(0, Math.min(127, root + semitone));
+        }
     }
-    const n = intervals.length;
-    for (let i = 0; i < 32; i++) {
-        const col = i % 8;
-        const row = Math.floor(i / 8);
-        const deg = col + row * 3;
-        const oct = Math.floor(deg / n);
-        const semitone = oct * 12 + intervals[deg % n];
-        S.padNoteMap[i] = Math.max(0, Math.min(127, root + semitone));
+    /* Phase 1: push the resolved active-track map to DSP for audio-thread
+     * inbound. DSP only ever indexes pad_note_map[inst->active_track], so
+     * pushing the one active track's map on every recompute is sufficient.
+     * Dormant until the capability gate flips dsp_inbound_enabled in
+     * piece 3. */
+    if (typeof host_module_set_param === 'function') {
+        let payload = '';
+        for (let i = 0; i < 32; i++) {
+            payload += (i ? ' ' : '') + S.padNoteMap[i];
+        }
+        /* The tN_padmap key encodes the active track index — DSP's
+         * tN_padmap handler also updates inst->active_track from it.
+         * (Schwung host silently drops module-defined global keys, so we
+         * piggyback active-track sync onto the per-track padmap push.) */
+        host_module_set_param('t' + S.activeTrack + '_padmap', payload);
     }
 }
 
