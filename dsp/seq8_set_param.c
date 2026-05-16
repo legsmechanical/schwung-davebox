@@ -1482,6 +1482,15 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
 
+    /* Phase 1: capability gate for audio-thread inbound pad MIDI.
+     * Set to 1 by JS once it confirms the patched Schwung shim is delivering
+     * pad presses to on_midi. While 0, on_midi only logs (the JS-side
+     * pendingLiveNotes path owns dispatch). Read on every audio block. */
+    if (!strcmp(key, "dsp_inbound_enabled")) {
+        inst->dsp_inbound_enabled = (uint8_t)(my_atoi(val) ? 1 : 0);
+        return;
+    }
+
     /* --- Track-prefixed params: tN_<subkey> --- */
     if (key[0] == 't' && key[1] >= '0' && key[1] <= '7' && key[2] == '_') {
         int tidx = key[1] - '0';
@@ -4154,6 +4163,28 @@ static void set_param(void *instance, const char *key, const char *val) {
                     live_note_off(inst, tr, (uint8_t)pitch);
                 }
             }
+            return;
+        }
+
+        if (!strcmp(sub, "padmap")) {
+            /* tN_padmap "p0 p1 p2 ... p31" — 32 space-separated resolved
+             * MIDI pitches for the 32 pads on track t. Pushed by JS whenever
+             * computePadNoteMap recomputes (key / scale / scale-aware /
+             * pad octave / layout / pad mode change). 0xFF = unmapped.
+             * Consumed on the audio thread by on_midi. */
+            const char *sp = val;
+            int i;
+            for (i = 0; i < 32; i++) {
+                while (*sp == ' ') sp++;
+                if (!*sp) break;
+                int p = 0;
+                while (*sp >= '0' && *sp <= '9') { p = p * 10 + (*sp++ - '0'); }
+                if (p < 0)   p = 0xFF;
+                if (p > 255) p = 0xFF;
+                inst->pad_note_map[tidx][i] = (uint8_t)p;
+            }
+            /* Anything we didn't read stays at its previous value. JS is
+             * expected to always send the full 32-entry payload. */
             return;
         }
 

@@ -768,6 +768,18 @@ typedef struct {
 
     /* Result of last all_lanes_beat_stretch: 0=none, 1=ok, -1=blocked */
     int all_lanes_stretch_result;
+
+    /* Phase 1: inbound pad MIDI on the audio thread.
+     * dsp_inbound_enabled is flipped by JS during the capability handshake
+     * once it's confirmed the patched Schwung shim delivers pad presses to
+     * on_midi. While 0, on_midi only logs — JS-side pendingLiveNotes still
+     * owns the dispatch (stock-Schwung-compatible path).
+     * pad_note_map[t][padIdx] holds the resolved MIDI pitch (post key /
+     * scale / scale-aware / layout / octave) for each pad on track t. JS
+     * pushes the table via tN_padmap whenever its computePadNoteMap output
+     * changes. 0xFF = unmapped (skip dispatch). */
+    uint8_t  dsp_inbound_enabled;
+    uint8_t  pad_note_map[NUM_TRACKS][32];
 } seq8_instance_t;
 
 static const host_api_v1_t *g_host = NULL;
@@ -4670,6 +4682,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     inst->looper_sync            = 1;
     inst->looper_pending_silence = 0;
     memset(inst->perf_emitted_pitch, 0xFF, sizeof(inst->perf_emitted_pitch));
+    memset(inst->pad_note_map, 0xFF, sizeof(inst->pad_note_map));
     strncpy(inst->state_path, SEQ8_STATE_PATH_FALLBACK, sizeof(inst->state_path) - 1);
 
     /* Resolve per-set state path from active_set.txt */
@@ -4760,14 +4773,51 @@ static void destroy_instance(void *instance) {
 /* on_midi                                                              */
 /* ------------------------------------------------------------------ */
 
+/* Phase 1 inbound: audio-thread pad MIDI from the patched Schwung shim.
+ *
+ * source: 0 = MOVE_MIDI_SOURCE_INTERNAL (Move pads / hardware controls),
+ *         1 = MOVE_MIDI_SOURCE_EXTERNAL (cable-2 USB / external MIDI),
+ *         2 = panic and other shim-side announcements.
+ *
+ * We currently filter for cable-0 internal pad note events in d1 range
+ * 68..99 (the Move pad note block). The resolved pitch comes from
+ * pad_note_map[active_track][padIdx] — populated by JS via tN_padmap.
+ *
+ * Dispatch (live_note_on / live_note_off) is gated on inst->dsp_inbound_enabled
+ * AND on the pad_note_map entry being initialized (!= 0xFF). While dormant we
+ * just log so we can confirm parse + filter behavior on device without
+ * double-firing notes alongside the existing JS pendingLiveNotes path. */
 static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
     seq8_instance_t *inst = (seq8_instance_t *)instance;
-    uint8_t b0 = len > 0 ? msg[0] : 0;
-    uint8_t b1 = len > 1 ? msg[1] : 0;
-    uint8_t b2 = len > 2 ? msg[2] : 0;
-    char buf[96];
-    snprintf(buf, sizeof(buf), "[probe] on_midi src=%d len=%d %02x %02x %02x", source, len, b0, b1, b2);
-    seq8_ilog(inst, buf);
+    if (!inst || len < 3 || !msg) return;
+
+    uint8_t status = msg[0];
+    uint8_t d1     = msg[1];
+    uint8_t d2     = msg[2];
+    uint8_t type   = status & 0xF0;
+
+    /* Filter to internal pad note events only. */
+    if (source != 0)                          return; /* not internal */
+    if (type != 0x90 && type != 0x80)         return; /* not note on/off */
+    if (d1 < 68 || d1 > 99)                   return; /* not a pad note */
+
+    int     is_on   = (type == 0x90) && (d2 > 0);
+    int     padIdx  = (int)d1 - 68;
+    uint8_t t       = inst->active_track;
+    uint8_t pitch   = (t < NUM_TRACKS) ? inst->pad_note_map[t][padIdx] : 0xFF;
+
+    {
+        char buf[128];
+        snprintf(buf, sizeof(buf),
+                 "[inbound] %s t=%u pad=%d note=%u vel=%u pitch=%u en=%u",
+                 is_on ? "on" : "off",
+                 (unsigned)t, padIdx, (unsigned)d1, (unsigned)d2,
+                 (unsigned)pitch, (unsigned)inst->dsp_inbound_enabled);
+        seq8_ilog(inst, buf);
+    }
+
+    /* Piece 3 will add the live_note_on / live_note_off dispatch here,
+     * gated on inst->dsp_inbound_enabled && pitch != 0xFF. */
 }
 
 /* ------------------------------------------------------------------ */
