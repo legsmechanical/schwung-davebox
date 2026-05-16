@@ -49,14 +49,47 @@ Builds: dist/davebox-module.tar.gz current. `~/schwung/build/shadow/shadow_ui` d
 
 ## What's NOT done yet
 
-1. **Device-test pass before merge.** This session was long and made several pivots; recommend an hour of real-music playing on patched Schwung in a fresh session before merging `phase-1-bundle-1` → `main`.
-2. **Merge & release.** Per plan: cut a release between bundles. Will need to merge both `legsmechanical/schwung:phase-1-inbound` → `main` (shim sentinel) and `phase-1-bundle-1` → `main` (dAVEBOx). Regenerate `patches/davebox-local.patch`.
-3. **Edge cases worth poking at:**
-   - State load / set switch (DSP destroy/recreate path — does the first pad press after recreate work, or is there a gate-not-set window?).
-   - Schwung overtake exit + re-entry (does S.dspInboundEnabled remain true; is the JS path resilient?).
-   - Rapid chord stress test — many notes in tight succession.
-   - Drum velocity zones in patched mode (right-half pad presses for vel-arm).
-   - Recording on drum tracks (drum_record_note_on path).
+1. **Device-test pass before merge** — see "Device-test plan" below.
+2. **Merge & release.** Per plan: cut a release between bundles. Will need to merge both `legsmechanical/schwung:phase-1-inbound` → `main` (shim sentinel) and `phase-1-bundle-1` → `main` (dAVEBOx). Regenerate `patches/davebox-local.patch`. Probable version: `0.5.0`.
+
+---
+
+## Device-test plan (run before merging)
+
+Goal: ~1 hour of real-music playing on patched Schwung. Hit the things below. Anything weird that isn't on the "expected NOT to work" list is a real regression.
+
+### Expected NOT to work (Bundle 2/3 territory — DO NOT flag as bugs)
+
+These features still live in the JS path which Phase 1 suppresses for note events on patched Schwung. They'll be ported in later bundles.
+
+| Feature | What's missing | Bundle |
+|---|---|---|
+| **VelIn (per-track velocity override)** | JS applies `trackVelOverride` in `liveSendNote` — now skipped for notes. `on_midi` dispatches with raw pad velocity. VelIn knob no-op for pad presses. | 2 |
+| **Drum velocity zones** | Right-half pad presses still arm a zone in JS state, but the actual velocity hitting the lane is raw d2 from `on_midi`, not the zone-derived value. | 2 |
+| **Note Repeat (Rpt1 / Rpt2)** | JS pad-press handler fires the repeat pattern. With JS note dispatch suppressed, repeats don't fire on pad input. (Repeats DURING sequencer playback still work — those run from DSP step-fire.) | 2 |
+| **Count-in preroll chord capture** | JS captures notes during count-in via `pendingPrerollNotes`. With JS suppressed, preroll captures may not work correctly. | 3 |
+
+### Expected TO work — verify these
+
+- **Chord cohesion** — press 3-4 pads simultaneously; should sound tight (no late notes). This is the actual Bundle 1 win.
+- **Single-note latency** — should feel snappier than pre-Phase-1.
+- **TARP, NOTE FX, HARMZ, MIDI DLY on melodic** — `live_note_on` routes through the pfx chain so these effects apply to live pad input.
+- **Melodic recording** when armed — records AND monitors, no doubles.
+- **Drum recording** when armed — drum lane fires, records, no doubles.
+- **Octave shift** (Up/Down arrows on melodic) — already verified, but re-confirm under real use.
+- **Drum lane page paging** (Up/Down on drum) — already verified.
+- **Track switching** — Shift+pad and Shift+jog both.
+- **Step playback** — untouched DSP render path; should be unchanged.
+- **External MIDI in via cable 2** (USB MIDI input) — separate `on_midi` path; should be untouched.
+- **Looper capture** — `pfx_send` captures emitted notes; should work.
+- **ROUTE_EXTERNAL output** — USB MIDI out; JS path preserved for that.
+
+### Edge cases worth probing
+
+- **State load / set switch.** Switch sets while dAVEBOx is open. DSP destroys & recreates the instance. The first pad press AFTER the switch may be silent — `pad_note_map` and `dsp_inbound_enabled` are reset, and nothing re-pushes `tN_padmap` until the user does something that triggers `computePadNoteMap` (octave shift, track switch, key change, etc.). If this happens, the fix is to add an explicit `computePadNoteMap()` call in the `pendingDspSync` completion path (after `restoreUiSidecar(true)`).
+- **Schwung overtake exit + re-entry.** Does `S.dspInboundEnabled` survive a Shift+Back + re-enter cycle? Should, but worth checking.
+- **Rapid chord stress test.** Tight succession of chord on/off events. Watch for stuck notes or dropped events.
+- **Stock-Schwung fallback** (if a stock build is around). Confirm no regression on unpatched Schwung.
 
 ---
 
