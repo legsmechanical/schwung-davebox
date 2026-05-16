@@ -1,30 +1,30 @@
-# Phase 1 Bundle 1 — Session Checkpoint
+# Phase 1 — Session Checkpoint (Bundles 1 + 1.5 complete)
 
-**Saved:** 2026-05-15 → updated 2026-05-16 (mid-session).
-**Status:** **✓ BUNDLE 1 + recording-tick slot fix VERIFIED on `phase-1-bundle-1`.** All 6 verification scenarios pass (5 explicit, 1 incidental). Monitoring + recording feel tight. Outstanding before merge: (a) vanilla-Schwung fallback test (build ready at `/tmp/schwung-vanilla/schwung.tar.gz`, not yet deployed), (b) Bundle 1.5 (count-in preroll path) per user direction — won't merge until that's done too.
+**Saved:** 2026-05-15 → updated 2026-05-16 (end of session, Bundle 1.5 shipped).
+**Status:** **✓ BUNDLE 1 + BUNDLE 1.5 VERIFIED + COMMITTED + PUSHED on `phase-1-bundle-1`.** All recording scenarios pass: loop_start=0 (count-in + normal, melodic + drum), loop_start>0 (count-in + normal, melodic + drum), window-wrap held notes, TARP overdub, ROUTE_MOVE + ROUTE_SCHWUNG. Vanilla-Schwung fallback also verified (deployed v0.9.13 binaries; user confirmed pre-Phase-1 behavior; patched restored after).
+
+**Discipline locked-in for this refactor:** **NO main merges until the entire Phase 1 refactor is complete and verified end-to-end.** Bundle branches push to their own remote refs only; one coordinated mainline drop + patch regen + release at the very end. Stated 2026-05-16 — memory: `feedback_phase_1_no_main_until_done.md`.
 
 ---
 
-## Commits on phase-1-bundle-1 (off main)
+## Commits on phase-1-bundle-1 (off main, pushed to `origin/phase-1-bundle-1`)
 
-- `78f9275` piece 1 — DSP scaffold: `dsp_inbound_enabled` flag, `pad_note_map[8][32]` storage, `on_midi` parse+filter+log, `tN_padmap` set_param handler.
-- `000e30e` piece 2 — JS `computePadNoteMap` pushes `tN_padmap` to DSP on every recompute. Padmap handler also piggybacks `active_track` sync.
-- `ac3c3c2` piece 3 — capability gate (`shadow_inbound_pad_midi_active`), `on_midi` dispatch via `live_note_on/off`, JS suppression in `liveSendNote` for ROUTE_MOVE + ROUTE_SCHWUNG. Padmap handler also sets `dsp_inbound_enabled = 1` (capability signal piggybacked).
 - `73295f0` drum mode — `computePadNoteMap` branches: drum tracks push lane `midi_notes`; right-half pads emit 0xFF (vel zones aren't note dispatch).
-- `d3fb587` trackOctave — bake runtime octave shift into DSP padmap push; resync on Up/Down arrows (also handles `drumLanePage` change).
+- `d3fb587` trackOctave — bake runtime octave shift into DSP padmap push; resync on Up/Down arrows + drumLanePage change.
+- `f47c93e` session-view padmap gate + drum lane note repush.
+- `2e540d9` single-buffer monitor when armed on patched Schwung — on_midi dispatches unconditionally; record-path inline-monitor gated on `!dsp_inbound_enabled`.
+- `f822dfe` record-tick slot mechanism — `on_midi` snapshots actual hardware press/release tick on audio thread; record handlers read from per-(track,pitch) / per-(track,lane) slots.
+- `b5c3fa7` docs: session-state checkpoint (mid-session).
+- `a46bb3c` **Bundle 1.5** — count-in preroll capture (last 1/8 note window) + window-aware recording (drop `% clip_ticks` in record_note_on/off, drum_record_note_on/off, tarp_fire_step, finalize_pending_notes; widen drum bounds to `< loop_start + length`).
 
-**Uncommitted on tree (verified working, awaiting Bundle 1.5 + vanilla test before commit):**
-- Session-view padmap gate — pads in session view emit 0xFF so DSP `on_midi` skips dispatch.
-- Drum lane note assign re-pushes padmap so on_midi reflects the new lane note.
-- on_midi → live_note_on/off unconditionally (no skip when armed); record-path inline-monitor gated on `!inst->dsp_inbound_enabled` so monitor stays single-buffer regardless of armed state.
-- **Recording-tick slot mechanism** — `on_midi` snapshots actual hardware press/release tick (audio thread); `record_note_on/off` + `drum_record_note_on/off` read from per-(track,pitch) and per-(track,lane) slots instead of `current_clip_tick` at handler arrival. Fixes the "press+release in same audio buffer → gate=1 tick" collapse. Slots cleared on recording-arm transition.
+(Earlier Bundle 1 commits `78f9275`, `000e30e`, `ac3c3c2` are the scaffold/initial-dispatch trio that landed before the session-state file was first written; they sit underneath these on the branch.)
 
-## Commits on `legsmechanical/schwung:phase-1-inbound` (off main, v0.9.13 base)
+## Commits on `legsmechanical/schwung:phase-1-inbound` (off main, v0.9.13 base, pushed to `fork/phase-1-inbound`)
 
 - `a58f557f` shim pad-delivery insertion (existed pre-session).
 - `7aa0a0e9` capability sentinel `shadow_inbound_pad_midi_active()` exposed via shadow_ui.
 
-Builds: dist/davebox-module.tar.gz current. `~/schwung/build/shadow/shadow_ui` deployed to `/data/UserData/schwung/shadow/` on Move.
+Builds: dist/davebox-module.tar.gz current. `~/schwung/build/shadow/shadow_ui` deployed to `/data/UserData/schwung/shadow/` on Move (includes phase-1-inbound commits).
 
 ---
 
@@ -53,29 +53,42 @@ Builds: dist/davebox-module.tar.gz current. `~/schwung/build/shadow/shadow_ui` d
 
 ---
 
-## What's NOT done yet
+## What's NOT done yet (resume here next session)
 
-1. **Bundle 1.5: count-in preroll fix** — see "Bundle 1.5 plan" below. User said: "i'm not interested in shipping anything until we're totally done. fine deferring count-in to 1.5 if that makes sense." So 1.5 lands before merge.
-2. ~~**Vanilla Schwung fallback test**~~ — **PASSED 2026-05-16.** Deployed v0.9.13 binaries from `/tmp/schwung-vanilla/schwung.tar.gz`. dAVEBOx detected `shadow_inbound_pad_midi_active` absent → `S.dspInboundEnabled=false` → pre-Phase-1 path. User confirmed: pad presses, recording, session-view clip-launch all work as before. Patched binaries restored after test (backups at `*.patched.bak` on Move; can re-test stock by running the restore loop in reverse).
-3. **Commit the uncommitted slot-fix + session-view-gate + drum-lane-assign work.** User hasn't asked for commit yet (per workflow rule). Commit shape: probably 3-4 logical commits — (a) session-view padmap + drum lane assign, (b) record-path inline-monitor gate, (c) recording-tick slot mechanism.
-4. **Merge & release.** Per plan: cut a release between bundles. Will need to merge both `legsmechanical/schwung:phase-1-inbound` → `main` (shim sentinel) and `phase-1-bundle-1` → `main` (dAVEBOx). Regenerate `patches/davebox-local.patch`. Probable version: `0.5.0`.
+### Open work
+
+1. **Bundle 1.6 — TARP + count-in interaction.** Pre-existing bug surfaced during Bundle 1.5 device test; user verified happens at `loop_start=0` too. Two structural pieces:
+   - **No TARP playback during count-in.** `tarp_fire_step` is driven by `tarp_tick`, which only runs during regular playback (`inst->playing=1`). During count-in `playing=0`, so the TARP engine is frozen. Count-in tick loop at `seq8.c:6383` only decrements `count_in_ticks` and runs the metronome — nothing else ticks. Fixing this means wiring TARP advancement into the count-in loop while keeping the playhead/clip side dormant.
+   - **No TARP capture during count-in.** `tarp_fire_step`'s clip-write at `seq8.c:4078` is gated on `tr->recording=1`, which only flips on AT count-in end. Capture during preroll needs an analogous branch — slot snapshot during last 1/8 note, tracking arp-fired notes instead of pad presses.
+   - **"Maybe missing step-0 capture"** — likely fallout from (1)/(2), not a third bug.
+   - Scope: small sub-feature ("TARP-aware count-in"), not a one-liner. Read `tarp_tick` / `tarp_fire_step` and the count-in tick loop together before patching.
+
+2. **Bundle 2 — VelIn + drum velocity zones + Note Repeat audio-thread path.** Per the original Phase 1 plan. Currently these features live in the JS path which Bundle 1 suppresses for note events on patched Schwung. See `notes/phase-1-plan.md` for the bundle breakdown.
+
+3. **End-of-refactor coordinated drop** — when ALL phase-1 bundles are done:
+   - Merge `legsmechanical/schwung:phase-1-inbound` → `legsmechanical/schwung:main`, push fork.
+   - Merge `phase-1-bundle-1` (+ later bundle branches) → `legsmechanical/schwung-davebox:main`, push origin.
+   - Regenerate `patches/davebox-local.patch` via `git -C ~/schwung diff v0.9.13..main -- src/` and commit on dAVEBOx main.
+   - Cut release (probably `0.5.0`+).
+   - Do NOT do any of this mid-refactor — see `feedback_phase_1_no_main_until_done.md`.
+
+### Already done (confirmed)
+
+- ~~**Vanilla Schwung fallback test**~~ — **PASSED 2026-05-16.** Deployed v0.9.13 binaries from `/tmp/schwung-vanilla/schwung.tar.gz`. dAVEBOx detected `shadow_inbound_pad_midi_active` absent → `S.dspInboundEnabled=false` → pre-Phase-1 path. User confirmed: pad presses, recording, session-view clip-launch all work as before. Patched binaries restored after test (backups at `*.patched.bak` on Move).
+- ~~**Bundle 1.5 (count-in preroll + window-aware recording)**~~ — **VERIFIED + COMMITTED + PUSHED 2026-05-16.** Commit `a46bb3c`. See CHANGELOG `[Unreleased]` for user-facing summary.
+- ~~**Commit the uncommitted slot-fix + session-view-gate + drum-lane-assign work**~~ — **DONE.** Five commits on the branch as listed above. All pushed to `origin/phase-1-bundle-1`.
 
 ---
 
-## Bundle 1.5 plan — count-in preroll path
+## Bundle 1.5 — shipped (reference)
 
-**Problem:** Pad presses during the recording count-in go through `pendingPrerollNotes` (ui.js L6952) → JS-computed gate via `dspPerJs = 384 / countInDur` heuristic → `step_<loop_start>_toggle` + `step_<loop_start>_gate` set_params. The JS tick math is approximate and durations come out ~20-30% short. The slot mechanism doesn't help because (a) JS doesn't call `recordNoteOn` during count-in (gated on `!recordCountingIn`), and (b) `tr->recording` is 0 in DSP during count-in so on_midi skips slot writes.
+Bundle 1.5 (commit `a46bb3c`) folded two related fixes:
 
-**Verified during this session:** user pressed during count-in → gate = 11.2/12.5 steps when 16 steps were held. Verified by reading log: `on_midi PRESS` never fired (recording=0 in DSP at press time); `rec_on` never fired (JS preroll path took it instead). On a separate test the user waited for count-in to end and got a perfect 15.5-step gate via slot path.
+1. **Count-in preroll capture window.** Presses in the first 7/8 of count-in are monitored only; presses in the last 1/8 land at `loop_start * tps` when transport flips. Filter is in DSP `on_midi` (last 1/8 note = `count_in_ticks <= PPQN/2`). JS-side `recordCountingIn` gate dropped — DSP is authoritative on patched. `record_count_in` handler clears slot active flags so stale flags don't leak. Slot-mandatory rule on patched: record handlers `continue` if no active on_midi slot (drops filtered preroll presses).
 
-**Fix shape (proposed):**
-- JS: change L6956 to push to `_recNoteOns` regardless of `recordCountingIn`. Drop the `pendingPrerollNotes` melodic-non-TARP branch — `_recNoteOns` flush is already gated on `!recordCountingIn` so the batch flushes precisely when DSP becomes ready. Keep `pendingPrerollNotes` for the TARP and drum branches for now (separate fix).
-- DSP: extend `on_midi` slot-write to fire when `tr->record_armed || tr->recording`. Issue: during count-in `current_clip_tick` may be at the end of the previous loop. Need to special-case: if `record_armed && !recording`, write slot tick = 0 (synthetic "step 0 of upcoming pass"). Release captured normally once recording starts.
-- Edge case: chord during count-in — slots are per-pitch so chord-cohesion preserved.
-- Edge case: TARP+count-in — TARP branch in `recordNoteOn` is already pendingPrerollNotes-skipped, leave alone.
-- Edge case: drum+count-in — leave on `pendingPrerollNotes` for this bundle.
+2. **Window-aware recording.** Every recording path was collapsing window-anchored ticks with `% (length * tps)` before insertion, stripping `loop_start`. All sites — record_note_on/off, drum_record_note_on/off, tarp_fire_step, finalize_pending_notes — now treat `current_clip_tick` / slot snapshots as already window-anchored. Drum write/close-gate bounds widened from `step < length` to `step < (loop_start + length)`; drum wrap math returns to `loop_start` instead of 0 at window end. Unsigned-wraparound gate math for window-crossing held notes verified correct.
 
-**Verification protocol:** repeat the long-hold-from-step-0 test BUT press during count-in. Gate should come out within hardware press precision of expected (e.g., 15-16 steps for a 16-step hold).
+**Why folded into one commit:** the count-in preroll uses a synthetic tick = `loop_start * tps`; without the window-aware fix, that would be modulo'd by `length*tps` to 0 for `loop_start=length` clips. They're coupled.
 
 ---
 
@@ -132,18 +145,15 @@ These features still live in the JS path which Phase 1 suppresses for note event
 ## File state at end of session
 
 ```
-On branch phase-1-bundle-1 (5 commits ahead of main + uncommitted slot fix on tree)
-Modified (uncommitted):
-  dsp/seq8.c           — slot storage in seq8_instance_t, on_midi snapshots
-  dsp/seq8_set_param.c — slot reset on recording=1, record handlers read slots
-  ui/ui.js             — session-view padmap gate, drum lane assign repush
-Untracked:
+On branch phase-1-bundle-1 (in sync with origin/phase-1-bundle-1)
+Working tree clean (no Bundle 1.5 leftovers)
+Untracked (notes, intentionally not committed):
   notes/DISCORD_INTRO_POST.md
   notes/RECORDING_LATENCY_EXPERIMENT.md
   notes/audit-davebox-arch.md
 ```
 
-Original 5 Bundle 1 commits remain. The slot/gate/drum-assign work is verified but uncommitted — awaiting Bundle 1.5 + vanilla test before commit (per user direction: ship-when-totally-done).
+All Bundle 1 + 1.5 work committed and pushed. Resume next session from this branch — do NOT merge to main per discipline rule above.
 
 ## Verification scenarios run this session
 
