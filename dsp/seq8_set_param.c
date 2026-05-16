@@ -3193,6 +3193,12 @@ static void set_param(void *instance, const char *key, const char *val) {
                 /* Fresh recording session: clear pass mask so existing notes play back */
                 memset(tr->live_recorded_steps, 0, 32);
                 memset(tr->cc_auto_touch_frame, 0, sizeof(tr->cc_auto_touch_frame));
+                /* PHASE-1: clear inbound press/release slots so a stale active=1
+                 * from a prior recording session can't leak into this pass. */
+                memset(inst->on_midi_press_active[tidx], 0, sizeof(inst->on_midi_press_active[tidx]));
+                memset(inst->on_midi_release_active[tidx], 0, sizeof(inst->on_midi_release_active[tidx]));
+                memset(inst->on_midi_drum_press_active[tidx], 0, sizeof(inst->on_midi_drum_press_active[tidx]));
+                memset(inst->on_midi_drum_release_active[tidx], 0, sizeof(inst->on_midi_drum_release_active[tidx]));
                 /* Reset drum-repeat per-pass accumulation detector so this pass's
                  * first fire on each lane-step is treated as new (preserves the
                  * write-once-across-passes semantic for Rpt1/Rpt2 recording). */
@@ -3220,18 +3226,16 @@ static void set_param(void *instance, const char *key, const char *val) {
         if (!strcmp(sub, "record_note_on")) {
             /* tN_record_note_on "p1 v1 [p2 v2 ...]"
              * JS batches all chord note-ons into one call to survive set_param coalescing.
-             * DSP snapshots current_clip_tick once and inserts all notes at the same tick. */
+             * PHASE-1: per-pitch tick comes from on_midi_press_tick slots (audio-thread
+             * single-buffer precision); fallback is current_clip_tick at handler arrival
+             * (stock-Schwung path, no slot snapshot). */
             if (!tr->recording) return;
             clip_t *cl = &tr->clips[tr->active_clip];
 
-            /* Snapshot tick once for the whole chord */
-            uint32_t abs_tick = tr->current_clip_tick;
             uint16_t tps = cl->ticks_per_step;
             uint32_t clip_ticks = (uint32_t)cl->length * tps;
             if (clip_ticks == 0) return;
-            abs_tick = abs_tick % clip_ticks;
-            if (inst->inp_quant)
-                abs_tick = ((abs_tick + tps / 2) / tps) * tps;
+            uint32_t fallback_tick = tr->current_clip_tick % clip_ticks;
 
             const char *sp = val;
             while (*sp) {
@@ -3250,6 +3254,18 @@ static void set_param(void *instance, const char *key, const char *val) {
                     vel = clamp_i(vel, 0, 127);
                 }
                 vel = effective_vel(tr, vel);
+
+                /* PHASE-1: prefer the actual hardware-press tick captured by
+                 * on_midi over the late current_clip_tick. Consume the slot. */
+                uint32_t abs_tick;
+                if (inst->dsp_inbound_enabled && inst->on_midi_press_active[tidx][pitch]) {
+                    abs_tick = inst->on_midi_press_tick[tidx][pitch] % clip_ticks;
+                    inst->on_midi_press_active[tidx][pitch] = 0;
+                } else {
+                    abs_tick = fallback_tick;
+                }
+                if (inst->inp_quant)
+                    abs_tick = ((abs_tick + tps / 2) / tps) * tps;
 
                 /* TRACK ARP active: arp output will be recorded in tarp_fire_step.
                  * Feed raw input only into the arp held buffer. PHASE-1: on
@@ -3321,15 +3337,15 @@ static void set_param(void *instance, const char *key, const char *val) {
         if (!strcmp(sub, "record_note_off")) {
             /* tN_record_note_off "p1 [p2 ...]"
              * JS batches simultaneous chord releases into one call.
-             * DSP snapshots off_tick once and updates gate for each pitch. */
+             * PHASE-1: per-pitch off_tick comes from on_midi_release_tick slot
+             * (audio-thread); fallback is current_clip_tick. */
             if (!tr->recording) return;
             clip_t *cl = &tr->clips[tr->active_clip];
 
-            uint32_t off_tick = tr->current_clip_tick;
             uint16_t tps = cl->ticks_per_step;
             uint32_t clip_ticks = (uint32_t)cl->length * tps;
             if (clip_ticks == 0) return;
-            off_tick = off_tick % clip_ticks;
+            uint32_t fallback_off_tick = tr->current_clip_tick % clip_ticks;
 
             const char *sp = val;
             while (*sp) {
@@ -3339,6 +3355,15 @@ static void set_param(void *instance, const char *key, const char *val) {
                 int pitch = 0;
                 while (*sp >= '0' && *sp <= '9') { pitch = pitch * 10 + (*sp++ - '0'); }
                 pitch = clamp_i(pitch, 0, 127);
+
+                /* PHASE-1: prefer the actual hardware-release tick. Consume. */
+                uint32_t off_tick;
+                if (inst->dsp_inbound_enabled && inst->on_midi_release_active[tidx][pitch]) {
+                    off_tick = inst->on_midi_release_tick[tidx][pitch] % clip_ticks;
+                    inst->on_midi_release_active[tidx][pitch] = 0;
+                } else {
+                    off_tick = fallback_off_tick;
+                }
 
                 /* TRACK ARP active: note was never written to rec_pending; update
                  * arp held buffer and let tarp_fire_step own clip recording.
@@ -4021,9 +4046,22 @@ static void set_param(void *instance, const char *key, const char *val) {
                     }}
                     if (lane >= 0) {
                     clip_t   *dlc  = &dc->lanes[lane].clip;
-                    uint16_t  step = tr->drum_current_step[lane];
-                    uint8_t diq = tr->drum_inp_quant;
-                    int16_t off = (int16_t)tr->drum_tick_in_step[lane];
+                    /* PHASE-1: prefer the audio-thread press snapshot for this
+                     * lane's (step, tick_in_step). Consume the slot. Fallback
+                     * is the live drum playhead at handler arrival. */
+                    uint16_t base_step;
+                    int16_t  base_off;
+                    if (inst->dsp_inbound_enabled && inst->on_midi_drum_press_active[tidx][lane]) {
+                        base_step = inst->on_midi_drum_press_step[tidx][lane];
+                        base_off  = inst->on_midi_drum_press_off[tidx][lane];
+                        inst->on_midi_drum_press_active[tidx][lane] = 0;
+                    } else {
+                        base_step = tr->drum_current_step[lane];
+                        base_off  = (int16_t)tr->drum_tick_in_step[lane];
+                    }
+                    uint16_t step = base_step;
+                    int16_t  off  = base_off;
+                    uint8_t  diq  = tr->drum_inp_quant;
                     if (off >= (int16_t)(TICKS_PER_STEP / 2)) {
                         step = (step + 1) % dlc->length;
                         off -= (int16_t)TICKS_PER_STEP;
@@ -4031,13 +4069,13 @@ static void set_param(void *instance, const char *key, const char *val) {
 
                     if (diq > 0) {
                         int qt  = (int)DRUM_INQ_TICKS[diq];
-                        int tis = (int)tr->drum_tick_in_step[lane];
+                        int tis = (int)base_off;
                         int sn  = (tis + qt / 2) / qt * qt;
                         if (sn >= (int)TICKS_PER_STEP / 2) {
-                            step = (tr->drum_current_step[lane] + 1) % dlc->length;
+                            step = (base_step + 1) % dlc->length;
                             off = (int16_t)(sn - (int)TICKS_PER_STEP);
                         } else {
-                            step = tr->drum_current_step[lane];
+                            step = base_step;
                             off = (int16_t)sn;
                         }
                     } else if (inst->inp_quant) {
@@ -4065,9 +4103,11 @@ static void set_param(void *instance, const char *key, const char *val) {
                                   dlc->notes[ni3].suppress_until_wrap = 1;
                           }
                         }
-                        /* Store pending state so drum_record_note_off can close the gate */
-                        tr->drum_rec_pending_tick[lane]   = (uint32_t)step * TICKS_PER_STEP
-                                                            + tr->drum_tick_in_step[lane];
+                        /* Store pending state so drum_record_note_off can close the gate.
+                         * PHASE-1: use the snapshot (base_step, base_off) so the gate
+                         * compares like-for-like against the release snapshot. */
+                        tr->drum_rec_pending_tick[lane]   = (uint32_t)base_step * TICKS_PER_STEP
+                                                            + (uint32_t)base_off;
                         tr->drum_rec_pending_step[lane]   = step;
                         tr->drum_rec_pending_active[lane] = 1;
                     }
@@ -4111,8 +4151,16 @@ static void set_param(void *instance, const char *key, const char *val) {
                         uint16_t  step2    = tr->drum_rec_pending_step[lane2];
                         uint32_t  tps2     = TICKS_PER_STEP;
                         uint32_t  on_tick  = tr->drum_rec_pending_tick[lane2];
-                        uint32_t  off_tick = (uint32_t)tr->drum_current_step[lane2] * tps2
-                                            + tr->drum_tick_in_step[lane2];
+                        /* PHASE-1: prefer the audio-thread release snapshot. Consume. */
+                        uint32_t  off_tick;
+                        if (inst->dsp_inbound_enabled && inst->on_midi_drum_release_active[tidx][lane2]) {
+                            off_tick = (uint32_t)inst->on_midi_drum_release_step[tidx][lane2] * tps2
+                                       + (uint32_t)inst->on_midi_drum_release_off[tidx][lane2];
+                            inst->on_midi_drum_release_active[tidx][lane2] = 0;
+                        } else {
+                            off_tick = (uint32_t)tr->drum_current_step[lane2] * tps2
+                                       + tr->drum_tick_in_step[lane2];
+                        }
                         uint32_t  clip_ticks = (uint32_t)dlc2->length * tps2;
                         uint32_t  gate;
                         if (off_tick >= on_tick) gate = off_tick - on_tick;

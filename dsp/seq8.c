@@ -780,6 +780,28 @@ typedef struct {
      * changes. 0xFF = unmapped (skip dispatch). */
     uint8_t  dsp_inbound_enabled;
     uint8_t  pad_note_map[NUM_TRACKS][32];
+
+    /* Phase 1: per-(track,pitch) press/release tick snapshots. on_midi writes
+     * these at the actual audio buffer the pad event arrives in (audio-thread,
+     * single-buffer precision). record_note_on / record_note_off read them
+     * back instead of reading tr->current_clip_tick at handler-arrival time,
+     * which is 1-2 audio buffers late (JS → tick → set_param hop). Fixes the
+     * "press+release in same buffer → gate=1 tick" bug for short staccato.
+     * active flag is set on write, cleared on consume. */
+    uint32_t on_midi_press_tick[NUM_TRACKS][128];
+    uint32_t on_midi_release_tick[NUM_TRACKS][128];
+    uint8_t  on_midi_press_active[NUM_TRACKS][128];
+    uint8_t  on_midi_release_active[NUM_TRACKS][128];
+
+    /* Drum equivalent: per-(track,lane) step + tick_in_step at press/release.
+     * on_midi looks up lane by matching pitch to lane->midi_note (same as
+     * drum_record_note_on). Smaller than per-pitch since DRUM_LANES < 128. */
+    uint16_t on_midi_drum_press_step[NUM_TRACKS][DRUM_LANES];
+    int16_t  on_midi_drum_press_off[NUM_TRACKS][DRUM_LANES];
+    uint8_t  on_midi_drum_press_active[NUM_TRACKS][DRUM_LANES];
+    uint16_t on_midi_drum_release_step[NUM_TRACKS][DRUM_LANES];
+    int16_t  on_midi_drum_release_off[NUM_TRACKS][DRUM_LANES];
+    uint8_t  on_midi_drum_release_active[NUM_TRACKS][DRUM_LANES];
 } seq8_instance_t;
 
 static const host_api_v1_t *g_host = NULL;
@@ -4815,6 +4837,43 @@ static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
     if (pitch == 0xFF) return;          /* map not yet populated for this track */
 
     seq8_track_t *tr = &inst->tracks[t];
+
+    /* PHASE-1: when armed, snapshot the actual press/release moment so the
+     * record-path handlers use this tick (audio-thread, single-buffer
+     * precision) instead of their own current_clip_tick at set_param arrival
+     * (1-2 audio buffers late due to the JS → tick → set_param hop). This
+     * preserves real hold duration even when press+release land in the same
+     * audio buffer of set_param processing. */
+    if (tr->recording) {
+        if (tr->pad_mode == PAD_MODE_DRUM) {
+            int ac = (int)tr->active_clip;
+            drum_clip_t *dc = &tr->drum_clips[ac];
+            int lane = -1;
+            { int l; for (l = 0; l < DRUM_LANES; l++) {
+                if (dc->lanes[l].midi_note == pitch) { lane = l; break; }
+            }}
+            if (lane >= 0) {
+                if (is_on) {
+                    inst->on_midi_drum_press_step[t][lane]   = tr->drum_current_step[lane];
+                    inst->on_midi_drum_press_off[t][lane]    = (int16_t)tr->drum_tick_in_step[lane];
+                    inst->on_midi_drum_press_active[t][lane] = 1;
+                } else {
+                    inst->on_midi_drum_release_step[t][lane]   = tr->drum_current_step[lane];
+                    inst->on_midi_drum_release_off[t][lane]    = (int16_t)tr->drum_tick_in_step[lane];
+                    inst->on_midi_drum_release_active[t][lane] = 1;
+                }
+            }
+        } else {
+            if (is_on) {
+                inst->on_midi_press_tick[t][pitch]   = tr->current_clip_tick;
+                inst->on_midi_press_active[t][pitch] = 1;
+            } else {
+                inst->on_midi_release_tick[t][pitch]   = tr->current_clip_tick;
+                inst->on_midi_release_active[t][pitch] = 1;
+            }
+        }
+    }
+
     /* Audio-thread monitor: fire live_note_on/off regardless of recording
      * state. The record-path handlers (record_note_on / record_note_off /
      * drum_record_note_on) suppress their inline-monitor when
