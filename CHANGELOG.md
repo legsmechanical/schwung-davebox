@@ -7,8 +7,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com). Add entries to
 the section into a versioned heading at release time.
 
 ## [Unreleased]
+### Fixes
+- **Recording into clips with a non-zero loop start now lands inside the window.** Live presses on clips whose loop window starts past step 0 used to silently drop or land at the wrong step — every recording path (melodic note-on/note-off, drum note-on/note-off, TARP overdub, finalize-pending-notes gate closure) was unconditionally collapsing window-anchored ticks with `% (length * tps)` before insertion, which strips the `loop_start` offset and points the writes at the wrong step. Drum recording additionally clamped writes with stale `step < length` bounds that rejected every legal window position when `loop_start > 0`. All sites now treat `current_clip_tick` / on-midi slot snapshots as already-window-anchored (which they are, by construction of `current_step`) and drum bounds widened to `< (loop_start + length)`. Window-wrap gate math remains correct under unsigned arithmetic for held notes that cross the loop boundary. No behavior change for `loop_start = 0` clips.
+
 ### Performance / UX
 - **Pad input rewired to audio thread (on patched Schwung):** Live pad presses are now dispatched by DSP directly from the audio-thread MIDI hook, bypassing the JS-tick → `tN_live_notes` set_param queue. Chord cohesion improves on patched Schwung (no more late notes when 3-4 pads land in the same buffer) and input latency drops. Stock-Schwung users automatically fall back to the existing JS path — no behavior change without the patched shim. Works for melodic and drum tracks, ROUTE_MOVE and ROUTE_SCHWUNG, monitoring and armed recording, octave and drum-lane-page changes.
+- **Count-in pre-roll capture window tightened to the last 1/8 note.** Presses during the first 7/8 of the 1-bar count-in are now monitored only (audible but not recorded); presses in the final 1/8 note land at the start of the loop window when transport flips. Previously every press during count-in was captured, which felt sloppy — warm-up taps would leak into step 0. The capture filter lives in DSP (`on_midi`), so it's enforced regardless of JS tick rate. On stock Schwung (no audio-thread pad input) the prior JS-side count-in capture continues to apply, unchanged.
 
 ## [0.4.0] — 2026-05-15
 ### Fixes

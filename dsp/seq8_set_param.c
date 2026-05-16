@@ -509,6 +509,17 @@ static void set_param(void *instance, const char *key, const char *val) {
         inst->count_in_ticks = 4 * PPQN;  /* 1 bar; tick_delta already tracks actual BPM */
         inst->tick_accum     = 0;          /* reset phase so first beat fires on schedule */
         if (inst->metro_on >= 1) inst->metro_beat_count++;  /* beat 1 fires immediately */
+        /* PHASE-1: clear inbound press/release slots for this track so stale
+         * active=1 flags from a prior recording session can't leak into the
+         * upcoming preroll capture. The recording=1 transition fires inside
+         * render_block (not via tN_recording set_param), so that path's
+         * slot-clear doesn't run for count-in flows. */
+        memset(inst->on_midi_press_active[track], 0,    sizeof(inst->on_midi_press_active[track]));
+        memset(inst->on_midi_release_active[track], 0,  sizeof(inst->on_midi_release_active[track]));
+        memset(inst->on_midi_drum_press_active[track], 0,
+               sizeof(inst->on_midi_drum_press_active[track]));
+        memset(inst->on_midi_drum_release_active[track], 0,
+               sizeof(inst->on_midi_drum_release_active[track]));
         return;
     }
     if (!strcmp(key, "record_count_in_cancel")) {
@@ -3235,7 +3246,11 @@ static void set_param(void *instance, const char *key, const char *val) {
             uint16_t tps = cl->ticks_per_step;
             uint32_t clip_ticks = (uint32_t)cl->length * tps;
             if (clip_ticks == 0) return;
-            uint32_t fallback_tick = tr->current_clip_tick % clip_ticks;
+            /* current_clip_tick is already window-anchored in
+             * [loop_start*tps, (loop_start+length)*tps); modulo by
+             * clip_ticks would collapse it to [0, clip_ticks) and
+             * drop the loop_start offset. */
+            uint32_t fallback_tick = tr->current_clip_tick;
 
             const char *sp = val;
             while (*sp) {
@@ -3256,10 +3271,18 @@ static void set_param(void *instance, const char *key, const char *val) {
                 vel = effective_vel(tr, vel);
 
                 /* PHASE-1: prefer the actual hardware-press tick captured by
-                 * on_midi over the late current_clip_tick. Consume the slot. */
+                 * on_midi over the late current_clip_tick. Consume the slot.
+                 * On patched Schwung the slot must be active — if it isn't,
+                 * the press was filtered by on_midi (e.g., early-count-in
+                 * window outside the last 1/8 note) and must be dropped to
+                 * preserve the filter. Stock Schwung falls back to
+                 * current_clip_tick (no slots written). */
                 uint32_t abs_tick;
-                if (inst->dsp_inbound_enabled && inst->on_midi_press_active[tidx][pitch]) {
-                    abs_tick = inst->on_midi_press_tick[tidx][pitch] % clip_ticks;
+                if (inst->dsp_inbound_enabled) {
+                    if (!inst->on_midi_press_active[tidx][pitch]) {
+                        continue;
+                    }
+                    abs_tick = inst->on_midi_press_tick[tidx][pitch];
                     inst->on_midi_press_active[tidx][pitch] = 0;
                 } else {
                     abs_tick = fallback_tick;
@@ -3345,7 +3368,8 @@ static void set_param(void *instance, const char *key, const char *val) {
             uint16_t tps = cl->ticks_per_step;
             uint32_t clip_ticks = (uint32_t)cl->length * tps;
             if (clip_ticks == 0) return;
-            uint32_t fallback_off_tick = tr->current_clip_tick % clip_ticks;
+            /* Window-anchored: see record_note_on. */
+            uint32_t fallback_off_tick = tr->current_clip_tick;
 
             const char *sp = val;
             while (*sp) {
@@ -3359,7 +3383,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 /* PHASE-1: prefer the actual hardware-release tick. Consume. */
                 uint32_t off_tick;
                 if (inst->dsp_inbound_enabled && inst->on_midi_release_active[tidx][pitch]) {
-                    off_tick = inst->on_midi_release_tick[tidx][pitch] % clip_ticks;
+                    off_tick = inst->on_midi_release_tick[tidx][pitch];
                     inst->on_midi_release_active[tidx][pitch] = 0;
                 } else {
                     off_tick = fallback_off_tick;
@@ -4047,11 +4071,17 @@ static void set_param(void *instance, const char *key, const char *val) {
                     if (lane >= 0) {
                     clip_t   *dlc  = &dc->lanes[lane].clip;
                     /* PHASE-1: prefer the audio-thread press snapshot for this
-                     * lane's (step, tick_in_step). Consume the slot. Fallback
-                     * is the live drum playhead at handler arrival. */
+                     * lane's (step, tick_in_step). On patched Schwung the slot
+                     * must be active — if it isn't, the press was filtered by
+                     * on_midi (e.g., outside the preroll capture window). Drop
+                     * it to preserve the filter. Stock Schwung uses the live
+                     * drum playhead at handler arrival. */
                     uint16_t base_step;
                     int16_t  base_off;
-                    if (inst->dsp_inbound_enabled && inst->on_midi_drum_press_active[tidx][lane]) {
+                    if (inst->dsp_inbound_enabled) {
+                        if (!inst->on_midi_drum_press_active[tidx][lane]) {
+                            continue;  /* drop filtered preroll press; sp already past this entry */
+                        }
                         base_step = inst->on_midi_drum_press_step[tidx][lane];
                         base_off  = inst->on_midi_drum_press_off[tidx][lane];
                         inst->on_midi_drum_press_active[tidx][lane] = 0;
@@ -4062,8 +4092,14 @@ static void set_param(void *instance, const char *key, const char *val) {
                     uint16_t step = base_step;
                     int16_t  off  = base_off;
                     uint8_t  diq  = tr->drum_inp_quant;
+                    /* Window-aware wrap: base_step lives in
+                     * [loop_start, loop_start+length); wrapping past the
+                     * window end must return to loop_start, not 0. */
+                    uint16_t _we = (uint16_t)(dlc->loop_start + dlc->length);
                     if (off >= (int16_t)(TICKS_PER_STEP / 2)) {
-                        step = (step + 1) % dlc->length;
+                        uint16_t ns = (uint16_t)(step + 1);
+                        if (ns >= _we) ns = dlc->loop_start;
+                        step = ns;
                         off -= (int16_t)TICKS_PER_STEP;
                     }
 
@@ -4072,7 +4108,9 @@ static void set_param(void *instance, const char *key, const char *val) {
                         int tis = (int)base_off;
                         int sn  = (tis + qt / 2) / qt * qt;
                         if (sn >= (int)TICKS_PER_STEP / 2) {
-                            step = (base_step + 1) % dlc->length;
+                            uint16_t ns = (uint16_t)(base_step + 1);
+                            if (ns >= _we) ns = dlc->loop_start;
+                            step = ns;
                             off = (int16_t)(sn - (int)TICKS_PER_STEP);
                         } else {
                             step = base_step;
@@ -4081,7 +4119,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                     } else if (inst->inp_quant) {
                         off = 0;
                     }
-                    if (step < dlc->length && dlc->step_note_count[step] == 0) {
+                    if (step < _we && dlc->step_note_count[step] == 0) {
                         dlc->step_notes[step][0]       = (uint8_t)pitch;
                         dlc->step_note_count[step]     = 1;
                         dlc->step_vel[step]            = (uint8_t)vel;
@@ -4167,7 +4205,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                         else                     gate = clip_ticks - on_tick + off_tick;
                         if (gate < 1)          gate = 1;
                         if (gate > clip_ticks) gate = clip_ticks;
-                        if (step2 < dlc2->length) {
+                        if (step2 < (uint16_t)(dlc2->loop_start + dlc2->length)) {
                             dlc2->step_gate[step2] = (uint16_t)gate;
                             clip_migrate_to_notes(dlc2);
                         }
