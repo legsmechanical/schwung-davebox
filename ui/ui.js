@@ -1373,13 +1373,21 @@ function computePadNoteMap() {
          * so we bake the runtime octave offset into the pushed payload while
          * leaving S.padNoteMap itself unshifted (the stock-Schwung fallback
          * path still adds the offset at dispatch). Drum tracks ignore the
-         * offset (lane midi_notes are fixed). */
+         * offset (lane midi_notes are fixed). Session View: pads launch
+         * clips — emit all-0xFF so DSP on_midi skips dispatch. Track-view
+         * re-entry triggers another computePadNoteMap() in tick(). */
+        const sessionView = !!S.sessionView;
         const isDrum = S.trackPadMode[t] === PAD_MODE_DRUM;
         const octShift = isDrum ? 0 : ((S.trackOctave[t] | 0) * 12);
         let payload = '';
         for (let i = 0; i < 32; i++) {
-            const p = S.padNoteMap[i];
-            const out = (p === 0xFF) ? 0xFF : Math.max(0, Math.min(127, p + octShift));
+            let out;
+            if (sessionView) {
+                out = 0xFF;
+            } else {
+                const p = S.padNoteMap[i];
+                out = (p === 0xFF) ? 0xFF : Math.max(0, Math.min(127, p + octShift));
+            }
             payload += (i ? ' ' : '') + out;
         }
         /* The tN_padmap key encodes the active track index — DSP's
@@ -3752,6 +3760,12 @@ globalThis.tick = function () {
                 host_module_set_param('t' + _t + '_tarp_latch', '0');
         }
     }
+    /* PHASE-1: session-view edge re-pushes padmap so DSP on_midi gates pad
+     * dispatch (session pads launch clips, not notes). Remove with the rest
+     * of the PHASE-1 gates when patches upstreamed. */
+    if (S.sessionView !== _lastSessionView) {
+        computePadNoteMap();
+    }
     _lastSessionView = S.sessionView;
 
     /* Suspend detection: host swaps clear_screen to a no-op while we're parked.
@@ -6123,6 +6137,9 @@ function _onCC_knobs(d1, d2) {
                         S.drumLaneNote[t][lane] = nv;
                         if (typeof host_module_set_param === 'function')
                             host_module_set_param('t' + t + '_l' + lane + '_lane_note', String(nv));
+                        /* PHASE-1: DSP padmap caches the resolved lane notes; re-push
+                         * so on_midi dispatches the new note for this lane's pads. */
+                        if (t === S.activeTrack) computePadNoteMap();
                         S.screenDirty = true;
                     }
                 }
