@@ -4074,14 +4074,26 @@ static void tarp_fire_step(seq8_instance_t *inst, seq8_track_t *tr) {
     if (gate >= rate) gate = (uint32_t)rate - 1;
     a->gate_remaining = gate;
 
-    /* Record arp output into clip when recording. */
-    if (tr->recording) {
+    /* Record arp output into clip when recording. Also capture during the
+     * last 1/8 note of count-in for sync=off tracks: arp fires immediately
+     * on press in free mode, so late-window fires represent the chord the
+     * user wants to record on step 0. sync=on doesn't need this — it aligns
+     * to the rate grid and the first post-fire fire lands cleanly on step 0
+     * via the current_clip_tick prime in the count-in fire branch. */
+    int _is_preroll = (!tr->recording && inst->count_in_ticks > 0 &&
+                       inst->count_in_ticks <= (int32_t)(PPQN / 2) &&
+                       (int)inst->count_in_track == (int)(tr - inst->tracks) &&
+                       !tr->tarp_sync);
+    if (tr->recording || _is_preroll) {
         clip_t  *cl         = &tr->clips[tr->active_clip];
         uint16_t tps        = cl->ticks_per_step;
         uint32_t clip_ticks = (uint32_t)cl->length * tps;
         if (clip_ticks > 0) {
-            /* Window-anchored — see record_note_on in seq8_set_param.c. */
-            uint32_t abs_tick = tr->current_clip_tick;
+            /* Window-anchored — see record_note_on in seq8_set_param.c.
+             * Preroll: synthetic tick at loop window start. */
+            uint32_t abs_tick = _is_preroll
+                ? (uint32_t)cl->loop_start * tps
+                : tr->current_clip_tick;
             if (inst->inp_quant)
                 abs_tick = ((abs_tick + tps / 2) / tps) * tps;
             uint16_t gticks = (uint16_t)(gate > 65535u ? 65535u : gate);
@@ -6395,6 +6407,15 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 } else {
                     inst->count_in_ticks--;
                 }
+                /* TARP: tick input-side arp during count-in so live chord presses
+                 * are audible (and, for sync=off, captured via tarp_fire_step's
+                 * preroll branch). Mirrors the stopped block — only TARP, not
+                 * looper/drum-repeats/SEQ-ARP (those are playback-side). */
+                { int _tt;
+                  for (_tt = 0; _tt < NUM_TRACKS; _tt++)
+                      tarp_tick(inst, &inst->tracks[_tt]);
+                }
+                inst->arp_master_tick++;
             }
             if (inst->count_in_ticks == 0) {
                 inst->tick_accum          = 0;
@@ -6409,6 +6430,38 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                     _tr->tick_in_step       = 0;
                     _tr->note_active        = 0;
                     _tr->pfx.sample_counter = 0;
+                    /* Prime current_clip_tick so the first post-fire tarp_fire_step
+                     * (which runs at L6744 *before* the per-track tick advance at L6857
+                     * recomputes it) reads loop_start * tps, not the stale pre-count-in
+                     * value. This is what makes the first arp note get captured at
+                     * clip tick 0 / loop window start. */
+                    _tr->current_clip_tick  = (uint32_t)_tr->clips[_tr->active_clip].loop_start
+                                              * _tr->clips[_tr->active_clip].ticks_per_step;
+                    /* Reschedule any pfx events the count-in TARP queued to fire
+                     * immediately on next pfx_q_fire. Their original fire_at was
+                     * pegged to count-in's high sample_counter, which we just
+                     * zeroed — without this they'd never fire (or fire seconds
+                     * later when sample_counter catches up), stranding the
+                     * queued note-offs and leaving stuck voices on Move/Schwung. */
+                    {
+                        play_fx_t *_fx = &_tr->pfx;
+                        int _ei;
+                        for (_ei = 0; _ei < _fx->event_count; _ei++)
+                            _fx->events[_ei].fire_at = 0;
+                    }
+                    /* TARP runtime reset: re-anchor pattern position to step 0 of
+                     * the new arp_master_tick. master_anchor was set during the
+                     * count-in TARP ticks and would underflow `master_pos =
+                     * arp_master_tick - master_anchor` after the reset above. */
+                    if (_tr->tarp_on) {
+                        arp_engine_t *_a = &_tr->tarp;
+                        _a->sounding_active     = 0;
+                        _a->sounding_pitch      = 0;
+                        _a->gate_remaining      = 0;
+                        _a->ticks_until_next    = 0;
+                        _a->master_anchor       = 0;
+                        _a->pending_first_note  = (_a->held_count > 0) ? 1 : 0;
+                    }
                     {
                         int _dl;
                         for (_dl = 0; _dl < DRUM_LANES; _dl++)

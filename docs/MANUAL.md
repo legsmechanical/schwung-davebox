@@ -471,6 +471,8 @@ To stop: **Record** again (transport continues) or **Play** (also stops transpor
 
 Notes pressed in the last half-beat of the count-in are captured on **step 1** of the clip. They appear from the second loop pass onward — the system waits for the note to release and for the first full loop to complete before firing, to prevent double-triggering if the pad is still held when transport starts.
 
+**ARP IN during count-in.** When ARP IN is on, the arpeggiator runs through the count-in too — you can hear the pattern you're about to record from the moment you press, instead of waiting until recording fires. The first arpeggiator note after the count-in lands on step 1 of the clip regardless of sync mode. With **Sync = Off**, the engine fires the instant you press, so any arp output produced in the last half-beat of the count-in (whether triggered by a press in that window or by an earlier press still held into it) also records onto step 1.
+
 ### Track switching while recording
 
 While record-armed, switching tracks is free. Recording follows the focused track. Notes on the previous track are closed out cleanly; record arm stays on.
