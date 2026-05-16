@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com). Add entries to
 the section into a versioned heading at release time.
 
 ## [Unreleased]
+### Performance / UX
+- **Pad input rewired to audio thread (on patched Schwung):** Live pad presses are now dispatched by DSP directly from the audio-thread MIDI hook, bypassing the JS-tick → `tN_live_notes` set_param queue. Chord cohesion improves on patched Schwung (no more late notes when 3-4 pads land in the same buffer) and input latency drops. Stock-Schwung users automatically fall back to the existing JS path — no behavior change without the patched shim. Works for melodic and drum tracks, ROUTE_MOVE and ROUTE_SCHWUNG, monitoring and armed recording, octave and drum-lane-page changes.
 
 ## [0.4.0] — 2026-05-15
 ### Fixes
