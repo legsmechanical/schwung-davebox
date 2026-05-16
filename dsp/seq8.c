@@ -4761,7 +4761,13 @@ static void destroy_instance(void *instance) {
 /* ------------------------------------------------------------------ */
 
 static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
-    (void)instance; (void)msg; (void)len; (void)source;
+    seq8_instance_t *inst = (seq8_instance_t *)instance;
+    uint8_t b0 = len > 0 ? msg[0] : 0;
+    uint8_t b1 = len > 1 ? msg[1] : 0;
+    uint8_t b2 = len > 2 ? msg[2] : 0;
+    char buf[96];
+    snprintf(buf, sizeof(buf), "[probe] on_midi src=%d len=%d %02x %02x %02x", source, len, b0, b1, b2);
+    seq8_ilog(inst, buf);
 }
 
 /* ------------------------------------------------------------------ */
