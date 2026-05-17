@@ -3898,6 +3898,31 @@ static void set_param(void *instance, const char *key, const char *val) {
             return;
         }
 
+        if (!strcmp(sub, "delete_held")) {
+            /* Phase 1 / Bundle 2C-Rpt2: Delete-held edge push. JS sends
+             * a SINGLE push (carrier key shape is tN_delete_held — any
+             * tN works) on every Delete CC edge. Writes to the GLOBAL
+             * inst->delete_held since Delete is a global modifier, not
+             * per-track. Earlier fan-out of 8 calls (one per track)
+             * coalesced — only the last N reached DSP. drum_pad_event
+             * reads inst->delete_held to bail before classifying;
+             * mirrors JS's "bail on Delete-held" pad-handler branches. */
+            inst->delete_held = (uint8_t)(my_atoi(val) ? 1 : 0);
+            return;
+        }
+
+        if (!strcmp(sub, "drum_lane_page")) {
+            /* Phase 1 / Bundle 2C-Rpt2: JS mirror of S.drumLanePage[t].
+             * Used by drum_pad_event to translate left-half padIdx →
+             * absolute drum lane index for Rpt2 lane-pad classification
+             * and for Rpt1 lane-swap-while-holding. Pushed by JS on every
+             * page change (Up/Down arrow on drum track + init + sidecar
+             * restore). */
+            int page_dlp = atoi(val);
+            tr->drum_lane_page = (uint8_t)clamp_i(page_dlp, 0, (DRUM_LANES + 15) / 16 - 1);
+            return;
+        }
+
         if (!strcmp(sub, "drum_perform_mode")) {
             /* Bundle 2A: JS mirror of S.drumPerformMode[t] (0=NORMAL,
              * 1=Rpt1, 2=Rpt2). Pushed via setDrumPerformMode helper
@@ -3962,48 +3987,26 @@ static void set_param(void *instance, const char *key, const char *val) {
         }
 
         if (!strcmp(sub, "drum_repeat2_lane_on")) {
-            /* tN_drum_repeat2_lane_on "lane vel" — add lane; uses lane's stored rate */
+            /* tN_drum_repeat2_lane_on "lane vel" — add lane; uses lane's stored rate.
+             * Phase 1 / Bundle 2C-Rpt2: delegates to drum_repeat2_lane_on_internal
+             * so the on_midi path (drum_pad_event) and set_param path share one body. */
             const char *sp = val;
             while (*sp == ' ') sp++;
             int lane_r = 0;
             while (*sp >= '0' && *sp <= '9') { lane_r = lane_r * 10 + (*sp++ - '0'); }
-            lane_r = clamp_i(lane_r, 0, DRUM_LANES - 1);
             while (*sp == ' ') sp++;
             int vel_r = 100;
             if (*sp >= '0' && *sp <= '9') {
                 vel_r = 0;
                 while (*sp >= '0' && *sp <= '9') { vel_r = vel_r * 10 + (*sp++ - '0'); }
             }
-            vel_r = clamp_i(vel_r, 1, 127);
-            tr->drum_repeat2_vel[lane_r]   = (uint8_t)vel_r;
-            tr->drum_repeat2_phase[lane_r] = 0;
-            tr->drum_repeat2_step[lane_r]  = 0;
-            /* InQ sync: if playing and InQ set, arm as pending if in second half of interval */
-            { uint8_t diq = tr->drum_inp_quant;
-              if (diq > 0 && inst->playing) {
-                  int qt = (int)DRUM_INQ_TICKS[diq];
-                  uint32_t abs = inst->global_tick * (uint32_t)TICKS_PER_STEP + inst->master_tick_in_step;
-                  int phase = (int)(abs % (uint32_t)qt);
-                  if (phase >= qt / 2) {
-                      tr->drum_repeat2_pending |=  (1u << (unsigned)lane_r);
-                      tr->drum_repeat2_active  &= ~(1u << (unsigned)lane_r);
-                  } else {
-                      tr->drum_repeat2_pending &= ~(1u << (unsigned)lane_r);
-                      tr->drum_repeat2_active  |=  (1u << (unsigned)lane_r);
-                  }
-              } else {
-                  tr->drum_repeat2_pending &= ~(1u << (unsigned)lane_r);
-                  tr->drum_repeat2_active  |=  (1u << (unsigned)lane_r);
-              }
-            }
+            drum_repeat2_lane_on_internal(inst, tr, lane_r, vel_r);
             return;
         }
 
         if (!strcmp(sub, "drum_repeat2_lane_off")) {
-            /* tN_drum_repeat2_lane_off "lane" — remove lane from Rpt2 bitmask (and pending) */
-            int lane_r = clamp_i(my_atoi(val), 0, DRUM_LANES - 1);
-            tr->drum_repeat2_active  &= ~(1u << (unsigned)lane_r);
-            tr->drum_repeat2_pending &= ~(1u << (unsigned)lane_r);
+            /* tN_drum_repeat2_lane_off "lane" — remove lane from active+pending+latched bitmasks */
+            drum_repeat2_lane_off_internal(tr, my_atoi(val));
             return;
         }
 
@@ -4013,24 +4016,54 @@ static void set_param(void *instance, const char *key, const char *val) {
             while (*sp == ' ') sp++;
             int lane_r = 0;
             while (*sp >= '0' && *sp <= '9') { lane_r = lane_r * 10 + (*sp++ - '0'); }
-            lane_r = clamp_i(lane_r, 0, DRUM_LANES - 1);
             while (*sp == ' ') sp++;
             int rate_r = 0;
             while (*sp >= '0' && *sp <= '9') { rate_r = rate_r * 10 + (*sp++ - '0'); }
-            rate_r = clamp_i(rate_r, 0, 7);
-            tr->drum_repeat2_rate_idx[lane_r] = (uint8_t)rate_r;
-            if (tr->drum_repeat2_active & (1u << (unsigned)lane_r)) {
-                uint16_t new_rate = DRUM_REPEAT_RATE_TICKS[rate_r];
-                if (tr->drum_repeat2_phase[lane_r] >= (uint32_t)new_rate)
-                    tr->drum_repeat2_phase[lane_r] = 0;
-            }
+            drum_repeat2_rate_internal(tr, lane_r, rate_r);
+            return;
+        }
+
+        if (!strcmp(sub, "drum_repeat2_latch_held")) {
+            /* Phase 1 / Bundle 2C-Rpt2: atomic "latch every currently
+             * held/pending lane." JS fires this when Loop is tapped while
+             * lanes are held (replaces a per-lane push loop that was
+             * coalescing on its shared key). DSP-side OR of active+pending
+             * into latched bitmask captures every engaged lane regardless
+             * of InQ boundary state. */
+            tr->drum_repeat2_latched_lanes |= tr->drum_repeat2_active;
+            tr->drum_repeat2_latched_lanes |= tr->drum_repeat2_pending;
+            return;
+        }
+
+        if (!strcmp(sub, "drum_repeat2_lane_latched")) {
+            /* Phase 1 / Bundle 2C-Rpt2: JS one-shot per-lane edge push,
+             * "<lane> <0|1>". JS fires the 1-edge immediately after a
+             * Loop-held lane-pad press. drum_repeat2_lane_on_internal
+             * clears the lane's bit on every lane-on so JS doesn't push
+             * 0-edges. drum_pad_event reads this bitmask on lane-pad
+             * press to detect "re-tap of latched lane = lane_off NOW"
+             * synchronously on the audio thread, closing the JS-tick
+             * race that could otherwise fire extra repeats at fast rates. */
+            const char *sp = val;
+            while (*sp == ' ') sp++;
+            int lane_r = 0;
+            while (*sp >= '0' && *sp <= '9') { lane_r = lane_r * 10 + (*sp++ - '0'); }
+            lane_r = clamp_i(lane_r, 0, DRUM_LANES - 1);
+            while (*sp == ' ') sp++;
+            int on = (*sp >= '0' && *sp <= '9') ? my_atoi(sp) : 0;
+            if (on)
+                tr->drum_repeat2_latched_lanes |=  (1u << (unsigned)lane_r);
+            else
+                tr->drum_repeat2_latched_lanes &= ~(1u << (unsigned)lane_r);
             return;
         }
 
         if (!strcmp(sub, "drum_repeat2_stop")) {
-            /* tN_drum_repeat2_stop — clear all active Rpt2 lanes (and any pending) */
-            tr->drum_repeat2_active  = 0;
-            tr->drum_repeat2_pending = 0;
+            /* tN_drum_repeat2_stop — clear all active Rpt2 lanes (and any pending).
+             * Bundle 2C-Rpt2: also clears the latched-lanes bitmask. */
+            tr->drum_repeat2_active        = 0;
+            tr->drum_repeat2_pending       = 0;
+            tr->drum_repeat2_latched_lanes = 0;
             return;
         }
 

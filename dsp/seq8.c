@@ -523,6 +523,13 @@ typedef struct {
      * note for vel-pad preview. Runtime, not persisted — JS sidecar owns
      * persistence for activeDrumLane. */
     uint8_t      active_drum_lane;
+    /* Phase 1 / Bundle 2C-Rpt2: mirror of JS S.drumLanePage[t]. JS pushes
+     * via tN_drum_lane_page on every page change (Up/Down arrow on drum
+     * track + init + sidecar restore). on_midi reads it in drum_pad_event
+     * to translate a left-half padIdx → absolute drum lane index (mirror
+     * of JS drumPadToLane formula: page*16 + row*4 + col). Runtime, not
+     * persisted. */
+    uint8_t      drum_lane_page;
     /* Phase 1 / Bundle 2A: mirror of JS S.drumPerformMode[t] (0=NORMAL,
      * 1=Rpt1, 2=Rpt2). JS pushes via tN_drum_perform_mode whenever it
      * cycles (2 sites in ui.js). drum_pad_event reads this to decide
@@ -562,6 +569,13 @@ typedef struct {
     uint8_t  drum_repeat2_step[DRUM_LANES];     /* per-lane gate mask step 0-7 */
     uint32_t drum_repeat2_phase[DRUM_LANES];    /* per-lane phase within step */
     uint8_t  drum_repeat2_vel[DRUM_LANES];      /* per-lane velocity in Rpt 2 */
+    /* Phase 1 / Bundle 2C-Rpt2: per-lane latched-flag bitmask. JS pushes
+     * the 1-edge via tN_drum_repeat2_lane_latched <lane> 1 immediately
+     * after a Loop-held lane-pad press; _lane_on_internal defensively
+     * clears the lane's bit at entry so JS never needs to push the
+     * 0-edge. drum_pad_event reads the bit to detect re-tap-to-unlatch
+     * synchronously on the audio thread. */
+    uint32_t drum_repeat2_latched_lanes;
     /* Per-track drum input quantize (persisted) */
     uint8_t  drum_inp_quant;    /* 0=Off, 1-8 = index into DRUM_INQ_TICKS */
     /* Pending sync flags (runtime, not persisted): repeat waits for InQ boundary */
@@ -592,6 +606,25 @@ typedef struct {
 
     seq8_track_t tracks[NUM_TRACKS];
     uint8_t      active_track;
+
+    /* Phase 1 / Bundle 2C-Rpt2: global Delete-held flag. JS pushes the
+     * edge via a single `t0_delete_held` set_param on every Delete CC
+     * edge (per-track-shaped key, but read here at instance level —
+     * Delete is a global modifier). drum_pad_event returns 1 at top
+     * when set, so on_midi does NOT classify the pad press; mirrors
+     * JS's "bail on Delete-held" branches in the drum-mode pad handlers.
+     *
+     * Why one push, not 8: a tight for-loop fan-out of 8 tN_* writes
+     * within one onMidiMessage callback was empirically observed to
+     * coalesce (only the last N landed) — likely a host queue depth
+     * limit on rapid same-shape pushes. Single push is reliable.
+     *
+     * Scope today is Delete only. Shift / Copy / Mute / Capture also
+     * gate JS-side pad handlers and would need similar mirrors when
+     * porting more pad logic into on_midi; see parked memory
+     * project-modal-pad-interception-regression. Generalizing to a
+     * `modal_pad_block` bitmask at that point is straightforward. */
+    uint8_t      delete_held;
 
     /* Shared transport — all tracks run on the same timing grid */
     uint8_t  playing;
@@ -3738,7 +3771,19 @@ static int effective_vel(seq8_track_t *tr, int raw_vel) {
  * Both paths (set_param + on_midi) share these so behavior stays in
  * one place. Stock Schwung reaches them via the set_param handlers
  * (JS still pushes those keys on stock); patched Schwung reaches them
- * via on_midi (JS pushes are PHASE-1-gated dead). */
+ * via on_midi (JS pushes are PHASE-1-gated dead).
+ *
+ * `drum_repeat_latched` bit lifecycle (read by drum_pad_event for
+ * unlatch-tap detection):
+ *   SET    by JS edge push tN_drum_repeat_latched 1 on Loop-held start
+ *   CLEAR  by drum_repeat_stop_internal (engine off → bit must drop)
+ *   NEVER  touched inside drum_repeat_start_internal — host drains
+ *          set_params before on_midi, so the latched=1 from THIS press
+ *          would already be in tr->drum_repeat_latched at entry; a
+ *          defensive clear would stomp it. JS is authoritative: pushes
+ *          0 OR 1 on every rate-pad press (`if (loopHeld) push 1 else push 0`).
+ * drum_repeat_tick contains an invariant check that warns if
+ * latched=1 with active=0 && pending=0 (phantom latch). */
 static void drum_repeat_start_internal(seq8_instance_t *inst, seq8_track_t *tr,
                                        int lane, int rate_idx, int vel) {
     lane     = clamp_i(lane,     0, DRUM_LANES - 1);
@@ -3749,10 +3794,8 @@ static void drum_repeat_start_internal(seq8_instance_t *inst, seq8_track_t *tr,
     tr->drum_repeat_vel      = (uint8_t)vel;
     tr->drum_repeat_step     = 0;
     tr->drum_repeat_phase    = 0;
-    /* Defensive: every start clears the latched mirror. JS only ever pushes
-     * the 1-edge after a Loop-held latch; this self-cleans on plain restarts
-     * regardless of host-side set_param ordering. */
-    tr->drum_repeat_latched  = 0;
+    /* Latched bit: do NOT touch here — see header comment on this
+     * function for the full lifecycle contract. */
     tr->drum_repeat_active   = 1;
     /* InQ sync: if playing and InQ set, arm pending if in second half of interval */
     {
@@ -3778,11 +3821,104 @@ static void drum_repeat_lane_internal(seq8_track_t *tr, int lane) {
     tr->drum_repeat_lane = (uint8_t)clamp_i(lane, 0, DRUM_LANES - 1);
 }
 
+/* Phase 1 / Bundle 2C-Rpt2: Rpt2 engine entry points + pad-to-lane helper.
+ * Same extract-from-set_param-handler pattern as Rpt1.
+ *
+ * `drum_repeat2_latched_lanes` bit lifecycle (read by drum_pad_event
+ * for unlatch-tap detection per-lane):
+ *   SET    by JS edge push, one of:
+ *            - tN_drum_repeat2_lane_latched <lane> 1  (single lane edge)
+ *            - tN_drum_repeat2_latch_held             (atomic, ORs
+ *              active|pending into latched in one set_param)
+ *          Use the atomic form when multiple lanes may engage in one
+ *          buffer (Loop-pressed → multi-pad press, or Loop-tap while
+ *          multiple pads held); the per-lane edge form coalesces (same
+ *          key, different args → last write wins).
+ *   CLEAR  by drum_repeat2_lane_off_internal (per-lane) or
+ *          tN_drum_repeat2_stop handler (all lanes on engine stop).
+ *   NEVER  touched inside drum_repeat2_lane_on_internal — same reason
+ *          as Rpt1: host drains set_params before on_midi, so JS's edge
+ *          push has already landed at entry; a clear would stomp it.
+ *          JS is authoritative.
+ * drum_repeat2_tick contains an invariant check that warns if
+ * latched_lanes has bits not in (active | pending). */
+static inline int drum_pad_to_lane(int padIdx, uint8_t drum_lane_page) {
+    int col = padIdx % 8;
+    if (col >= 4) return -1;
+    int row = padIdx / 8;
+    return (int)drum_lane_page * 16 + row * 4 + col;
+}
+
+static void drum_repeat2_lane_on_internal(seq8_instance_t *inst, seq8_track_t *tr,
+                                          int lane, int vel) {
+    lane = clamp_i(lane, 0, DRUM_LANES - 1);
+    vel  = clamp_i(vel,  1, 127);
+    tr->drum_repeat2_vel[lane]   = (uint8_t)vel;
+    tr->drum_repeat2_phase[lane] = 0;
+    tr->drum_repeat2_step[lane]  = 0;
+    /* Latched bit: do NOT touch here — see header comment on
+     * drum_pad_to_lane for the full lifecycle contract. */
+    {
+        uint8_t diq = tr->drum_inp_quant;
+        if (diq > 0 && inst->playing) {
+            int qt = (int)DRUM_INQ_TICKS[diq];
+            uint32_t abs = inst->global_tick * (uint32_t)TICKS_PER_STEP + inst->master_tick_in_step;
+            int phase = (int)(abs % (uint32_t)qt);
+            if (phase >= qt / 2) {
+                tr->drum_repeat2_pending |=  (1u << (unsigned)lane);
+                tr->drum_repeat2_active  &= ~(1u << (unsigned)lane);
+            } else {
+                tr->drum_repeat2_pending &= ~(1u << (unsigned)lane);
+                tr->drum_repeat2_active  |=  (1u << (unsigned)lane);
+            }
+        } else {
+            tr->drum_repeat2_pending &= ~(1u << (unsigned)lane);
+            tr->drum_repeat2_active  |=  (1u << (unsigned)lane);
+        }
+    }
+}
+
+static void drum_repeat2_lane_off_internal(seq8_track_t *tr, int lane) {
+    lane = clamp_i(lane, 0, DRUM_LANES - 1);
+    /* Clear from both bitmasks — pending too, or an InQ-pending lane
+     * unlatched before fire would ghost-fire at next boundary crossing. */
+    tr->drum_repeat2_active        &= ~(1u << (unsigned)lane);
+    tr->drum_repeat2_pending       &= ~(1u << (unsigned)lane);
+    tr->drum_repeat2_latched_lanes &= ~(1u << (unsigned)lane);
+}
+
+static void drum_repeat2_rate_internal(seq8_track_t *tr, int lane, int rate_idx) {
+    lane     = clamp_i(lane,     0, DRUM_LANES - 1);
+    rate_idx = clamp_i(rate_idx, 0, 7);
+    tr->drum_repeat2_rate_idx[lane] = (uint8_t)rate_idx;
+    if (tr->drum_repeat2_active & (1u << (unsigned)lane)) {
+        uint16_t new_rate = DRUM_REPEAT_RATE_TICKS[rate_idx];
+        if (tr->drum_repeat2_phase[lane] >= (uint32_t)new_rate)
+            tr->drum_repeat2_phase[lane] = 0;
+    }
+}
+
 /* Fire the drum repeat note for the current step if conditions are met.
  * Called each render tick for drum tracks with repeat active.
  * Check-then-advance order: fires at phase==fire_at, then phase wraps to 0 and
  * step increments, so the first fire happens immediately on the tick after activation. */
 static void drum_repeat_tick(seq8_instance_t *inst, seq8_track_t *tr) {
+    /* Phase 1 / Bundle 2C invariant: latched implies (active || pending).
+     * A phantom latch (latched=1 without an engine running) would make
+     * drum_pad_event's unlatch-tap branch fire stop() against a stopped
+     * engine — harmless but signals a JS/DSP lifecycle bug. Logged once
+     * per ~200-block burst across all tracks to avoid log spam. */
+    if (tr->drum_repeat_latched && !tr->drum_repeat_active && !tr->drum_repeat_pending) {
+        static uint32_t s_last_warn_block = 0;
+        if (inst->block_count - s_last_warn_block > 200) {
+            char dbg[96];
+            snprintf(dbg, sizeof(dbg),
+                "[repeat-invariant] Rpt1 latched=1 active=0 pending=0 (block=%u)",
+                (unsigned)inst->block_count);
+            seq8_ilog(inst, dbg);
+            s_last_warn_block = inst->block_count;
+        }
+    }
     if (!tr->drum_repeat_active || tr->pad_mode != PAD_MODE_DRUM) return;
     /* InQ pending: wait for nearest quant boundary before first fire */
     if (tr->drum_repeat_pending) {
@@ -3893,6 +4029,25 @@ static void drum_repeat_tick(seq8_instance_t *inst, seq8_track_t *tr) {
 /* Rpt 2 repeat tick — fires all held lanes at independent per-lane rates.
  * Each lane has its own rate_idx, phase, step, nudge, gate, vel_scale. */
 static void drum_repeat2_tick(seq8_instance_t *inst, seq8_track_t *tr) {
+    /* Phase 1 / Bundle 2C-Rpt2 invariant: every bit in latched_lanes
+     * must also be in (active | pending). Phantom latches signal a
+     * JS/DSP lifecycle bug. Rate-limited to one warn per ~200 blocks. */
+    {
+        uint32_t phantom = tr->drum_repeat2_latched_lanes &
+                          ~(tr->drum_repeat2_active | tr->drum_repeat2_pending);
+        if (phantom) {
+            static uint32_t s_last_warn_block = 0;
+            if (inst->block_count - s_last_warn_block > 200) {
+                char dbg[128];
+                snprintf(dbg, sizeof(dbg),
+                    "[repeat-invariant] Rpt2 phantom latched=0x%x latched=0x%x active=0x%x pending=0x%x",
+                    (unsigned)phantom, (unsigned)tr->drum_repeat2_latched_lanes,
+                    (unsigned)tr->drum_repeat2_active, (unsigned)tr->drum_repeat2_pending);
+                seq8_ilog(inst, dbg);
+                s_last_warn_block = inst->block_count;
+            }
+        }
+    }
     if (!(tr->drum_repeat2_active | tr->drum_repeat2_pending) || tr->pad_mode != PAD_MODE_DRUM) return;
     /* Resolve any lanes pending InQ boundary */
     if (tr->drum_repeat2_pending) {
@@ -4954,27 +5109,69 @@ static inline uint8_t drum_vel_zone_to_velocity(int zone) {
  * voice rings out via the natural envelope. */
 static int drum_pad_event(seq8_instance_t *inst, seq8_track_t *tr,
                           int t, int padIdx, uint8_t vel, int is_on) {
+    /* Phase 1 / Bundle 2C-Rpt2: Delete-held suppression. JS bails its
+     * drum-mode pad handlers while Delete is held — mirror that here so
+     * DSP doesn't fire vel-zone / Rpt classifier branches mid-gesture.
+     * on_midi's pad_note_map dispatch is also suppressed because we
+     * return 1 (handled, don't fall through). */
+    if (inst->delete_held) return 1;
     int velZone = drum_pad_to_vel_zone(padIdx);
 
-    /* Left-half pad.
-     * Rpt2: JS owns lane-on activation (return 1 — drum_repeat2_tick fires
-     * the first repeat; suppressing on_midi dispatch prevents double-trigger).
-     * Rpt1: fall through to normal lane-note dispatch — single audible hit
-     * on press, normal note-off on release. The lane-swap-while-holding-
-     * a-rate-pad gesture is owned by JS in Bundle 2C-Rpt1: JS fires
-     * tN_drum_repeat_lane immediately on press (the prior 1-tick deferral
-     * is removed). DSP doesn't carry the drum_lane_page mirror needed to
-     * resolve padIdx → absolute lane number, so audio-thread handling
-     * would require new state; one-buffer latency (~5-10ms) on the
-     * lane-swap set_param is imperceptible at rate intervals ≥31ms. */
+    /* Left-half pad (col 0-3). Different semantics per perform_mode. */
     if (velZone < 0) {
-        if (tr->drum_perform_mode == 2) return 1;
-        /* Rpt1 lane-swap-while-running: suppress the single audible tap
-         * so the user only hears the continuing repeats. JS still fires
-         * tN_drum_repeat_lane immediately on press, so the swap lands;
-         * we just skip the on_midi pad-note dispatch. (Outside an active
-         * repeat, falling through to a single hit is correct.) */
-        if (tr->drum_perform_mode == 1 && tr->drum_repeat_active) return 1;
+        if (tr->drum_perform_mode == 2) {
+            /* Bundle 2C-Rpt2: Rpt2 lane-pad classifier on the audio thread.
+             * Lane bit toggles in/out of the multi-lane repeat. On the
+             * 1-edge of a Loop-held press JS pushes drum_repeat2_lane_latched
+             * <lane> 1 separately.
+             *
+             * Release path: handle here so simultaneous multi-lane releases
+             * don't collide on the JS-side tN_drum_repeat2_lane_off set_param
+             * (same-key writes coalesce per buffer; only the last lane would
+             * land). DSP-side release processes each lane synchronously. */
+            int lane = drum_pad_to_lane(padIdx, tr->drum_lane_page);
+            if (lane < 0 || lane >= DRUM_LANES) return 1;
+            if (!is_on) {
+                /* Pad released: if lane isn't latched, stop it now. Latched
+                 * lanes keep firing (intentional). */
+                if (!(tr->drum_repeat2_latched_lanes & (1u << (unsigned)lane)))
+                    drum_repeat2_lane_off_internal(tr, lane);
+                return 1;
+            }
+            /* Same-buffer race fix (advisor): write active_drum_lane synchronously
+             * so a fast lane-then-rate-pad gesture in one buffer reads the new
+             * lane in the rate-pad branch (which calls drum_repeat2_rate_internal
+             * against tr->active_drum_lane). JS pushes the same value via
+             * setActiveDrumLane one buffer later — no long-term divergence. */
+            tr->active_drum_lane = (uint8_t)lane;
+            inst->pad_source_scratch[t] = (uint8_t)PAD_SRC_RPT_LANE;
+            if (tr->drum_repeat2_latched_lanes & (1u << (unsigned)lane)) {
+                /* Re-tap of latched lane: stop now on audio thread.
+                 * JS will also push lane_off shortly; idempotent. */
+                drum_repeat2_lane_off_internal(tr, lane);
+            } else {
+                drum_repeat2_lane_on_internal(inst, tr, lane, (int)vel);
+            }
+            inst->pad_source_scratch[t] = (uint8_t)PAD_SRC_NORMAL;
+            return 1;
+        }
+        if (tr->drum_perform_mode == 1) {
+            /* Bundle 2C-Rpt2 (folded into 2C-Rpt2 commit): Rpt1 lane-swap
+             * into DSP. Now that drum_lane_page mirror exists, translate
+             * padIdx → lane on the audio thread and call lane_internal
+             * directly. Closes the one-buffer set_param-drain latency the
+             * 2C-Rpt1 JS-immediate fire still incurred. Also suppress the
+             * single-hit lane-note dispatch when repeat is running so the
+             * user only hears repeats, not a tap. */
+            if (is_on && tr->drum_repeat_active) {
+                int lane = drum_pad_to_lane(padIdx, tr->drum_lane_page);
+                if (lane >= 0 && lane < DRUM_LANES) {
+                    tr->active_drum_lane = (uint8_t)lane;  /* same-buffer race fix */
+                    drum_repeat_lane_internal(tr, lane);
+                }
+            }
+            if (tr->drum_repeat_active) return 1;  /* suppress single-hit during active repeat */
+        }
         return 0;  /* left half — caller handles as lane note */
     }
 
@@ -5007,9 +5204,22 @@ static int drum_pad_event(seq8_instance_t *inst, seq8_track_t *tr,
         return 1;
     }
 
-    /* Rpt2 right-half: JS owns rate/gate/vel-pad classifier (Bundle 2C-Rpt2 moves it). */
+    /* Bundle 2C-Rpt2: Rpt2 rate-pad classifier on the audio thread.
+     * Rate pads are right-half rows 0-1; gate-mask pads are rows 2-3
+     * (config edit, JS-owned). Rate-pad press assigns the rate to the
+     * currently active drum lane (mirrors JS S.activeDrumLane semantics). */
     if (tr->drum_perform_mode == 2) {
-        return 1;  /* handled — don't fire vel-zone preview */
+        if (!is_on) return 1;
+        int row = padIdx / 8;
+        if (row >= 2) return 1;  /* gate-mask pad → JS owns */
+        int col = padIdx % 8;
+        int rate_idx = row * 4 + (col - 4);
+        int lane     = (int)tr->active_drum_lane;
+        if (lane < 0 || lane >= DRUM_LANES) return 1;
+        inst->pad_source_scratch[t] = (uint8_t)PAD_SRC_RPT_RATE;
+        drum_repeat2_rate_internal(tr, lane, rate_idx);
+        inst->pad_source_scratch[t] = (uint8_t)PAD_SRC_NORMAL;
+        return 1;
     }
 
     /* NORMAL drum mode + right-half pad. Resolve the target lane note now;

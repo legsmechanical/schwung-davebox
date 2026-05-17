@@ -1477,6 +1477,19 @@ function setDrumPerformMode(t, mode) {
         host_module_set_param('t' + t + '_drum_perform_mode', String(mode));
 }
 
+/* Bundle 2C-Rpt2: single setter for S.drumLanePage that also pushes the
+ * value to DSP via tN_drum_lane_page so on_midi.drum_pad_event can
+ * translate left-half padIdx → absolute drum lane index (Rpt2 lane-pad
+ * classification + Rpt1 lane-swap-while-holding). Same array-ref-alias
+ * pattern as setActiveDrumLane to avoid replace_all self-recursion. */
+function setDrumLanePage(t, page) {
+    if (S.drumLanePage[t] === page) return;
+    const arrLp = S.drumLanePage;
+    arrLp[t] = page;
+    if (typeof host_module_set_param === 'function')
+        host_module_set_param('t' + t + '_drum_lane_page', String(page));
+}
+
 /** Convert a padIdx (0-31) to velocity zone 0-15, or -1 if left half. */
 function drumPadToVelZone(padIdx) {
     const col = padIdx % 8;
@@ -3434,6 +3447,16 @@ function restoreUiSidecar(applyDefaultsNow) {
                     setActiveDrumLane(_t, _l);
             }
         }
+        /* Bundle 2C-Rpt2: re-push drum_lane_page mirror after DSP
+         * create_instance reset. Not sidecar-persisted, but JS state may
+         * be non-zero if the user paged off-zero before the set-switch
+         * that triggered this restore. Unconditional push (the setter
+         * would early-return on matching values, missing the post-reset
+         * DSP=0 case). */
+        if (typeof host_module_set_param === 'function') {
+            for (let _t = 0; _t < NUM_TRACKS; _t++)
+                host_module_set_param('t' + _t + '_drum_lane_page', String(S.drumLanePage[_t]));
+        }
         if (typeof us.bm === 'number') S.beatMarkersEnabled = us.bm !== 0;
         if (us.v >= 2) {
             if (typeof us.pm === 'number') S.perfModsToggled = us.pm & 0xFFFFFF;
@@ -5128,6 +5151,17 @@ function _onCC_buttons(d1, d2) {
 
     if (d1 === MoveDelete) {
         S.deleteHeld = d2 === 127;
+        /* Phase 1 / Bundle 2C-Rpt2: push Delete-held suppression to DSP.
+         * Single push — carrier key is tN_-shaped but reader is global
+         * inst->delete_held (Delete is a global modifier, no reason it
+         * was ever per-track). Empirically the previous fan-out of 8
+         * tN_delete_held writes within this onMidiMessage callback
+         * coalesced (only the last N landed) — likely a host-queue depth
+         * limit on rapid same-shape pushes. Single push is reliable.
+         * Future modal modifiers (Shift/Copy/Mute/Capture) — see parked
+         * memory project_modal_pad_interception_regression. */
+        if (typeof host_module_set_param === 'function')
+            host_module_set_param('t0_delete_held', S.deleteHeld ? '1' : '0');
     }
 
     if (d1 === MoveCopy) {
@@ -5320,10 +5354,23 @@ function _onCC_buttons(d1, d2) {
                     for (const _ll of S.drumRepeat2HeldLanes[_lrt]) {
                         S.drumRepeat2LatchedLanes[_lrt].add(_ll);
                     }
+                    /* Phase 1 / Bundle 2C-Rpt2: one atomic DSP push for all
+                     * currently-held lanes. A per-lane loop here would coalesce
+                     * (same set_param key, different values) — only the last
+                     * lane would land. The DSP handler ORs active|pending into
+                     * the latched bitmask. */
+                    if (typeof host_module_set_param === 'function')
+                        host_module_set_param('t' + _lrt + '_drum_repeat2_latch_held', '1');
                     S.rpt2LoopPadUsed = true;
                 }
             } else if (S.drumRepeatHeldPad[_lrt] >= 0) {
                 S.drumRepeatLatched[_lrt] = true;
+                /* Phase 1 / Bundle 2C-Rpt1: also push DSP-side latched bit
+                 * for parity (used by audio-thread unlatch-tap detection in
+                 * drum_pad_event). Rpt1's release handler is still JS-driven
+                 * so this isn't strictly required, but keeps DSP in sync. */
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + _lrt + '_drum_repeat_latched', '1');
             }
             S.heldStepBtn        = -1;
             S.heldStep           = -1;
@@ -5676,7 +5723,7 @@ function _onCC_transport(d1, d2) {
     if (d1 === MoveUp   && d2 === 127 && (S.sessionView || S.sessionOverlayHeld) && S.sceneRow > 0)              { S.sceneRow = Math.max(0, S.sceneRow - 4);              forceRedraw(); }
     if (d1 === MoveUp   && d2 > 0 && !S.sessionView && !S.sessionOverlayHeld) {
         if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
-            S.drumLanePage[S.activeTrack] = 1;
+            setDrumLanePage(S.activeTrack, 1);
             syncDrumLanesMeta(S.activeTrack);
             syncDrumLaneSteps(S.activeTrack, S.activeDrumLane[S.activeTrack]);
             computePadNoteMap();  /* PHASE-1: drum page change shifts lane mapping; re-push */
@@ -5690,7 +5737,7 @@ function _onCC_transport(d1, d2) {
     }
     if (d1 === MoveDown && d2 > 0 && !S.sessionView && !S.sessionOverlayHeld) {
         if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
-            S.drumLanePage[S.activeTrack] = 0;
+            setDrumLanePage(S.activeTrack, 0);
             syncDrumLanesMeta(S.activeTrack);
             syncDrumLaneSteps(S.activeTrack, S.activeDrumLane[S.activeTrack]);
             computePadNoteMap();  /* PHASE-1: drum page change shifts lane mapping; re-push */
@@ -6662,13 +6709,14 @@ function _onPadPressTrackView(status, d1, d2) {
                          * path on both stock and patched. */
                         if (!S.dspInboundEnabled)
                             host_module_set_param('t' + t + '_drum_repeat_start', lane + ' ' + rateIdx + ' ' + vel);
-                        /* Edge push of latched flag (both paths).
-                         * drum_repeat_start_internal clears the flag at entry,
-                         * so this is the only push JS ever needs (no 0-edge).
-                         * Lets drum_pad_event detect re-tap-to-unlatch on the
-                         * audio thread with zero JS-tick race. */
-                        if (S.loopHeld)
-                            host_module_set_param('t' + t + '_drum_repeat_latched', '1');
+                        /* Latched flag — JS is authoritative DSP-side after
+                         * the 2C-Rpt2 fix removed the defensive clear in
+                         * drum_repeat_start_internal. Push BOTH 0 and 1 so
+                         * a rate-switch-while-latched-without-Loop (JS sets
+                         * drumRepeatLatched=false) correctly clears the bit.
+                         * Lets drum_pad_event detect re-tap-to-unlatch on
+                         * the audio thread with zero JS-tick race. */
+                        host_module_set_param('t' + t + '_drum_repeat_latched', S.loopHeld ? '1' : '0');
                     }
                 }
                 S.screenDirty = true;
@@ -6708,11 +6756,14 @@ function _onPadPressTrackView(status, d1, d2) {
             const col = padIdx % 8;
             const row = Math.floor(padIdx / 8);
             if (col >= 4 && row < 2) {
-                /* Rate pad: assign rate to active lane */
+                /* Rate pad: assign rate to active lane.
+                 * Phase 1 / Bundle 2C-Rpt2: on patched Schwung drum_pad_event
+                 * already called drum_repeat2_rate_internal on the audio
+                 * thread; firing the set_param here would be redundant. */
                 const rateIdx = row * 4 + (col - 4);
                 const lane = S.activeDrumLane[t];
                 S.drumRepeat2RatePerLane[t][lane] = rateIdx;
-                if (typeof host_module_set_param === 'function')
+                if (typeof host_module_set_param === 'function' && !S.dspInboundEnabled)
                     host_module_set_param('t' + t + '_drum_repeat2_rate', lane + ' ' + rateIdx);
                 S.screenDirty = true;
                 return;
@@ -6741,7 +6792,13 @@ function _onPadPressTrackView(status, d1, d2) {
                 forceRedraw();
                 return;
             } else if (col < 4 && !S.deleteHeld) {
-                /* Lane pad: add/unlatch multi-lane repeat */
+                /* Lane pad: add/unlatch multi-lane repeat.
+                 * Phase 1 / Bundle 2C-Rpt2: on patched Schwung drum_pad_event
+                 * already toggled the lane via drum_repeat2_lane_on/off_internal
+                 * on the audio thread. The set_params here stay as the stock
+                 * Schwung path. JS-side bookkeeping (HeldLanes/LatchedLanes
+                 * Sets) is parallel state for OLED display — stays correct
+                 * because JS and DSP run the same toggle logic. */
                 const lane = drumPadToLane(padIdx);
                 if (lane >= 0 && lane < DRUM_LANES) {
                     setActiveDrumLane(t, lane);
@@ -6749,15 +6806,30 @@ function _onPadPressTrackView(status, d1, d2) {
                     refreshDrumLaneBankParams(t, lane);
                     if (S.drumRepeat2LatchedLanes[t].has(lane)) {
                         S.drumRepeat2LatchedLanes[t].delete(lane);
-                        if (typeof host_module_set_param === 'function')
+                        if (typeof host_module_set_param === 'function' && !S.dspInboundEnabled)
                             host_module_set_param('t' + t + '_drum_repeat2_lane_off', String(lane));
                         if (S.loopHeld) S.rpt2LoopPadUsed = true;
                     } else {
                         S.drumRepeat2HeldLanes[t].add(lane);
                         if (S.loopHeld) { S.drumRepeat2LatchedLanes[t].add(lane); S.rpt2LoopPadUsed = true; }
                         padPitch[padIdx] = -1;
-                        if (typeof host_module_set_param === 'function')
-                            host_module_set_param('t' + t + '_drum_repeat2_lane_on', lane + ' ' + d2);
+                        if (typeof host_module_set_param === 'function') {
+                            if (!S.dspInboundEnabled)
+                                host_module_set_param('t' + t + '_drum_repeat2_lane_on', lane + ' ' + d2);
+                            /* Phase 1 / Bundle 2C-Rpt2: Loop-held latch via
+                             * the atomic latch_held set_param (handler ORs
+                             * active|pending into latched). Avoids the
+                             * coalescing trap of per-lane edge pushes: when
+                             * multiple lanes are pressed simultaneously with
+                             * Loop held, each press would push the same
+                             * set_param key with a different lane payload
+                             * → only the last lane would land. Non-Loop
+                             * engagement needs no push (latched bit is 0
+                             * by invariant: previously-latched lanes go
+                             * through the unlatch path, not the engage path). */
+                            if (S.loopHeld)
+                                host_module_set_param('t' + t + '_drum_repeat2_latch_held', '1');
+                        }
                     }
                     forceRedraw();
                 }
@@ -6916,13 +6988,13 @@ function _onPadPressTrackView(status, d1, d2) {
                                                  vel: recVel, isDrum: true,
                                                  pressedAtTick: S.tickCount, countInStart: S.countInStartTick };
                     }
-                    /* Phase 1 / Bundle 2C-Rpt1: lane-swap-while-holding-a-rate-pad.
-                     * Fire immediately on press (was: deferred 1 tick via
-                     * pendingRepeatLane). drum_repeat_lane is a different
-                     * set_param key from the other lane-pad pushes in this
-                     * onMidiMessage, so no coalescing. */
+                    /* Phase 1 / Bundle 2C-Rpt1+Rpt2: lane-swap-while-holding-a-rate-pad.
+                     * On patched Schwung drum_pad_event has called
+                     * drum_repeat_lane_internal on the audio thread (folded
+                     * into Bundle 2C-Rpt2 once drum_lane_page mirror was
+                     * available). Set_param push kept as the stock fallback. */
                     if (S.drumPerformMode[t] === 1 && (S.drumRepeatHeldPad[t] >= 0 || S.drumRepeatLatched[t])) {
-                        if (typeof host_module_set_param === 'function')
+                        if (typeof host_module_set_param === 'function' && !S.dspInboundEnabled)
                             host_module_set_param('t' + t + '_drum_repeat_lane', String(lane));
                     }
                     forceRedraw();
