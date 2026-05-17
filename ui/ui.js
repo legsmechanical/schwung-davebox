@@ -1446,6 +1446,37 @@ function drumPadToLane(padIdx) {
     return S.drumLanePage[S.activeTrack] * 16 + row * 4 + col;
 }
 
+/* Bundle 2A: single setter for S.activeDrumLane that also pushes the
+ * value to DSP via tN_active_drum_lane so on_midi.drum_pad_event can
+ * fire vel-pad preview at the active lane's note. Replaces every direct
+ * S.activeDrumLane[t] = X write site. PHASE-1: remove the set_param push
+ * (and revert to direct writes) when patches are upstreamed and the JS
+ * input path is deleted. */
+function setActiveDrumLane(t, lane) {
+    if (S.activeDrumLane[t] === lane) return;
+    /* NB: written via array-ref alias so a future `replace_all` on the
+     * pattern `S.activeDrumLane[t] = lane;` can't accidentally turn this
+     * line into a recursive call to setActiveDrumLane (which is what
+     * happened on the first 2A deploy — stack overflow on init). */
+    const arr = S.activeDrumLane;
+    arr[t] = lane;
+    if (typeof host_module_set_param === 'function')
+        host_module_set_param('t' + t + '_active_drum_lane', String(lane));
+}
+
+/* Bundle 2A: single setter for S.drumPerformMode that also pushes the
+ * value to DSP via tN_drum_perform_mode so on_midi.drum_pad_event can
+ * gate the vel-zone preview branch correctly (Rpt modes skip the
+ * preview; only NORMAL fires it). Same array-ref-alias pattern as
+ * setActiveDrumLane to avoid replace_all self-recursion. */
+function setDrumPerformMode(t, mode) {
+    if (S.drumPerformMode[t] === mode) return;
+    const arrPm = S.drumPerformMode;
+    arrPm[t] = mode;
+    if (typeof host_module_set_param === 'function')
+        host_module_set_param('t' + t + '_drum_perform_mode', String(mode));
+}
+
 /** Convert a padIdx (0-31) to velocity zone 0-15, or -1 if left half. */
 function drumPadToVelZone(padIdx) {
     const col = padIdx % 8;
@@ -3395,7 +3426,7 @@ function restoreUiSidecar(applyDefaultsNow) {
             for (let _t = 0; _t < NUM_TRACKS; _t++) {
                 const _l = us.dl[_t];
                 if (typeof _l === 'number' && _l >= 0 && _l < DRUM_LANES)
-                    S.activeDrumLane[_t] = _l;
+                    setActiveDrumLane(_t, _l);
             }
         }
         if (typeof us.bm === 'number') S.beatMarkersEnabled = us.bm !== 0;
@@ -4856,7 +4887,7 @@ function _onCC_jog(d1, d2) {
             host_module_set_param('t' + t + '_drum_repeat2_stop', '1');
         }
         S.drumRepeatLatched[t]  = false;
-        S.drumPerformMode[t]    = (S.drumPerformMode[t] + 1) % 3;
+        setDrumPerformMode(t, (S.drumPerformMode[t] + 1) % 3);
         showModePopup('PERFORMANCE PADS',
             ['Velocity', 'Repeat Play (Rpt1)', 'Repeat Set (Rpt2)'],
             S.drumPerformMode[t]);
@@ -6564,7 +6595,7 @@ function _onPadPressTrackView(status, d1, d2) {
             if (lane >= 0 && lane < DRUM_LANES) {
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('t' + t + '_l' + lane + '_hard_reset', '1');
-                S.activeDrumLane[t] = lane;
+                setActiveDrumLane(t, lane);
                 S.drumLaneLength[t]     = 16;
                 for (let s = 0; s < 256; s++) S.drumLaneSteps[t][lane][s] = '0';
                 S.drumLaneHasNotes[t][lane] = false;
@@ -6683,7 +6714,7 @@ function _onPadPressTrackView(status, d1, d2) {
                 /* Lane pad: add/unlatch multi-lane repeat */
                 const lane = drumPadToLane(padIdx);
                 if (lane >= 0 && lane < DRUM_LANES) {
-                    S.activeDrumLane[t] = lane;
+                    setActiveDrumLane(t, lane);
                     syncDrumLaneSteps(t, lane);
                     refreshDrumLaneBankParams(t, lane);
                     if (S.drumRepeat2LatchedLanes[t].has(lane)) {
@@ -6708,7 +6739,7 @@ function _onPadPressTrackView(status, d1, d2) {
             const _sl_lane = drumPadToLane(padIdx);
             if (_sl_lane >= 0 && _sl_lane < DRUM_LANES) {
                 const t = S.activeTrack;
-                S.activeDrumLane[t] = _sl_lane;
+                setActiveDrumLane(t, _sl_lane);
                 syncDrumLaneSteps(t, _sl_lane);
                 refreshDrumLaneBankParams(t, _sl_lane);
                 forceRedraw();
@@ -6761,7 +6792,7 @@ function _onPadPressTrackView(status, d1, d2) {
                     showActionPopup(S.shiftHeld ? 'CUT' : 'COPIED');
                 } else if (S.copySrc.kind === 'drum_lane' && S.copySrc.track === t) {
                     copyDrumLane(t, S.copySrc.lane, lane);
-                    S.activeDrumLane[t] = lane;
+                    setActiveDrumLane(t, lane);
                     refreshDrumLaneBankParams(t, lane);
                     invalidateLEDCache();
                     forceRedraw();
@@ -6769,7 +6800,7 @@ function _onPadPressTrackView(status, d1, d2) {
                 } else if (S.copySrc.kind === 'cut_drum_lane' && S.copySrc.track === t) {
                     cutDrumLane(t, S.copySrc.lane, lane);
                     S.copySrc = { kind: 'drum_lane', track: t, lane: lane };
-                    S.activeDrumLane[t] = lane;
+                    setActiveDrumLane(t, lane);
                     refreshDrumLaneBankParams(t, lane);
                     invalidateLEDCache();
                     forceRedraw();
@@ -6813,7 +6844,7 @@ function _onPadPressTrackView(status, d1, d2) {
                     /* Delete + lane pad: clear all steps in this lane */
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + t + '_l' + lane + '_clear', '1');
-                    S.activeDrumLane[t] = lane;
+                    setActiveDrumLane(t, lane);
                     for (let s = 0; s < 256; s++) S.drumLaneSteps[t][lane][s] = '0';
                     S.drumLaneHasNotes[t][lane] = false;
                     const ac = S.trackActiveClip[t];
@@ -6826,7 +6857,7 @@ function _onPadPressTrackView(status, d1, d2) {
                     forceRedraw();
                 } else {
                     /* Lane pad: select lane, sync its steps and bank params */
-                    S.activeDrumLane[t] = lane;
+                    setActiveDrumLane(t, lane);
                     syncDrumLaneSteps(t, lane);
                     refreshDrumLaneBankParams(t, lane);
                     /* Preview lane note at actual pad velocity */
@@ -7486,7 +7517,7 @@ function _onStepButtons(d1, d2) {
                     host_module_set_param('t' + t + '_drum_repeat2_stop', '1');
                 }
                 S.drumRepeatLatched[t] = false;
-                S.drumPerformMode[t]   = (S.drumPerformMode[t] + 1) % 3;
+                setDrumPerformMode(t, (S.drumPerformMode[t] + 1) % 3);
                 if (S.drumPerformMode[t] > 0) S.activeBank = 5;
                 showModePopup('PERFORMANCE PADS',
                     ['Velocity', 'Repeat Play (Rpt1)', 'Repeat Set (Rpt2)'],

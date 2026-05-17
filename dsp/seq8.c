@@ -517,6 +517,22 @@ typedef struct {
     uint8_t      tarp_latch;    /* K8: 0=release clears held, 1=latch keeps running */
     uint8_t      tarp_sync;     /* 0=free (fires immediately), 1=sync to next rate boundary */
     uint8_t      tarp_physical; /* runtime: physical keys currently held (not persisted) */
+    /* Phase 1 / Bundle 2A: mirror of JS S.activeDrumLane[t]. JS pushes via
+     * tN_active_drum_lane on every assignment site (8 in ui.js + init + sidecar
+     * restore). on_midi reads it in drum_pad_event to fire the active lane's
+     * note for vel-pad preview. Runtime, not persisted — JS sidecar owns
+     * persistence for activeDrumLane. */
+    uint8_t      active_drum_lane;
+    /* Phase 1 / Bundle 2A: mirror of JS S.drumPerformMode[t] (0=NORMAL,
+     * 1=Rpt1, 2=Rpt2). JS pushes via tN_drum_perform_mode whenever it
+     * cycles (2 sites in ui.js). drum_pad_event reads this to decide
+     * whether to fire vel-pad preview — Rpt modes use JS-side rate/lane
+     * pad classification today (Bundle 2C will replace). Gating on this
+     * mirror instead of drum_repeat_active fixes the first-hit double
+     * trigger: drum_repeat_active flips AFTER the rate-pad set_param
+     * processes, but mode is set BEFORE the user can press any rate pad,
+     * so on_midi sees the right state. */
+    uint8_t      drum_perform_mode;
     uint8_t      track_vel_override; /* TRACK K5: 0=Global, 1-127=absolute, 128=Live */
     /* Drum Repeat: gate mask, vel scale, nudge (per-lane, persisted) */
     uint8_t drum_repeat_gate[DRUM_LANES];         /* 8-step bitmask; bit s=step s; default 0xFF */
@@ -780,6 +796,25 @@ typedef struct {
      * changes. 0xFF = unmapped (skip dispatch). */
     uint8_t  dsp_inbound_enabled;
     uint8_t  pad_note_map[NUM_TRACKS][32];
+
+    /* Phase 1 / Bundle 2: pad-source intent scratch. Set by on_midi just
+     * before calling live_note_on / drum_record_note_on / etc., reset at
+     * end of dispatch. Holds a pad_source_t value (declared above on_midi).
+     * Consumers (Bundle 2A vel-zone bypass, 2B VelIn application, 2C Rpt
+     * classifier) read it to decide whether to apply VelIn or skip it.
+     * Per-track because on_midi processes one event at a time on the audio
+     * thread and the consumer runs synchronously within the same call. */
+    uint8_t  pad_source_scratch[NUM_TRACKS];
+
+    /* Phase 1 / Bundle 2A: drum vel-zone mirror. on_midi arms these in
+     * drum_pad_event when a right-half pad is pressed on a drum track in
+     * NORMAL perform mode (i.e. Rpt1/Rpt2 not running). Volatile session
+     * state — JS S.drumVelZoneArmed owns sidecar persistence; this DSP
+     * mirror exists for Bundle 2C consumers and to make the JS↔DSP
+     * separation explicit. The two mirrors update in parallel on the same
+     * hardware event (JS via _onPadPress, DSP via on_midi). */
+    uint8_t  drum_vel_zone_armed[NUM_TRACKS];
+    uint8_t  drum_last_vel_zone[NUM_TRACKS];  /* 0..15 */
 
     /* Phase 1: per-(track,pitch) press/release tick snapshots. on_midi writes
      * these at the actual audio buffer the pad event arrives in (audio-thread,
@@ -4431,6 +4466,8 @@ static void drum_track_init(seq8_track_t *tr, int track_idx) {
         tr->drum_last_rec_step[l]      = -1;
         drum_pfx_init_defaults(&tr->drum_lane_pfx[l], (uint8_t)track_idx, (uint8_t)l);
     }
+    tr->active_drum_lane  = 0;  /* Bundle 2A: JS pushes via tN_active_drum_lane */
+    tr->drum_perform_mode = 0;  /* Bundle 2A: JS pushes via tN_drum_perform_mode */
 }
 
 /* ------------------------------------------------------------------ */
@@ -4719,6 +4756,9 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     inst->looper_pending_silence = 0;
     memset(inst->perf_emitted_pitch, 0xFF, sizeof(inst->perf_emitted_pitch));
     memset(inst->pad_note_map, 0xFF, sizeof(inst->pad_note_map));
+    memset(inst->pad_source_scratch, 0, sizeof(inst->pad_source_scratch)); /* PAD_SRC_NORMAL */
+    memset(inst->drum_vel_zone_armed, 0, sizeof(inst->drum_vel_zone_armed));
+    memset(inst->drum_last_vel_zone, 0, sizeof(inst->drum_last_vel_zone));
     strncpy(inst->state_path, SEQ8_STATE_PATH_FALLBACK, sizeof(inst->state_path) - 1);
 
     /* Resolve per-set state path from active_set.txt */
@@ -4809,6 +4849,107 @@ static void destroy_instance(void *instance) {
 /* on_midi                                                              */
 /* ------------------------------------------------------------------ */
 
+/* Phase 1 / Bundle 2: pad source intent flag. on_midi sets a per-track
+ * scratch slot (inst->pad_source_scratch[t]) before dispatching to
+ * live_note_on / drum_record_note_on so downstream code knows whether
+ * to apply VelIn (NORMAL = yes; all bypass sources = no). Sub-bundle
+ * 2.0 wires the scaffold; 2A/B/C populate the non-NORMAL branches. */
+typedef enum {
+    PAD_SRC_NORMAL   = 0,  /* ordinary left-half pad press (apply VelIn) */
+    PAD_SRC_VEL_ZONE = 1,  /* right-half drum pad, vel-zone substitute   */
+    PAD_SRC_RPT_RATE = 2,  /* right-half drum pad, Rpt1 rate select      */
+    PAD_SRC_RPT_LANE = 3,  /* right-half drum pad, Rpt2 lane toggle      */
+    PAD_SRC_RPT_VEL  = 4,  /* right-half drum pad, Rpt repeat-vel zone   */
+} pad_source_t;
+
+/* Bundle 2A: mirrors of JS drumPadToVelZone (ui.js:1450) and
+ * drumVelZoneToVelocity (ui.js:1458). Right-half pads (col 4..7) are
+ * vel-zone control surface, not lane notes. zone 0..15 → vel 8..127. */
+static inline int drum_pad_to_vel_zone(int padIdx) {
+    int col = padIdx % 8;
+    if (col < 4) return -1;
+    int row = padIdx / 8;
+    return row * 4 + (col - 4);
+}
+
+static inline uint8_t drum_vel_zone_to_velocity(int zone) {
+    int v = ((zone + 1) * 127 + 8) / 16;  /* round((zone+1)*127/16) */
+    if (v < 1) v = 1;
+    if (v > 127) v = 127;
+    return (uint8_t)v;
+}
+
+/* Bundle 2A/2C: classify right-half pad events on drum tracks.
+ *
+ * Returns 1 if the event was handled by drum_pad_event (caller MUST NOT
+ * fall through to normal pad_note_map dispatch). Returns 0 if not
+ * applicable (left-half pad, or right-half but no branch handles it) —
+ * caller falls through to existing pitch-based dispatch.
+ *
+ * Rpt-mode collision gating: if tr->drum_repeat_active or any bit in
+ * tr->drum_repeat2_active is set, JS Rpt1/Rpt2 set_params own
+ * activation today (2C will replace). We return 1 (handled — don't
+ * dispatch a lane note) without firing any preview. Bundle 2C fills
+ * the Rpt branches in this slot.
+ *
+ * NORMAL mode (no Rpt running): arm the vel zone, fire the active
+ * lane's note at zone velocity for audible preview. Release is a noop —
+ * matches JS _onPadRelease which has no drum-vel-zone branches; synth
+ * voice rings out via the natural envelope. */
+static int drum_pad_event(seq8_instance_t *inst, seq8_track_t *tr,
+                          int t, int padIdx, uint8_t vel, int is_on) {
+    (void)vel;  /* zone velocity is computed from padIdx, not vel */
+    int velZone = drum_pad_to_vel_zone(padIdx);
+    if (velZone < 0) return 0;  /* left half — caller handles as lane note */
+
+    /* Rpt mode → JS owns right-pad classification (Bundle 2C will replace).
+     * Gating on perform_mode mirror (set by JS BEFORE rate pad press) avoids
+     * the first-hit double trigger that drum_repeat_active gating produced. */
+    if (tr->drum_perform_mode != 0) {
+        return 1;  /* handled — don't fire vel-zone preview */
+    }
+
+    /* NORMAL drum mode + right-half pad. Resolve the target lane note now;
+     * needed for both audible preview AND for record-slot population. */
+    int lane = (int)tr->active_drum_lane;
+    if (lane < 0 || lane >= DRUM_LANES) return 1;
+    drum_clip_t *dc = &tr->drum_clips[tr->active_clip];
+    uint8_t laneNote = dc->lanes[lane].midi_note;
+    if (laneNote == 0xFF) return 1;
+
+    /* Bundle 2A recording fix: populate the on_midi_drum_press slot for
+     * the active lane. JS pushes tN_drum_record_note_on for vel-pad hits
+     * (path is unchanged from pre-2A). That DSP handler now requires
+     * on_midi_drum_press_active[t][lane]=1 on patched Schwung (Bundle 1.5
+     * preroll filter at seq8_set_param.c:4090). Without this populate
+     * step, vel-pad records get dropped. JS does not push a record-off
+     * for vel pads, so we only populate the PRESS slot. */
+    int _is_preroll = (!tr->recording && inst->count_in_ticks > 0 &&
+                       inst->count_in_ticks <= (int32_t)(PPQN / 2) &&
+                       (int)inst->count_in_track == (int)t);
+    if (is_on && (tr->recording || _is_preroll)) {
+        uint16_t snap_step = _is_preroll
+            ? dc->lanes[lane].clip.loop_start
+            : tr->drum_current_step[lane];
+        int16_t  snap_off  = _is_preroll ? (int16_t)0
+            : (int16_t)tr->drum_tick_in_step[lane];
+        inst->on_midi_drum_press_step[t][lane]   = snap_step;
+        inst->on_midi_drum_press_off[t][lane]    = snap_off;
+        inst->on_midi_drum_press_active[t][lane] = 1;
+    }
+
+    if (is_on) {
+        inst->drum_vel_zone_armed[t] = 1;
+        inst->drum_last_vel_zone[t]  = (uint8_t)velZone;
+        uint8_t zoneVel = drum_vel_zone_to_velocity(velZone);
+        inst->pad_source_scratch[t] = (uint8_t)PAD_SRC_VEL_ZONE;
+        live_note_on(inst, tr, laneNote, zoneVel);
+        inst->pad_source_scratch[t] = (uint8_t)PAD_SRC_NORMAL;
+    }
+    /* Release: noop on monitor (synth ringout); no record-off for vel pads. */
+    return 1;
+}
+
 /* Phase 1 inbound: audio-thread pad MIDI from the patched Schwung shim.
  *
  * source: 0 = MOVE_MIDI_SOURCE_INTERNAL (Move pads / hardware controls),
@@ -4848,9 +4989,19 @@ static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
      * handler is what sets dsp_inbound_enabled; JS only pushes tN_padmap
      * when shadow_inbound_pad_midi_active is exposed (patched Schwung). */
     if (!inst->dsp_inbound_enabled) return;
-    if (pitch == 0xFF) return;          /* map not yet populated for this track */
 
     seq8_track_t *tr = &inst->tracks[t];
+
+    /* Bundle 2A: classify right-half drum pads (vel zones + Rpt). If
+     * handled (returns 1), don't fall through to normal lane-note dispatch.
+     * Left-half drum pads + all melodic pads → return 0, fall through. */
+    if (tr->pad_mode == PAD_MODE_DRUM) {
+        if (drum_pad_event(inst, tr, t, padIdx, d2, is_on)) {
+            return;
+        }
+    }
+
+    if (pitch == 0xFF) return;          /* map not yet populated for this track */
 
     /* PHASE-1: snapshot the actual press/release moment so the record-path
      * handlers use this tick (audio-thread, single-buffer precision) instead
@@ -4917,11 +5068,17 @@ static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
      * drum_record_note_on) suppress their inline-monitor when
      * dsp_inbound_enabled so we don't double-fire — this gives armed input
      * the same single-buffer latency as unarmed. */
+    /* Bundle 2.0: set pad source intent for downstream consumers. 2.0 only
+     * publishes NORMAL; 2A adds VEL_ZONE before this point for right-half
+     * drum pads, 2C adds the RPT_* variants. Reset after dispatch so a
+     * stale value can't leak to the next call. */
+    inst->pad_source_scratch[t] = (uint8_t)PAD_SRC_NORMAL;
     if (is_on) {
         live_note_on(inst, tr, pitch, d2);
     } else {
         live_note_off(inst, tr, pitch);
     }
+    inst->pad_source_scratch[t] = (uint8_t)PAD_SRC_NORMAL;
 }
 
 /* ------------------------------------------------------------------ */

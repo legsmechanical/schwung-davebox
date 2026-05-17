@@ -3889,6 +3889,26 @@ static void set_param(void *instance, const char *key, const char *val) {
             return;
         }
 
+        if (!strcmp(sub, "active_drum_lane")) {
+            /* Bundle 2A: JS mirror of S.activeDrumLane[t]. Pushed at every
+             * mutation site in ui.js (8 sites) + init + sidecar restore.
+             * Read by on_midi.drum_pad_event for vel-pad preview. */
+            int lane_adl = atoi(val);
+            tr->active_drum_lane = (uint8_t)clamp_i(lane_adl, 0, DRUM_LANES - 1);
+            return;
+        }
+
+        if (!strcmp(sub, "drum_perform_mode")) {
+            /* Bundle 2A: JS mirror of S.drumPerformMode[t] (0=NORMAL,
+             * 1=Rpt1, 2=Rpt2). Pushed via setDrumPerformMode helper
+             * (2 mutation sites in ui.js). on_midi.drum_pad_event gates
+             * the vel-zone preview branch on this — Rpt modes leave the
+             * right-pad classifier to JS (Bundle 2C will move it). */
+            int mode_dpm = atoi(val);
+            tr->drum_perform_mode = (uint8_t)clamp_i(mode_dpm, 0, 2);
+            return;
+        }
+
         if (!strcmp(sub, "drum_repeat_start")) {
             /* tN_drum_repeat_start "lane rate_idx vel" — activate repeat for a drum lane */
             const char *sp = val;
