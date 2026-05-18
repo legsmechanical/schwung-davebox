@@ -1285,7 +1285,7 @@ When a track's Route is set to **External**, all MIDI output for that track goes
 
 Notes are sent on the track's configured MIDI channel. Multiple tracks can all route to External simultaneously, enabling multi-timbral setups on one USB-A connection.
 
-Transport stop sends note-offs for sounding notes. Delete + Play (stopped) sends a full panic on all channels.
+Transport stop sends note-offs for sounding notes. Delete + Play (stopped) sends a full panic on all channels and clears Rpt1, Rpt2, and TARP latches across all tracks. Delete + Play (running) deactivates all clips and clears the same latches.
 
 ## 12.6 CC automation output
 
@@ -1619,8 +1619,8 @@ Dismissed immediately if you touch a knob or enter step edit.
 | Play | Start / stop transport |
 | Shift + Play | Restart transport from start |
 | Loop + Play | Restart with active clip at the visible page's first step (other tracks land in sync) |
-| Delete + Play (running) | Deactivate all clips |
-| Delete + Play (stopped) | MIDI panic |
+| Delete + Play (running) | Deactivate all clips + unlatch Rpt1/Rpt2/TARP on every track |
+| Delete + Play (stopped) | MIDI panic + unlatch Rpt1/Rpt2/TARP on every track |
 | Record | Start / stop recording |
 | Capture | Capture played notes into clip |
 | Loop | Enter pages / loop view |
@@ -1700,8 +1700,8 @@ All melodic Track View controls apply except as noted below.
 | Volume encoder | Master output volume |
 | Play | Start / stop transport |
 | Shift + Play | Restart from start |
-| Delete + Play (running) | Deactivate all clips |
-| Delete + Play (stopped) | MIDI panic |
+| Delete + Play (running) | Deactivate all clips + unlatch Rpt1/Rpt2/TARP on every track |
+| Delete + Play (stopped) | MIDI panic + unlatch Rpt1/Rpt2/TARP on every track |
 | Mute + clip pad | Mute / unmute track |
 | Shift + Mute + clip pad | Solo / unsolo track |
 | Delete + Mute | Clear mutes/solos |
