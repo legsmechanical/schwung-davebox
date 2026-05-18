@@ -608,6 +608,8 @@ A *live* arpeggiator for pad input and external MIDI. **Per-track**, not per-cli
 
 **Latch shortcut.** While holding pads with ARP IN active, tap **Loop** to toggle latch on/off without entering the bank. **Delete + Loop** also unlatches. With `Ltch` already on and notes latched, tapping **Loop with no pads held** clears the latched chord without turning latch off — the next chord you play latches as usual.
 
+**Latch lifecycle.** The latch chip is per-track and persists across track / route / channel / MIDI-in changes — switching to a different track does *not* drop the latched buffer. The latch clears on: transport Stop (sweeps every track), Delete + Play (any transport state), and Session View entry (active track only).
+
 **Drop one latched note (accumulate mode).** With `Rtrg=Off` and `Ltch=On`, re-pressing a pad whose note is currently latched but not physically held removes that single note from the buffer. Useful for plucking individual voices out of a stacked chord without dropping everything.
 
 **Latch visual feedback.** When `Latch` is on, every pad in the current ARP IN input buffer stays lit white — held *and* latched-after-release — so you can see which notes are feeding the arp. The `Arp` indicator in the Track View header inverts (black-on-white chip) while latched.
@@ -1296,7 +1298,7 @@ When a track's Route is set to **External**, all MIDI output for that track goes
 
 Notes are sent on the track's configured MIDI channel. Multiple tracks can all route to External simultaneously, enabling multi-timbral setups on one USB-A connection.
 
-Transport stop sends note-offs for sounding notes. Delete + Play (stopped) sends a full panic on all channels and clears Rpt1, Rpt2, and TARP latches across all tracks. Delete + Play (running) deactivates all clips and clears the same latches.
+Transport stop sends note-offs for sounding notes and clears ARP IN latches across every track (latched chord buffers don't drone with transport dead). Delete + Play (stopped) sends a full panic on all channels and clears Rpt1, Rpt2, and ARP IN latches across all tracks. Delete + Play (running) deactivates all clips and clears the same latches.
 
 ## 12.6 CC automation output
 
@@ -1389,7 +1391,7 @@ State is **not** saved continuously during use.
 - CLIP-bank values per clip
 - Global settings (BPM, key, scale, scale-aware, launch quant, metro, swing, MIDI in, beat markers)
 - Mute / solo state and all 16 snapshots (including per-lane drum mutes)
-- ARP IN per-track state (except latch, which resets on track switch / Session entry)
+- ARP IN per-track state (except latch, which resets on transport Stop, Delete + Play, or Session View entry — but persists across track switches)
 - Performance Mode user presets (slots 9–16) and currently-latched mods
 - Note Repeat per-lane gate masks, groove, lengths
 
