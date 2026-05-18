@@ -1976,7 +1976,20 @@ function pollDSP() {
             }
         }
     }
-    if (S.playingPrev  && !S.playing) disarmRecord();
+    if (S.playingPrev  && !S.playing) {
+        disarmRecord();
+        /* Transport stop also unlatches TARP on every track so latched chords
+         * don't drone with transport dead. Per-track tarp_latch=0 invokes
+         * tarp_drop_latched() -> tarp_silence() DSP-side, which clears the
+         * held buffer and silences any sounding note. Queued one-per-tick
+         * via pendingDefaultSetParams to avoid same-buffer coalescing. */
+        for (let _stt = 0; _stt < NUM_TRACKS; _stt++) {
+            if (S.bankParams[_stt] && S.bankParams[_stt][5] && S.bankParams[_stt][5][7]) {
+                S.bankParams[_stt][5][7] = 0;
+                S.pendingDefaultSetParams.push({ key: 't' + _stt + '_tarp_latch', val: '0' });
+            }
+        }
+    }
     S.playingPrev = S.playing;
 
     /* Refresh step LEDs while recording or holding a step (nudge may move note across boundary) */
@@ -3875,13 +3888,9 @@ globalThis.tick = function () {
         const _rm = S.midiInChannel;
         if (_rt !== _lastRemapTrack || _rr !== _lastRemapRoute ||
                 _rc !== _lastRemapChannel || _rm !== _lastRemapMidiIn) {
-            /* Reset TARP latch on the track being left */
-            if (_rt !== _lastRemapTrack && _lastRemapTrack >= 0 &&
-                    (S.bankParams[_lastRemapTrack][5][7] | 0)) {
-                S.bankParams[_lastRemapTrack][5][7] = 0;
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('t' + _lastRemapTrack + '_tarp_latch', '0');
-            }
+            /* TARP latch is per-track musical intent — preserved across track/
+             * route/channel/MIDI-in changes. Only Stop transport and Delete+Play
+             * clear it deliberately. */
             applyExtMidiRemap();
             _lastRemapTrack = _rt; _lastRemapRoute = _rr;
             _lastRemapChannel = _rc; _lastRemapMidiIn = _rm;
