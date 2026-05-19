@@ -5327,8 +5327,11 @@ static int drum_pad_event(seq8_instance_t *inst, seq8_track_t *tr,
         inst->pad_source_scratch[t] = (uint8_t)PAD_SRC_VEL_ZONE;
         live_note_on(inst, tr, laneNote, zoneVel);
         inst->pad_source_scratch[t] = (uint8_t)PAD_SRC_NORMAL;
+    } else {
+        inst->pad_source_scratch[t] = (uint8_t)PAD_SRC_VEL_ZONE;
+        live_note_off(inst, tr, laneNote);
+        inst->pad_source_scratch[t] = (uint8_t)PAD_SRC_NORMAL;
     }
-    /* Release: noop on monitor (synth ringout); no record-off for vel pads. */
     return 1;
 }
 
