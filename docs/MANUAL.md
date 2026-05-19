@@ -330,7 +330,7 @@ The 8×16 clip grid. 8 rows are visible at a time; scroll to reach all 16.
 | Loop (hold) | Temporary Performance Mode |
 | Shift + Loop | Toggle Perf Mode latch mode |
 
-The active track is shown on the OLED's track row as a 1px box drawn around its track number (1–8). Each track's currently-focused clip slot shows dark grey in Session View, so you can always see which slot is in focus.
+The active track is shown on the OLED's track row as a 1px box drawn around its track number (1–8). Each track's currently-focused clip slot shows dark grey in Session View, so you can always see which slot is in focus. In Track View's OLED overview, clip letters for playing or will-relaunch clips display inverted (black on white) so active clips are visible at a glance.
 
 ## 3.4 The Global Menu
 
@@ -449,7 +449,7 @@ Hold **Loop** to enter pages view — each step button now represents a *bar* of
 Three ways to change the loop window while Loop is held:
 
 - **Jog ±1 step per detent** — grows or shrinks the window from the end (start stays fixed).
-- **Tap a page button** — sets the window to pages `[0, N]` where `N` is the page you tapped. Same as it always worked.
+- **Tap a page button** — sets the window to pages `[0, N]` where `N` is the page you tapped. If the loop is already exactly 2 pages and you tap page 2, it shrinks to 1 page (the only pad gesture that reaches a single-page loop).
 - **Hold a page + tap another page** — sets the window to `[start, end]`. The held page anchors the **start**; the tap sets the **end**. Tapping a smaller page than the held one swaps automatically so the range is always `[min, max]`. Additional taps while still holding the start re-set the end (scrub freely; last tap wins). Tapping the same page you're holding is ignored. If you release the held page without tapping a second one, it falls back to the tap behavior above. The held page lights white while you're mid-gesture.
 
 The bottom OLED bar shows pages in the window only. Small 1px ticks at the bar's left/right edges signal that note content exists outside the visible window — non-destructive, those notes are preserved and play again if you expand the window. **Bake** (Track menu) re-anchors the window at step 0, so you can grow the length back to 256 steps after baking a sub-range.
@@ -470,6 +470,8 @@ To stop: **Record** again (transport continues) or **Play** (also stops transpor
 ### Count-in pre-roll
 
 Notes pressed in the last half-beat of the count-in are captured on **step 1** of the clip. They appear from the second loop pass onward — the system waits for the note to release and for the first full loop to complete before firing, to prevent double-triggering if the pad is still held when transport starts.
+
+**Solo does not affect count-in.** Track solo/mute never silences the count-in click or any held pads (TARP, Rpt1, Rpt2) during the pre-roll — you always hear the click and your warm-up regardless of solo state.
 
 **ARP IN during count-in.** When ARP IN is on, the arpeggiator runs through the count-in too — you can hear the pattern you're about to record from the moment you press, instead of waiting until recording fires. The first arpeggiator note after the count-in lands on step 1 of the clip regardless of sync mode. With **Sync = Off**, the engine fires the instant you press, so any arp output produced in the last half-beat of the count-in (whether triggered by a press in that window or by an earlier press still held into it) also records onto step 1.
 
@@ -1346,7 +1348,7 @@ Available on **Move-routed** tracks. Selecting this entry hands the **OLED, jog 
 - **Menu** exits and returns to dAVEBOx.
 - **Drum-mode tracks:** tapping a pad in the left 4 columns silently selects the matching cell in Move's drum-instrument editor (mirroring Move's native Shift + drum-pad gesture). dAVEBOx still fires the drum from its sequencer, so there's no double-trigger.
 
-While Edit Synth is active, the pad and step-button LEDs freeze at their entry-time state — audio output and pad triggering work normally; only the lights are paused.
+While Edit Synth or Edit Slot is active, pad colors switch to a grayscale scheme to signal split-UI mode: drum pads show white/grey instead of track color; melodic pads invert root/non-root brightness (root notes dim, non-root notes bright). Normal colors restore on exit.
 
 Below Track Config, a `── Global ──` separator divides Track Config from global items.
 
@@ -1450,10 +1452,11 @@ All playing clips flash in sync, locked to the main clock.
 
 | State | LED |
 |---|---|
-| Currently editing (not playing) | Solid bright track color |
-| Currently editing AND playing | Flash at 1/8-note rate |
-| Other clips with content | Dim track color |
-| Empty slots | Off |
+| Playing | Flash between bright and dim track color at 1/8-note rate |
+| Focused, will relaunch | Slow pulse between bright and dim track color |
+| Focused (not playing) | Solid bright track color |
+| Has content, not focused | Dim track color |
+| Empty | Dark grey |
 
 ### Step buttons (Track View)
 

@@ -3980,8 +3980,9 @@ static void drum_repeat_tick(seq8_instance_t *inst, seq8_track_t *tr) {
         }
     }
     if (!tr->drum_repeat_active || tr->pad_mode != PAD_MODE_DRUM) return;
-    /* Mute gate: skip emission but keep state so unmute resumes phase. */
-    if (effective_mute(inst, (int)(tr - inst->tracks))) return;
+    /* Mute gate: skip emission but keep state so unmute resumes phase.
+     * Bypassed during count-in so live input is always audible. */
+    if (inst->count_in_ticks == 0 && effective_mute(inst, (int)(tr - inst->tracks))) return;
     /* Repeat Sync pending: wait for next rate-grid boundary on arp_master_tick. */
     if (tr->drum_repeat_pending) {
         uint16_t rate_ticks = DRUM_REPEAT_RATE_TICKS[tr->drum_repeat_rate_idx];
@@ -4108,8 +4109,9 @@ static void drum_repeat2_tick(seq8_instance_t *inst, seq8_track_t *tr) {
         }
     }
     if (!(tr->drum_repeat2_active | tr->drum_repeat2_pending) || tr->pad_mode != PAD_MODE_DRUM) return;
-    /* Mute gate: skip per-lane emission, preserve latched_lanes/active/pending. */
-    if (effective_mute(inst, (int)(tr - inst->tracks))) return;
+    /* Mute gate: skip per-lane emission, preserve latched_lanes/active/pending.
+     * Bypassed during count-in so live input is always audible. */
+    if (inst->count_in_ticks == 0 && effective_mute(inst, (int)(tr - inst->tracks))) return;
     /* Resolve any lanes pending repeat-rate boundary. Each lane has its own
      * rate; activate per-lane when its rate divides arp_master_tick. */
     if (tr->drum_repeat2_pending) {
@@ -4315,8 +4317,9 @@ static void tarp_fire_step(seq8_instance_t *inst, seq8_track_t *tr) {
     if (a->held_count == 0) return;
     /* Mute gate: silence latched/held TARP output without disturbing the
      * held buffer. silence_muted_tracks kills any sustaining note via
-     * tarp_silence (latch-preserving). Unmute resumes mid-phrase. */
-    if (effective_mute(inst, (int)(tr - inst->tracks))) return;
+     * tarp_silence (latch-preserving). Unmute resumes mid-phrase.
+     * Bypassed during count-in so live input is always audible. */
+    if (inst->count_in_ticks == 0 && effective_mute(inst, (int)(tr - inst->tracks))) return;
 
     uint16_t rate = ARP_RATE_TICKS[a->rate_idx];
     if (rate == 0) rate = 24;

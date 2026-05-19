@@ -7,7 +7,7 @@ import {
 } from '/data/UserData/schwung/modules/tools/davebox/ui_constants.mjs';
 import { trackClipHasContent } from '/data/UserData/schwung/modules/tools/davebox/ui_scene.mjs';
 import {
-    White, Blue, LightGrey, DarkGrey, Cyan, PurpleBlue, VividYellow
+    White, Blue, DarkBlue, LightGrey, DarkGrey, Cyan, PurpleBlue, VividYellow
 } from '/data/UserData/schwung/shared/constants.mjs';
 import { setLED, setButtonLED } from '/data/UserData/schwung/shared/input_filter.mjs';
 
@@ -262,7 +262,7 @@ export function updateSessionLEDs() {
             const note  = TRACK_PAD_BASE + i;
             const flash = S.tapTempoFlashTick >= 0 &&
                           S.tickCount - S.tapTempoFlashTick < TAP_TEMPO_FLASH_TICKS;
-            cachedSetLED(note, flash ? Blue : LightGrey);
+            cachedSetLED(note, flash ? DarkBlue : DarkGrey);
         }
         return;
     }
@@ -380,7 +380,7 @@ export function updateTrackLEDs() {
             const note  = TRACK_PAD_BASE + i;
             const flash = S.tapTempoFlashTick >= 0 &&
                           S.tickCount - S.tapTempoFlashTick < TAP_TEMPO_FLASH_TICKS;
-            cachedSetLED(note, flash ? Blue : LightGrey);
+            cachedSetLED(note, flash ? DarkBlue : DarkGrey);
         }
         return;
     }
@@ -427,14 +427,15 @@ export function updateTrackLEDs() {
     }
 
     if (!S.sessionView) {
+        const _inCoRunPad = S.schwungCoRunSlot >= 0 || S.moveCoRunTrack >= 0;
         const isDrum = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
         if (isDrum) {
             /* Left 4 cols (col 0-3): lane selectors; Right 4 cols (col 4-7): velocity zones */
             const t        = S.activeTrack;
             const selLane  = S.activeDrumLane[t];
             const velZone  = S.drumLastVelZone[t];
-            const tc       = TRACK_COLORS[t];
-            const td       = TRACK_DIM_COLORS[t];
+            const tc       = _inCoRunPad ? White     : TRACK_COLORS[t];
+            const td       = _inCoRunPad ? LightGrey : TRACK_DIM_COLORS[t];
             const flashDur = 2 * POLL_INTERVAL;
             for (let i = 0; i < 32; i++) {
                 const col = i % 8;
@@ -514,7 +515,8 @@ export function updateTrackLEDs() {
                 cachedSetLED(TRACK_PAD_BASE + i, color);
             }
         } else {
-        const rootColor = TRACK_COLORS[S.activeTrack];
+        const rootColor    = _inCoRunPad ? DarkGrey : TRACK_COLORS[S.activeTrack];
+        const nonRootColor = _inCoRunPad ? TRACK_COLORS[S.activeTrack] : DarkGrey;
         const _tarpActive = (S.bankParams[S.activeTrack][5][7] | 0) !== 0 &&
                             (S.bankParams[S.activeTrack][5][0] | 0) !== 0;
         const _tarpHeld = _tarpActive ? S.tarpHeldNotes[S.activeTrack] : null;
@@ -529,7 +531,7 @@ export function updateTrackLEDs() {
             const chromatic = S.padLayoutChromatic[S.activeTrack];
             color = (sounding || inHeld || inLatch) ? White
                   : (chromatic && !inScale) ? LED_OFF
-                  : (S.padNoteMap[i] % 12 === S.padKey ? rootColor : DarkGrey);
+                  : (S.padNoteMap[i] % 12 === S.padKey ? rootColor : nonRootColor);
             cachedSetLED(TRACK_PAD_BASE + i, color);
         }
         }
@@ -554,15 +556,13 @@ export function updateTrackLEDs() {
             const isPlaying = S.trackClipPlaying[t] && S.trackActiveClip[t] === sceneIdx;
             const slowPulse = Math.floor(S.tickCount / 98) % 2;
             const isWillRelaunch = S.trackWillRelaunch[t] && S.trackActiveClip[t] === sceneIdx;
-            if (isFocused && isPlaying) {
+            if (isPlaying) {
                 color = S.flashEighth ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
-            } else if (isFocused && isWillRelaunch) {
+            } else if (isFocused && isWillRelaunch && S.playing) {
                 color = slowPulse ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
             } else if (isFocused) {
                 color = TRACK_COLORS[t];
             } else if (!trackClipHasContent(t, sceneIdx)) {
-                color = LED_OFF;
-            } else if (S.trackPadMode[t] !== PAD_MODE_DRUM && !clipHasActiveNotes(t, sceneIdx)) {
                 color = DarkGrey;
             } else {
                 color = TRACK_DIM_COLORS[t];

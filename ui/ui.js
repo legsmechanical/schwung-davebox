@@ -1852,12 +1852,19 @@ function pollDSP() {
                 }
             }
         }
-        S.trackQueuedClip[t]  = parseInt(v[17 + t], 10) | 0;
+        const _newQ = parseInt(v[17 + t], 10) | 0;
+        if (_newQ !== S.trackQueuedClip[t]) S.screenDirty = true;
+        S.trackQueuedClip[t]  = _newQ;
     }
     const countInDspActive = (v[25] === '1');
     for (let t = 0; t < NUM_TRACKS; t++) {
-        S.trackClipPlaying[t]     = (v[26 + t] === '1');
-        S.trackWillRelaunch[t]    = (v[34 + t] === '1');
+        const _newPlaying  = (v[26 + t] === '1');
+        const _newWR       = (v[34 + t] === '1');
+        if (_newPlaying !== S.trackClipPlaying[t] || _newWR !== S.trackWillRelaunch[t]) {
+            S.screenDirty = true;
+        }
+        S.trackClipPlaying[t]     = _newPlaying;
+        S.trackWillRelaunch[t]    = _newWR;
         S.trackPendingPageStop[t] = (v[42 + t] === '1');
     }
     S.flashEighth    = (v[50] === '1');
@@ -2311,7 +2318,15 @@ function applyTrackConfig(t, key, val) {
             syncDrumClipContent(t);
         } else {
             if (t === S.activeTrack && S.activeBank === 7) S.activeBank = 0;
+            /* Leaving DRUM mode: clear JS drum vel-zone state and push DSP
+             * dispatch mirrors to safe values so on_midi can't ghost-fire a
+             * vel-zone press on the right-half pads after the switch. */
+            S.drumVelZoneArmed[t] = false;
+            S.drumLastVelZone[t]  = 0;
+            host_module_set_param('t' + t + '_active_drum_lane', '0');
+            host_module_set_param('t' + t + '_drum_perform_mode', '0');
         }
+        if (t === S.activeTrack) { computePadNoteMap(); forceRedraw(); }
     }
     else if (key === 'track_vel_override') S.trackVelOverride[t] = val;
     else if (key === 'track_looper')    S.trackLooper[t] = val;
@@ -2862,8 +2877,16 @@ function drawUI() {
         print(43, 2, banner, 0);
         drawMetroIndicator();
         drawTrackRow(34);
-        for (let t = 0; t < NUM_TRACKS; t++)
-            pixelPrint(t * 16 + 5, 46, SCENE_LETTERS[S.trackActiveClip[t]], 1);
+        for (let t = 0; t < NUM_TRACKS; t++) {
+            const cx = t * 16 + 5;
+            const isActive = S.trackClipPlaying[t] || S.trackWillRelaunch[t] || (S.trackQueuedClip[t] >= 0);
+            if (isActive) {
+                fill_rect(cx - 1, 45, 9, 11, 1);
+                pixelPrint(cx, 46, SCENE_LETTERS[S.trackActiveClip[t]], 0);
+            } else {
+                pixelPrint(cx, 46, SCENE_LETTERS[S.trackActiveClip[t]], 1);
+            }
+        }
         return;
     }
 
@@ -3249,8 +3272,16 @@ function drawUI() {
         }
         drawMetroIndicator();
         drawTrackRow(34);
-        for (let _t = 0; _t < NUM_TRACKS; _t++)
-            pixelPrint(_t * 16 + 5, 46, SCENE_LETTERS[S.trackActiveClip[_t]], 1);
+        for (let _t = 0; _t < NUM_TRACKS; _t++) {
+            const _cx = _t * 16 + 5;
+            const _isActive = S.trackClipPlaying[_t] || S.trackWillRelaunch[_t] || (S.trackQueuedClip[_t] >= 0);
+            if (_isActive) {
+                fill_rect(_cx - 1, 45, 9, 11, 1);
+                pixelPrint(_cx, 46, SCENE_LETTERS[S.trackActiveClip[_t]], 0);
+            } else {
+                pixelPrint(_cx, 46, SCENE_LETTERS[S.trackActiveClip[_t]], 1);
+            }
+        }
         drawDrumPositionBar(t);
     } else {
         /* State 4: normal Track View */
@@ -3278,8 +3309,16 @@ function drawUI() {
         if (S.scaleAware) fill_rect(keySclX, 15, keyScl.length * CHAR_W, 1, 1);
         drawMetroIndicator();
         drawTrackRow(34);
-        for (let t = 0; t < NUM_TRACKS; t++)
-            pixelPrint(t * 16 + 5, 46, SCENE_LETTERS[S.trackActiveClip[t]], 1);
+        for (let t = 0; t < NUM_TRACKS; t++) {
+            const _cx = t * 16 + 5;
+            const _isActive = S.trackClipPlaying[t] || S.trackWillRelaunch[t] || (S.trackQueuedClip[t] >= 0);
+            if (_isActive) {
+                fill_rect(_cx - 1, 45, 9, 11, 1);
+                pixelPrint(_cx, 46, SCENE_LETTERS[S.trackActiveClip[t]], 0);
+            } else {
+                pixelPrint(_cx, 46, SCENE_LETTERS[S.trackActiveClip[t]], 1);
+            }
+        }
         drawPositionBar(S.activeTrack);
     }
 }
@@ -3437,7 +3476,8 @@ function exitSchwungCoRun() {
     S.shiftHeld = false; S.deleteHeld = false; S.muteHeld = false;
     S.copyHeld  = false; S.loopHeld  = false; S.loopJogActive = false;
     S.captureHeld = false; S.shiftTrackLEDActive = false;
-    S.screenDirty = true;
+    invalidateLEDCache();
+    forceRedraw();
 }
 
 /* Enter Move-native co-run for dAVEBOx track t. Asks the shim to (a) yield
@@ -3483,6 +3523,7 @@ function exitMoveNativeCoRun() {
     S.shiftHeld = false; S.deleteHeld = false; S.muteHeld = false;
     S.copyHeld  = false; S.loopHeld  = false; S.loopJogActive = false;
     S.captureHeld = false; S.shiftTrackLEDActive = false;
+    invalidateLEDCache();
     forceRedraw();
 }
 
@@ -5910,6 +5951,8 @@ function _onCC_transport(d1, d2) {
             computePadNoteMap();  /* PHASE-1: drum page change shifts lane mapping; re-push */
             forceRedraw();
         } else {
+        for (const p of S.liveActiveNotes) queueLiveNoteOff(S.activeTrack, p);
+        S.liveActiveNotes.clear();
         S.trackOctave[S.activeTrack] = Math.min(4, S.trackOctave[S.activeTrack] + 1);
         computePadNoteMap();  /* PHASE-1: re-bake octave offset into DSP padmap */
         S.screenDirty = true;
@@ -5924,6 +5967,8 @@ function _onCC_transport(d1, d2) {
             computePadNoteMap();  /* PHASE-1: drum page change shifts lane mapping; re-push */
             forceRedraw();
         } else {
+        for (const p of S.liveActiveNotes) queueLiveNoteOff(S.activeTrack, p);
+        S.liveActiveNotes.clear();
         S.trackOctave[S.activeTrack] = Math.max(-4, S.trackOctave[S.activeTrack] - 1);
         computePadNoteMap();  /* PHASE-1: re-bake octave offset into DSP padmap */
         S.screenDirty = true;
@@ -7710,14 +7755,23 @@ function _resolveLoopGesture(fireFallback) {
     S.loopGestureLane  = -1;
     if (fired) { forceRedraw(); return; }
     if (fireFallback) {
-        const currentLs = (ctx === 0) ? (S.clipLoopStart[trk][clip] | 0)
-                                      : (S.drumLaneLoopStart[trk] | 0);
+        const currentLs  = (ctx === 0) ? (S.clipLoopStart[trk][clip] | 0)
+                                       : (S.drumLaneLoopStart[trk] | 0);
+        const currentLen = (ctx === 0) ? (S.clipLength[trk][clip] | 0)
+                                       : (S.drumLaneLength[trk] | 0);
         const startPage = currentLs >> 4;
+        let newLs, newLen;
         if (currentLs === 0 || a < startPage) {
-            _fireLoopWindowSet(trk, ctx, 0, (a + 1) * 16);
+            newLs  = 0;
+            newLen = (a + 1) * 16;
         } else {
-            _fireLoopWindowSet(trk, ctx, currentLs, (a - startPage + 1) * 16);
+            newLs  = currentLs;
+            newLen = (a - startPage + 1) * 16;
         }
+        if (newLen === currentLen && currentLen === 32) {
+            newLen = 16;
+        }
+        _fireLoopWindowSet(trk, ctx, newLs, newLen);
     }
     forceRedraw();
 }
