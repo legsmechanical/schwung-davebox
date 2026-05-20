@@ -1972,7 +1972,11 @@ static void set_param(void *instance, const char *key, const char *val) {
                 return;
             }
             if (!strncmp(p, "_clear", 6) && p[6] == '\0') {
-                /* tN_cC_clear — atomically wipe all steps in clip */
+                /* tN_cC_clear — wipe step data in clip.
+                 * Preserves: length, loop_start, ticks_per_step, stretch_exp,
+                 * clock_shift_pos, nudge_pos, and pfx_params. Only step note
+                 * data is wiped. Hard Reset (_hard_reset) is the gesture that
+                 * wipes structure too. */
                 int i;
                 undo_begin_single(inst, tidx, cidx);
                 for (i = 0; i < SEQ_STEPS; i++) {
@@ -1983,13 +1987,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                     cl->step_gate[i] = (uint16_t)GATE_TICKS;
                     memset(cl->note_tick_offset[i], 0, 8 * sizeof(int16_t));
                 }
-                cl->active          = 0;
-                cl->stretch_exp     = 0;
-                cl->clock_shift_pos = 0;
-                cl->nudge_pos       = 0;
-                cl->ticks_per_step  = TICKS_PER_STEP;
-                cl->loop_start      = 0;
-                clip_pfx_params_init(&cl->pfx_params);
+                cl->active     = 0;
                 cl->note_count = 0;
                 memset(cl->notes, 0, sizeof(cl->notes));
                 cl->occ_dirty = 1;
@@ -2010,7 +2008,11 @@ static void set_param(void *instance, const char *key, const char *val) {
                 return;
             }
             if (!strncmp(p, "_clear_keep", 11) && p[11] == '\0') {
-                /* tN_cC_clear_keep — wipe all steps, preserve playback state */
+                /* tN_cC_clear_keep — wipe step data, preserve playback state.
+                 * Same preserve list as _clear (length, loop_start, tps, stretch,
+                 * clock_shift, nudge, pfx) — only step note data is wiped. The
+                 * difference vs _clear is that clip_playing / queued / armed
+                 * state stay put so the focused clip keeps ticking through. */
                 int i;
                 undo_begin_single(inst, tidx, cidx);
                 for (i = 0; i < SEQ_STEPS; i++) {
@@ -2021,13 +2023,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                     cl->step_gate[i] = (uint16_t)GATE_TICKS;
                     memset(cl->note_tick_offset[i], 0, 8 * sizeof(int16_t));
                 }
-                cl->active          = 0;
-                cl->stretch_exp     = 0;
-                cl->clock_shift_pos = 0;
-                cl->nudge_pos       = 0;
-                cl->ticks_per_step  = TICKS_PER_STEP;
-                cl->loop_start      = 0;
-                clip_pfx_params_init(&cl->pfx_params);
+                cl->active     = 0;
                 cl->note_count = 0;
                 memset(cl->notes, 0, sizeof(cl->notes));
                 cl->occ_dirty = 1;
@@ -2525,14 +2521,25 @@ static void set_param(void *instance, const char *key, const char *val) {
             }
 
             if (!strcmp(p2, "_hard_reset")) {
-                /* tN_lL_hard_reset — full factory reset: clip_init; midi_note preserved.
-                 * Snapshot the drum clip before wiping so global Undo can restore
-                 * the lane. Snapshot is per-clip (all 16 lanes), matching the
-                 * existing undo granularity used by _loop_double_fill etc. */
+                /* tN_lL_hard_reset — full factory reset for one drum lane.
+                 * Wipes clip data via clip_init AND the per-lane drum-repeat
+                 * groove fields (gate, gate_len, vel_scale, nudge, Rpt2 rate)
+                 * back to drum_repeat_init_defaults values. midi_note is
+                 * preserved (lane identity — a kick lane stays a kick lane).
+                 * Snapshot covers per-clip (all 16 lanes); Rpt groove fields
+                 * are NOT undoable. */
+                int _rs;
                 undo_begin_drum_clip(inst, tidx, (int)tr->active_clip);
                 clip_init(dlc);
                 tr->drum_current_step[lane_idx]   = 0;
                 tr->drum_tick_in_step[lane_idx]   = 0;
+                tr->drum_repeat_gate[lane_idx]      = 0xFF;
+                tr->drum_repeat_gate_len[lane_idx]  = 8;
+                tr->drum_repeat2_rate_idx[lane_idx] = 2; /* 1/8 default */
+                for (_rs = 0; _rs < 8; _rs++) {
+                    tr->drum_repeat_vel_scale[lane_idx][_rs] = 100;
+                    tr->drum_repeat_nudge[lane_idx][_rs]     = 0;
+                }
                 inst->state_dirty = 1;
                 return;
             }

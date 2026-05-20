@@ -635,8 +635,12 @@ function playMetronomeClick() {
 function clearClip(t, ac, keepPlaying) {
     if (typeof host_module_set_param !== 'function') return;
     S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
+    /* Clip CLEAR semantics (matches drum lane Clear, Group I): wipe step
+     * note data only. Preserve length, loop window, ticks_per_step, the
+     * destructive CLIP-bank params (stretch_exp / clock_shift_pos /
+     * nudge_pos), and per-clip pfx (NOTE FX / HARMONY / DELAY / SEQUENCE
+     * ARP). Hard Reset (Shift+Delete) is the gesture that wipes structure. */
     if (S.trackPadMode[t] === PAD_MODE_DRUM) {
-        /* Drum clip clear: wipe all lane step data; keep transport if S.playing */
         const keep = (keepPlaying && S.trackClipPlaying[t] && ac === S.trackActiveClip[t]) ? '1' : '0';
         S.pendingDefaultSetParams.unshift({ key: 't' + t + '_c' + ac + '_drum_clear', val: keep });
         S.clearDrainHold = 1;
@@ -645,37 +649,29 @@ function clearClip(t, ac, keepPlaying) {
             S.drumLaneHasNotes[t][l] = false;
         }
         S.drumClipNonEmpty[t][ac] = false;
-        S.clipLengthManuallySet[t][ac] = false;
-        S.drumLaneLengthManuallySet[t]  = false;
         if (ac === S.trackActiveClip[t]) {
             S.seqActiveNotes.clear();
-            S.drumLaneLength[t] = 16;
-            S.drumLaneLoopStart[t] = 0;
-            S.trackCurrentPage[t] = 0;
         }
-        S.pendingClearLengthTrack = t;
-        S.pendingClearLengthClip  = ac;
         return;
     }
     const cmd = (keepPlaying && S.trackClipPlaying[t] && ac === S.trackActiveClip[t])
         ? 't' + t + '_c' + ac + '_clear_keep'
         : 't' + t + '_c' + ac + '_clear';
     S.pendingDefaultSetParams.unshift({ key: cmd, val: '1' });
-    /* Defer drain 1 tick: the same buffer's sync set_param fan-out (pendingClearLength,
-     * resetPerClipBankParamsToDefault) otherwise coalesces _clear away. */
+    /* Defer drain 1 tick to keep _clear out of the same audio buffer as any
+     * sync set_param fan-out that might still be in flight. */
     S.clearDrainHold = 1;
     const len = S.clipLength[t][ac];
     for (let s = 0; s < len; s++) S.clipSteps[t][ac][s] = 0;
     S.clipNonEmpty[t][ac] = false;
-    S.clipLengthManuallySet[t][ac] = false;
-    S.clipLength[t][ac] = 16;
-    S.clipLoopStart[t][ac] = 0;
-    if (ac === S.trackActiveClip[t]) S.trackCurrentPage[t] = 0;
-    S.pendingClearLengthTrack = t;
-    S.pendingClearLengthClip  = ac;
+    /* Re-read steps from DSP 2 ticks later so step LEDs catch up after _clear
+     * has drained. Belt-and-suspenders against any state that still reads from
+     * DSP after the synchronous JS mirror wipe. */
+    S.pendingStepsReread      = 2;
+    S.pendingStepsRereadTrack = t;
+    S.pendingStepsRereadClip  = ac;
     if (ac === S.trackActiveClip[t]) {
         S.seqActiveNotes.clear(); S.seqLastStep = -1; S.seqNoteOnClipTick = -1;
-        resetPerClipBankParamsToDefault(t);
         /* Focused-clip-by-default: after clearing the focused clip, ensure it
          * stays playing so the track doesn't go silent. If trackClipPlaying
          * was true we used _clear_keep (DSP preserves playback). If it was
@@ -4427,7 +4423,14 @@ globalThis.tick = function () {
     if (S.pendingDrumLaneResync > 0) {
         S.pendingDrumLaneResync--;
         if (S.pendingDrumLaneResync === 0) {
-            syncDrumLaneSteps(S.pendingDrumLaneResyncTrack, S.pendingDrumLaneResyncLane);
+            const _drT = S.pendingDrumLaneResyncTrack;
+            const _drL = S.pendingDrumLaneResyncLane;
+            syncDrumLaneSteps(_drT, _drL);
+            /* Also refresh per-lane bank params (NOTE FX, DELAY, Repeat Groove)
+             * so post-reset and post-mutation pfx values reflect DSP. Without
+             * this, Lane Reset would leave NOTE FX/DELAY mirrors showing the
+             * pre-reset values until the next track switch. */
+            refreshDrumLaneBankParams(_drT, _drL);
             forceRedraw();
         }
     }
@@ -4485,21 +4488,10 @@ globalThis.tick = function () {
         }
     }
 
-    if (S.pendingClearLengthTrack >= 0) {
-        const _clt = S.pendingClearLengthTrack;
-        const _clc = S.pendingClearLengthClip;
-        S.pendingClearLengthTrack = -1;
-        S.pendingClearLengthClip  = -1;
-        const _isDrumCl = S.trackPadMode[_clt] === PAD_MODE_DRUM;
-        if (_isDrumCl) {
-            if (_clc === S.trackActiveClip[_clt])
-                host_module_set_param('t' + _clt + '_all_lanes_length', '16');
-        } else {
-            host_module_set_param('t' + _clt + '_c' + _clc + '_length', '16');
-        }
-        if (_clc === S.trackActiveClip[_clt]) refreshPerClipBankParams(_clt);
-        forceRedraw();
-    }
+    /* pendingClearLength drain removed (Group B): Clip Clear now preserves
+     * length and loop window so the deferred length=16 reset is no longer
+     * needed. The pendingClearLengthTrack/Clip fields are kept in ui_state
+     * defaults (-1) but no setter remains. */
 
     /* Refresh step LEDs while drum repeat is recording into the active lane */
     if (S.recordArmed && S.playing && !S.sessionView &&
@@ -7108,7 +7100,8 @@ function _onPadPressTrackView(status, d1, d2) {
         const padIdx = d1 - TRACK_PAD_BASE;
 
         /* Drum lane RESET: Shift+Delete+lane pad — full factory reset (length,
-         * loop, pfx, all wiped). */
+         * loop, pfx, Rpt groove all wiped). midi_note is preserved (lane
+         * identity). */
         if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.shiftHeld && S.deleteHeld) {
             const t    = S.activeTrack;
             const lane = drumPadToLane(padIdx);
@@ -7120,12 +7113,26 @@ function _onPadPressTrackView(status, d1, d2) {
                 S.drumLaneLength[t]     = 16;
                 for (let s = 0; s < 256; s++) S.drumLaneSteps[t][lane][s] = '0';
                 S.drumLaneHasNotes[t][lane] = false;
+                /* Per-lane Rpt1 + Rpt2 groove reset to fresh-session defaults
+                 * (matches drum_repeat_init_defaults + doClearSession). */
+                S.drumRepeatGate[t][lane] = 0xFF;
+                for (let _s = 0; _s < 8; _s++) {
+                    S.drumRepeatVelScale[t][lane][_s] = 100;
+                    S.drumRepeatNudge[t][lane][_s]    = 0;
+                }
+                S.drumRepeat2RatePerLane[t][lane] = 0;
                 const ac = S.trackActiveClip[t];
                 S.drumClipNonEmpty[t][ac] = false;
                 for (let ol = 0; ol < DRUM_LANES; ol++) {
                     if (S.drumLaneHasNotes[t][ol]) { S.drumClipNonEmpty[t][ac] = true; break; }
                 }
-                refreshDrumLaneBankParams(t, lane);
+                /* Defer refreshDrumLaneBankParams via pendingDrumLaneResync so it
+                 * runs AFTER DSP _hard_reset has drained (2 ticks). Synchronous
+                 * refresh was reading pre-reset DSP values, leaving NOTE FX /
+                 * DELAY mirrors un-defaulted. */
+                S.pendingDrumLaneResync      = 2;
+                S.pendingDrumLaneResyncTrack = t;
+                S.pendingDrumLaneResyncLane  = lane;
                 showActionPopup('LANE', 'RESET');
                 forceRedraw();
             }
