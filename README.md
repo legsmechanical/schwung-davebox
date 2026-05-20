@@ -2,9 +2,7 @@
 
 **A creative 8-track MIDI sequencer for the [Schwung](https://github.com/charlesvestal/schwung) framework on Ableton Move.**
 
-<a href="https://youtu.be/-OMpxbtUNpo?si=JSRkPo88e6qOXEvN">
-  <img width="323" height="171" alt="IMG_0177" src="https://github.com/user-attachments/assets/b84d5136-706b-41f7-a551-5799be8daaab" />
-</a>
+[Untitled - May 20, 2026 at 14.49.53 (2).bmp](https://github.com/user-attachments/files/28072479/Untitled.-.May.20.2026.at.14.49.53.2.bmp)
 
 dAVEBOx is an integrated sequencing environment & MIDI playground capable of fully replacing the functionality of the native Move sequencer. There are lots of weird little things to explore that can radically transform your compositions — and probably overload the Move CPU when you overdo it. You'll have a good time getting to that point, though.
 
