@@ -3,7 +3,7 @@
 ## Bugs to fix
 
 3. **Scale-aware key/scale changes** — transpose all clip notes on Key/Scale change. Design TBD.
-7. **State snapshots** (16 slots)
+7. **State snapshots / multi-save per session.** Global Menu items "Save snapshot" + "Recall state". Current auto-save behavior unchanged; snapshots are explicit and independent. On state-version bump, dAVEBOx load shows confirm dialog before wiping incompatible snapshots: "dAVEBOx updated — Incompatible session snapshots will be deleted. Proceed? [Yes/No]" (No is default).
 9. **MIDI clock sync**
 10. **Track conversion** (`tN_convert_to_drum`/`tN_convert_to_melodic`): Global Menu Mode item or dedicated dialog.
 
@@ -19,7 +19,6 @@ The batch on `1.0-tweaks` shipped items #5, #8, #10, #14, #16, #20, #29, #32 fro
 - **Scene capture grabs all focused clips, including empty/inactive ones.** Should only capture clips that are *playing* or *will play* on next transport start.
 - **Press Record during playback** starts recording mid-page. Should start at the beginning of the next page.
 - **Drum lane copy/paste broken.** Notes and params appear to copy in UI, but the destination lane is empty after paste. Regression — likely DSP-side paste path mismatched to drum-lane struct.
-- **Note duration hold+tap should extend THROUGH the last tapped step.** Currently sets duration TO the tapped step, not through it. Hold step 0, tap step 4 → notes should hold until start of step 5 (step-resolution boundary, not note-window).
 - **Lowest pad octave bug:** at the bottom octave setting on melodic tracks, the three left-most pads on the bottom row all light up when any one is pressed. Investigate octave-aware pad lighting logic.
 - **Shift+clip = focus-without-activate.** Companion to the focused-clip-active default (shipped 2026-05-19). Needs a JS-side "focused vs DSP-active" split so edits target the focused clip even when DSP is still playing the prior one. Deferred — requires deeper refactor.
 - **Re-sync after lane / clip length change.** When user edits lane length or clip length, playback should re-anchor cleanly. Current behavior can phase-shift.
@@ -27,6 +26,17 @@ The batch on `1.0-tweaks` shipped items #5, #8, #10, #14, #16, #20, #29, #32 fro
 - **Knob position alignment** of similar params across banks/track types. Example: InQ value should sit at the same knob angle across all places it appears (ALL LANES, CLIP K6 melodic, etc.).
 - **Re-sync playback after sub-page loop length adjust.** Adjusting loop within a sub-page should re-anchor — both clip and lane scopes.
 - **Native Move knob hang.** Turning a Move-native knob from within dAVEBOx (or in native co-run when controlling Move-native) hangs the dAVEBOx sequencer MIDI output. Suspect shared SPI path. Diagnose.
+- **Step LEDs shouldn't blink under Shift.** When Shift is held to indicate shortcut availability, step LEDs should be solid white instead of blinking.
+- **Step LED duration rendering** should indicate the *last step the note fully plays through*. Step 1 with duration 4 should light through step 3 (not 4). Companion: hold + tap second step at duration=2 should set duration=1 (mirrors loop-length adjust gesture).
+- **Drum lane LEDs:** active lane should be dark grey by default; bright white only when the lane has notes.
+- **Tracks should remember active param bank** across track switches and across session reload. Currently resets.
+- **Loop double broken on clips with start > 0.** Sequence clear / clip clear sometimes stops the focused clip's playback, violating the "focused clip plays by default" spec.
+- **Sequence clear should NOT reset loop start/end.** Only Clip Clear should.
+- **Active-clip invert indicator margin bug** on session/track OLED overview: background drops far below the letters. Bottom margin should match top margin. Also: clips without data should never show highlighted. Promoted to P1 alongside Group D — without it, focused-clip auto-launch lights every empty clip as "active" which is visually misleading.
+- **Arp state persists across tracks on session clear.** Should reset like other per-track state.
+- **Arp rate has in-between/delayed values.** Some rate values are not clean musical divisions, or produce a delayed/glitched output. Needs value-list cleanup and/or rate→tick-period precision check.
+- **Perf Mode looper sometimes leaves hanging notes** when looper is deactivated. Note-offs not flushed on looper-off transition. Lower priority within P1 — "next pass."
+- **Focused-clip auto-launch gaps.** The "focused clip plays by default" contract (shipped 2026-05-19) doesn't always fire. Repros: (a) first entry into a clip track in a new session, (b) sometimes after clip clear/reset. Likely a guard that bails when no clip is currently playing.
 
 ### Features
 
@@ -39,9 +49,25 @@ The batch on `1.0-tweaks` shipped items #5, #8, #10, #14, #16, #20, #29, #32 fro
 - **Delay `retrig` param** — new knob. When a note is received while repeats are still playing, the existing repeats stop immediately; only the most recent press's repeats are audible.
 - **All-track clip merge.**
 - **Shift + row button** launches the row from the beginning of the next bar.
+- **Live merge post-stop placement dialog.** When live merge stops, OLED shows "Tap pad to place merged clip" with a Cancel option. Tapping a clip pad replaces that clip with the merged clip. Live merge no longer auto-populates a destination.
+- **Move bake to Capture button; live merge to Sample (no Shift).** Check for gesture conflicts.
+- **Hold inactive step → activate + open step edit overlay.** Single-gesture activation + edit.
+- **Lane delete undoable** via Delete + lane-pad re-press.
+- **Arp interval/step bank** (new feature). Knob bank where each knob controls the relative pitch of the corresponding arp step (±7 semitones/intervals, scale-aware). Access: press jog while on SEQ ARP or TARP bank in track view. Display persistent until jog turn/click. Visual similar to repeat groove; step-mode-muted steps (K5) hidden, mirroring repeat-groove + gate-mask. Step pad mode is displayed persistently while on this bank; the current K5-touch-into-step-pad-mode gesture on SEQ ARP/TARP is removed.
+
+### Schwung-side (fork) features
+
+- **Two effect sends with returns** added to the chain menu. Each send hosts up to 3 Schwung effects in series.
+- **Module favorites in picker** (mirrored from Features list above — Schwung-side).
+
+## Open investigations
+
+- **dAVEBOx co-run vs TB-3PO co-run** — characterize differences; identify anything TB-3PO does cleaner that we should adopt.
 
 ## Post-1.0 investigations
 
+- **Song mode — linear arrangement recording and editing.** One long "song clip" per track (no pfx, independent of the 16-clip grid) that captures all tracks' output via an all-track live merge variant. Primary constraint is state persistence: the text-format `state_buf[65536]` can't hold long-form song data — needs a binary format or a separate song-state file. Memory is fine (~200 KB for 8 lean clips at 2K notes each). Step arrays should be dropped for song clips (note-centric model only). UI is the biggest scope item: a linear horizontal arrangement view is a new mode entirely.
+
 - **Move-native state readback via Sentry breadcrumbs.** Sentry SDK writes per-process breadcrumb files under `/data/UserData/Sentry/<uuid>.run/__sentry-breadcrumb{1,2}` (MessagePack ring buffer). MoveOriginal emits `Set MainMode (new state: note|session|songOverview)`, `Set ShiftMode`, `Push/Pop MomentaryMode`, `Song opened (UUID ...)` — a real read-only side channel into Move-native firmware state. Would let co-run auto-detect exit, mirror Shift state, and sync set loads. Investigation parked with full vocabulary + caveats in `notes/sentry-breadcrumb-state-readback.md`. Next step: live capture during a co-run handoff while exercising Note/Session/device-edit/preset-browser, then prototype a msgpack parser.
 
-Source: `~/Downloads/1.0 fixes tweaks.txt` (user-maintained). When user adds new items there, they should be mirrored here.
+Source: `~/Downloads/local todo.txt` (user-maintained). When user adds new items there, they should be mirrored here.
