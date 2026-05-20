@@ -3790,6 +3790,17 @@ function restoreUiSidecar(applyDefaultsNow) {
         S.scaleAware   = 1;
         S.metronomeVol = 100;
         S.trackPadMode[0] = PAD_MODE_DRUM;
+        /* Sync t0's drum lane data + drumClipNonEmpty from the freshly-reset
+         * DSP. syncClipsFromDsp already ran earlier in the post-DSP-sync
+         * drain, but its drum-sync block was gated on JS trackPadMode==DRUM,
+         * which was MELODIC at the time (doClearSession reset it). Without
+         * this catch-up, S.drumClipNonEmpty[0] + drum lane meta retain pre-
+         * Clear values and t1's session/drum pad LEDs render stale. */
+        if (applyDefaultsNow && typeof host_module_get_param === 'function') {
+            syncDrumClipContent(0);
+            syncDrumLanesMeta(0);
+            syncDrumLaneSteps(0, S.activeDrumLane[0] | 0);
+        }
         if (applyDefaultsNow) {
             S.pendingDefaultSetParams = [
                 { key: 'scale_aware', val: '1' },
