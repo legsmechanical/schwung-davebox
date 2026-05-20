@@ -726,6 +726,15 @@ static void set_param(void *instance, const char *key, const char *val) {
                 tr2->pad_mode            = PAD_MODE_MELODIC_SCALE;
                 tr2->active_drum_lane    = 0;
                 tr2->drum_perform_mode   = 0;
+                /* Additional track-config fields that also drift after Clear
+                 * Session if not reset here. JS doClearSession resets the JS
+                 * mirrors but never pushes them to DSP; for v=0 (cleared) state
+                 * files seq8_load_state leaves in-memory values untouched. */
+                tr2->channel             = (uint8_t)t2;
+                tr2->pad_octave          = 3;
+                tr2->pfx.looper_on       = 1;
+                tr2->pfx.route           = (t2 < 4) ? ROUTE_MOVE : ROUTE_SCHWUNG;
+                { int _rl; for (_rl = 0; _rl < DRUM_LANES; _rl++) tr2->drum_lane_pfx[_rl].route = tr2->pfx.route; }
                 for (c2 = 0; c2 < NUM_CLIPS; c2++)
                     clip_init(&tr2->clips[c2]);
                 drum_track_init(tr2, t2);

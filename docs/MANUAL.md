@@ -792,6 +792,8 @@ Holding a repeat pad through the count-in click is audible and seamlessly fires 
 
 **Rpt2:** Loop + lane pad latches that lane. Hold a lane + Loop latches all currently-held lanes. Tap a latched lane to unlatch it. **Delete + Loop** stops all.
 
+**Tap Loop alone** (drum track, no pads or lanes held) — unlatches all latched Rpt1 + Rpt2 lanes on the active track in one go. Equivalent to the per-track half of **Delete + Loop**, without needing Delete.
+
 **Visual feedback.** Latched Rpt1 / Rpt2 lane pads stay lit Cyan regardless of the current right-pad mode (Velocity / Rpt1 / Rpt2). Default Rpt2 rate is 1/8. Track mute silences latched output but preserves the latch — unmute resumes mid-phrase. Transport Stop clears all latches across every track. Rpt1's last-selected rate (per-track) and Rpt2's per-lane rates persist across save/load.
 
 ### Gate mask

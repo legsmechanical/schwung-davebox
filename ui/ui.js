@@ -4947,7 +4947,7 @@ function _onCC_jog(d1, d2) {
     if (d1 === 3 && d2 === 127 && S.confirmBakeScene) {
         if (S.confirmBakeSceneSel > 0) {
             const _loops = [1, 2, 4][S.confirmBakeSceneSel - 1];
-            host_module_set_param('bake_scene', S.confirmBakeSceneClip + ' ' + _loops);
+            S.pendingDefaultSetParams.push({ key: 'bake_scene', val: S.confirmBakeSceneClip + ' ' + _loops });
             S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
             showActionPopup('SCENE', 'BAKED');
             S.pendingSceneBakeResync = 2;
@@ -4967,8 +4967,10 @@ function _onCC_jog(d1, d2) {
                 const _loops = S.confirmBakeLoops;
                 if (S.confirmBakeIsDrum) {
                     const _laneArg = S.confirmBakeDrumMode === 1 ? ' ' + S.activeDrumLane[S.confirmBakeTrack] : ' 0';
-                    host_module_set_param('bake',
-                        S.confirmBakeTrack + ' ' + S.confirmBakeClip + ' ' + S.confirmBakeDrumMode + ' ' + _loops + _laneArg + ' ' + _wrap);
+                    S.pendingDefaultSetParams.push({
+                        key: 'bake',
+                        val: S.confirmBakeTrack + ' ' + S.confirmBakeClip + ' ' + S.confirmBakeDrumMode + ' ' + _loops + _laneArg + ' ' + _wrap
+                    });
                     S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
                     showActionPopup('BAKED', _loops + 'x');
                     S.pendingBankRefresh = S.confirmBakeTrack;
@@ -4977,7 +4979,10 @@ function _onCC_jog(d1, d2) {
                         S.pendingDrumResyncTrack = S.confirmBakeTrack;
                     }
                 } else {
-                    host_module_set_param('bake', S.confirmBakeTrack + ' ' + S.confirmBakeClip + ' 0 ' + _loops + ' 0 ' + _wrap);
+                    S.pendingDefaultSetParams.push({
+                        key: 'bake',
+                        val: S.confirmBakeTrack + ' ' + S.confirmBakeClip + ' 0 ' + _loops + ' 0 ' + _wrap
+                    });
                     S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
                     showActionPopup('BAKED', _loops + 'x');
                     S.pendingBankRefresh      = S.confirmBakeTrack;
@@ -5547,6 +5552,22 @@ function _onCC_buttons(d1, d2) {
         if (S.loopHeld) {
             /* Latch or clear drum repeat on the active track */
             const _lrt = S.activeTrack;
+            S.loopPressTick = S.tickCount;
+            /* Tap-loop-alone unlatch eligibility (drum tracks only). Snapshot
+             * "no fresh physical pad press" at press time so the release path
+             * can distinguish a true alone-tap from a tap-while-latching
+             * gesture. For Rpt1, drumRepeatHeldPad doubles as the latched-pad
+             * reference once latched, so we must allow that case (latched +
+             * no fresh press = the unlatch gesture we want). Rpt2 uses two
+             * separate sets (held vs latched) so its check is simpler. */
+            S.loopTapUnlatchTrack = -1;
+            const _rpt1FreshHold = S.drumRepeatHeldPad[_lrt] >= 0 && !S.drumRepeatLatched[_lrt];
+            const _rpt2FreshHold = S.drumRepeat2HeldLanes[_lrt].size > 0;
+            if (S.trackPadMode[_lrt] === PAD_MODE_DRUM &&
+                !_rpt1FreshHold && !_rpt2FreshHold &&
+                S.liveActiveNotes.size === 0) {
+                S.loopTapUnlatchTrack = _lrt;
+            }
             /* Delete+Loop: unconditionally stop active drum repeat latch */
             if (S.deleteHeld && S.trackPadMode[_lrt] === PAD_MODE_DRUM) {
                 if (S.drumPerformMode[_lrt] === 1 && S.drumRepeatLatched[_lrt]) {
@@ -5570,12 +5591,12 @@ function _onCC_buttons(d1, d2) {
                     /* Latch ON: holding any pad + loop turns it off */
                     S.bankParams[_lrt][5][7] = 0;
                     if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + _lrt + '_tarp_latch', '0');
+                        S.pendingDefaultSetParams.push({ key: 't' + _lrt + '_tarp_latch', val: '0' });
                 } else if ((S.bankParams[_lrt][5][0] | 0) !== 0) {
                     /* Latch OFF: turn it on (only when TARP style is set) */
                     S.bankParams[_lrt][5][7] = 1;
                     if (typeof host_module_set_param === 'function')
-                        host_module_set_param('t' + _lrt + '_tarp_latch', '1');
+                        S.pendingDefaultSetParams.push({ key: 't' + _lrt + '_tarp_latch', val: '1' });
                 }
             } else if (S.trackPadMode[_lrt] !== PAD_MODE_DRUM &&
                        (S.bankParams[_lrt][5][7] | 0) !== 0 &&
@@ -5608,7 +5629,7 @@ function _onCC_buttons(d1, d2) {
                  * drum_pad_event). Rpt1's release handler is still JS-driven
                  * so this isn't strictly required, but keeps DSP in sync. */
                 if (typeof host_module_set_param === 'function')
-                    host_module_set_param('t' + _lrt + '_drum_repeat_latched', '1');
+                    S.pendingDefaultSetParams.push({ key: 't' + _lrt + '_drum_repeat_latched', val: '1' });
             }
             S.heldStepBtn        = -1;
             S.heldStep           = -1;
@@ -5622,7 +5643,28 @@ function _onCC_buttons(d1, d2) {
             S.loopJogActive = false;
             /* Loop released before the held start step — treat as aborted
              * gesture and fire the length-only fallback (single-tap semantics). */
-            if (S.loopGestureStart >= 0) _resolveLoopGesture(true);
+            if (S.loopGestureStart >= 0) {
+                _resolveLoopGesture(true);
+                S.loopTapUnlatchTrack = -1;
+            }
+            /* Tap-loop-alone: unlatch all latched repeats on active drum track.
+             * Eligibility was snapshotted at press (no pads/lanes held + drum
+             * track). A long hold disqualifies (treated like a gesture timeout). */
+            if (S.loopTapUnlatchTrack >= 0 &&
+                (S.tickCount - S.loopPressTick) < LOOP_TAP_TICKS) {
+                const _ut = S.loopTapUnlatchTrack;
+                if (S.drumRepeatLatched[_ut]) {
+                    S.drumRepeatLatched[_ut] = false;
+                    S.drumRepeatHeldPad[_ut] = -1;
+                    S.drumRepeatHeldPadsStack[_ut].length = 0;
+                    S.pendingDefaultSetParams.push({ key: 't' + _ut + '_drum_repeat_stop', val: '1' });
+                }
+                if (S.drumRepeat2LatchedLanes[_ut].size > 0) {
+                    S.drumRepeat2LatchedLanes[_ut].clear();
+                    S.pendingDefaultSetParams.push({ key: 't' + _ut + '_drum_repeat2_stop', val: '1' });
+                }
+            }
+            S.loopTapUnlatchTrack = -1;
         }
         forceRedraw();
     }
@@ -8030,9 +8072,11 @@ function _onStepButtons(d1, d2) {
             if (tappedStep !== S.heldStep) {
                 const len     = S.drumLaneLength[t];
                 const tps     = S.drumLaneTPS[t] || 24;
+                /* Extend THROUGH the tapped step: gate spans up to the start
+                 * of (tappedStep + 1), not just up to tappedStep. */
                 const dist    = tappedStep > S.heldStep
-                    ? tappedStep - S.heldStep
-                    : len - S.heldStep + tappedStep;
+                    ? tappedStep - S.heldStep + 1
+                    : len - S.heldStep + tappedStep + 1;
                 const newGate = Math.max(1, Math.min(dist * tps, 65535));
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_gate', String(newGate));
@@ -8131,9 +8175,10 @@ function _onStepButtons(d1, d2) {
             if (tappedStep !== S.heldStep) {
                 const len     = S.clipLength[S.activeTrack][ac_tap];
                 const tps     = S.clipTPS[S.activeTrack][ac_tap] || 24;
+                /* Extend THROUGH the tapped step (see drum-mode counterpart). */
                 const dist    = tappedStep > S.heldStep
-                    ? tappedStep - S.heldStep
-                    : len - S.heldStep + tappedStep;
+                    ? tappedStep - S.heldStep + 1
+                    : len - S.heldStep + tappedStep + 1;
                 const newGate = Math.max(1, Math.min(dist * tps, 65535));
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('t' + S.activeTrack + '_c' + ac_tap + '_step_' + S.heldStep + '_gate', String(newGate));

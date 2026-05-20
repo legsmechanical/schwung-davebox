@@ -59,6 +59,10 @@ export const S = {
      * Loop button release too so a partial gesture doesn't leak. */
     loopGestureStart: -1,
     loopGestureFired: false,
+    /* Tap-loop-alone unlatch (drum tracks): snapshot taken at Loop press time
+     * of "active drum track with no pads/lanes held + no notes live". On tap
+     * release, unlatch all Rpt1/Rpt2 latched on that track. -1 = ineligible. */
+    loopTapUnlatchTrack: -1,
     loopGestureCtx:   0,   /* 0 = melodic, 1 = drum lane, 2 = ALL LANES */
     loopGestureTrack: -1,
     loopGestureClip:  -1,
