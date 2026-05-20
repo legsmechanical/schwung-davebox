@@ -1224,10 +1224,10 @@ dAVEBOx supports **one level** of undo and redo.
 | Control (Track View) | Action |
 |---|---|
 | Delete + step | Clear that step |
-| Delete + side clip button | Clear all notes in that clip |
-| Shift + Delete + side clip button | Hard reset clip — clears notes **and** all per-clip params |
-| Delete + lane-pad (drum track) | Clear all notes in that lane. Preserves lane length, loop window, per-lane play FX, and MIDI note. Pops **"LANE CLEARED"**. |
-| Shift + Delete + lane-pad (drum track) | Hard reset lane — wipes notes and per-lane params. Pops **"LANE RESET"**. |
+| Delete + side clip button | Clear all notes in that clip. Length, loop window, ticks-per-step, destructive CLIP-bank params (Stretch / Clock Shift / Nudge), per-clip play FX, and CC automation all survive. |
+| Shift + Delete + side clip button | Hard reset clip — clears notes **and** length / loop / per-clip params / CC automation |
+| Delete + lane-pad (drum track) | Clear all notes in that lane. Preserves lane length, loop window, per-lane play FX, per-lane Rpt groove (gate / vel-scale / nudge / Rpt2 rate), and MIDI note. Pops **"LANE CLEARED"**. |
+| Shift + Delete + lane-pad (drum track) | Hard reset lane — wipes notes, length / loop / per-lane play FX, and per-lane Rpt groove. MIDI note is preserved (kick stays kick). Pops **"LANE RESET"**. |
 | Delete + jog click | Reset all params in the active bank (active clip/lane) |
 | Shift + Delete + jog click | Reset all play FX across every bank (active clip/lane) |
 
