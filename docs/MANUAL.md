@@ -461,9 +461,12 @@ Press **Record** to capture pad input into the active clip.
 | Starting from | Behavior |
 |---|---|
 | Stopped | One-bar count-in (step buttons flash on each beat). Recording and transport start together when count-in ends. Pressing **Play** during count-in cancels both. |
-| Playing | Recording arms immediately; no count-in. |
+| Playing, **fixed-length clip** | Records immediately at the current step — mid-page is meaningful in an existing clip structure. Record button goes solid Red. |
+| Playing, **adaptive clip** (empty + length not set) | Recording arms but defers to the next 16-step bar boundary. The clip's playhead resets to step 0 at that moment so the bar boundary becomes the new clip start (no empty leading page). Record button **blinks Red** while pending, solid once recording begins. |
 
 To stop: **Record** again (transport continues) or **Play** (also stops transport).
+
+**Transport start auto-launches focused clips.** Pressing **Play** from a stopped state launches each track's focused clip automatically, so you don't have to manually arm a clip on every track to hear sound. Switching tracks in Track View also auto-launches the destination track's focused clip if nothing is currently playing there. Session View clip launches are still explicit (you're tapping pads).
 
 **Recording is always additive — existing notes are never erased.** To get a fresh take, clear the clip first (Delete + side clip button).
 
@@ -1214,7 +1217,7 @@ dAVEBOx supports **one level** of undo and redo.
 - After undoing, performing any new action discards the redo state.
 - If nothing to undo/redo, brief "NOTHING TO UNDO" / "NOTHING TO REDO" on OLED.
 
-**Undoable actions** include: step clear, step copy, clip clear, clip copy/cut, hard reset (single clip or scene row), row clear, row copy, live recording session, bank param reset, full bank reset, Loop Double, drum lane copy/cut, drum clip copy/cut.
+**Undoable actions** include: step clear, step copy, clip clear, clip copy/cut, hard reset (single clip or scene row), row clear, row copy, live recording session, bank param reset, full bank reset, Loop Double, drum lane copy/cut, drum clip copy/cut, drum lane clear (Delete + lane-pad), drum lane reset (Shift+Delete + lane-pad).
 
 ## 11.8 Clear and reset shortcuts
 
@@ -1223,6 +1226,8 @@ dAVEBOx supports **one level** of undo and redo.
 | Delete + step | Clear that step |
 | Delete + side clip button | Clear all notes in that clip |
 | Shift + Delete + side clip button | Hard reset clip — clears notes **and** all per-clip params |
+| Delete + lane-pad (drum track) | Clear all notes in that lane. Preserves lane length, loop window, per-lane play FX, and MIDI note. Pops **"LANE CLEARED"**. |
+| Shift + Delete + lane-pad (drum track) | Hard reset lane — wipes notes and per-lane params. Pops **"LANE RESET"**. |
 | Delete + jog click | Reset all params in the active bank (active clip/lane) |
 | Shift + Delete + jog click | Reset all play FX across every bank (active clip/lane) |
 
@@ -1400,6 +1405,7 @@ State is **not** saved continuously during use.
 - All note data (per clip, per track)
 - Per-clip params (NOTE FX, HARMONY, DELAY, SEQUENCE ARP, CC AUTOMATION per clip)
 - Track settings (channel, route, mode, octave shift, VelIn, Looper)
+- Per-track active param bank (which bank each track was on when last left)
 - CLIP-bank values per clip
 - Global settings (BPM, key, scale, scale-aware, launch quant, metro, swing, MIDI in, beat markers)
 - Mute / solo state and all 16 snapshots (including per-lane drum mutes)
