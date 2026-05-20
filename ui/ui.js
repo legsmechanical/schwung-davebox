@@ -79,7 +79,7 @@ import {
 } from '/data/UserData/schwung/modules/tools/davebox/ui_constants.mjs';
 
 import { S, CC_ASSIGN_DEFAULTS, PERF_FACTORY_PRESETS } from '/data/UserData/schwung/modules/tools/davebox/ui_state.mjs';
-import { saveState, doClearSession, showActionPopup, uuidToStatePath, uuidToUiStatePath, readActiveSet, loadNameIndex, saveNameIndex, copyStateFiles, findInheritCandidates } from '/data/UserData/schwung/modules/tools/davebox/ui_persistence.mjs';
+import { saveState, writeSidecar, doClearSession, showActionPopup, uuidToStatePath, uuidToUiStatePath, readActiveSet, loadNameIndex, saveNameIndex, copyStateFiles, findInheritCandidates } from '/data/UserData/schwung/modules/tools/davebox/ui_persistence.mjs';
 import { drawGlobalMenu } from '/data/UserData/schwung/modules/tools/davebox/ui_dialogs.mjs';
 import { trackClipHasContent, sceneAllQueued, updateSceneMapLEDs } from '/data/UserData/schwung/modules/tools/davebox/ui_scene.mjs';
 import { effectiveClip, updateStepLEDs, updateSessionLEDs, updateTrackLEDs, flashAtRate, drawPositionBar, invalidateLEDCache } from '/data/UserData/schwung/modules/tools/davebox/ui_leds.mjs';
@@ -676,6 +676,17 @@ function clearClip(t, ac, keepPlaying) {
     if (ac === S.trackActiveClip[t]) {
         S.seqActiveNotes.clear(); S.seqLastStep = -1; S.seqNoteOnClipTick = -1;
         resetPerClipBankParamsToDefault(t);
+        /* Focused-clip-by-default: after clearing the focused clip, ensure it
+         * stays playing so the track doesn't go silent. If trackClipPlaying
+         * was true we used _clear_keep (DSP preserves playback). If it was
+         * false (e.g. clip hadn't auto-launched yet), re-launch now while
+         * transport is playing so the cleared clip ticks through empty steps. */
+        if (S.playing && !S.trackClipPlaying[t]
+                && !S.trackWillRelaunch[t]
+                && S.trackQueuedClip[t] === -1) {
+            S.pendingDefaultSetParams.push({ key: 't' + t + '_launch_clip', val: String(ac) });
+            S.trackQueuedClip[t] = ac;
+        }
     }
 }
 
@@ -939,6 +950,7 @@ function disarmRecord() {
     const t = S.recordArmedTrack;
     const _wasCountingIn   = S.recordCountingIn;
     S.recordArmed          = false;
+    S.recordPendingPage    = false;
     S.recordCountingIn     = false;
     S.recordArmedTrack     = -1;
     S.countInStartTick    = -1;
@@ -1096,6 +1108,29 @@ function registerTapTempo(padNote) {
     S.screenDirty = true;
 }
 
+
+/* Save the current S.activeBank into the outgoing track's per-track slot,
+ * switch to newT, then restore the new track's stored bank into S.activeBank.
+ * Existing post-switch validity checks (e.g. drum-track hidden banks → 0)
+ * still apply to the loaded value. Use at every site that assigns S.activeTrack. */
+function _switchActiveTrack(newT) {
+    S.trackActiveBank[S.activeTrack] = S.activeBank;
+    S.activeTrack = newT | 0;
+    S.activeBank = S.trackActiveBank[S.activeTrack] | 0;
+    /* Focused-clip-by-default: if transport is playing and the destination
+     * track has nothing playing / queued / willRelaunch, launch the focused
+     * clip so entering a track always lands on its focused clip live. Skip
+     * in session view since the user is launching clips explicitly there. */
+    if (S.playing && !S.sessionView
+            && !S.trackClipPlaying[S.activeTrack]
+            && !S.trackWillRelaunch[S.activeTrack]
+            && S.trackQueuedClip[S.activeTrack] === -1) {
+        const _ac = S.trackActiveClip[S.activeTrack];
+        if (typeof host_module_set_param === 'function')
+            host_module_set_param('t' + S.activeTrack + '_launch_clip', String(_ac));
+        S.trackQueuedClip[S.activeTrack] = _ac;
+    }
+}
 
 function doDoubleFill() {
     const _t = S.activeTrack;
@@ -1367,7 +1402,12 @@ function computePadNoteMap() {
             for (let i = 0; i < 32; i++) {
                 const col = i % 8;
                 const row = Math.floor(i / 8);
-                S.padNoteMap[i] = Math.max(0, Math.min(127, root + col + row * 8));
+                /* OOB pads (computed pitch < 0 or > 127) get the 0xFF sentinel
+                 * to match drum vel-zone slots. Previously clamped to 0/127,
+                 * which made multiple OOB pads share the same MIDI note → all
+                 * lit when any one was pressed (LED cache keyed on note). */
+                const p = root + col + row * 8;
+                S.padNoteMap[i] = (p < 0 || p > 127) ? 0xFF : p;
             }
         } else {
             const n = intervals.length;
@@ -1377,7 +1417,8 @@ function computePadNoteMap() {
                 const deg = col + row * 3;
                 const oct = Math.floor(deg / n);
                 const semitone = oct * 12 + intervals[deg % n];
-                S.padNoteMap[i] = Math.max(0, Math.min(127, root + semitone));
+                const p = root + semitone;
+                S.padNoteMap[i] = (p < 0 || p > 127) ? 0xFF : p;
             }
         }
     }
@@ -1576,13 +1617,21 @@ function defaultStepNote() {
     const target = S.padKey + 60;  /* root pitch class in MIDI octave 4 */
     let best = -1, bestDist = 999;
     for (let i = 0; i < 32; i++) {
+        if (S.padNoteMap[i] === 0xFF) continue;  /* OOB pad — no melodic note */
         const p = S.padNoteMap[i] + S.trackOctave[S.activeTrack] * 12;
         if (p < 0 || p > 127) continue;
         if (S.padNoteMap[i] % 12 !== S.padKey) continue;  /* root notes only */
         const d = Math.abs(p - target);
         if (d < bestDist) { bestDist = d; best = p; }
     }
-    return best >= 0 ? best : Math.max(0, Math.min(127, S.padNoteMap[0] + S.trackOctave[S.activeTrack] * 12));
+    if (best >= 0) return best;
+    /* Fallback: first valid (non-0xFF) entry; if every pad is OOB (shouldn't
+     * happen at any sane octave), return middle C. */
+    for (let i = 0; i < 32; i++) {
+        if (S.padNoteMap[i] === 0xFF) continue;
+        return Math.max(0, Math.min(127, S.padNoteMap[i] + S.trackOctave[S.activeTrack] * 12));
+    }
+    return 60;
 }
 
 
@@ -1982,6 +2031,13 @@ function pollDSP() {
         }
     }
 
+    /* Record-arm pending page boundary: DSP defers recording=1 to next bar.
+     * Clear S.recordPendingPage once DSP has fired (recording_pending_page=0). */
+    if (S.recordPendingPage && S.recordArmedTrack >= 0 && typeof host_module_get_param === 'function') {
+        const _rpp = host_module_get_param('t' + S.recordArmedTrack + '_recording_pending_page');
+        if (_rpp === '0') S.recordPendingPage = false;
+    }
+
     /* Count-in end: DSP fired transport+recording — sync JS state */
     if (S.countInDspPrev && !countInDspActive && S.playing) {
         S.recordCountingIn    = false;
@@ -1993,6 +2049,21 @@ function pollDSP() {
     /* Transport transitions */
     if (!S.playingPrev && S.playing) {
         S.transportStartTick = S.tickCount;
+        /* Focused-clip-by-default on transport start: launch each track's
+         * focused clip if nothing on that track is already playing / queued /
+         * will-relaunch. Without this, pressing Play on a fresh session left
+         * every track silent with the playhead stuck at step 0.
+         * Queue through pendingDefaultSetParams so the 8 launch_clip set_params
+         * drain one-per-tick — same-buffer coalescing would otherwise drop all
+         * but the last, leaving only one track playing per transport start. */
+        for (let _tt = 0; _tt < NUM_TRACKS; _tt++) {
+            if (S.trackClipPlaying[_tt]) continue;
+            if (S.trackWillRelaunch[_tt]) continue;
+            if (S.trackQueuedClip[_tt] !== -1) continue;
+            const _tac = S.trackActiveClip[_tt];
+            S.pendingDefaultSetParams.push({ key: 't' + _tt + '_launch_clip', val: String(_tac) });
+            S.trackQueuedClip[_tt] = _tac;
+        }
         /* Auto-launch focused clip if record is armed and clip is inactive */
         if (S.recordArmed) {
             const _rT  = S.recordArmedTrack >= 0 ? S.recordArmedTrack : S.activeTrack;
@@ -2892,12 +2963,16 @@ function drawUI() {
         drawTrackRow(34);
         for (let t = 0; t < NUM_TRACKS; t++) {
             const cx = t * 16 + 5;
-            const isActive = S.trackClipPlaying[t] || S.trackWillRelaunch[t] || (S.trackQueuedClip[t] >= 0);
+            const ac = S.trackActiveClip[t];
+            const hasData = S.trackPadMode[t] === PAD_MODE_DRUM
+                ? S.drumClipNonEmpty[t][ac]
+                : S.clipNonEmpty[t][ac];
+            const isActive = (S.trackClipPlaying[t] || S.trackWillRelaunch[t] || (S.trackQueuedClip[t] >= 0)) && hasData;
             if (isActive) {
-                fill_rect(cx - 1, 45, 9, 11, 1);
-                pixelPrint(cx, 46, SCENE_LETTERS[S.trackActiveClip[t]], 0);
+                fill_rect(cx - 1, 45, 9, 7, 1);
+                pixelPrint(cx, 46, SCENE_LETTERS[ac], 0);
             } else {
-                pixelPrint(cx, 46, SCENE_LETTERS[S.trackActiveClip[t]], 1);
+                pixelPrint(cx, 46, SCENE_LETTERS[ac], 1);
             }
         }
         return;
@@ -3260,7 +3335,12 @@ function drawUI() {
                 else if (knobs[k].dspKey === 'clip_resolution') _lbl = 'Zoom';
             }
             print(colX, rowY,      _lbl, hi ? 0 : 1);
-            print(colX, rowY + 12, col4(knobs[k].abbrev ? knobs[k].fmt(vals[k]) : null), hi ? 0 : 1);
+            /* Arp Rate (Rate knob in SEQ ARP / ARP IN) uses 5-char labels for
+             * triplets ('1/16t','1/32t'). Skip the 4-char padding so the 't'
+             * isn't truncated — the cell has ~24px and the raw string fits. */
+            const _rawVal = knobs[k].abbrev ? knobs[k].fmt(vals[k]) : null;
+            const _txt    = (knobs[k].fmt === fmtArpRate) ? (_rawVal || '-') : col4(_rawVal);
+            print(colX, rowY + 12, _txt, hi ? 0 : 1);
         }
         }
 
@@ -3287,12 +3367,16 @@ function drawUI() {
         drawTrackRow(34);
         for (let _t = 0; _t < NUM_TRACKS; _t++) {
             const _cx = _t * 16 + 5;
-            const _isActive = S.trackClipPlaying[_t] || S.trackWillRelaunch[_t] || (S.trackQueuedClip[_t] >= 0);
+            const _ac = S.trackActiveClip[_t];
+            const _hasData = S.trackPadMode[_t] === PAD_MODE_DRUM
+                ? S.drumClipNonEmpty[_t][_ac]
+                : S.clipNonEmpty[_t][_ac];
+            const _isActive = (S.trackClipPlaying[_t] || S.trackWillRelaunch[_t] || (S.trackQueuedClip[_t] >= 0)) && _hasData;
             if (_isActive) {
-                fill_rect(_cx - 1, 45, 9, 11, 1);
-                pixelPrint(_cx, 46, SCENE_LETTERS[S.trackActiveClip[_t]], 0);
+                fill_rect(_cx - 1, 45, 9, 7, 1);
+                pixelPrint(_cx, 46, SCENE_LETTERS[_ac], 0);
             } else {
-                pixelPrint(_cx, 46, SCENE_LETTERS[S.trackActiveClip[_t]], 1);
+                pixelPrint(_cx, 46, SCENE_LETTERS[_ac], 1);
             }
         }
         drawDrumPositionBar(t);
@@ -3324,12 +3408,16 @@ function drawUI() {
         drawTrackRow(34);
         for (let t = 0; t < NUM_TRACKS; t++) {
             const _cx = t * 16 + 5;
-            const _isActive = S.trackClipPlaying[t] || S.trackWillRelaunch[t] || (S.trackQueuedClip[t] >= 0);
+            const _ac = S.trackActiveClip[t];
+            const _hasData = S.trackPadMode[t] === PAD_MODE_DRUM
+                ? S.drumClipNonEmpty[t][_ac]
+                : S.clipNonEmpty[t][_ac];
+            const _isActive = (S.trackClipPlaying[t] || S.trackWillRelaunch[t] || (S.trackQueuedClip[t] >= 0)) && _hasData;
             if (_isActive) {
-                fill_rect(_cx - 1, 45, 9, 11, 1);
-                pixelPrint(_cx, 46, SCENE_LETTERS[S.trackActiveClip[t]], 0);
+                fill_rect(_cx - 1, 45, 9, 7, 1);
+                pixelPrint(_cx, 46, SCENE_LETTERS[_ac], 0);
             } else {
-                pixelPrint(_cx, 46, SCENE_LETTERS[S.trackActiveClip[t]], 1);
+                pixelPrint(_cx, 46, SCENE_LETTERS[_ac], 1);
             }
         }
         drawPositionBar(S.activeTrack);
@@ -3489,6 +3577,10 @@ function exitSchwungCoRun() {
     S.shiftHeld = false; S.deleteHeld = false; S.muteHeld = false;
     S.copyHeld  = false; S.loopHeld  = false; S.loopJogActive = false;
     S.captureHeld = false; S.shiftTrackLEDActive = false;
+    /* Schwung's chain editor may have rewritten palette scratch entries while
+     * we were ceded. Reapply our palette before invalidating the LED cache
+     * so forceRedraw below repaints with the right colors. */
+    reapplyPalette();
     invalidateLEDCache();
     forceRedraw();
 }
@@ -3536,6 +3628,11 @@ function exitMoveNativeCoRun() {
     S.shiftHeld = false; S.deleteHeld = false; S.muteHeld = false;
     S.copyHeld  = false; S.loopHeld  = false; S.loopJogActive = false;
     S.captureHeld = false; S.shiftTrackLEDActive = false;
+    /* Move firmware may have rewritten palette scratch entries (knob rings,
+     * Shift/Back, etc.) while we were ceded. Reapply our palette before
+     * invalidating the LED cache so forceRedraw below repaints with the
+     * right colors, not stale ones left by Move firmware. */
+    reapplyPalette();
     invalidateLEDCache();
     forceRedraw();
 }
@@ -3659,6 +3756,16 @@ function restoreUiSidecar(applyDefaultsNow) {
                 if (typeof _o === 'number')
                     S.trackOctave[_t] = Math.max(-4, Math.min(4, _o | 0));
             }
+        }
+        if (us.v >= 8 && Array.isArray(us.tab)) {
+            for (let _t = 0; _t < NUM_TRACKS; _t++) {
+                const _b = us.tab[_t];
+                S.trackActiveBank[_t] = (typeof _b === 'number' && _b >= 0 && _b <= 7) ? (_b | 0) : 0;
+            }
+            /* Sync live mirror to the restored active track. Subsequent
+             * post-restore validity checks (e.g. hide bank 7 on melodic) still
+             * apply because activeBank is a regular live variable from here on. */
+            S.activeBank = S.trackActiveBank[S.activeTrack] | 0;
         }
     } else {
         S.scaleAware   = 1;
@@ -4603,7 +4710,9 @@ globalThis.tick = function () {
 
         /* Transport LEDs */
         setButtonLED(MovePlay, S.playing ? Green : LED_OFF);
-        if (S.recordScheduledStop) {
+        if (S.recordScheduledStop || S.recordPendingPage) {
+            /* recordScheduledStop = waiting for end-of-page to stop; recordPendingPage =
+             * waiting for next page boundary for DSP to flip recording=1. Both blink. */
             setButtonLED(MoveRec, Math.floor(S.tickCount / 8) % 2 === 0 ? Red : LED_OFF);
         } else {
             setButtonLED(MoveRec, S.recordArmed ? Red : LED_OFF);
@@ -5273,7 +5382,7 @@ function _onCC_jog(d1, d2) {
                     if (next !== S.activeTrack) {
                         extNoteOffAll();
                         handoffRecordingToTrack(next);
-                        S.activeTrack = next;
+                        _switchActiveTrack(next);
                         if (S.trackPadMode[next] === PAD_MODE_DRUM) {
                             if (S.activeBank === 2 || S.activeBank === 4) S.activeBank = 0;
                         } else {
@@ -5354,8 +5463,10 @@ function _onCC_jog(d1, d2) {
                     }
                     if (next !== cur) {
                         S.activeBank = next;
+                        S.trackActiveBank[S.activeTrack] = next;
                         readBankParams(S.activeTrack, next);
                         S.bankSelectTick = S.tickCount;
+                        writeSidecar();
                         forceRedraw();
                     }
                 }
@@ -5889,23 +6000,32 @@ function _onCC_transport(d1, d2) {
             setButtonLED(MoveRec, Red);
             /* Adaptive mode: entered when count-in finishes (transport start edge in tick) */
         } else {
-            /* Playing → arm immediately with no count-in */
+            /* Playing → arm with no count-in. Two paths by mode:
+             *   Adaptive (empty clip + length not manually set): defer DSP
+             *     recording=1 to next bar boundary AND reset playhead to
+             *     loop_start at fire time (next page becomes new step 0,
+             *     avoiding an empty leading page). Record LED blinks until
+             *     DSP fires. JS sends recording=2.
+             *   Fixed (clip exists / length locked): record immediately at
+             *     the current step — the existing clip grid is the meaningful
+             *     frame. JS sends recording=1 (legacy). No blink. */
             const rawBpmLive = typeof host_module_get_param === 'function'
                 ? parseFloat(host_module_get_param('bpm')) : 120;
-            S.recordArmed      = true;
-            S.recordCountingIn = false;
-            S.recordArmedTrack = S.activeTrack;
+            const _at = S.activeTrack, _ac = S.trackActiveClip[_at];
+            const _isDrum = S.trackPadMode[_at] === PAD_MODE_DRUM;
+            const _adaptive = _isDrum
+                ? (!S.drumClipNonEmpty[_at][_ac] && !S.drumLaneLengthManuallySet[_at])
+                : (!S.clipNonEmpty[_at][_ac] && !S.clipLengthManuallySet[_at][_ac]);
+            S.recordArmed       = true;
+            S.recordCountingIn  = false;
+            S.recordArmedTrack  = _at;
+            S.recordPendingPage = _adaptive;
             S.recordBpm        = (rawBpmLive > 0 && isFinite(rawBpmLive)) ? rawBpmLive : 120;
+            if (_adaptive) S.clipAdaptiveMode[_at][_ac] = true;
             setButtonLED(MoveRec, Red);
             if (typeof host_module_set_param === 'function')
-                host_module_set_param('t' + S.activeTrack + '_recording', '1');
+                host_module_set_param('t' + _at + '_recording', _adaptive ? '2' : '1');
             S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
-            /* Adaptive mode: arm into empty clip with no manual length set */
-            { const _at = S.activeTrack, _ac = S.trackActiveClip[_at];
-              const _isDrum = S.trackPadMode[_at] === PAD_MODE_DRUM;
-              if (_isDrum ? (!S.drumClipNonEmpty[_at][_ac] && !S.drumLaneLengthManuallySet[_at])
-                          : (!S.clipNonEmpty[_at][_ac] && !S.clipLengthManuallySet[_at][_ac]))
-                  S.clipAdaptiveMode[_at][_ac] = true; }
         }
     }
 
@@ -6987,11 +7107,13 @@ function _onPadPressTrackView(status, d1, d2) {
     if (d1 >= TRACK_PAD_BASE && d1 < TRACK_PAD_BASE + 32) {
         const padIdx = d1 - TRACK_PAD_BASE;
 
-        /* Drum Pad Clear: Shift+Delete+lane pad — full factory reset of drum lane */
+        /* Drum lane RESET: Shift+Delete+lane pad — full factory reset (length,
+         * loop, pfx, all wiped). */
         if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.shiftHeld && S.deleteHeld) {
             const t    = S.activeTrack;
             const lane = drumPadToLane(padIdx);
             if (lane >= 0 && lane < DRUM_LANES) {
+                S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('t' + t + '_l' + lane + '_hard_reset', '1');
                 setActiveDrumLane(t, lane);
@@ -7004,7 +7126,30 @@ function _onPadPressTrackView(status, d1, d2) {
                     if (S.drumLaneHasNotes[t][ol]) { S.drumClipNonEmpty[t][ac] = true; break; }
                 }
                 refreshDrumLaneBankParams(t, lane);
-                showActionPopup('PAD CLEARED');
+                showActionPopup('LANE', 'RESET');
+                forceRedraw();
+            }
+            return;
+        }
+
+        /* Drum lane CLEAR: Delete+lane pad (no shift) — notes-only clear,
+         * preserves length, loop window, pfx params, midi_note. Undoable. */
+        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && !S.shiftHeld && S.deleteHeld) {
+            const t    = S.activeTrack;
+            const lane = drumPadToLane(padIdx);
+            if (lane >= 0 && lane < DRUM_LANES) {
+                S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + t + '_l' + lane + '_clear', '1');
+                setActiveDrumLane(t, lane);
+                for (let s = 0; s < 256; s++) S.drumLaneSteps[t][lane][s] = '0';
+                S.drumLaneHasNotes[t][lane] = false;
+                const ac = S.trackActiveClip[t];
+                S.drumClipNonEmpty[t][ac] = false;
+                for (let ol = 0; ol < DRUM_LANES; ol++) {
+                    if (S.drumLaneHasNotes[t][ol]) { S.drumClipNonEmpty[t][ac] = true; break; }
+                }
+                showActionPopup('LANE', 'CLEARED');
                 forceRedraw();
             }
             return;
@@ -7350,8 +7495,11 @@ function _onPadPressTrackView(status, d1, d2) {
             }
         } else if (S.heldStep >= 0 && !S.shiftHeld) {
             /* Step edit: tap pad to toggle note assignment for held step */
+            if (S.padNoteMap[padIdx] === 0xFF) return; /* OOB pad — no note to toggle */
             const ac    = effectiveClip(S.activeTrack);
-            const pitch = Math.max(0, Math.min(127, S.padNoteMap[padIdx] + S.trackOctave[S.activeTrack] * 12));
+            const _pitchRaw = S.padNoteMap[padIdx] + S.trackOctave[S.activeTrack] * 12;
+            if (_pitchRaw < 0 || _pitchRaw > 127) return; /* OOB after track-octave shift */
+            const pitch = _pitchRaw;
             if (typeof host_module_set_param === 'function')
                 host_module_set_param('t' + S.activeTrack + '_c' + ac + '_step_' + S.heldStep + '_toggle', pitch + ' ' + stepEntryVelocity(S.activeTrack, effectiveVelocity(d2), false));
             /* Read back authoritative note list */
@@ -7392,8 +7540,10 @@ function _onPadPressTrackView(status, d1, d2) {
                     S.bankSelectTick = -1;
                 } else {
                     S.activeBank = bankIdx;
+                    S.trackActiveBank[S.activeTrack] = bankIdx;
                     readBankParams(S.activeTrack, bankIdx);
                     S.bankSelectTick = S.tickCount;
+                    writeSidecar();
                 }
                 S.screenDirty = true;
             }
@@ -7401,7 +7551,7 @@ function _onPadPressTrackView(status, d1, d2) {
             /* Shift + bottom-row pad: select active track */
             extNoteOffAll();
             handoffRecordingToTrack(padIdx);
-            S.activeTrack = padIdx;
+            _switchActiveTrack(padIdx);
             refreshPerClipBankParams(padIdx);
             computePadNoteMap();
             S.seqActiveNotes.clear();
@@ -7420,9 +7570,14 @@ function _onPadPressTrackView(status, d1, d2) {
             }
             S.screenDirty = true;
         } else if (!S.shiftHeld) {
-            /* Live note — apply per-track octave shift, clamp 0-127 */
+            /* Live note — apply per-track octave shift; skip OOB to avoid ghost
+             * dispatches of clamped note 0 (or 127) when multiple pads' shifted
+             * pitches land outside [0,127]. */
             const basePitch = S.padNoteMap[padIdx];
-            const pitch = Math.max(0, Math.min(127, basePitch + S.trackOctave[S.activeTrack] * 12));
+            if (basePitch === 0xFF) return; /* OOB base */
+            const _pitchRaw = basePitch + S.trackOctave[S.activeTrack] * 12;
+            if (_pitchRaw < 0 || _pitchRaw > 127) return; /* OOB after track-octave shift */
+            const pitch = _pitchRaw;
             padPitch[padIdx] = pitch;
             S.lastPlayedNote  = pitch;
             S.lastPadVelocity = effectiveVelocity(d2);
@@ -7673,7 +7828,7 @@ function _onPadPress(status, d1, d2) {
                                     host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
                             }
                             handoffRecordingToTrack(t);
-                            S.activeTrack = t;
+                            _switchActiveTrack(t);
                             refreshPerClipBankParams(t);
                             S.sessionView = false;
                             S.shiftTrackLEDActive = false;
@@ -7681,7 +7836,7 @@ function _onPadPress(status, d1, d2) {
                             forceRedraw();
                         } else if (S.trackClipPlaying[t] && isActiveClip) {
                             handoffRecordingToTrack(t);
-                            S.activeTrack = t;
+                            _switchActiveTrack(t);
                             refreshPerClipBankParams(t);
                             if (S.trackPendingPageStop[t]) {
                                 /* Pending stop → cancel by re-launching */
@@ -7695,21 +7850,21 @@ function _onPadPress(status, d1, d2) {
                         } else if (S.trackWillRelaunch[t] && isActiveClip) {
                             /* Transport stopped, clip primed to restart → cancel */
                             handoffRecordingToTrack(t);
-                            S.activeTrack = t;
+                            _switchActiveTrack(t);
                             refreshPerClipBankParams(t);
                             if (typeof host_module_set_param === 'function')
                                 host_module_set_param('t' + t + '_deactivate', '1');
                         } else if (S.trackQueuedClip[t] === clipIdx) {
                             /* Queued to launch → cancel */
                             handoffRecordingToTrack(t);
-                            S.activeTrack = t;
+                            _switchActiveTrack(t);
                             refreshPerClipBankParams(t);
                             if (typeof host_module_set_param === 'function')
                                 host_module_set_param('t' + t + '_deactivate', '1');
                         } else {
                             /* Launch clip for this track */
                             handoffRecordingToTrack(t);
-                            S.activeTrack = t;
+                            _switchActiveTrack(t);
                             if (!S.playing) {
                                 const prevClip = S.trackActiveClip[t];
                                 S.trackActiveClip[t]  = clipIdx;
@@ -8477,6 +8632,7 @@ function _onPadRelease(status, d1, d2) {
             return;
         }
         const pitch = padPitch[padIdx] >= 0 ? padPitch[padIdx] : S.padNoteMap[padIdx];
+        if (pitch === 0xFF) return; /* OOB pad — press was skipped, nothing to release */
         S.liveActiveNotes.delete(pitch);
         if (S.pendingPrerollNote !== null) {
             const _prRelPitch = S.pendingPrerollNote.laneNote;

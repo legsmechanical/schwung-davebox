@@ -330,6 +330,20 @@ export function updateTrackLEDs() {
         }
     }
 
+    /* Move-native co-run: Move firmware owns CCs 40-43 while active, leaving
+     * its own colors on the LEDs when the user exits. dAVEBOx must reclaim
+     * those LEDs once, otherwise the prior Move-native colors persist into
+     * dAVEBOx track view. Parallel latch to the Schwung path above. */
+    {
+        const inMoveCoRun = (S.moveCoRunTrack | 0) >= 0;
+        if (inMoveCoRun) {
+            S._moveCoRunTrackLedsActive = true;
+        } else if (S._moveCoRunTrackLedsActive) {
+            for (let _i = 0; _i < 4; _i++) setButtonLED(40 + _i, LED_OFF, true);
+            S._moveCoRunTrackLedsActive = false;
+        }
+    }
+
     /* Step icon LEDs (CCs 16-31): light shortcut hints while Shift held in Track View.
      * Force-send every POLL_INTERVAL to override any native Move state that bypasses caches.
      * Suppress icons too while Shift+Shft/Res knob is being touched (matches the step
@@ -522,7 +536,22 @@ export function updateTrackLEDs() {
         const _tarpHeld = _tarpActive ? S.tarpHeldNotes[S.activeTrack] : null;
         for (let i = 0; i < 32; i++) {
             let color;
-            const pitch    = Math.max(0, Math.min(127, S.padNoteMap[i] + S.trackOctave[S.activeTrack] * 12));
+            /* OOB pads — either (a) sentinel from computePadNoteMap (base pitch
+             * before track-octave was out of range), or (b) base + trackOctave
+             * shift pushes the pitch out of [0,127]. Both must blank the LED so
+             * pads sharing the same clamped MIDI note don't all light when one
+             * is pressed (clamping multiple pads to note 0 was the bottom-row
+             * ghost-light bug). */
+            if (S.padNoteMap[i] === 0xFF) {
+                cachedSetLED(TRACK_PAD_BASE + i, LED_OFF);
+                continue;
+            }
+            const pitchRaw = S.padNoteMap[i] + S.trackOctave[S.activeTrack] * 12;
+            if (pitchRaw < 0 || pitchRaw > 127) {
+                cachedSetLED(TRACK_PAD_BASE + i, LED_OFF);
+                continue;
+            }
+            const pitch    = pitchRaw;
             const sounding = S.liveActiveNotes.has(pitch) || S.seqActiveNotes.has(pitch);
             const inHeld   = S.heldStep >= 0 && S.heldStepNotes.indexOf(pitch) >= 0;
             const inLatch  = _tarpHeld && _tarpHeld.has(pitch);

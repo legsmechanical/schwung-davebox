@@ -164,6 +164,15 @@ export const S = {
     cachedSceneAllQueued: new Array(16).fill(false),
     cachedSceneAnyPlaying: new Array(16).fill(false),
     activeBank: 0,
+    /* Per-track snapshot of activeBank. Saved at every track switch, restored
+     * on track switch and on sidecar load. activeBank remains the live mirror
+     * for the currently-active track; this array is the storage that survives
+     * track changes and session reload. Sidecar v=8. */
+    trackActiveBank: new Array(8).fill(0),
+    /* Latches: track-button LED reclaim after Move-native co-run exit (Move
+     * firmware writes CC 40-43 colors during co-run; dAVEBOx must blank them
+     * once on exit). Schwung co-run has a parallel _coRunTrackLedsLit latch. */
+    _moveCoRunTrackLedsActive: false,
     knobTouched: -1,
     knobAccum: new Array(8).fill(0),
     knobLastDir: new Array(8).fill(0),
@@ -261,6 +270,10 @@ export const S = {
     sessionOverlayHeld: false,
     overviewCache: null,
     recordArmed: false,
+    /* True between Record-press during playback and the next page boundary
+     * where DSP actually flips tr->recording=1. Drives the record-button blink
+     * so the user sees the deferred start. */
+    recordPendingPage: false,
     recordCountingIn: false,
     recordArmedTrack: -1,
     countInStartTick: -1,

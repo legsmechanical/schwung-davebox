@@ -473,6 +473,9 @@ typedef struct {
     uint8_t   will_relaunch;        /* 1 = was playing; restarts when transport plays */
     uint8_t   pending_page_stop;    /* 1 = stop at next main clock bar boundary (global_tick%16==0) */
     uint8_t   record_armed;         /* 1 = set recording=1 atomically when queued clip launches */
+    uint8_t   recording_pending_page; /* 1 = set recording=1 at next bar boundary (global_tick%16==0) */
+    uint8_t   recording_adaptive_arm; /* 1 = at recording_pending_page fire, reset playhead to loop_start
+                                       *     (adaptive-mode arms only — fixed-mode records mid-page) */
     /* Steps recorded in the current recording pass; cleared on clip wrap so they play
      * back starting from the next loop (not the pass they were recorded on). */
     uint8_t   live_recorded_steps[32]; /* 256-bit mask: 1 bit per step */
@@ -3981,9 +3984,12 @@ static void drum_repeat_tick(seq8_instance_t *inst, seq8_track_t *tr) {
         }
     }
     if (!tr->drum_repeat_active || tr->pad_mode != PAD_MODE_DRUM) return;
-    /* Mute gate: skip emission but keep state so unmute resumes phase.
-     * Bypassed during count-in so live input is always audible. */
-    if (inst->count_in_ticks == 0 && effective_mute(inst, (int)(tr - inst->tracks))) return;
+    /* Mute gate: skip emission for *latched* (no current pad hold) repeats.
+     * Currently-held pad repeats bypass mute to match live-monitor semantics
+     * (a held pad is monitoring through the chain, mute or not). Bypassed
+     * during count-in so live input is always audible. */
+    if (inst->count_in_ticks == 0 && tr->drum_repeat_latched
+            && effective_mute(inst, (int)(tr - inst->tracks))) return;
     /* Repeat Sync pending: wait for next rate-grid boundary on arp_master_tick. */
     if (tr->drum_repeat_pending) {
         uint16_t rate_ticks = DRUM_REPEAT_RATE_TICKS[tr->drum_repeat_rate_idx];
@@ -4110,9 +4116,11 @@ static void drum_repeat2_tick(seq8_instance_t *inst, seq8_track_t *tr) {
         }
     }
     if (!(tr->drum_repeat2_active | tr->drum_repeat2_pending) || tr->pad_mode != PAD_MODE_DRUM) return;
-    /* Mute gate: skip per-lane emission, preserve latched_lanes/active/pending.
-     * Bypassed during count-in so live input is always audible. */
-    if (inst->count_in_ticks == 0 && effective_mute(inst, (int)(tr - inst->tracks))) return;
+    /* Mute gate is now per-lane below: latched lanes respect mute, currently-held
+     * lanes (active without the latched bit) bypass mute to match live-monitor
+     * semantics. Bypassed during count-in so live input is always audible. */
+    int _track_muted = (inst->count_in_ticks == 0)
+                       && effective_mute(inst, (int)(tr - inst->tracks));
     /* Resolve any lanes pending repeat-rate boundary. Each lane has its own
      * rate; activate per-lane when its rate divides arp_master_tick. */
     if (tr->drum_repeat2_pending) {
@@ -4131,6 +4139,12 @@ static void drum_repeat2_tick(seq8_instance_t *inst, seq8_track_t *tr) {
     int l;
     for (l = 0; l < DRUM_LANES; l++) {
         if (!(tr->drum_repeat2_active & (1u << (unsigned)l))) continue;
+        /* Per-lane mute gate: latched lanes go silent under mute; currently-
+         * held lanes fire through. A "latched" lane has its bit set in
+         * drum_repeat2_latched_lanes; without the latched bit the lane is
+         * actively being held by the player. */
+        if (_track_muted && (tr->drum_repeat2_latched_lanes & (1u << (unsigned)l)))
+            goto advance_l;
         uint8_t  step = tr->drum_repeat2_step[l];
         uint16_t rate = DRUM_REPEAT_RATE_TICKS[tr->drum_repeat2_rate_idx[l]];
         int nudge_ticks = (int)(int8_t)tr->drum_repeat_nudge[l][step] * (int)rate / 100;
@@ -4938,6 +4952,8 @@ static void seq8_clear_state(seq8_instance_t *inst) {
         tr->clip_playing        = 0;
         tr->will_relaunch       = 0;
         tr->pending_page_stop   = 0;
+        tr->recording_pending_page = 0;
+        tr->recording_adaptive_arm = 0;
         tr->record_armed        = 0;
         tr->recording           = 0;
         tr->queued_clip         = -1;
@@ -6549,6 +6565,8 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                 (int)tr->cc_auto_last_sent[6], (int)tr->cc_auto_last_sent[7]);
         if (!strcmp(sub, "current_step"))
             return snprintf(out, out_len, "%d", (int)tr->current_step);
+        if (!strcmp(sub, "recording_pending_page"))
+            return snprintf(out, out_len, "%d", (int)tr->recording_pending_page);
         if (!strcmp(sub, "active_clip"))
             return snprintf(out, out_len, "%d", (int)tr->active_clip);
         if (!strcmp(sub, "queued_clip"))
@@ -7301,6 +7319,32 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                         memset(tr->drum_last_rec_step, 0xFF, sizeof(tr->drum_last_rec_step));
                         tr->recording    = 1;
                         tr->record_armed = 0;
+                    }
+                }
+
+                /* Press-Record during playback: arm at next bar boundary so
+                 * recording starts at the top of the next 16-step page rather
+                 * than mid-page. Adaptive arms additionally reset the clip's
+                 * playhead to loop_start so the boundary becomes the new step 0
+                 * (avoids the "empty leading page" in adaptive mode). Fixed-mode
+                 * arms never enter this path — JS sends recording=1 directly
+                 * for them since the existing clip grid is the meaningful frame. */
+                if (tr->recording_pending_page && inst->global_tick % 16 == 0) {
+                    tr->recording_pending_page = 0;
+                    tr->recording              = 1;
+                    if (tr->recording_adaptive_arm) {
+                        tr->recording_adaptive_arm = 0;
+                        if (tr->pad_mode == PAD_MODE_DRUM) {
+                            int _dl;
+                            for (_dl = 0; _dl < DRUM_LANES; _dl++) {
+                                clip_t *_dlc = &tr->drum_clips[tr->active_clip].lanes[_dl].clip;
+                                tr->drum_current_step[_dl] = _dlc->loop_start;
+                                tr->drum_tick_in_step[_dl] = 0;
+                            }
+                        } else {
+                            tr->current_step = tr->clips[tr->active_clip].loop_start;
+                            tr->tick_in_step = 0;
+                        }
                     }
                 }
 

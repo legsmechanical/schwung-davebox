@@ -740,6 +740,14 @@ static void set_param(void *instance, const char *key, const char *val) {
                 drum_track_init(tr2, t2);
                 { int _rl; for (_rl = 0; _rl < DRUM_LANES; _rl++) tr2->drum_lane_pfx[_rl].route = tr2->pfx.route; }
                 drum_repeat_init_defaults(tr2);
+                /* TRACK ARP (TARP) per-track state — wasn't reset, so latched
+                 * TARP, held chord, and style/rate would carry across Clear
+                 * Session. tarp_init_defaults zeroes tarp_on, tarp_latch,
+                 * tarp_sync, style, retrigger, and clears the held buffer +
+                 * runtime via arp_clear_runtime. tarp_physical is a runtime
+                 * flag not touched by tarp_init_defaults; clear explicitly. */
+                tarp_init_defaults(tr2);
+                tr2->tarp_physical = 0;
             }
         }
         seq8_load_state(inst);
@@ -1897,6 +1905,18 @@ static void set_param(void *instance, const char *key, const char *val) {
                     uint16_t le = (uint16_t)(cl->loop_start + cl->length);
                     if (tr->current_step < cl->loop_start || tr->current_step >= le)
                         tr->current_step = cl->loop_start;
+                    /* Anchor playhead to global tick during playback so phase
+                     * stays consistent when length changes mid-playback (same
+                     * idea as drum_lane_anchor_playhead). */
+                    if (inst->playing) {
+                        uint16_t mtps  = cl->ticks_per_step > 0 ? cl->ticks_per_step
+                                                                 : (uint16_t)TICKS_PER_STEP;
+                        uint32_t elapsed = (uint32_t)inst->global_tick * (uint32_t)TICKS_PER_STEP
+                                           + (uint32_t)inst->master_tick_in_step;
+                        uint32_t steps = elapsed / mtps;
+                        tr->current_step = (uint16_t)(cl->loop_start + (steps % cl->length));
+                        tr->tick_in_step = (uint16_t)(elapsed % mtps);
+                    }
                 }
                 clip_migrate_to_notes(cl);
                 return;
@@ -1922,6 +1942,15 @@ static void set_param(void *instance, const char *key, const char *val) {
                     uint16_t le = (uint16_t)(cl->loop_start + cl->length);
                     if (tr->current_step < cl->loop_start || tr->current_step >= le)
                         tr->current_step = cl->loop_start;
+                    if (inst->playing) {
+                        uint16_t mtps  = cl->ticks_per_step > 0 ? cl->ticks_per_step
+                                                                 : (uint16_t)TICKS_PER_STEP;
+                        uint32_t elapsed = (uint32_t)inst->global_tick * (uint32_t)TICKS_PER_STEP
+                                           + (uint32_t)inst->master_tick_in_step;
+                        uint32_t steps = elapsed / mtps;
+                        tr->current_step = (uint16_t)(cl->loop_start + (steps % cl->length));
+                        tr->tick_in_step = (uint16_t)(elapsed % mtps);
+                    }
                 }
                 clip_migrate_to_notes(cl);
                 inst->state_dirty = 1;
@@ -2437,6 +2466,11 @@ static void set_param(void *instance, const char *key, const char *val) {
                             || tr->drum_current_step[lane_idx] >= le)
                         tr->drum_current_step[lane_idx] = dlc->loop_start;
                 }
+                /* Re-anchor lane playhead to global tick so cross-lane phase
+                 * stays consistent when length changes mid-playback. Stopped
+                 * transport: anchor pins to loop_start (same as the clamp). */
+                if (inst->playing)
+                    drum_lane_anchor_playhead(inst, tr, lane_idx, dlc);
                 clip_migrate_to_notes(dlc);
                 inst->state_dirty = 1;
                 return;
@@ -2461,13 +2495,19 @@ static void set_param(void *instance, const char *key, const char *val) {
                             || tr->drum_current_step[lane_idx] >= le)
                         tr->drum_current_step[lane_idx] = dlc->loop_start;
                 }
+                if (inst->playing)
+                    drum_lane_anchor_playhead(inst, tr, lane_idx, dlc);
                 clip_migrate_to_notes(dlc);
                 inst->state_dirty = 1;
                 return;
             }
             if (!strcmp(p2, "_clear")) {
-                /* tN_lL_clear — wipe all steps in this drum lane */
+                /* tN_lL_clear — wipe all steps in this drum lane.
+                 * Preserves length, loop_start, ticks_per_step, pfx_params,
+                 * and midi_note (per-lane sibling). Snapshots the drum clip
+                 * for global Undo (same granularity as _hard_reset). */
                 int i;
+                undo_begin_drum_clip(inst, tidx, (int)tr->active_clip);
                 for (i = 0; i < SEQ_STEPS; i++) {
                     dlc->steps[i] = 0;
                     memset(dlc->step_notes[i], 0, 8);
@@ -2485,7 +2525,11 @@ static void set_param(void *instance, const char *key, const char *val) {
             }
 
             if (!strcmp(p2, "_hard_reset")) {
-                /* tN_lL_hard_reset — full factory reset: clip_init; midi_note preserved */
+                /* tN_lL_hard_reset — full factory reset: clip_init; midi_note preserved.
+                 * Snapshot the drum clip before wiping so global Undo can restore
+                 * the lane. Snapshot is per-clip (all 16 lanes), matching the
+                 * existing undo granularity used by _loop_double_fill etc. */
+                undo_begin_drum_clip(inst, tidx, (int)tr->active_clip);
                 clip_init(dlc);
                 tr->drum_current_step[lane_idx]   = 0;
                 tr->drum_tick_in_step[lane_idx]   = 0;
@@ -2495,16 +2539,21 @@ static void set_param(void *instance, const char *key, const char *val) {
 
             if (!strcmp(p2, "_loop_double_fill")) {
                 int len = (int)dlc->length;
+                int ls  = (int)dlc->loop_start;
                 int i;
-                if (len * 2 > SEQ_STEPS) return;
+                /* See melodic loop_double_fill: bounds check + copy source
+                 * indices must respect loop_start>0. */
+                if (ls + len * 2 > SEQ_STEPS) return;
                 undo_begin_drum_clip(inst, tidx, (int)tr->active_clip);
                 for (i = 0; i < len; i++) {
-                    dlc->steps[len + i]           = dlc->steps[i];
-                    memcpy(dlc->step_notes[len + i], dlc->step_notes[i], 8);
-                    dlc->step_note_count[len + i] = dlc->step_note_count[i];
-                    dlc->step_vel[len + i]        = dlc->step_vel[i];
-                    dlc->step_gate[len + i]       = dlc->step_gate[i];
-                    memcpy(dlc->note_tick_offset[len + i], dlc->note_tick_offset[i], 8 * sizeof(int16_t));
+                    int src = ls + i;
+                    int dst = ls + len + i;
+                    dlc->steps[dst]           = dlc->steps[src];
+                    memcpy(dlc->step_notes[dst], dlc->step_notes[src], 8);
+                    dlc->step_note_count[dst] = dlc->step_note_count[src];
+                    dlc->step_vel[dst]        = dlc->step_vel[src];
+                    dlc->step_gate[dst]       = dlc->step_gate[src];
+                    memcpy(dlc->note_tick_offset[dst], dlc->note_tick_offset[src], 8 * sizeof(int16_t));
                 }
                 dlc->length = (uint16_t)(len * 2);
                 {
@@ -3245,7 +3294,16 @@ static void set_param(void *instance, const char *key, const char *val) {
                  * which jumps the step index and audibly drifts the latched
                  * chord (fix g, 1.0-tweaks). */
                 if (!inst->playing) tarp_silence(inst, tr);
-                if (tr->clip_playing) {
+                /* JS sends rv=2 for adaptive-mode arms (defer to next bar +
+                 * reset playhead at fire time) and rv=1 for fixed-mode arms or
+                 * any non-playing start (immediate). The defer-with-reset only
+                 * activates for rv==2 with transport+clip playing. */
+                if (tr->clip_playing && inst->playing && rv == 2) {
+                    tr->recording_pending_page = 1;
+                    tr->recording_adaptive_arm = 1;
+                } else if (tr->clip_playing) {
+                    /* Fixed-mode arm during playback (rv==1), or clip-playing
+                     * with transport stopped: begin recording immediately. */
                     tr->recording = 1;
                 } else if (tr->queued_clip >= 0) {
                     tr->record_armed = 1;
@@ -3255,8 +3313,10 @@ static void set_param(void *instance, const char *key, const char *val) {
             } else {
                 finalize_pending_notes(&tr->clips[tr->active_clip], tr);
                 clip_clear_suppress(&tr->clips[tr->active_clip]);
-                tr->recording    = 0;
-                tr->record_armed = 0;
+                tr->recording              = 0;
+                tr->record_armed           = 0;
+                tr->recording_pending_page = 0;
+                tr->recording_adaptive_arm = 0;
                 tr->cc_touch_held = 0;
             }
             return;
@@ -3850,7 +3910,8 @@ static void set_param(void *instance, const char *key, const char *val) {
 
         if (!strcmp(sub, "all_lanes_length")) {
             /* tN_all_lanes_length "steps" — set clip length on all 32 drum lanes.
-             * Per-lane clamp respects each lane's own loop_start. */
+             * Per-lane clamp respects each lane's own loop_start; re-anchor to
+             * global tick during playback so cross-lane phase stays in sync. */
             int reqlen = my_atoi(val);
             drum_clip_t *dc_al = &tr->drum_clips[tr->active_clip];
             int l_al;
@@ -3864,6 +3925,8 @@ static void set_param(void *instance, const char *key, const char *val) {
                 if (tr->drum_current_step[l_al] < dlc->loop_start
                         || tr->drum_current_step[l_al] >= le)
                     tr->drum_current_step[l_al] = dlc->loop_start;
+                if (inst->playing)
+                    drum_lane_anchor_playhead(inst, tr, l_al, dlc);
                 clip_migrate_to_notes(dlc);
             }
             inst->state_dirty = 1;
@@ -3894,6 +3957,8 @@ static void set_param(void *instance, const char *key, const char *val) {
                 if (tr->drum_current_step[l_al] < dlc->loop_start
                         || tr->drum_current_step[l_al] >= le)
                     tr->drum_current_step[l_al] = dlc->loop_start;
+                if (inst->playing)
+                    drum_lane_anchor_playhead(inst, tr, l_al, dlc);
                 clip_migrate_to_notes(dlc);
             }
             inst->state_dirty = 1;
@@ -4707,16 +4772,26 @@ static void set_param(void *instance, const char *key, const char *val) {
         if (!strcmp(sub, "loop_double_fill")) {
             clip_t *cl = &tr->clips[tr->active_clip];
             int len = (int)cl->length;
+            int ls  = (int)cl->loop_start;
             int i;
-            if (len * 2 > SEQ_STEPS) return;
+            /* Doubling the loop window must fit inside storage from loop_start.
+             * Old check `len*2 > SEQ_STEPS` ignored loop_start; with ls>0 it
+             * would accept doublings that overflow the storage extent. */
+            if (ls + len * 2 > SEQ_STEPS) return;
             undo_begin_single(inst, tidx, (int)tr->active_clip);
+            /* Copy the loop window forward by `len` steps so the doubled window
+             * [ls, ls+len*2) holds two copies of the original content. Old
+             * code wrote steps[len..2len-1] from steps[0..len-1] — only
+             * correct when loop_start == 0. */
             for (i = 0; i < len; i++) {
-                cl->steps[len + i]           = cl->steps[i];
-                memcpy(cl->step_notes[len + i], cl->step_notes[i], 8);
-                cl->step_note_count[len + i] = cl->step_note_count[i];
-                cl->step_vel[len + i]        = cl->step_vel[i];
-                cl->step_gate[len + i]       = cl->step_gate[i];
-                memcpy(cl->note_tick_offset[len + i], cl->note_tick_offset[i], 8 * sizeof(int16_t));
+                int src = ls + i;
+                int dst = ls + len + i;
+                cl->steps[dst]           = cl->steps[src];
+                memcpy(cl->step_notes[dst], cl->step_notes[src], 8);
+                cl->step_note_count[dst] = cl->step_note_count[src];
+                cl->step_vel[dst]        = cl->step_vel[src];
+                cl->step_gate[dst]       = cl->step_gate[src];
+                memcpy(cl->note_tick_offset[dst], cl->note_tick_offset[src], 8 * sizeof(int16_t));
             }
             cl->length = (uint16_t)(len * 2);
             {

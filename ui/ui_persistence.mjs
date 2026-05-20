@@ -126,16 +126,14 @@ export function showActionPopup(...lines) {
     S.screenDirty = true;
 }
 
-export function saveState() {
-    /* Route the DSP save through the end-of-tick pendingSuspendSave drain so it
-     * cannot be coalesced by other set_params fired in the same audio buffer
-     * (Quit / Shift+Back / Save menu / co-run handoff all call this from
-     * MIDI-handler context). Sidecar write stays synchronous — host_write_file
-     * is on a separate channel. */
-    S.pendingSuspendSave = true;
+/* Write the sidecar synchronously. Split out of saveState so bank-change
+ * sites can persist immediately without scheduling a DSP save. */
+export function writeSidecar() {
+    /* Always sync the live activeBank into per-track storage before serializing. */
+    S.trackActiveBank[S.activeTrack] = S.activeBank;
     if (typeof host_write_file === 'function')
         host_write_file(uuidToUiStatePath(S.currentSetUuid), JSON.stringify({
-            v: 7, at: S.activeTrack, ac: S.trackActiveClip.slice(), sv: S.sessionView ? 1 : 0,
+            v: 8, at: S.activeTrack, ac: S.trackActiveClip.slice(), sv: S.sessionView ? 1 : 0,
             dl: S.activeDrumLane.slice(),
             pm: S.perfModsToggled, lm: S.perfLatchMode ? 1 : 0,
             rs: S.perfRecalledSlot, us: S.perfSnapshots.slice(8),
@@ -143,8 +141,18 @@ export function saveState() {
             ss: S.trackSchwungSlot.slice(),
             dva: S.drumVelZoneArmed.slice(),
             dleu: S.drumLaneEuclidN.map(function(lane) { return lane.slice(); }),
-            to: S.trackOctave.slice()
+            to: S.trackOctave.slice(),
+            tab: S.trackActiveBank.slice()
         }));
+}
+
+export function saveState() {
+    /* Route the DSP save through the end-of-tick pendingSuspendSave drain so it
+     * cannot be coalesced by other set_params fired in the same audio buffer
+     * (Quit / Shift+Back / Save menu / co-run handoff all call this from
+     * MIDI-handler context). Sidecar write stays synchronous via writeSidecar(). */
+    S.pendingSuspendSave = true;
+    writeSidecar();
 }
 
 export function doClearSession() {
@@ -153,6 +161,7 @@ export function doClearSession() {
     if (typeof host_write_file === 'function') host_write_file(uuidToUiStatePath(S.currentSetUuid), '{"v":0}');
     /* Reset JS-only state not covered by S.pendingSetLoad */
     S.activeBank = 0;
+    for (let _t = 0; _t < NUM_TRACKS; _t++) S.trackActiveBank[_t] = 0;
     S.undoSeqArpSnapshot = null;
     S.redoSeqArpSnapshot = null;
     for (let _t = 0; _t < NUM_TRACKS; _t++) {
