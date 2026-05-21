@@ -9121,6 +9121,15 @@ globalThis.onMidiMessageInternal = function (data) {
     const d1     = (data[1] ?? 0) | 0;
     const d2     = (data[2] ?? 0) | 0;
 
+    /* Master volume knob (CC 79) + its capacitive touch (note 8) are owned by
+     * Move firmware (button_passthrough[79] + the shim's overtake-mode volume
+     * passthrough). dAVEBOx does nothing with them, but the host still forwards
+     * the full detent stream to us in overtake mode — processing every one
+     * competes with sequencer/MIDI output and stutters playback. Drop them
+     * immediately so volume adjustment stays entirely Move-native. */
+    if ((status & 0xF0) === 0xB0 && d1 === 79) return;
+    if (((status & 0xF0) === 0x90 || (status & 0xF0) === 0x80) && d1 === 8) return;
+
     /* While session overview is held, swallow everything except CC 50 release and Up/Down scroll. */
     if (S.sessionOverlayHeld) {
         const isRelease = (status === 0xB0 && d1 === MoveNoteSession && d2 === 0);
