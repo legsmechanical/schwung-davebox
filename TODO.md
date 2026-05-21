@@ -19,7 +19,6 @@
 - **Step LEDs shouldn't blink under Shift.** When Shift is held to indicate shortcut availability, step LEDs should be solid white instead of blinking.
 - **Step LED duration rendering** should indicate the *last step the note fully plays through*. Step 1 with duration 4 should light through step 3 (not 4). Companion: hold + tap second step at duration=2 should set duration=1 (mirrors loop-length adjust gesture).
 - **Drum lane LEDs:** active lane should be dark grey by default; bright white only when the lane has notes.
-- **Tracks should remember active param bank** across track switches and across session reload. Currently resets.
 
 ### Features
 
