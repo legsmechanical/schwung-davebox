@@ -130,11 +130,10 @@ export function updateStepLEDs() {
             (S.activeBank === 7 && _kt === 1);
         if (!_knobShiftMode) {
             const isDrum = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
-            const flash  = (Math.floor(S.tickCount / 24) % 2) ? LightGrey : LED_OFF;
             for (let i = 0; i < 16; i++) {
                 let on = i === 1 || i === 2 || (i >= 4 && i <= 6) || i === 8;
                 if (i === 7 || i === 9 || (i === 10 && !isDrum) || i === 14 || i === 15) on = true;
-                setLED(16 + i, on ? flash : LED_OFF);
+                setLED(16 + i, on ? LightGrey : LED_OFF);
             }
             return;
         }
@@ -382,10 +381,9 @@ export function updateTrackLEDs() {
      * Suppressed when a compound modifier is held (Shift+Mute/Delete/Copy/Loop). */
     if (S.sessionView && S.shiftHeld &&
         !(S.muteHeld || S.deleteHeld || S.copyHeld || S.loopHeld)) {
-        const flash = (Math.floor(S.tickCount / 24) % 2) ? LightGrey : LED_OFF;
         for (let i = 0; i < 16; i++) {
             const on = i === 1 || i === 2 || (i >= 4 && i <= 6) || i === 8; /* shared shortcuts only */
-            setLED(16 + i, on ? flash : LED_OFF);
+            setLED(16 + i, on ? LightGrey : LED_OFF);
         }
     }
 
@@ -470,7 +468,7 @@ export function updateTrackLEDs() {
                     } else if (isMuted) {
                         color = LED_OFF;
                     } else if (isActive) {
-                        color = White;
+                        color = hasHits ? White : DarkGrey;
                     } else if (hasHits) {
                         color = S.playing ? td : tc;
                     } else {
