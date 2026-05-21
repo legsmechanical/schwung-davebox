@@ -3385,12 +3385,15 @@ function drawUI() {
             print(colX, rowY + 12, col4(String(S.trackCCVal[t][k])),        hi ? 0 : 1);
         }
         } else if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 3) {
-        /* Drum MIDI DLY: K1-K4 same as melodic, K5=Gate, K6=Clk, K7-K8 empty */
+        /* Drum MIDI DLY: K1-K4 same as melodic, K5=Gate, K6=Clk, K7=Retrg, K8 empty.
+         * Drum has no Pfb (no per-lane pitch) and no Rnd (no random pitch fb),
+         * so K5/K6 borrow those physical slots for Gate/Clk via the per-track
+         * remap in applyBankParam, and K7 hosts delay_retrig directly. */
         const t    = S.activeTrack;
         const vals = S.bankParams[t][3];
         const knobs = BANKS[3].knobs;
-        const drumDlyLabels = [knobs[0].abbrev, knobs[1].abbrev, knobs[2].abbrev, knobs[3].abbrev, 'Gate', 'Clk', null, null];
-        const drumDlyFmt    = [knobs[0].fmt, knobs[1].fmt, knobs[2].fmt, knobs[3].fmt, fmtGateMod, fmtSign, null, null];
+        const drumDlyLabels = [knobs[0].abbrev, knobs[1].abbrev, knobs[2].abbrev, knobs[3].abbrev, 'Gate', 'Clk', 'Retrg', null];
+        const drumDlyFmt    = [knobs[0].fmt, knobs[1].fmt, knobs[2].fmt, knobs[3].fmt, fmtGateMod, fmtSign, fmtBool, null];
         drawBankHeading('>> ' + BANKS[3].name);
         for (let k = 0; k < 8; k++) {
             if (!drumDlyLabels[k]) continue;
