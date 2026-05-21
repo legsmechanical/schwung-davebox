@@ -666,18 +666,29 @@ typedef struct {
     /* Print mode: bake chain output into step data */
     uint8_t  printing;
 
-    /* Live Merge: real-time capture of pfx-chain output into a new melodic clip */
+    /* Live Merge: multi-track real-time capture of all 8 tracks' pfx-chain
+     * output into a deferred-placement buffer. User chooses the destination
+     * scene row post-stop via merge_place_row. Per-track pending arrays so
+     * each track's captured notes can be written to its own column at the
+     * chosen row; tracks with zero captured notes are skipped at placement
+     * (existing clips on those tracks at the destination row are preserved). */
 #define MERGE_STATE_IDLE      0
 #define MERGE_STATE_ARMED     1
 #define MERGE_STATE_CAPTURING 2
 #define MERGE_STATE_STOPPING  3  /* stop requested; finalize at next 16-step page boundary */
+#define MERGE_STATE_CAPTURED  4  /* capture complete, waiting for placement (merge_place_row) */
     uint8_t  merge_state;
-    uint8_t  merge_track;
-    uint8_t  merge_dst_clip;
     uint32_t merge_start_abs;    /* abs master tick (global_tick*TPS + master_tick_in_step) */
-    uint32_t merge_tps;          /* source clip tps at capture start; also written to dst clip */
-    struct { uint8_t pitch; uint32_t tick_at_on; uint8_t vel; } merge_pending[32];
-    uint8_t  merge_pending_count;
+    uint32_t merge_tps;          /* TPS used for captured timing (TICKS_PER_STEP for all tracks) */
+    uint32_t merge_end_abs;      /* abs tick at finalize — used to size destination clips */
+    /* gate=0 while the note is still held (closed at merge_stop with the
+     * elapsed tick); non-zero once the matching note-off arrived during
+     * CAPTURING. Both forms are written into clips at merge_place_row time.
+     * Slot count must be high enough to cover a long multi-track merge —
+     * 32 was insufficient (drum-heavy passes capped after one bar). 512
+     * matches MAX_NOTES_PER_CLIP. */
+    struct { uint8_t pitch; uint32_t tick_at_on; uint8_t vel; uint16_t gate; } merge_pending[NUM_TRACKS][512];
+    uint16_t merge_pending_count[NUM_TRACKS];
 
     /* Live pad input: global key/scale stored for state persistence */
     uint8_t  pad_key;               /* root key 0-11, default 9 (A) */
@@ -1789,67 +1800,110 @@ static void ext_queue_push(seq8_instance_t *inst, uint8_t s, uint8_t d1, uint8_t
     inst->ext_head = next;
 }
 
-/* Finalize an in-progress Live Merge: close any open notes and set clip length.
- * Safe to call from both ARMED and CAPTURING states; no-op when IDLE. */
+/* Forward decls used by merge_place (defined later in the file). */
+static void clip_init(clip_t *cl);
+static void clip_build_steps_from_notes(clip_t *cl);
+/* clip_insert_note already forward-declared at L942. */
+
+/* Finalize an in-progress Live Merge: close any open note-ons at the current
+ * tick (recording their gate), record the capture endpoint, and transition
+ * to CAPTURED. The actual write to destination clips happens in merge_place
+ * once the user picks a scene row via merge_place_row. Safe to call from
+ * ARMED, CAPTURING, or STOPPING; no-op when IDLE/CAPTURED. */
 static void merge_finalize(seq8_instance_t *inst) {
     if (!inst || inst->merge_state == MERGE_STATE_IDLE) return;
+    if (inst->merge_state == MERGE_STATE_CAPTURED) return;
     if (inst->merge_state == MERGE_STATE_ARMED) {
+        int t;
+        for (t = 0; t < NUM_TRACKS; t++) inst->merge_pending_count[t] = 0;
         inst->merge_state = MERGE_STATE_IDLE;
         return;
     }
-    /* CAPTURING: close pending note-ons at current position */
-    int is_drum = inst->tracks[inst->merge_track].pad_mode == PAD_MODE_DRUM;
+    /* CAPTURING / STOPPING: close any still-open pending notes at current pos. */
     uint32_t abs_now = inst->global_tick * TICKS_PER_STEP + inst->master_tick_in_step;
     uint32_t rel = abs_now > inst->merge_start_abs ? abs_now - inst->merge_start_abs : 0;
-    int pi;
-    for (pi = 0; pi < inst->merge_pending_count; pi++) {
-        uint32_t gate = rel > inst->merge_pending[pi].tick_at_on
-                        ? rel - inst->merge_pending[pi].tick_at_on : 1;
-        if (gate == 0) gate = 1;
-        if (is_drum) {
-            int l;
-            for (l = 0; l < DRUM_LANES; l++) {
-                if (inst->tracks[inst->merge_track].drum_clips[inst->merge_dst_clip].lanes[l].midi_note
-                        == inst->merge_pending[pi].pitch) {
-                    clip_insert_note(
-                        &inst->tracks[inst->merge_track].drum_clips[inst->merge_dst_clip].lanes[l].clip,
-                        inst->merge_pending[pi].tick_at_on,
-                        (uint16_t)(gate > 65535u ? 65535u : gate),
-                        inst->merge_pending[pi].pitch, inst->merge_pending[pi].vel);
-                    break;
-                }
-            }
-        } else {
-            clip_t *dc = &inst->tracks[inst->merge_track].clips[inst->merge_dst_clip];
-            clip_insert_note(dc, inst->merge_pending[pi].tick_at_on,
-                             (uint16_t)(gate > 65535u ? 65535u : gate),
-                             inst->merge_pending[pi].pitch, inst->merge_pending[pi].vel);
+    inst->merge_end_abs = rel;
+    int t;
+    for (t = 0; t < NUM_TRACKS; t++) {
+        int pi;
+        for (pi = 0; pi < inst->merge_pending_count[t]; pi++) {
+            if (inst->merge_pending[t][pi].gate != 0) continue;
+            uint32_t g = rel > inst->merge_pending[t][pi].tick_at_on
+                       ? rel - inst->merge_pending[t][pi].tick_at_on : 1;
+            if (g == 0)        g = 1;
+            if (g > 65535u)    g = 65535u;
+            inst->merge_pending[t][pi].gate = (uint16_t)g;
         }
     }
-    inst->merge_pending_count = 0;
-    /* Set clip length to capture duration (steps), clamped 1..256.
-     * Stop is always quantized to a 16-step page boundary in the render path,
-     * so rel is already page-aligned when we arrive here. */
+    inst->merge_state = MERGE_STATE_CAPTURED;
+    /* state_dirty deferred until merge_place actually writes — there's
+     * nothing on disk to update until then. */
+}
+
+/* Commit captured notes to the user-selected scene row. Per-track skip when
+ * merge_pending_count[t] == 0 — existing clips on those tracks at the row
+ * stay intact. Tracks with pending notes overwrite the existing clip at row. */
+static void merge_place(seq8_instance_t *inst, int row) {
+    if (!inst) return;
+    if (row < 0 || row >= NUM_CLIPS) return;
+    if (inst->merge_state != MERGE_STATE_CAPTURED) return;
     uint32_t steps = inst->merge_tps
-                     ? (rel + inst->merge_tps - 1) / inst->merge_tps : 16;
+                   ? (inst->merge_end_abs + inst->merge_tps - 1) / inst->merge_tps : 16;
     if (steps < 1)   steps = 1;
     if (steps > 256) steps = 256;
-    if (is_drum) {
-        int l;
-        for (l = 0; l < DRUM_LANES; l++) {
-            clip_t *lc = &inst->tracks[inst->merge_track].drum_clips[inst->merge_dst_clip].lanes[l].clip;
-            lc->length         = (uint16_t)steps;
-            lc->ticks_per_step = (uint16_t)inst->merge_tps;
-            if (lc->note_count > 0)
-                clip_build_steps_from_notes(lc);
+    int t;
+    for (t = 0; t < NUM_TRACKS; t++) {
+        if (inst->merge_pending_count[t] == 0) continue;
+        seq8_track_t *tr = &inst->tracks[t];
+        int is_drum = tr->pad_mode == PAD_MODE_DRUM;
+        if (is_drum) {
+            /* Wipe lanes for this row, then size + fill from pending pitches. */
+            int l;
+            for (l = 0; l < DRUM_LANES; l++) {
+                clip_init(&tr->drum_clips[row].lanes[l].clip);
+                tr->drum_clips[row].lanes[l].clip.length         = (uint16_t)steps;
+                tr->drum_clips[row].lanes[l].clip.ticks_per_step = (uint16_t)inst->merge_tps;
+            }
+            int pi;
+            for (pi = 0; pi < inst->merge_pending_count[t]; pi++) {
+                uint8_t pitch = inst->merge_pending[t][pi].pitch;
+                for (l = 0; l < DRUM_LANES; l++) {
+                    if (tr->drum_clips[row].lanes[l].midi_note == pitch) {
+                        clip_insert_note(
+                            &tr->drum_clips[row].lanes[l].clip,
+                            inst->merge_pending[t][pi].tick_at_on,
+                            inst->merge_pending[t][pi].gate,
+                            pitch, inst->merge_pending[t][pi].vel);
+                        break;
+                    }
+                }
+            }
+            for (l = 0; l < DRUM_LANES; l++) {
+                clip_t *lc = &tr->drum_clips[row].lanes[l].clip;
+                if (lc->note_count > 0) clip_build_steps_from_notes(lc);
+            }
+        } else {
+            clip_t *dc = &tr->clips[row];
+            clip_init(dc);
+            dc->length         = (uint16_t)steps;
+            dc->ticks_per_step = (uint16_t)inst->merge_tps;
+            int pi;
+            for (pi = 0; pi < inst->merge_pending_count[t]; pi++) {
+                clip_insert_note(dc,
+                    inst->merge_pending[t][pi].tick_at_on,
+                    inst->merge_pending[t][pi].gate,
+                    inst->merge_pending[t][pi].pitch,
+                    inst->merge_pending[t][pi].vel);
+            }
+            /* Rebuild step arrays — sequencer playback reads step_notes /
+             * step_vel / step_gate, not notes[]. Without this, the clip's
+             * notes are stored but silent and invisible in Session View. */
+            if (dc->note_count > 0) clip_build_steps_from_notes(dc);
         }
-    } else {
-        clip_t *dc = &inst->tracks[inst->merge_track].clips[inst->merge_dst_clip];
-        dc->length         = (uint16_t)steps;
-        dc->ticks_per_step = (uint16_t)inst->merge_tps;
+        inst->merge_pending_count[t] = 0;
     }
-    inst->state_dirty  = 1;
-    inst->merge_state  = MERGE_STATE_IDLE;
+    inst->state_dirty = 1;
+    inst->merge_state = MERGE_STATE_IDLE;
 }
 
 static void pfx_emit(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2);
@@ -1933,52 +1987,44 @@ static void pfx_send(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
         }
     }
 
-    /* Live Merge hook: capture post-chain MIDI into destination clip.
-     * Falls through so the note is also emitted normally. */
-    if (g_inst && g_inst->merge_state == MERGE_STATE_CAPTURING &&
-            fx->track_idx == g_inst->merge_track) {
-        uint8_t st = status & 0xF0;
-        if (st == 0x90 || st == 0x80) {
+    /* Live Merge hook: multi-track capture. Append note-ons to the
+     * per-track pending array and close gate when the matching note-off
+     * fires. Destination scene row is chosen post-stop via merge_place_row.
+     * Falls through so the note is also emitted normally (parallel capture).
+     * Capture continues during STOPPING (user has tapped merge_stop but the
+     * bar boundary hasn't landed yet) so trailing notes in the final partial
+     * page still make it in. */
+    if (g_inst && (g_inst->merge_state == MERGE_STATE_CAPTURING ||
+                   g_inst->merge_state == MERGE_STATE_STOPPING)) {
+        uint8_t st  = status & 0xF0;
+        uint8_t tri = fx->track_idx;
+        if (tri < NUM_TRACKS && (st == 0x90 || st == 0x80)) {
             uint32_t abs_now = g_inst->global_tick * TICKS_PER_STEP
                                + g_inst->master_tick_in_step;
             uint32_t rel = abs_now > g_inst->merge_start_abs
                            ? abs_now - g_inst->merge_start_abs : 0;
             if (rel >= 256u * g_inst->merge_tps) {
+                /* Max length reached — finalize the whole multi-track capture. */
                 merge_finalize(g_inst);
             } else if (st == 0x90 && d2 > 0) {
-                if (g_inst->merge_pending_count < 32) {
-                    int _pi = (int)g_inst->merge_pending_count++;
-                    g_inst->merge_pending[_pi].pitch      = d1;
-                    g_inst->merge_pending[_pi].tick_at_on = rel;
-                    g_inst->merge_pending[_pi].vel        = d2;
+                if (g_inst->merge_pending_count[tri] < 512) {
+                    int _pi = (int)g_inst->merge_pending_count[tri]++;
+                    g_inst->merge_pending[tri][_pi].pitch      = d1;
+                    g_inst->merge_pending[tri][_pi].tick_at_on = rel;
+                    g_inst->merge_pending[tri][_pi].vel        = d2;
+                    g_inst->merge_pending[tri][_pi].gate       = 0; /* open */
                 }
             } else {
+                /* note-off: close the most recent matching open pending entry. */
                 int _pi;
-                for (_pi = 0; _pi < (int)g_inst->merge_pending_count; _pi++) {
-                    if (g_inst->merge_pending[_pi].pitch == d1) {
-                        uint32_t gate = rel > g_inst->merge_pending[_pi].tick_at_on
-                                        ? rel - g_inst->merge_pending[_pi].tick_at_on : 1;
-                        clip_t *_dc = NULL;
-                        if (g_inst->tracks[g_inst->merge_track].pad_mode == PAD_MODE_DRUM) {
-                            int _l;
-                            for (_l = 0; _l < DRUM_LANES; _l++) {
-                                if (g_inst->tracks[g_inst->merge_track]
-                                        .drum_clips[g_inst->merge_dst_clip].lanes[_l].midi_note == d1) {
-                                    _dc = &g_inst->tracks[g_inst->merge_track]
-                                               .drum_clips[g_inst->merge_dst_clip].lanes[_l].clip;
-                                    break;
-                                }
-                            }
-                        } else {
-                            _dc = &g_inst->tracks[g_inst->merge_track]
-                                       .clips[g_inst->merge_dst_clip];
-                        }
-                        if (_dc)
-                            clip_insert_note(_dc, g_inst->merge_pending[_pi].tick_at_on,
-                                             (uint16_t)(gate > 65535u ? 65535u : gate),
-                                             d1, g_inst->merge_pending[_pi].vel);
-                        g_inst->merge_pending[_pi] =
-                            g_inst->merge_pending[--g_inst->merge_pending_count];
+                for (_pi = (int)g_inst->merge_pending_count[tri] - 1; _pi >= 0; _pi--) {
+                    if (g_inst->merge_pending[tri][_pi].pitch == d1 &&
+                        g_inst->merge_pending[tri][_pi].gate == 0) {
+                        uint32_t gate = rel > g_inst->merge_pending[tri][_pi].tick_at_on
+                                        ? rel - g_inst->merge_pending[tri][_pi].tick_at_on : 1;
+                        if (gate == 0)     gate = 1;
+                        if (gate > 65535u) gate = 65535u;
+                        g_inst->merge_pending[tri][_pi].gate = (uint16_t)gate;
                         break;
                     }
                 }
@@ -3192,11 +3238,13 @@ static void drum_pfx_send(drum_pfx_t *px, uint8_t status, uint8_t d1, uint8_t d2
             return;
         }
     }
-    /* Live Merge hook */
-    if (g_inst && g_inst->merge_state == MERGE_STATE_CAPTURING &&
-            px->track_idx == g_inst->merge_track) {
-        uint8_t st = status & 0xF0;
-        if (st == 0x90 || st == 0x80) {
+    /* Live Merge hook (drum-lane pfx): same per-track capture as melodic.
+     * Capture continues during STOPPING — see melodic comment. */
+    if (g_inst && (g_inst->merge_state == MERGE_STATE_CAPTURING ||
+                   g_inst->merge_state == MERGE_STATE_STOPPING)) {
+        uint8_t st  = status & 0xF0;
+        uint8_t tri = px->track_idx;
+        if (tri < NUM_TRACKS && (st == 0x90 || st == 0x80)) {
             uint32_t abs_now = g_inst->global_tick * TICKS_PER_STEP
                                + g_inst->master_tick_in_step;
             uint32_t rel = abs_now > g_inst->merge_start_abs
@@ -3204,34 +3252,23 @@ static void drum_pfx_send(drum_pfx_t *px, uint8_t status, uint8_t d1, uint8_t d2
             if (rel >= 256u * g_inst->merge_tps) {
                 merge_finalize(g_inst);
             } else if (st == 0x90 && d2 > 0) {
-                if (g_inst->merge_pending_count < 32) {
-                    int _pi = (int)g_inst->merge_pending_count++;
-                    g_inst->merge_pending[_pi].pitch      = d1;
-                    g_inst->merge_pending[_pi].tick_at_on = rel;
-                    g_inst->merge_pending[_pi].vel        = d2;
+                if (g_inst->merge_pending_count[tri] < 512) {
+                    int _pi = (int)g_inst->merge_pending_count[tri]++;
+                    g_inst->merge_pending[tri][_pi].pitch      = d1;
+                    g_inst->merge_pending[tri][_pi].tick_at_on = rel;
+                    g_inst->merge_pending[tri][_pi].vel        = d2;
+                    g_inst->merge_pending[tri][_pi].gate       = 0;
                 }
             } else {
                 int _pi;
-                for (_pi = 0; _pi < (int)g_inst->merge_pending_count; _pi++) {
-                    if (g_inst->merge_pending[_pi].pitch == d1) {
-                        uint32_t gate = rel > g_inst->merge_pending[_pi].tick_at_on
-                                        ? rel - g_inst->merge_pending[_pi].tick_at_on : 1;
-                        int _l;
-                        clip_t *_dc = NULL;
-                        for (_l = 0; _l < DRUM_LANES; _l++) {
-                            if (g_inst->tracks[g_inst->merge_track]
-                                    .drum_clips[g_inst->merge_dst_clip].lanes[_l].midi_note == d1) {
-                                _dc = &g_inst->tracks[g_inst->merge_track]
-                                           .drum_clips[g_inst->merge_dst_clip].lanes[_l].clip;
-                                break;
-                            }
-                        }
-                        if (_dc)
-                            clip_insert_note(_dc, g_inst->merge_pending[_pi].tick_at_on,
-                                             (uint16_t)(gate > 65535u ? 65535u : gate),
-                                             d1, g_inst->merge_pending[_pi].vel);
-                        g_inst->merge_pending[_pi] =
-                            g_inst->merge_pending[--g_inst->merge_pending_count];
+                for (_pi = (int)g_inst->merge_pending_count[tri] - 1; _pi >= 0; _pi--) {
+                    if (g_inst->merge_pending[tri][_pi].pitch == d1 &&
+                        g_inst->merge_pending[tri][_pi].gate == 0) {
+                        uint32_t gate = rel > g_inst->merge_pending[tri][_pi].tick_at_on
+                                        ? rel - g_inst->merge_pending[tri][_pi].tick_at_on : 1;
+                        if (gate == 0)     gate = 1;
+                        if (gate > 65535u) gate = 65535u;
+                        g_inst->merge_pending[tri][_pi].gate = (uint16_t)gate;
                         break;
                     }
                 }
@@ -6584,7 +6621,7 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
     }
 
     /* state_snapshot: single call returning all poll-loop values.
-     * Format: "playing cs0..cs7 ac0..ac7 qc0..qc7 count_in cp0..cp7 wr0..wr7 ps0..ps7 flash_eighth flash_sixteenth metro_beat_count master_pos looper_state merge_state merge_dst_clip"
+     * Format: "playing cs0..cs7 ac0..ac7 qc0..qc7 count_in cp0..cp7 wr0..wr7 ps0..ps7 flash_eighth flash_sixteenth metro_beat_count master_pos looper_state merge_state"
      * 57 values total. Replaces individual get_param calls in pollDSP(). */
     if (!strcmp(key, "state_snapshot")) {
         if (!inst) return snprintf(out, out_len,
@@ -6613,7 +6650,6 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         pos += snprintf(out + pos, (size_t)(out_len - pos), " %u", (unsigned)inst->arp_master_tick);
         pos += snprintf(out + pos, (size_t)(out_len - pos), " %d", (int)inst->looper_state);
         pos += snprintf(out + pos, (size_t)(out_len - pos), " %d", (int)inst->merge_state);
-        pos += snprintf(out + pos, (size_t)(out_len - pos), " %d", (int)inst->merge_dst_clip);
         return pos;
     }
 
@@ -7290,9 +7326,10 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
         /* Merge: ARMED → CAPTURING at first step boundary; STOPPING → finalize at
          * next 16-step page boundary so the captured clip is an exact page length. */
         if (inst->merge_state == MERGE_STATE_ARMED && inst->master_tick_in_step == 0) {
+            int _mt;
             inst->merge_state     = MERGE_STATE_CAPTURING;
             inst->merge_start_abs = inst->global_tick * TICKS_PER_STEP;
-            inst->merge_pending_count = 0;
+            for (_mt = 0; _mt < NUM_TRACKS; _mt++) inst->merge_pending_count[_mt] = 0;
         }
         if (inst->merge_state == MERGE_STATE_STOPPING && inst->master_tick_in_step == 0
                 && inst->global_tick % 16 == 0) {

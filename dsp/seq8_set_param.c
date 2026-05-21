@@ -695,8 +695,8 @@ static void set_param(void *instance, const char *key, const char *val) {
         /* Reset internal state without MIDI panic to avoid flooding the MIDI buffer. */
         {
             int t2, c2;
-            inst->merge_state         = MERGE_STATE_IDLE;
-            inst->merge_pending_count = 0;
+            inst->merge_state = MERGE_STATE_IDLE;
+            for (t2 = 0; t2 < NUM_TRACKS; t2++) inst->merge_pending_count[t2] = 0;
             inst->playing        = 0;
             inst->count_in_ticks = 0;
             for (t2 = 0; t2 < NUM_TRACKS; t2++) {
@@ -807,42 +807,12 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
     if (!strcmp(key, "merge_arm")) {
-        /* val = track index (0-based). Find first empty clip slot. */
-        int mt = my_atoi(val);
-        if (mt < 0 || mt >= NUM_TRACKS) return;
-        int dst = -1, c;
-        if (inst->tracks[mt].pad_mode == PAD_MODE_DRUM) {
-            for (c = 0; c < NUM_CLIPS; c++) {
-                int l, empty = 1;
-                for (l = 0; l < DRUM_LANES; l++)
-                    if (inst->tracks[mt].drum_clips[c].lanes[l].clip.note_count > 0) { empty = 0; break; }
-                if (empty) { dst = c; break; }
-            }
-        } else {
-            for (c = 0; c < NUM_CLIPS; c++)
-                if (inst->tracks[mt].clips[c].note_count == 0) { dst = c; break; }
-        }
-        if (dst < 0) return; /* no empty clip slot */
-        /* Determine TPS from active clip (use TICKS_PER_STEP for drum tracks) */
-        uint16_t tps = (inst->tracks[mt].pad_mode == PAD_MODE_DRUM)
-                       ? (uint16_t)TICKS_PER_STEP
-                       : inst->tracks[mt].clips[inst->tracks[mt].active_clip].ticks_per_step;
-        if (tps == 0) tps = (uint16_t)TICKS_PER_STEP;
-        if (inst->tracks[mt].pad_mode == PAD_MODE_DRUM) {
-            int l;
-            for (l = 0; l < DRUM_LANES; l++) {
-                clip_init(&inst->tracks[mt].drum_clips[dst].lanes[l].clip);
-                inst->tracks[mt].drum_clips[dst].lanes[l].clip.ticks_per_step = tps;
-            }
-        } else {
-            clip_init(&inst->tracks[mt].clips[dst]);
-            inst->tracks[mt].clips[dst].ticks_per_step = tps;
-        }
-        inst->merge_track         = (uint8_t)mt;
-        inst->merge_dst_clip      = (uint8_t)dst;
-        inst->merge_tps           = (uint32_t)tps;
-        inst->merge_pending_count = 0;
-        /* Go straight to CAPTURING if transport is already running; otherwise ARMED */
+        /* Multi-track arm: capture all 8 tracks at once. Destination scene
+         * row is chosen post-stop via merge_place_row. TPS is global at
+         * TICKS_PER_STEP so all tracks share a coherent timeline. */
+        int t;
+        for (t = 0; t < NUM_TRACKS; t++) inst->merge_pending_count[t] = 0;
+        inst->merge_tps = (uint32_t)TICKS_PER_STEP;
         if (inst->playing && inst->master_tick_in_step == 0) {
             inst->merge_state     = MERGE_STATE_CAPTURING;
             inst->merge_start_abs = inst->global_tick * TICKS_PER_STEP;
@@ -858,6 +828,17 @@ static void set_param(void *instance, const char *key, const char *val) {
             merge_finalize(inst);
         return;
     }
+    if (!strcmp(key, "merge_place_row")) {
+        merge_place(inst, my_atoi(val));
+        return;
+    }
+    if (!strcmp(key, "merge_cancel")) {
+        /* Discard any captured pending notes without writing to clips. */
+        int t;
+        for (t = 0; t < NUM_TRACKS; t++) inst->merge_pending_count[t] = 0;
+        inst->merge_state = MERGE_STATE_IDLE;
+        return;
+    }
     if (!strcmp(key, "bake")) {
         /* val = "T C [M] [N] [L] [W]" — M: 0=melodic, 1=drum lane, 2=drum clip; N: loops 1/2/4; L: lane (mode 1); W: 1=wrap tails */
         int bt = 0, bc = 0, bm = 0, bn = 1, bl = 0, bw = 0;
@@ -870,19 +851,20 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
     if (!strcmp(key, "bake_scene")) {
-        /* val = "C N" — C: clip index, N: loop count for melodic tracks (1/2/4) */
-        int sc = 0, sn = 1;
+        /* val = "C N W" — C: clip index, N: loop count (1/2/4), W: 1=wrap tails */
+        int sc = 0, sn = 1, sw = 0;
         int t;
-        sscanf(val, "%d %d", &sc, &sn);
+        sscanf(val, "%d %d %d", &sc, &sn, &sw);
         if (sc >= 0 && sc < NUM_CLIPS) {
             sn = clamp_i(sn, 1, 4);
+            sw = sw ? 1 : 0;
             undo_begin_scene_bake(inst, sc);
             inst->undo_locked = 1;
             for (t = 0; t < NUM_TRACKS; t++) {
                 if (inst->tracks[t].pad_mode == PAD_MODE_DRUM)
-                    bake_drum_clip(inst, t, sc, sn, 0);
+                    bake_drum_clip(inst, t, sc, sn, sw);
                 else
-                    bake_clip(inst, t, sc, sn, 0);
+                    bake_clip(inst, t, sc, sn, sw);
             }
             inst->undo_locked = 0;
             inst->state_dirty = 1;

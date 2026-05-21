@@ -220,6 +220,9 @@ export const S = {
     muteHeld: false,
     muteUsedAsModifier: false,
     captureHeld: false,
+    captureUsedAsModifier: false,    /* set true when a Capture-held gesture consumes the press (scene capture, drum lane select, etc.) — bare-tap clip/scene bake suppresses on release */
+    pendingSceneBakePicker: false,   /* Session-View Capture tap → wait for next row/step press to pick scene → opens scene-bake confirm */
+    pendingMergePlacement: false,    /* multi-track live merge stopped → wait for row/step press to pick destination scene row */
     metronomeOn: 1,
     metronomeOnLast: 1,
     metronomeVol: 100,
@@ -256,6 +259,9 @@ export const S = {
     confirmBakeScene: false,
     confirmBakeSceneSel: 0,
     confirmBakeSceneClip: 0,
+    confirmBakeSceneWrapPhase: false,   /* mirrors clip-bake wrap phase: after loop count selected, ask wrap yes/no */
+    confirmBakeSceneWrapSel: 1,         /* 0=YES, 1=NO (default), 2=CANCEL */
+    confirmBakeSceneLoops: 1,           /* held loop count while in wrap phase */
     sampleHeld: false,
     sampleUsedAsModifier: false,
     pendingSceneBakeResync: 0,

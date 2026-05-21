@@ -1067,7 +1067,7 @@ These are two ways to commit transformations into clip data. They operate on the
 
 ## 9.1 Bake
 
-In **Track View**, press **Sample** to open the bake dialog for the active track's active clip. (In Session View, a bare Sample tap is a no-op — Sample acts as a modifier for scene bake there; see § 9.1.3.)
+Bake = **Capture** button. Tap **Capture** in Track View to open the bake dialog for the active track's active clip. Tap **Capture** in Session View to open the scene-bake picker (see § 9.1.3). Sample is no longer the bake button — it's Live Merge now (§ 9.2).
 
 ### Melodic bake
 
@@ -1099,32 +1099,36 @@ If the clip is empty, bake does nothing.
 
 ### 9.1.3 Scene bake
 
-In **Session View**, **hold Sample + tap a scene row button** to open the scene bake dialog at that column. Bakes the column's clip on every track in one pass — each track runs the same chain its per-clip bake would run (melodic uses the full chain; drum uses CLIP-mode semantics).
+Two ways in:
 
-Dialog: **CANCEL / 1x / 2x / 4x** (default 1x). Jog scrolls; click confirms. Empty clips on a given track are skipped silently.
+- **Session View, tap Capture** → "BAKE SCENE / Tap row or scene step to pick destination" picker. Tap a row launcher (CC 40-43) or a scene step button (1-16) → routes to the scene-bake confirm dialog for that scene. Tap any other input to cancel the picker.
+- **Session View, hold Sample + tap a scene row** → goes directly to the scene-bake confirm dialog for that scene (legacy direct gesture, unchanged).
 
-## 9.2 Live Merge
+Confirm dialog: **CANCEL / 1x / 2x / 4x** (loop count), then **WRAP TAILS? YES / NO / CANCEL**. Each track in the column runs the chain its per-clip bake would (melodic = full chain; drum = CLIP-mode semantics). Empty clips on a given track are skipped silently.
 
-Live Merge captures the active track's post-effects MIDI output into the first available empty clip slot, in real time.
+## 9.2 Live Merge (multi-track)
+
+Live Merge captures the running chain output from **all 8 tracks simultaneously** into a deferred buffer; on stop, you pick a scene row to drop the captured clips into.
 
 | Step | Control |
 |---|---|
-| Arm | Shift + Sample (LED turns red) |
-| Capture starts | When transport begins (LED turns green) |
-| Stop | Sample — schedules stop at the next 16-step page boundary |
+| Arm | Session View, tap **Sample** (LED red; OLED popup describes the operation) |
+| Capture starts | At the next bar boundary if transport is already running; on transport start otherwise |
+| Stop | Tap **Sample** again — capture finalizes at the next 16-step page boundary |
 | Auto-stop | At 256 steps (max clip length) |
+| Place | After stop, OLED prompts "PLACE MERGED CLIPS / Tap row or scene step to pick destination" — tap any row or scene step to commit |
+| Cancel placement | Tap **Capture** instead of a row — captured pending notes are discarded |
 
-On melodic tracks, notes are captured with all effects applied. On drum tracks, captured notes are routed to matching lanes by pitch.
+**Selective per-track placement.** Each track is committed independently:
 
-Undoable. If no empty clip slot is available, a "NO EMPTY CLIP SLOT" message appears.
+- Tracks that **captured at least one note** during the window overwrite their existing clip at the destination row.
+- Tracks that **captured nothing** leave their existing clip at the destination row untouched.
 
-### Cross-clip merging on the same track
+That means you can overlay a merged drum + bass onto a row that already has piano and guitar parts — the piano and guitar tracks stay intact because they weren't playing during the merge window.
 
-The merge captures whatever's playing **on the merge track**, regardless of which clip that track is currently launching. Switch clips on the merge track mid-capture, and the new clip's output starts feeding the destination too. This lets you stitch together a composite clip from multiple sources: launch clip 1 for the verse, switch to clip 3 for the chorus, switch to clip 5 for a fill — the destination ends up with all of it merged in time.
+> **Try this.** Set up two melodic tracks playing different loops at row 0. In Session View tap Sample → wait a few bars → tap Sample to stop. Tap row 4 to place. Row 4 now holds the merged versions of those two tracks; everything else at row 4 stays as it was.
 
-> **Try this.** Sequence three short complementary patterns across clips 1, 2, and 3 of the same track. Arm Live Merge (Shift + Sample), start transport, then launch clip 1, clip 2, clip 3 in sequence — letting each play for a bar or two. Stop Merge. The destination clip holds the combined melody.
-
-> **Try this.** Run a sequence with heavy Pitch Random and Delay for a while, then Live Merge it. You've captured the actual randomized output as fixed note data — a snapshot of one specific performance of the chain.
+> **Try this.** Run a sequence with heavy Pitch Random and Delay for a while, then live merge. You've captured the actual randomized output as fixed note data — a snapshot of one specific performance of the chain.
 
 ---
 
@@ -1668,8 +1672,11 @@ Dismissed immediately if you touch a knob or enter step edit.
 | Shift + Delete + side clip | Hard reset clip |
 | Undo | Undo |
 | Shift + Undo | Redo |
-| Sample | Open bake dialog |
-| Shift + Sample | Arm Live Merge |
+| Capture (Track View) | Open clip-bake dialog |
+| Capture (Session View) | Open scene-bake picker — next row/step press selects scene |
+| Sample (Session View) | Arm / stop multi-track Live Merge |
+| Sample + scene row (Session View) | Scene bake confirm — direct entry |
+| Capture + scene row (Session View) | Scene capture — copy playing/queued clips to row |
 | Note/Session (tap) | Switch to Session View |
 | Note/Session (hold) | Momentary peek at Session View |
 | Shift + Note/Session | Open Global Menu |

@@ -1341,12 +1341,20 @@ function drawBakeSceneConfirm() {
         }
     }
     drawMenuHeader('BAKE SCENE?');
-    print(4, 22, 'Loop count:', 1);
     const mH = 11;
-    _btn(14, 33, 100, mH, S.confirmBakeSceneSel === 0, 'CANCEL', 31);
-    _btn(4,  47, 36,  mH, S.confirmBakeSceneSel === 1, '1x', 12);
-    _btn(46, 47, 36,  mH, S.confirmBakeSceneSel === 2, '2x', 12);
-    _btn(88, 47, 36,  mH, S.confirmBakeSceneSel === 3, '4x', 12);
+    if (S.confirmBakeSceneWrapPhase) {
+        print(4, 22, 'Wrap tails?', 1);
+        const bY = 47, bW = 36;
+        _btn(4,  bY, bW, mH, S.confirmBakeSceneWrapSel === 0, 'YES',    9);
+        _btn(45, bY, bW, mH, S.confirmBakeSceneWrapSel === 1, 'NO',    14);
+        _btn(86, bY, bW, mH, S.confirmBakeSceneWrapSel === 2, 'CANCEL', 1);
+    } else {
+        print(4, 22, 'Loop count:', 1);
+        _btn(14, 33, 100, mH, S.confirmBakeSceneSel === 0, 'CANCEL', 31);
+        _btn(4,  47, 36,  mH, S.confirmBakeSceneSel === 1, '1x', 12);
+        _btn(46, 47, 36,  mH, S.confirmBakeSceneSel === 2, '2x', 12);
+        _btn(88, 47, 36,  mH, S.confirmBakeSceneSel === 3, '4x', 12);
+    }
 }
 
 function clipHasContent(t, c) {
@@ -1927,27 +1935,25 @@ function pollDSP() {
     if (v.length >= 55) S.dspLooperState  = parseInt(v[54], 10) | 0;
     const _prevMergeState = S.dspMergeState;
     if (v.length >= 56) S.dspMergeState   = parseInt(v[55], 10) | 0;
-    if (v.length >= 57) S.dspMergeDstClip = parseInt(v[56], 10) | 0;
-    /* Arm confirmation: if DSP stayed idle after merge_arm, no empty slot was available */
-    if (S.pendingMergeArm) {
-        S.pendingMergeArm = false;
-        if (S.dspMergeState === 0) {
-            setButtonLED(MoveSample, LED_OFF);
-            showActionPopup('NO EMPTY', 'CLIP SLOT');
-        }
+    /* Arm confirmation: no longer fails on "no empty slot" — placement is
+     * deferred until the user picks a row, so arm always succeeds. */
+    if (S.pendingMergeArm) S.pendingMergeArm = false;
+    /* Capture-done transition: DSP went into CAPTURED (4) — show placement
+     * dialog so the user can tap a row to commit. */
+    if (_prevMergeState !== 4 && S.dspMergeState === 4) {
+        S.pendingMergePlacement = true;
+        S.screenDirty = true;
     }
-    /* Merge just finished — re-read destination clip so LEDs + session view update */
-    if (_prevMergeState !== 0 && S.dspMergeState === 0 && S.dspMergeTrack >= 0) {
-        /* Auto-finalize: DSP jumped directly from CAPTURING (2) to IDLE — max length hit */
+    /* Placement complete: DSP transitioned CAPTURED→IDLE (merge_place_row
+     * fired and committed clips). Re-read ALL clips from DSP — any of the 8
+     * tracks may have just received fresh notes at the placement row. The
+     * full re-read also rebuilds clipSteps/clipNonEmpty mirrors so the
+     * Session-View overview lights the newly-populated clip pads. */
+    if (_prevMergeState !== 0 && S.dspMergeState === 0) {
+        setButtonLED(MoveSample, LED_OFF);
         if (_prevMergeState === 2) showActionPopup('MAX LENGTH', 'REACHED');
-        if (S.trackPadMode[S.dspMergeTrack] === PAD_MODE_DRUM) {
-            syncDrumClipContent(S.dspMergeTrack);
-            S.screenDirty = true;
-        } else {
-            S.pendingStepsReread      = 2;
-            S.pendingStepsRereadTrack = S.dspMergeTrack;
-            S.pendingStepsRereadClip  = S.dspMergeDstClip;
-        }
+        syncClipsFromDsp();
+        S.screenDirty = true;
     }
 
     /* Deferred bank refresh after bake */
@@ -2875,7 +2881,17 @@ function drawPerfModeOled() {
 
     /* ── Body (y 14-49): action popup → mod popup → mods list ── */
     if (S.actionPopupEndTick >= 0 && S.tickCount <= S.actionPopupEndTick && S.actionPopupLines.length > 0) {
-        if (S.actionPopupLines.length >= 2) {
+        const _n = S.actionPopupLines.length;
+        if (_n >= 4) {
+            print(4, 14, S.actionPopupLines[0], 1);
+            print(4, 25, S.actionPopupLines[1], 1);
+            print(4, 36, S.actionPopupLines[2], 1);
+            print(4, 47, S.actionPopupLines[3], 1);
+        } else if (_n === 3) {
+            print(4, 17, S.actionPopupLines[0], 1);
+            print(4, 29, S.actionPopupLines[1], 1);
+            print(4, 41, S.actionPopupLines[2], 1);
+        } else if (_n === 2) {
             print(4, 20, S.actionPopupLines[0], 1);
             print(4, 32, S.actionPopupLines[1], 1);
         } else {
@@ -2949,6 +2965,22 @@ function drawUI() {
     if (S.moveCoRunTrack >= 0) return;
     if (S.sessionOverlayHeld) { drawSessionOverview(); return; }
     if (S.pendingInheritPicker) { drawInheritPicker(); return; }
+    if (S.pendingSceneBakePicker) {
+        clear_screen();
+        print(4, 8,  'BAKE SCENE',         1);
+        print(4, 22, 'Tap row or scene step', 1);
+        print(4, 34, 'to pick destination',  1);
+        print(4, 50, 'Any other btn cancels', 1);
+        return;
+    }
+    if (S.pendingMergePlacement) {
+        clear_screen();
+        print(4, 8,  'PLACE MERGED CLIPS',  1);
+        print(4, 22, 'Tap row or scene step', 1);
+        print(4, 34, 'to pick destination',  1);
+        print(4, 50, 'Capture cancels',      1);
+        return;
+    }
     if (S.pendingSchwungSlotPicker) { drawSchwungSlotPicker(); return; }
     if (S.confirmBakeScene) { drawBakeSceneConfirm(); return; }
     if (S.confirmBake) { drawBakeConfirm(); return; }
@@ -2981,7 +3013,17 @@ function drawUI() {
     clear_screen();
     if (S.sessionView) {
         if (S.actionPopupEndTick >= 0) {
-            if (S.actionPopupLines.length >= 2) {
+            const _n = S.actionPopupLines.length;
+            if (_n >= 4) {
+                print(4, 14, S.actionPopupLines[0], 1);
+                print(4, 25, S.actionPopupLines[1], 1);
+                print(4, 36, S.actionPopupLines[2], 1);
+                print(4, 47, S.actionPopupLines[3], 1);
+            } else if (_n === 3) {
+                print(4, 17, S.actionPopupLines[0], 1);
+                print(4, 29, S.actionPopupLines[1], 1);
+                print(4, 41, S.actionPopupLines[2], 1);
+            } else if (_n === 2) {
                 print(4, 22, S.actionPopupLines[0], 1);
                 print(4, 34, S.actionPopupLines[1], 1);
             } else {
@@ -5132,15 +5174,33 @@ function _onCC_jog(d1, d2) {
         resolveSchwungSlotPicker(action);
         return;
     }
-    /* Scene bake confirm: jog click confirms/cancels */
+    /* Scene bake confirm: two-phase jog flow — loop count, then wrap yes/no. */
     if (d1 === 3 && d2 === 127 && S.confirmBakeScene) {
+        if (S.confirmBakeSceneWrapPhase) {
+            /* Wrap dialog: 0=YES, 1=NO, 2=CANCEL */
+            if (S.confirmBakeSceneWrapSel < 2) {
+                const _wrap = S.confirmBakeSceneWrapSel === 0 ? 1 : 0;
+                S.pendingDefaultSetParams.push({
+                    key: 'bake_scene',
+                    val: S.confirmBakeSceneClip + ' ' + S.confirmBakeSceneLoops + ' ' + _wrap
+                });
+                S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
+                showActionPopup('SCENE', 'BAKED');
+                S.pendingSceneBakeResync = 2;
+                S.pendingSceneBakeClip   = S.confirmBakeSceneClip;
+            }
+            S.confirmBakeSceneWrapPhase = false;
+            S.confirmBakeScene          = false;
+            S.screenDirty               = true;
+            return;
+        }
         if (S.confirmBakeSceneSel > 0) {
-            const _loops = [1, 2, 4][S.confirmBakeSceneSel - 1];
-            S.pendingDefaultSetParams.push({ key: 'bake_scene', val: S.confirmBakeSceneClip + ' ' + _loops });
-            S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
-            showActionPopup('SCENE', 'BAKED');
-            S.pendingSceneBakeResync = 2;
-            S.pendingSceneBakeClip   = S.confirmBakeSceneClip;
+            /* Advance to wrap phase, hold loop count for the commit step. */
+            S.confirmBakeSceneLoops     = [1, 2, 4][S.confirmBakeSceneSel - 1];
+            S.confirmBakeSceneWrapPhase = true;
+            S.confirmBakeSceneWrapSel   = 1; /* default: NO */
+            S.screenDirty               = true;
+            return;
         }
         S.confirmBakeScene = false;
         S.screenDirty      = true;
@@ -5374,7 +5434,10 @@ function _onCC_jog(d1, d2) {
         if (S.confirmBakeScene) {
             const delta = decodeDelta(d2);
             if (delta !== 0) {
-                S.confirmBakeSceneSel = (S.confirmBakeSceneSel + (delta > 0 ? 1 : 3)) % 4;
+                if (S.confirmBakeSceneWrapPhase)
+                    S.confirmBakeSceneWrapSel = (S.confirmBakeSceneWrapSel + (delta > 0 ? 1 : 2)) % 3;
+                else
+                    S.confirmBakeSceneSel = (S.confirmBakeSceneSel + (delta > 0 ? 1 : 3)) % 4;
                 S.screenDirty = true;
             }
             return;
@@ -5616,9 +5679,48 @@ function _onCC_buttons(d1, d2) {
     }
 
     if (d1 === MoveCapture) {
-        S.captureHeld = d2 === 127;
-        computePadNoteMap();
-        forceRedraw();
+        if (d2 === 127) {
+            S.captureHeld           = true;
+            S.captureUsedAsModifier = false;
+            /* Press also cancels in-flight dialogs/pickers/merge — symmetric
+             * with Sample's press behavior. */
+            if (S.pendingSceneBakePicker) { S.pendingSceneBakePicker = false; S.captureUsedAsModifier = true; }
+            if (S.pendingMergePlacement)  {
+                S.pendingMergePlacement = false;
+                S.captureUsedAsModifier = true;
+                S.pendingDefaultSetParams.push({ key: 'merge_cancel', val: '1' });
+            }
+            if (S.confirmBake)            { S.confirmBake            = false; S.captureUsedAsModifier = true;
+                                            S.confirmBakeDrumLoopOpen = false; S.confirmBakeWrapPhase = false; }
+            if (S.confirmBakeScene)       { S.confirmBakeScene       = false; S.captureUsedAsModifier = true; }
+            computePadNoteMap();
+            forceRedraw();
+        } else {
+            S.captureHeld = false;
+            /* Bare-tap release: open clip-bake (Track View) or scene-bake picker
+             * (Session View). Suppressed when Capture was used as a modifier
+             * (scene capture via Capture+row, drum-lane select via Capture+pad). */
+            if (!S.captureUsedAsModifier) {
+                if (S.sessionView) {
+                    S.pendingSceneBakePicker = true;
+                    S.screenDirty = true;
+                } else {
+                    const _bt = S.activeTrack, _bc = S.trackActiveClip[_bt];
+                    const _isDrum = S.trackPadMode[_bt] === PAD_MODE_DRUM;
+                    S.confirmBake             = true;
+                    S.confirmBakeIsDrum       = _isDrum;
+                    S.confirmBakeIsMultiLoop  = !_isDrum;
+                    S.confirmBakeSel          = _isDrum ? 2 : 1;
+                    S.confirmBakeTrack        = _bt;
+                    S.confirmBakeClip         = _bc;
+                    S.confirmBakeDrumLoopOpen = false;
+                    S.confirmBakeWrapPhase    = false;
+                    S.screenDirty             = true;
+                }
+            }
+            computePadNoteMap();
+            forceRedraw();
+        }
         return;
     }
 
@@ -6126,38 +6228,27 @@ function _onCC_transport(d1, d2) {
             /* LED stays green until DSP finalizes at page boundary */
         }
     }
-    /* Sample release (no modifier): open per-track bake if not used as modifier.
-     * Clip bake is a Track View action only — in Session View, Sample is a
-     * modifier for scene bake (Sample + scene row), and a bare tap should be
-     * a no-op to avoid opening clip bake on whatever happens to be the active
-     * track at the time. */
+    /* Sample release (no modifier): in Session View arm/stop multi-track live
+     * merge; in Track View bare tap is a no-op (clip bake moved off Sample
+     * onto Capture). Sample-held + scene row still opens scene bake directly
+     * (Sample is also a modifier — flagged via sampleUsedAsModifier). */
     if (d1 === MoveSample && d2 === 0 && !S.shiftHeld) {
         S.sampleHeld = false;
-        if (!S.sampleUsedAsModifier && !S.sessionView) {
-            const _bt = S.activeTrack, _bc = S.trackActiveClip[_bt];
-            const _isDrum = S.trackPadMode[_bt] === PAD_MODE_DRUM;
-            S.confirmBake             = true;
-            S.confirmBakeIsDrum       = _isDrum;
-            S.confirmBakeIsMultiLoop  = !_isDrum;
-            S.confirmBakeSel          = _isDrum ? 2 : 1;
-            S.confirmBakeTrack        = _bt;
-            S.confirmBakeClip         = _bc;
-            S.confirmBakeDrumLoopOpen = false;
-            S.confirmBakeWrapPhase    = false;
-            S.screenDirty            = true;
-        }
-    }
-
-    /* Shift+Sample (CC 118): arm / disarm Live Merge for S.activeTrack */
-    if (d1 === MoveSample && d2 === 127 && S.shiftHeld) {
-        if (S.dspMergeState !== 0) {
-            S.pendingDefaultSetParams.push({ key: 'merge_stop', val: '1' });
-            /* LED stays green until DSP finalizes at page boundary */
-        } else {
-            S.pendingDefaultSetParams.push({ key: 'merge_arm', val: String(S.activeTrack) });
-            S.dspMergeTrack    = S.activeTrack;
-            S.pendingMergeArm  = true;
-            setButtonLED(MoveSample, Red);
+        if (!S.sampleUsedAsModifier && S.sessionView) {
+            if (S.dspMergeState !== 0) {
+                S.pendingDefaultSetParams.push({ key: 'merge_stop', val: '1' });
+                /* LED stays Red until DSP finalizes at page boundary, then
+                 * placement dialog opens via dspMergeState→IDLE detection. */
+            } else {
+                S.pendingDefaultSetParams.push({ key: 'merge_arm', val: '1' });
+                S.pendingMergeArm = true;
+                setButtonLED(MoveSample, Red);
+                /* Explain what's happening — multi-track merge is non-obvious
+                 * and the user needs time to read. Override the standard popup
+                 * window to ~3 seconds. */
+                showActionPopup('LIVE MERGE', 'Capturing all 8', 'tracks. Tap Sample', 'again to stop.');
+                S.actionPopupEndTick = S.tickCount + 280;
+            }
         }
     }
 
@@ -6261,6 +6352,27 @@ function _onCC_side(d1, d2) {
     if (d1 >= 40 && d1 <= 43 && d2 === 127) {
         const idx     = d1 - 40;
         const clipIdx = S.sceneRow + (3 - idx);
+        /* Scene-bake picker (set by Session-View Capture tap): row press selects
+         * the scene to bake and goes straight to the scene-bake confirm dialog.
+         * Picker is consumed before any other gesture so it doesn't double-fire. */
+        if (S.pendingSceneBakePicker) {
+            S.pendingSceneBakePicker    = false;
+            S.confirmBakeScene          = true;
+            S.confirmBakeSceneWrapPhase = false;
+            S.confirmBakeSceneSel       = 1;
+            S.confirmBakeSceneClip      = clipIdx;
+            S.screenDirty               = true;
+            return;
+        }
+        /* Multi-track live merge placement: post-stop, row press picks
+         * destination row and commits captured clips (per-track skip when
+         * no notes captured — preserves existing clips on those tracks). */
+        if (S.pendingMergePlacement) {
+            S.pendingMergePlacement = false;
+            S.pendingDefaultSetParams.push({ key: 'merge_place_row', val: String(clipIdx) });
+            S.screenDirty = true;
+            return;
+        }
         if (S.copyHeld) {
             if (S.copySrc && S.copySrc.kind === 'step') {
                 /* step copy in progress: swallow track/scene buttons — don't mix copy types */
@@ -6352,18 +6464,23 @@ function _onCC_side(d1, d2) {
                 forceRedraw();
                 showActionPopup('SEQUENCE', 'CLEARED');
             }
-        } else if (S.sampleHeld && S.sessionView) {
-            S.sampleUsedAsModifier  = true;
-            S.confirmBakeScene      = true;
-            S.confirmBakeSceneSel   = 1;
-            S.confirmBakeSceneClip  = clipIdx;
-            S.screenDirty           = true;
         } else if (S.captureHeld) {
-            /* Capture + scene row: copy each track's active clip into this row.
-             * Skip self-copy and empty-source tracks so unused tracks keep their target. */
+            /* Capture + scene row: copy each track's currently *playing* or
+             * *queued* clip into this row. Inactive/focused-but-not-playing
+             * clips are skipped — only what's actually live participates in
+             * the capture. Mark Capture as consumed so the upcoming release
+             * doesn't open the
+             * scene-bake picker. */
+            S.captureUsedAsModifier = true;
             let scooped = 0;
             for (let t = 0; t < NUM_TRACKS; t++) {
-                const srcC = S.trackActiveClip[t];
+                /* Only tracks whose active clip is *playing* (sequencer running)
+                 * OR is currently queued contribute to the scene capture.
+                 * Inactive/focused-but-silent tracks don't paint into the row. */
+                const isLive = (S.trackClipPlaying[t] && S.trackActiveClip[t] !== clipIdx)
+                            || (S.trackQueuedClip[t] >= 0 && S.trackQueuedClip[t] !== clipIdx);
+                if (!isLive) continue;
+                const srcC = S.trackQueuedClip[t] >= 0 ? S.trackQueuedClip[t] : S.trackActiveClip[t];
                 if (srcC === clipIdx) continue;
                 if (!trackClipHasContent(t, srcC)) continue;
                 if (S.trackPadMode[t] === PAD_MODE_DRUM) {
@@ -7455,6 +7572,7 @@ function _onPadPressTrackView(status, d1, d2) {
             const _sl_lane = drumPadToLane(padIdx);
             if (_sl_lane >= 0 && _sl_lane < DRUM_LANES) {
                 const t = S.activeTrack;
+                S.captureUsedAsModifier = true;
                 setActiveDrumLane(t, _sl_lane);
                 syncDrumLaneSteps(t, _sl_lane);
                 refreshDrumLaneBankParams(t, _sl_lane);
@@ -8168,6 +8286,23 @@ function _onStepButtons(d1, d2) {
         return;
     }
     if (S.sessionView) {
+        /* Scene-bake picker active (set by Session-View Capture tap): step
+         * press selects scene → straight to scene-bake confirm. */
+        if (S.pendingSceneBakePicker) {
+            S.pendingSceneBakePicker = false;
+            S.confirmBakeScene       = true;
+            S.confirmBakeSceneSel    = 1;
+            S.confirmBakeSceneClip   = idx;
+            S.screenDirty            = true;
+            return;
+        }
+        /* Multi-track live merge placement: step press picks destination row. */
+        if (S.pendingMergePlacement) {
+            S.pendingMergePlacement = false;
+            S.pendingDefaultSetParams.push({ key: 'merge_place_row', val: String(idx) });
+            S.screenDirty = true;
+            return;
+        }
         if (S.muteHeld) {
             /* All 16 step buttons are snapshot slots — defer to release for tap/hold decision. */
             S.stepBtnPressedTick[idx] = S.tickCount;
