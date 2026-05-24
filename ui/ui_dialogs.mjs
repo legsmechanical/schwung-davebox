@@ -131,8 +131,27 @@ function drawExportConfirm() {
     }
 }
 
+/* Persistent post-export confirmation: shows the full device path, dismissed
+ * with OK (jog-click or Back). Path is wrapped to fit the OLED. */
+function drawExportDoneDialog() {
+    clear_screen();
+    drawMenuHeader(S.exportDoneMissing > 0 ? ('EXPORTED -' + S.exportDoneMissing) : 'EXPORTED TO');
+    const path = S.exportDonePath || '';
+    const W = 21;   /* chars per line at the small print font */
+    let y = 14, lines = 0;
+    for (let i = 0; i < path.length && lines < 4; i += W, lines++) {
+        print(2, y, path.slice(i, i + W), 1);
+        y += 9;
+    }
+    /* OK button (filled, bottom center) */
+    const okX = 49, btnY = 52, btnW = 30, btnH = 11;
+    fill_rect(okX, btnY, btnW, btnH, 1);
+    print(okX + 10, btnY + 2, 'OK', 0);
+}
+
 export function drawGlobalMenu() {
     if (S.tapTempoOpen)        { drawTapTempoScreen();       return; }
+    if (S.exportDoneDialog)    { drawExportDoneDialog();     return; }
     if (S.confirmClearSession) { drawClearSessionConfirm();  return; }
     if (S.confirmConvertToDrum){ drawConvertToDrumConfirm(); return; }
     if (S.confirmExport)       { drawExportConfirm();        return; }

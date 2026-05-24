@@ -5572,6 +5572,12 @@ function _onCC_jog(d1, d2) {
         return;
     }
     if (d1 === 3 && d2 === 127 && S.globalMenuOpen) {
+        if (S.exportDoneDialog) {            /* OK dismiss */
+            S.exportDoneDialog = false;
+            S.globalMenuOpen   = false;
+            S.screenDirty = true;
+            return;
+        }
         if (S.confirmClearSession) {
             if (S.confirmClearSel === 0) doClearSession();
             else { S.confirmClearSession = false; }
@@ -5804,7 +5810,9 @@ function _onCC_jog(d1, d2) {
         }
         if (S.globalMenuOpen && !S.shiftHeld) {
             ensureGlobalMenuFresh();
-            if (S.confirmClearSession) {
+            if (S.exportDoneDialog) {
+                /* single OK button — jog does nothing */
+            } else if (S.confirmClearSession) {
                 const delta = decodeDelta(d2);
                 if (delta !== 0) { S.confirmClearSel = S.confirmClearSel === 0 ? 1 : 0; S.screenDirty = true; }
             } else if (S.confirmConvertToDrum) {
@@ -6079,6 +6087,10 @@ function _onCC_buttons(d1, d2) {
                 forceRedraw();
             } else if (S.globalMenuOpen && S.confirmConvertToDrum) {
                 closeConvertConfirm();
+                forceRedraw();
+            } else if (S.globalMenuOpen && S.exportDoneDialog) {
+                S.exportDoneDialog = false;
+                S.globalMenuOpen   = false;
                 forceRedraw();
             } else if (S.globalMenuOpen && S.confirmExport) {
                 S.confirmExport = false;
@@ -6368,6 +6380,10 @@ function _onCC_transport(d1, d2) {
             forceRedraw();
         } else if (S.globalMenuOpen && S.confirmConvertToDrum) {
             closeConvertConfirm();
+            forceRedraw();
+        } else if (S.globalMenuOpen && S.exportDoneDialog) {
+            S.exportDoneDialog = false;
+            S.globalMenuOpen   = false;
             forceRedraw();
         } else if (S.globalMenuOpen && S.confirmExport) {
             S.confirmExport = false;
@@ -7035,7 +7051,7 @@ function _onCC_knobs(d1, d2) {
     if (d1 >= 71 && d1 <= 78) {
         /* Exclusive overlays — knob turns have no visible effect and should be swallowed. */
         if (S.heldStep >= 0) return;
-        if (S.globalMenuOpen || S.tapTempoOpen || S.confirmBake || S.confirmClearSession || S.confirmConvertToDrum || S.confirmExport) return;
+        if (S.globalMenuOpen || S.tapTempoOpen || S.confirmBake || S.confirmClearSession || S.confirmConvertToDrum || S.confirmExport || S.exportDoneDialog) return;
         const knobIdx = d1 - 71;
         S.knobTouched          = knobIdx;
         S.knobTurnedTick[knobIdx] = S.tickCount;

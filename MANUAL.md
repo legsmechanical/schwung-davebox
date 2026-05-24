@@ -1117,9 +1117,9 @@ So you can overlay a merged drum + bass onto a row that already has piano and gu
 |---|---|
 | Transport check | Must be **stopped**. If it's running you'll see **STOP TRANSPORT / FOR EXPORT** and nothing is written. |
 | Confirm | A Yes/No dialog (No default) appears — jog to choose, click to confirm, **Back** to cancel. |
-| Export | The OLED shows **EXPORTING…**, then **EXPORTED &lt;name&gt;** when the bundle is written. |
+| Export | The OLED shows **EXPORTING…** while it works, then a persistent **EXPORTED TO** screen with the full file path — dismiss it with **OK** (jog-click or **Back**). |
 
-The bundle lands at `/data/UserData/schwung/davebox-exports/<set name>-<date>.ablbundle` (a same-day repeat gets `-2`, `-3`, …). Retrieve it over SFTP. It opens in Live as **8 MIDI tracks × 16 scene slots**, carrying your set's tempo and key. It is **self-contained** — the instruments' samples are bundled inside, so it opens with all sounds even on a computer that doesn't have the Move sample packs installed.
+The bundle lands at `/data/UserData/schwung/davebox-exports/<set name>-<date>.ablbundle` (a same-day repeat gets `-2`, `-3`, …) — the path shown on the EXPORTED screen. Retrieve it over SFTP. It opens in Live as **8 MIDI tracks × 16 scene slots**, carrying your set's tempo and key. It is **self-contained** — the instruments' samples are bundled inside, so it opens with all sounds even on a computer that doesn't have the Move sample packs installed.
 
 **Track instruments and names follow each track's route:**
 

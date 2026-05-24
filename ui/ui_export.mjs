@@ -23,11 +23,14 @@ import { NUM_TRACKS, NUM_CLIPS, ACTION_POPUP_TICKS } from '/data/UserData/schwun
 
 const EXPORT_MODULE_DIR = '/data/UserData/schwung/modules/tools/davebox';
 const EXPORT_OUT_DIR    = '/data/UserData/schwung/davebox-exports';
-const EXPORT_STAGING    = '/data/UserData/schwung/davebox-export-staging';
+/* Scratch workspace nested under the exports dir (keeps the schwung folder
+ * uncluttered); created per export and removed afterward. */
+const EXPORT_STAGING    = EXPORT_OUT_DIR + '/staging';
 const EXPORT_SCENES     = NUM_CLIPS;   /* dAVEBOx clip N -> scene N */
 /* DSP writes per-clip rendered notes here; JS reads them (must match
- * EXPORT_RENDER_PATH in dsp/seq8.c). Sidesteps the 16KB get_param cap. */
-const EXPORT_RENDER_PATH = '/data/UserData/schwung/seq8-export-render.txt';
+ * EXPORT_RENDER_PATH in dsp/seq8.c). Inside staging → cleaned with it.
+ * Sidesteps the 16KB get_param cap. */
+const EXPORT_RENDER_PATH = EXPORT_STAGING + '/render.txt';
 
 /* Source-side reads for route-aware instrument mapping (Phase 2). */
 const EXPORT_SETS_BASE_DIR    = '/data/UserData/UserLibrary/Sets';
@@ -53,6 +56,15 @@ function readJsonAsset(name) {
 }
 
 function deepClone(obj) { return JSON.parse(JSON.stringify(obj)); }
+
+/* Remove the staging workspace. NOT host_remove_dir — that host API rejects any
+ * path outside the modules dir (schwung_host.c validate), and staging lives under
+ * davebox-exports/. host_system_cmd's `rm ` prefix is allowlisted; the path is a
+ * fixed constant (no spaces / no user input). rm -rf is a no-op if absent. */
+function removeStagingDir() {
+    if (typeof host_system_cmd === 'function')
+        host_system_cmd("rm -rf '" + EXPORT_STAGING + "'");
+}
 
 /* ---- source-side reads (loaded Move set + Schwung chain config) ----------- */
 
@@ -433,10 +445,22 @@ function confirmExportStart() {
     showActionPopup('EXPORTING', '...');
 }
 
-/* tick() drain. Builds Song.abl, stages it, runs pack.py, reports via OLED. */
+/* tick() drain. Two-phase so the "EXPORTING…" popup renders BEFORE the blocking
+ * packager call (host_system_cmd waitpid's the python run): phase 1 just shows
+ * the popup and arms phase 2 for the next tick; the render between ticks paints
+ * EXPORTING; phase 2 does the (blocking) build + pack + report. */
 function pollPendingExport() {
-    if (!S.pendingExport) return;
-    S.pendingExport = false;
+    if (S.pendingExport) {
+        S.pendingExport    = false;
+        S.pendingExportRun = true;
+        showActionPopup('EXPORTING', '...');
+        S.screenDirty = true;
+        return;
+    }
+    if (!S.pendingExportRun) return;
+    S.pendingExportRun = false;
+    /* Push the EXPORTING frame to the screen before we block on the packager. */
+    if (typeof host_flush_display === 'function') host_flush_display();
 
     if (typeof host_write_file !== 'function' ||
         typeof host_system_cmd !== 'function' ||
@@ -471,6 +495,12 @@ function pollPendingExport() {
         usedDest: {}          /* dest names taken (avoid basename collisions) */
     };
 
+    /* Fresh staging dir FIRST — buildSong's render writes EXPORT_RENDER_PATH
+     * (inside staging) via the DSP, so the dir must exist before the render. */
+    host_ensure_dir(EXPORT_OUT_DIR);
+    removeStagingDir();
+    host_ensure_dir(EXPORT_STAGING);
+
     let songJson;
     try {
         songJson = JSON.stringify(buildSong(bpm, ctx));
@@ -478,11 +508,6 @@ function pollPendingExport() {
         showActionPopup('EXPORT FAIL', 'BUILD');
         return;
     }
-
-    /* Fresh staging dir. */
-    if (typeof host_remove_dir === 'function') host_remove_dir(EXPORT_STAGING);
-    host_ensure_dir(EXPORT_STAGING);
-    host_ensure_dir(EXPORT_OUT_DIR);
 
     if (!host_write_file(EXPORT_STAGING + '/Song.abl', songJson)) {
         showActionPopup('EXPORT FAIL', 'WRITE SONG');
@@ -519,13 +544,18 @@ function pollPendingExport() {
         errMsg = 'NO STATUS rc=' + rc;
     }
 
+    /* Clean up the scratch workspace (Song.abl + manifest + copied Samples/) —
+     * the finished bundle lives in EXPORT_OUT_DIR; staging is no longer needed. */
+    removeStagingDir();
+
     if (okStatus) {
-        const miss = (okStatus.missing && okStatus.missing.length) ? okStatus.missing.length : 0;
-        if (miss > 0) showActionPopup('EXPORTED', miss + ' SMP MISSING');
-        else {
-            const bn = String(outPath).split('/').pop().replace(/\.ablbundle$/, '');
-            showActionPopup('EXPORTED', bn.slice(0, 18));
-        }
+        /* Persistent "Exported to <path>" dialog — stays up until the user OKs it
+         * (reuses the global-menu dialog machinery: re-open the menu in dialog mode). */
+        S.exportDonePath    = String(okStatus.out || outPath);
+        S.exportDoneMissing = (okStatus.missing && okStatus.missing.length) ? okStatus.missing.length : 0;
+        S.exportDoneDialog  = true;
+        S.globalMenuOpen    = true;
+        S.screenDirty       = true;
     } else {
         showActionPopup('EXPORT FAIL', String(errMsg).slice(0, 18));
     }

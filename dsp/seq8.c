@@ -6093,7 +6093,7 @@ static uint32_t bake_apply_quantize(uint32_t tick, uint16_t tps, uint16_t length
  * is 16KB, too small for big clips (drum LCM merges, multi-cycle bakes); the
  * render writes notes here and get_param returns only the small header, JS reads
  * this file (host_read_file handles up to 4MB; a single clip is well under). */
-#define EXPORT_RENDER_PATH "/data/UserData/schwung/seq8-export-render.txt"
+#define EXPORT_RENDER_PATH "/data/UserData/schwung/davebox-exports/staging/render.txt"
 
 /* Non-destructive melodic clip render for Ableton export. MIRROR of the
  * bake_clip compute (lines ~6160-6250) — KEEP IN SYNC if the bake math changes.

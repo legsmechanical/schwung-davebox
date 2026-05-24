@@ -312,8 +312,17 @@ improved too):
   overriding the Move track's own color. **Ableton clip/track color palette = indices 0–25** (real
   Move/Note sets never exceed 25; out-of-range indices → "Document invariant violation" — learned by
   the chart's first 0–69 attempt failing).
-- [ ] Progress/most-recent-export feedback; error handling (missing sample, oversized clip, no clips).
-- [ ] MANUAL.md + CHANGELOG entries; capability-gate if any patched-Schwung dependency.
+- [x] **Progress + confirmation feedback** (done 2026-05-24). Two-phase tick drain shows **EXPORTING…**
+  before the blocking packager (`pendingExport`→render→`pendingExportRun`). Persistent **EXPORTED TO**
+  dialog (`exportDoneDialog`, reuses the global-menu dialog machinery) shows the full device path, OK
+  (jog-click/Back) to dismiss; `N` missing samples shown in the header. Pack failures still toast.
+- [x] **Staging tidied** (done 2026-05-24): moved to `davebox-exports/staging` (+ DSP render scratch
+  inside it), created per export and removed after. **BUG FIXED: `host_remove_dir` rejects paths
+  outside the modules dir** (schwung_host.c:2182), so staging never cleaned — switched to
+  `host_system_cmd("rm -rf …")` (the `rm ` prefix is allowlisted).
+- [x] **Capability:** export uses only stock Schwung APIs (host_system_cmd + python3 + host_read/write)
+  → ships from `main`, no capability gate needed. Runtime guard shows "NO HOST API" if ever absent.
+- [ ] MANUAL.md + CHANGELOG entries (kept current per phase); missing-ref revert in pack.py (minor edge).
 - [ ] **Verify:** full 8×16 session with drums, melodic, Schwung + external tracks, randomized +
   delayed clips → opens in Live, sounds like dAVEBOx, names/colors correct.
 

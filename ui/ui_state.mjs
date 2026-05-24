@@ -293,6 +293,9 @@ export const S = {
     confirmClearSel: 1,
     confirmExport: false,          /* Ableton export Yes/No dialog open */
     confirmExportSel: 1,           /* 0 = Yes, 1 = No (default) */
+    exportDoneDialog: false,       /* persistent "Exported to <path>" dialog (OK to dismiss) */
+    exportDonePath: '',            /* full device path shown in the export-done dialog */
+    exportDoneMissing: 0,          /* count of samples that couldn't be bundled */
     noteSessionPressedTick: -1,
     sessionOverlayHeld: false,
     overviewCache: null,
@@ -330,6 +333,7 @@ export const S = {
     pendingExitAfterSave: false,   /* drained one tick after pendingSuspendSave fires; calls host_exit_module */
     pendingHideAfterSave: false,   /* drained one tick after pendingSuspendSave fires; calls host_hide_module */
     pendingExport: false,          /* Ableton .ablbundle export — set by menu action, drained in tick() (get_param-safe) */
+    pendingExportRun: false,       /* phase 2 of export: armed after EXPORTING popup renders, does the blocking work */
     pendingPruneOrphans: false,
     nameIndexCache: null,    /* { name: uuid } map, lazy-loaded on first save */
     pendingInheritPicker: null,  /* { dstUuid, dstName, candidates: [{uuid,name}], selectedIndex } when picker is open */
