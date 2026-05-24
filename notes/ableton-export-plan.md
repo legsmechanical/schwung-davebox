@@ -250,6 +250,33 @@ header signals a file-write failure. Verified: byte-identical clip output vs the
 - [ ] **Verify:** randomized clip → expanding the loop brace in Live reveals variety; delayed clip →
   moving brace toggles unwrapped/wrapped.
 
+### Phase 4b RESULT — 2026-05-24 (device + desktop-Live verified ✅; on branch `ableton-export`)
+**Model SIMPLIFIED from the original loop-brace-reveal spec (user 2026-05-24):** the brace-on-cycle-1
+reveal was dropped. New rule, applied per melodic clip:
+- **randomness → 8 cycles** (clip is 8 cycles long, each a distinct random variation); **delay → wrap
+  every cycle** (echoes fold to steady-state); **loop brace = the whole clip** (for a normal 1-cycle
+  clip that = the original length). plain=1, delay=1 wrapped, random=8, random+delay=8 wrapped.
+- "Randomness" = NOTE FX `note_random`, arp Rnd/RnO, **or** DELAY-bank `fb_note_random` when delay is
+  on (the latter added after the user flagged track-3's delay-feedback random wasn't triggering it).
+- DSP: `render_melodic_clip(loops, wrap_from, ...)` — per-cycle wrap (cycles ≥ wrap_from fold mod L),
+  RNG persists across cycles for distinct passes, `note_random_walk` resets per cycle. Buffer
+  `BAKE_BUF*8`. get_param `tN_cC_export` returns `"<span> <count> <span>"` (brace = whole). JS
+  `buildClip` sets region.end = span, region.loop.end = span. Drums unchanged (1 LCM cycle, deferred).
+
+### Bake-fidelity fixes — 2026-05-24 (found while testing 4b; SHARED with in-app Capture/bake)
+Audited every pfx param vs the bake; fixed the gaps (all in the shared bake stages, so in-app bake
+improved too):
+- **`delay_retrig`** (was ignored; default ON): `bake_stage_midi_dly` now truncates each note's echo
+  train at the next note onset (wraps to first+clip_ticks for steady-state cycles).
+- **Echo gate** (the clip-A "sustained vs staccato" bug): echoes with `fb_gate_time=0` baked at the
+  SOURCE note gate (e.g. 96t) but live uses `pfx_gate_smp` = `GATE_TICKS(12) * gate_time%`. Now baked
+  at the live default. (Masked for non-random delay because same-pitch `legalizeNotes` clamped them;
+  exposed by random-pitch delay where pitches spread and escape clamping.)
+- **Arp Steps**: `bake_stage_arp_out` now copies `step_int` + `step_loop_len` (was hardcoded `&7u`),
+  uses loop-len for step_pos, applies the per-step interval offset (needs `inst` → +1 param, 5 calls).
+- **Drum `delay_retrig`**: copied into `fx` in the 3 drum bake paths (drum lanes have no `fb_note_random`).
+- NOT fixed: `unison` (parked for removal), arp `retrigger` (bake forces on), arp `sync` (N/A offline).
+
 ## Phase 5 — Samples (portable) + packager
 - [ ] JS: while copying instrument subtrees, collect every `sampleUri`; resolve URI→abs file; rewrite
   ref to relative `Samples/<basename>` (dedupe basenames); emit manifest.
@@ -279,6 +306,10 @@ header signals a file-write failure. Verified: byte-identical clip output vs the
   by construction). Phase 6 could revert missing refs in pack.py.
 
 ## Phase 6 — Polish
+- [ ] **Track colors should match the dAVEBOx track color for ALL tracks** (user note 2026-05-24).
+  Currently Move-routed tracks use the matched Move track color (happens to match dB) but
+  Schwung/Ext/fallback tracks use an arbitrary `DB_TRACK_COLORS` palette → mismatch. Fix: source the
+  actual dAVEBOx per-track color for every exported track's `color`.
 - [ ] Progress/most-recent-export feedback; error handling (missing sample, oversized clip, no clips).
 - [ ] MANUAL.md + CHANGELOG entries; capability-gate if any patched-Schwung dependency.
 - [ ] **Verify:** full 8×16 session with drums, melodic, Schwung + external tracks, randomized +

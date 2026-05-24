@@ -267,7 +267,10 @@ function legalizeNotes(notes) {
  * file for the notes. Returns an Ableton clip object, or null for an
  * empty/drum clip (caller makes it an empty slot) or a render/read error. DSP
  * is authoritative — empty clips return count 0. Ticks→beats = ÷96 (1 bar =
- * 384 ticks, 4 beats/bar). Phase 3: melodic only, single cycle. Drums = Phase 4. */
+ * 384 ticks, 4 beats/bar). Header is "<total_ticks> <count> <cycle_ticks>":
+ * total = content extent (region.end), cycle = default loop brace (region.loop.end)
+ * — Phase 4b bakes several cycles (random/delay) and parks the brace on cycle 1
+ * so the extra content is revealed by dragging the brace open in Live. */
 function buildClip(t, c, isDrum) {
     if (typeof host_module_get_param !== 'function' || typeof host_read_file !== 'function')
         return null;
@@ -277,7 +280,9 @@ function buildClip(t, c, isDrum) {
     const parts = hdr.split(' ');
     const span  = parseInt(parts[0], 10) || 0;
     const count = parseInt(parts[1], 10);
-    if (!isFinite(count) || count <= 0) return null;   /* 0 = empty, -1 = render error */
+    let   cycle = parseInt(parts[2], 10);
+    if (!isFinite(cycle) || cycle <= 0) cycle = span;   /* fallback: brace = whole clip */
+    if (!isFinite(count) || count <= 0) return null;    /* 0 = empty, -1 = render error */
 
     const body = host_read_file(EXPORT_RENDER_PATH);
     if (!body) return null;
@@ -305,14 +310,15 @@ function buildClip(t, c, isDrum) {
     const legal = legalizeNotes(notes);   /* remove illegal same-pitch overlaps */
     if (legal.length === 0) return null;
 
-    const lenBeats = (span > 0 ? span : 96) / 96;
+    const endBeats  = (span > 0 ? span : 96) / 96;     /* content extent (N cycles) */
+    const loopBeats = (cycle > 0 ? cycle : span) / 96; /* default brace = one cycle */
     return {
         isPlaying: false,
         name: '',
         color: null,
         isEnabled: true,
         timeSignature: { upper: 4, lower: 4 },
-        region: { start: 0.0, end: lenBeats, loop: { start: 0.0, end: lenBeats, isEnabled: true } },
+        region: { start: 0.0, end: endBeats, loop: { start: 0.0, end: loopBeats, isEnabled: true } },
         grooveId: null,
         stepEditorScrollPosition: 0,
         notes: legal,
