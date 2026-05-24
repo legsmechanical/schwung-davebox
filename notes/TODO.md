@@ -3,7 +3,7 @@
 ## Bugs to fix
 
 3. **Scale-aware key/scale changes** — transpose all clip notes on Key/Scale change. Design TBD.
-7. **State snapshots / multi-save per session.** Global Menu items "Save snapshot" + "Recall state". Current auto-save behavior unchanged; snapshots are explicit and independent. On state-version bump, dAVEBOx load shows confirm dialog before wiping incompatible snapshots: "dAVEBOx updated — Incompatible session snapshots will be deleted. Proceed? [Yes/No]" (No is default).
+7. ~~**State snapshots / multi-save per session.**~~ **SHIPPED 2026-05-24** (main `9e41f6b`). Global Menu **Save state** + **Load state**; up to 16 timestamped snapshots per set; explicit and independent of auto-save; incompatible-version snapshots offered for wipe when the Load list opens. See `docs/superpowers/specs/2026-05-24-multi-snapshot-states-design.md`.
 9. **MIDI clock sync**
 
 ## 1.0 fixes/tweaks — remaining (carried over from the May 2026 batch)

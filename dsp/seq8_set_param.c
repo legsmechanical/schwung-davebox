@@ -687,6 +687,23 @@ static void set_param(void *instance, const char *key, const char *val) {
             int u1 = unlink(buf);
             snprintf(buf, sizeof(buf), "/data/UserData/schwung/set_state/%s/seq8-ui-state.json", n);
             int u2 = unlink(buf);
+            /* Snapshot files (seq8-snap-index.json + seq8-snap-<id>-*.json) have
+             * variable names — enumerate the orphaned set's folder and remove
+             * any. Without this the rmdir below always fails for sets that had
+             * snapshots, leaving the folder + snap files behind. */
+            snprintf(buf, sizeof(buf), "/data/UserData/schwung/set_state/%s", n);
+            DIR *sd = opendir(buf);
+            if (sd) {
+                struct dirent *sde;
+                char sbuf[512];
+                while ((sde = readdir(sd)) != NULL) {
+                    if (strncmp(sde->d_name, "seq8-snap-", 10) != 0) continue;
+                    snprintf(sbuf, sizeof(sbuf),
+                             "/data/UserData/schwung/set_state/%s/%s", n, sde->d_name);
+                    unlink(sbuf);
+                }
+                closedir(sd);
+            }
             snprintf(buf, sizeof(buf), "/data/UserData/schwung/set_state/%s", n);
             rmdir(buf);  /* silently fails if other module's files remain */
             if (u1 == 0 || u2 == 0) removed++;
