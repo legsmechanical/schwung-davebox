@@ -297,6 +297,14 @@ typedef struct {
      * looper and silenced during playback; 0 = bypass entirely. Default 1. */
     uint8_t      looper_on;
     uint8_t      track_idx;  /* 0..NUM_TRACKS-1; back-pointer for looper events */
+    /* Output-pitch refcount: counts how many distinct chain sources (input pads
+     * × HARMZ copies + delay echoes + arp emits) are currently sounding each
+     * MIDI pitch on this track. pfx_emit gates wire-level note-on/off by this
+     * so two pads producing overlapping output pitches via HARMZ don't envelope-
+     * retrigger the synth, and a note-off from one pad doesn't silence a pitch
+     * another still-held pad is legitimately sourcing. Runtime only — not
+     * persisted; zeroed by pfx_reset and at the top of send_panic. */
+    uint8_t      pitch_refcount[128];
 } play_fx_t;
 
 /* ------------------------------------------------------------------ */
@@ -2202,6 +2210,22 @@ static void pfx_send(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
  * pfx_send hooks (ARP, looper, merge, swing). Used for already-deferred events. */
 static void pfx_emit(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
     if (!g_host) return;
+    /* Output-pitch refcount gate. See play_fx_t.pitch_refcount comment.
+     * Note-on (0x90 with vel>0): increment; drop if was already sounding.
+     * Note-off (0x80, or 0x90 with vel=0): decrement (clamp at 0); drop if
+     * still sounding from another source. When refcount is already 0 we let
+     * the off through unchanged — panic sweeps, stray offs, and the safety
+     * silence-all paths must still reach the synth. CC/AT/PB pass through. */
+    {
+        uint8_t st = status & 0xF0;
+        if (st == 0x90 && d2 > 0) {
+            if (d1 < 128 && fx->pitch_refcount[d1]++ != 0) return;
+        } else if (st == 0x80 || (st == 0x90 && d2 == 0)) {
+            if (d1 < 128 && fx->pitch_refcount[d1] > 0) {
+                if (--fx->pitch_refcount[d1] != 0) return;
+            }
+        }
+    }
     if (fx->route == ROUTE_MOVE) {
         if (!g_host->midi_inject_to_move) return;
         uint8_t pkt[4] = { (uint8_t)(0x20 | (status >> 4)), status, d1, d2 };
@@ -2713,6 +2737,11 @@ static void looper_stop(seq8_instance_t *inst) {
 static void send_panic(seq8_instance_t *inst) {
     play_fx_t *route_pfx[3] = { NULL, NULL, NULL };
     int t, ch, n;
+    /* Zero every track's output-pitch refcount so the panic sweep's note-offs
+     * (which decrement) don't go negative and so the next note-ons fire fresh. */
+    for (t = 0; t < NUM_TRACKS; t++)
+        memset(inst->tracks[t].pfx.pitch_refcount, 0,
+               sizeof(inst->tracks[t].pfx.pitch_refcount));
     for (t = 0; t < NUM_TRACKS; t++) {
         play_fx_t *fx = &inst->tracks[t].pfx;
         if (fx->route >= 0 && fx->route < 3 && !route_pfx[fx->route])
@@ -3148,6 +3177,7 @@ static void pfx_reset(play_fx_t *fx) {
     fx->delay_retrig    = 1;
     fx->quantize        = 0;
     arp_init_defaults(&fx->arp);
+    memset(fx->pitch_refcount, 0, sizeof(fx->pitch_refcount));
 }
 
 /* Process a note-on through the chain. Sends immediate output via

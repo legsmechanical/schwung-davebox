@@ -26,6 +26,7 @@ the section into a versioned heading at release time.
 - **Shift + bottom-row track-select pads read at a glance.** Holding Shift in Track View, the pad for the **active track** is a solid bright track color; the other seven blink **dim grey (dimmest available) ↔ dim track color** so the current track stands out from the switch targets. Previously all eight showed a static dim track color.
 
 ### Fixes
+- **HARMZ no longer drops notes during chords / runs on Move-native tracks.** With HARMONY engaged, different input pads can produce overlapping output pitches (e.g. pad C4 + Hrm1=+4 emits E4, which collides with hitting pad E4 directly). Previously each pad's note-off blindly sent offs for all of its harm copies — so releasing one pad could silence a pitch another still-held pad was legitimately sourcing, and the synth's voice tracker saw envelope-retriggering duplicate ons. The post-fx emit stage now reference-counts output pitches per track: a wire-level note-on fires only on the 0→1 transition, a note-off only when the last source releases. CC/AT/PB pass through; panic and all-notes-off sweeps still flush cleanly. Affects every output path (immediate emit, delay echoes, SEQ ARP, looper playback). No state change; no user-visible setting.
 - **Arp Steps overlay no longer fires on drum tracks.** A jog-click on a drum track at bank 5 (REPEAT GROOVE) previously toggled the melodic-only Arp Steps overlay, which had no useful effect and could show the wrong overview. The Arp Steps jog-click toggle is now gated to melodic tracks only.
 
 ### Features
