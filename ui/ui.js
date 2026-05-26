@@ -3285,16 +3285,10 @@ function drawUI() {
      * verified harmless in real use (nothing the user does during co-run
      * depends on live LED feedback). */
     if (S.moveCoRunTrack >= 0) {
-        /* Co-run owns the 4 track buttons (Move's track LED writes are stripped
-         * shim-side). dAVEBOx blinks them off/dark-grey as a subtle "press to switch
-         * Move track" affordance. Send only on blink toggle to avoid flooding MIDI;
-         * force=true to bypass the LED cache (Move may have left stale buttonCache). */
-        const _coBlinkOn = (Math.floor(S.tickCount / 24) % 2) === 0;
-        if (_coBlinkOn !== S._coRunBtnBlinkOn) {
-            S._coRunBtnBlinkOn = _coBlinkOn;
-            const _c = _coBlinkOn ? DarkGrey : LED_OFF;
-            for (let _i = 0; _i < 4; _i++) setButtonLED(40 + _i, _c, true);
-        }
+        /* Move firmware owns the 4 track buttons in Move-native co-run —
+         * track buttons are ceded by default keep_mask, so the framework
+         * lets Move's CC LED writes (40-43) reach hardware and the user
+         * sees Move's native track colors. dAVEBOx stays out of the way. */
         return;
     }
     /* Alt-param mode is transient: any bank change, track change, or entering
@@ -4294,7 +4288,6 @@ function enterMoveNativeCoRun(t) {
      * stripped and the LEDs don't show until a manual press. Fire it from tick() a
      * few ticks later, once co-run is fully active. */
     S.pendingMoveCoRunInject = 12;
-    S._coRunBtnBlinkOn = null;  /* force first track-button blink paint on entry */
     S.globalMenuOpen = false;
     S.lastSentMenuEditValue = null;
     S.screenDirty = true;
@@ -5161,13 +5154,19 @@ function _tickImpl() {
         }
     }
     /* Drain the co-run track-button press sequence (Option B full-row repaint):
-     * one injected press every few ticks until the queue empties. */
+     * one injected press every few ticks until the queue empties. Prefix each
+     * press with a defensive Shift-off (CC 49=0) — Move firmware's internal
+     * Shift state can be ambiguous when a tool entered co-run via Shift+Step
+     * (the physical Shift release was zeroed shim-side in non-co-run mode, so
+     * Move never saw it), and a plain track-button press with Shift "held"
+     * lands on Move's track-routing menu instead of the preset editor. */
     if (S.moveCoRunPressQueue && S.moveCoRunPressQueue.length > 0 &&
             typeof move_midi_inject_to_move === 'function') {
         if (S.moveCoRunPressGap > 0) {
             S.moveCoRunPressGap--;
         } else {
             const cc = S.moveCoRunPressQueue.shift();
+            move_midi_inject_to_move([0x0B, 0xB0, 49, 0]);    /* Shift off (defensive) */
             move_midi_inject_to_move([0x0B, 0xB0, cc, 127]);
             move_midi_inject_to_move([0x0B, 0xB0, cc, 0]);
             S.moveCoRunPressGap = 5;
