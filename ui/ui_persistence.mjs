@@ -148,6 +148,7 @@ export function writeSidecar() {
 }
 
 export function saveState() {
+    S.altMode = false;   /* transient; never persisted across suspend/resume */
     /* Route the DSP save through the end-of-tick pendingSuspendSave drain so it
      * cannot be coalesced by other set_params fired in the same audio buffer
      * (Quit / Shift+Back / Save menu / co-run handoff all call this from

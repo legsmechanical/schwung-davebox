@@ -33,6 +33,10 @@ export const S = {
     ledInitIndex: 0,
     ledInitComplete: false,
     shiftHeld: false,
+    altMode: false,        /* sticky alt-param mode, toggled by jog-click; transient */
+    _altPrevBank: -1,      /* diff-guard mirror for clearing altMode on bank change */
+    _altPrevTrack: -1,     /* diff-guard mirror for clearing altMode on track change */
+    _altBlinkPhase: -1,    /* tick-driven phase (0/1) for the alt-mode arrow flash */
     shiftTrackLEDActive: false,
     loopHeld: false,
     perfSync: true,

@@ -309,6 +309,7 @@ The primary editing environment. Shows the active track and clip.
 | Side clip buttons (4, left edge) | Switch between clips on the active track |
 | K1–K8 | Adjust parameters in the active bank |
 | Jog rotate | Cycle parameter banks |
+| Jog click | On a bank with alt parameters (CLIP, DELAY, AUTOMATION; DRUM LANE, REPEAT GROOVE, ALL LANES; SEQ ARP / ARP IN), toggle alt-param mode — knob labels flip to their alternates (Nudg/Zoom/ClkF; AUTOMATION → ASSIGN, retarget CC/AT). A small down-arrow in the header flashes while you're in it. Switching banks, switching tracks, or entering Session View reverts to the primary params. |
 | Shift + jog rotate | Switch tracks 1–8 |
 | Shift + bottom-row pad (1–8) | Switch to that track |
 | Loop (held) | Enter loop view — step buttons now show pages of the clip |

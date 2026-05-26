@@ -102,6 +102,9 @@ function drawBankHeading(name) {
     /* Right-aligned active-track indicator. Width = "Tr" + 1 digit = 18px @ 6px/char.
      * Placed at x=106 leaves a 4px right margin. */
     print(106, 1, 'Tr' + (S.activeTrack + 1), 0);
+    if (!S.sessionView && bankHasAltParams(S.activeTrack, S.activeBank)) {
+        drawAltArrow(98, true, altIndicatorActive(S.activeTrack, S.activeBank));
+    }
 }
 
 function drawBankHeadingInverted(name) {
@@ -110,6 +113,23 @@ function drawBankHeadingInverted(name) {
     fill_rect(0, 8, 128, 1, 1);
     print(4, 1, name, 1);
     print(106, 1, 'Tr' + (S.activeTrack + 1), 1);
+    if (!S.sessionView && bankHasAltParams(S.activeTrack, S.activeBank)) {
+        drawAltArrow(98, false, altIndicatorActive(S.activeTrack, S.activeBank));
+    }
+}
+
+/* Down-arrow affordance for banks that expose alt params. Always drawn in the
+ * header text color (steady) when alt mode is off; flashes on/off ~2x/sec when
+ * alt mode is on. `hdrBgWhite` true = header background is white (so arrow draws
+ * black); false = header background is black (so arrow draws white). The blink
+ * phase is set in the tick loop (S._altBlinkPhase) which also marks the screen
+ * dirty so the animation runs while idle. */
+function drawAltArrow(x, hdrBgWhite, on) {
+    if (on && S._altBlinkPhase === 1) return;   /* off-phase of the flash */
+    const fg = hdrBgWhite ? 0 : 1;
+    fill_rect(x,     2, 5, 1, fg);
+    fill_rect(x + 1, 3, 3, 1, fg);
+    fill_rect(x + 2, 4, 1, 1, fg);
 }
 
 function drawStepEditHeader() {
@@ -2743,6 +2763,30 @@ function applyExtMidiRemap() {
     S.extMidiRemapActive = true;
 }
 
+/* True when (track-type, bank) exposes alt params reachable via S.altMode.
+ * Melodic: CLIP(0), DELAY(3), AUTO/CC(6 — CC-assign). Drum: DRUM LANE(0),
+ * REPEAT GROOVE(5), ALL LANES(7). The CC bank is melodic-only (its knob handler
+ * returns early for drum), so bank 6 is NOT an alt bank on drum tracks. Keep in
+ * sync with the shiftHeld→altMode migration sites. */
+function bankHasAltParams(t, bank) {
+    if (S.trackPadMode[t] === PAD_MODE_DRUM) return bank === 0 || bank === 5 || bank === 7;
+    /* Melodic CLIP(0), DELAY(3), SEQ ARP(4), ARP IN(5), AUTO/CC(6). Banks 4/5 use
+     * stepIntervalMode (Arp Steps overlay) rather than altMode — the arrow still
+     * shows their toggle-availability, and altIndicatorActive() reflects which
+     * underlying flag is on. */
+    return bank === 0 || bank === 3 || bank === 4 || bank === 5 || bank === 6;
+}
+
+/* Returns true when the current bank's alt indicator should flash. For melodic
+ * SEQ ARP / ARP IN this is the Arp Steps overlay flag; for every other alt-param
+ * bank it is altMode. */
+function altIndicatorActive(t, bank) {
+    if (S.trackPadMode[t] !== PAD_MODE_DRUM && (bank === 4 || bank === 5)) {
+        return S.stepIntervalMode;
+    }
+    return S.altMode;
+}
+
 /* Send a single param change to DSP and apply any JS-side side-effects. */
 function applyBankParam(t, bankIdx, knobIdx, val) {
     const pm = BANKS[bankIdx].knobs[knobIdx];
@@ -3249,6 +3293,16 @@ function drawUI() {
         }
         return;
     }
+    /* Alt-param mode is transient: any bank change, track change, or entering
+     * Session View drops back to primary params. Diff-guard catches every
+     * S.activeBank / S.activeTrack reassignment regardless of source. */
+    if (S.altMode && (S.sessionView ||              /* session view can be entered via a button after altMode was set */
+            S.activeBank !== S._altPrevBank ||
+            S.activeTrack !== S._altPrevTrack)) {
+        S.altMode = false;
+    }
+    S._altPrevBank  = S.activeBank;
+    S._altPrevTrack = S.activeTrack;
     if (S.sessionOverlayHeld) { drawSessionOverview(); return; }
     if (S.pendingInheritPicker) { drawInheritPicker(); return; }
     if (S.snapshotPicker) { drawSnapshotPicker(); return; }
@@ -3558,9 +3612,9 @@ function drawUI() {
     }
 
     if (bank >= 0 && (S.knobTouched >= 0 || inTimeout ||
-            (S.shiftHeld && bank === 5 && S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) ||
+            (S.altMode && bankHasAltParams(S.activeTrack, bank)) ||
             (bank === 6 && !S.sessionView && S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM) ||
-            (S.shiftHeld && (bank === 1 || bank === 3) && S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM))) {
+            (S.shiftHeld && bank === 1 && S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM))) {
         const isDrumLaneBank = (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 0);
         if (isDrumLaneBank) {
             /* DRUM LANE bank overview: mirrors CLIP bank at lane level */
@@ -3573,7 +3627,7 @@ function drawUI() {
             const _dlNote  = S.drumLaneNote[t][lane];
             const _noteStr = midiNoteName(_dlNote) + ' ' + _dlNote;
             const eucN = Math.min(S.drumLaneEuclidN[t][lane] | 0, len);
-            const drumLaneLabels = ['Stch', S.shiftHeld ? 'Nudg' : 'Shft', S.shiftHeld ? 'Zoom' : 'Res', 'Eucl', 'Len', 'SqFl', null, null];
+            const drumLaneLabels = ['Stch', S.altMode ? 'Nudg' : 'Shft', S.altMode ? 'Zoom' : 'Res', 'Eucl', 'Len', 'SqFl', null, null];
             const drumLaneVals  = [
                 fmtStretch(S.bankParams[t][0][0]),
                 fmtSign(S.bankParams[t][0][1]),
@@ -3613,7 +3667,7 @@ function drawUI() {
             const t = S.activeTrack;
             const qv = S.bankParams[t][7][2];
             const DIQ_LABELS = ['Off','1/64','1/32','1/16','1/16T','1/8','1/8T','1/4','1/4T'];
-            const allLabels = ['Stch', S.shiftHeld ? 'Nudg' : 'Shft', 'Qnt', 'VelIn', 'InQ', 'SyncRpt', null, null];
+            const allLabels = ['Stch', S.altMode ? 'Nudg' : 'Shft', 'Qnt', 'VelIn', 'InQ', 'SyncRpt', null, null];
             const allVals = [
                 fmtStretch(S.bankParams[t][7][0]),
                 fmtSign(S.bankParams[t][7][1]),
@@ -3626,6 +3680,7 @@ function drawUI() {
             fill_rect(0, 0, 128, 9, 1);
             print(4, 1, (Math.floor(S.tickCount / 24) % 2 === 0 ? 'ALL' : '   ') + ' LANES', 0);
             print(106, 1, 'Tr' + (S.activeTrack + 1), 0);
+            drawAltArrow(98, true, altIndicatorActive(S.activeTrack, S.activeBank));
             for (let k = 0; k < 8; k++) {
                 if (!allLabels[k]) continue;
                 const colX = 4 + (k % 4) * 30;
@@ -3659,8 +3714,15 @@ function drawUI() {
         const t    = S.activeTrack;
         const lane = S.activeDrumLane[t];
         syncDrumRepeatState(t, lane);
-        drawBankHeadingInverted('REPEAT GROOVE');
-        pixelPrint(S.shiftHeld ? 94 : 106, 2, S.shiftHeld ? 'NUDGE' : 'VEL', 0);
+        /* Custom header: drop Tr# to clear the right side; arrow flash + per-step
+         * value format (vel% vs signed nudge%) signal the alt-mode state. */
+        fill_rect(0, 0, 128, 9, 0);
+        fill_rect(0, 0, 128, 1, 1);
+        fill_rect(0, 8, 128, 1, 1);
+        print(4, 1, 'REPEAT GROOVE', 1);
+        if (!S.sessionView && bankHasAltParams(S.activeTrack, S.activeBank)) {
+            drawAltArrow(98, false, altIndicatorActive(S.activeTrack, S.activeBank));
+        }
         const _gLen = S.drumRepeatGateLen[t][lane];
         for (let k = 0; k < 8; k++) {
             const colX = 4 + (k % 4) * 30;
@@ -3680,7 +3742,7 @@ function drawUI() {
             }
             const vs   = S.drumRepeatVelScale[t][lane][k];
             const ndg  = S.drumRepeatNudge[t][lane][k];
-            const disp = S.shiftHeld
+            const disp = S.altMode
                 ? (ndg === 0 ? ' 0%' : (ndg > 0 ? '+' : '') + ndg + '%')
                 : vs + '%';
             print(colX, rowY + 12, col4(disp), hi ? 0 : 1);
@@ -3710,7 +3772,7 @@ function drawUI() {
          * playhead or "—". Active lane cell is always highlighted. */
         const t  = S.activeTrack;
         const ac = effectiveClip(t);
-        drawBankHeadingInverted(BANKS[6].name);
+        drawBankHeadingInverted(S.altMode ? 'ASSIGN' : BANKS[6].name);
         /* Automation-type indicators: inverted badge (white bg, black text) per
          * type that has data in the focused clip; nothing if the type is empty.
          * PB is a placeholder (not implemented) → never shown in the header yet. */
@@ -3718,7 +3780,7 @@ function drawUI() {
             const ccHas = (S.trackCCAutoBits[t][ac] !== 0) ||
                           S.clipCCVal[t][ac].some(function(v) { return v >= 0; });
             const atHas = !!S.clipAtHas[t][ac];
-            let bx = 68;
+            let bx = 60;
             const _badge = function(txt) {
                 const w = txt.length * 6 + 3;
                 fill_rect(bx, 1, w, 7, 1);
@@ -3731,13 +3793,24 @@ function drawUI() {
         for (let k = 0; k < 8; k++) {
             const colX = 4 + (k % 4) * 30;
             const rowY = k < 4 ? 12 : 36;
-            const hi   = (S.knobTouched === k) || (S.ccActiveLane[t] === k);
-            if (hi) fill_rect(colX, rowY, 24, 24, 1);
+            /* In ASSIGN (altMode): highlight ONLY the label half of every cell so it
+             * is visually clear that turning the knob retargets the CC/AT, not the
+             * value. In normal mode, the touched/active lane gets the full-cell
+             * inversion as before. */
+            const touchedHi = (S.knobTouched === k) || (S.ccActiveLane[t] === k);
             const lbl = S.trackCCType[t][k] === 1 ? 'AT' : fmtCCLabel(S.trackCCAssign[t][k]);
             const rawV = S.playing ? S.trackCCLiveVal[t][k] : S.clipCCVal[t][ac][k];
             const val  = (rawV >= 0 && rawV <= 127) ? String(rawV) : '--';
-            print(colX, rowY,      col4(lbl), hi ? 0 : 1);
-            print(colX, rowY + 12, col4(val), hi ? 0 : 1);
+            if (S.altMode) {
+                fill_rect(colX, rowY, 24, 12, 1);                /* label row only */
+                if (touchedHi) fill_rect(colX, rowY + 12, 24, 12, 1);  /* value row only if touched */
+                print(colX, rowY,      col4(lbl), 0);
+                print(colX, rowY + 12, col4(val), touchedHi ? 0 : 1);
+            } else {
+                if (touchedHi) fill_rect(colX, rowY, 24, 24, 1);
+                print(colX, rowY,      col4(lbl), touchedHi ? 0 : 1);
+                print(colX, rowY + 12, col4(val), touchedHi ? 0 : 1);
+            }
         }
         } else if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 3) {
         /* Drum MIDI DLY: K1-K4 same as melodic, K5=Gate, K6=Clk, K7=Retrg, K8 empty.
@@ -3775,8 +3848,8 @@ function drawUI() {
             /* Shift+K1 on DELAY bank (melodic): label + value flip to
              * delay_clock_fb. Drum: K6 already holds clock_fb directly via
              * remap; no flip needed. */
-            const _delayShiftClkF = S.shiftHeld && !_isDrum && bank === 3 && k === 0;
-            if (S.shiftHeld) {
+            const _delayShiftClkF = S.altMode && !_isDrum && bank === 3 && k === 0;
+            if (S.altMode) {
                 if      (knobs[k].dspKey === 'clock_shift')    _lbl = 'Nudg';
                 else if (knobs[k].dspKey === 'clip_resolution') _lbl = 'Zoom';
                 else if (_delayShiftClkF)                       _lbl = 'ClkF';
@@ -5787,6 +5860,13 @@ function _tickImpl() {
         if (_dropped) saveNameIndex(S.nameIndexCache);
     }
 
+    /* Drive the alt-mode arrow flash: repaint on each blink-phase edge so the
+     * down-arrow animates even when the UI is otherwise idle. Covers both altMode
+     * (most alt banks) and stepIntervalMode (Arp Steps overlay on melodic 4/5). */
+    if (altIndicatorActive(S.activeTrack, S.activeBank)) {
+        const _ph = Math.floor(S.tickCount / 24) % 2;
+        if (_ph !== S._altBlinkPhase) { S._altBlinkPhase = _ph; S.screenDirty = true; }
+    }
     if (S.screenDirty && !isSuspended) { S.screenDirty = false; drawUI(); }
 
 };
@@ -6078,7 +6158,8 @@ function _onCC_jog(d1, d2) {
      * offsets (±14), pad grid is the persistent step-vel level editor. Auto-clears
      * on next jog turn (handled in the main-knob delta branch below). */
     if (d1 === 3 && d2 === 127 && !S.shiftHeld && !S.deleteHeld && !S.copyHeld && !S.muteHeld &&
-            !S.sessionView && (S.activeBank === 4 || S.activeBank === 5)) {
+            !S.sessionView && S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM &&
+            (S.activeBank === 4 || S.activeBank === 5)) {
         S.stepIntervalMode = !S.stepIntervalMode;
         /* Repush padmap so pads stop dispatching notes while the overlay is on. */
         computePadNoteMap();
@@ -6086,25 +6167,15 @@ function _onCC_jog(d1, d2) {
         forceRedraw();
         return;
     }
-    /* Plain jog click on drum track: toggle Velocity / Repeat pad mode */
+    /* Plain jog click on an alt-param bank: toggle sticky alt-param mode.
+     * Perform-mode switching now lives only on Shift+step-8 (see _onStepButtons).
+     * The Arp-Steps block above is gated melodic-only, so on drum tracks bank 5
+     * (REPEAT GROOVE) correctly falls through here to toggle VEL/NUDGE. */
     if (d1 === 3 && d2 === 127 && !S.shiftHeld && !S.deleteHeld && !S.copyHeld && !S.muteHeld &&
-            !S.sessionView && S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
-        const t = S.activeTrack;
-        if (S.drumPerformMode[t] === 1) {
-            host_module_set_param('t' + t + '_drum_repeat_stop', '1');
-            S.drumRepeatHeldPad[t] = -1;
-            S.drumRepeatHeldPadsStack[t].length = 0;
-        }
-        if (S.drumPerformMode[t] === 2) {
-            S.drumRepeat2HeldLanes[t].clear();
-            S.drumRepeat2LatchedLanes[t].clear();
-            host_module_set_param('t' + t + '_drum_repeat2_stop', '1');
-        }
-        S.drumRepeatLatched[t]  = false;
-        setDrumPerformMode(t, (S.drumPerformMode[t] + 1) % 3);
-        showModePopup('PERFORMANCE PADS',
-            ['Velocity', 'Repeat Play (Rpt1)', 'Repeat Set (Rpt2)'],
-            S.drumPerformMode[t]);
+            !S.sessionView && bankHasAltParams(S.activeTrack, S.activeBank)) {
+        S.altMode = !S.altMode;
+        S.screenDirty = true;
+        forceRedraw();
         return;
     }
 
@@ -7590,10 +7661,10 @@ function _onCC_knobs(d1, d2) {
             if (knobIdx === 1) {
                 /* K2 = Shft (clock shift, sens=8). Shift+turn = Nudge (sens=4, faster). */
                 S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= (S.shiftHeld ? 4 : 8)) {
+                if (S.knobAccum[knobIdx] >= (S.altMode ? 4 : 8)) {
                     S.knobAccum[knobIdx] = 0;
-                    if (S.shiftHeld) {
-                        /* Shift+Shft = Nudge */
+                    if (S.altMode) {
+                        /* alt = Nudge */
                         S.bankParams[t][0][knobIdx] += dir;
                         if (typeof host_module_set_param === 'function')
                             host_module_set_param('t' + t + '_l' + lane + '_nudge', String(dir));
@@ -7616,7 +7687,7 @@ function _onCC_knobs(d1, d2) {
                     const curIdx = Math.max(0, TPS_VALUES.indexOf(S.drumLaneTPS[t]));
                     const nv = Math.max(0, Math.min(5, curIdx + dir));
                     if (nv !== curIdx) {
-                        if (S.shiftHeld) {
+                        if (S.altMode) {
                             /* Zoom: absolute note positions fixed, step grid shifts, length adjusts */
                             const newTps = TPS_VALUES[nv];
                             const newLen = Math.ceil(S.drumLaneLength[t] * S.drumLaneTPS[t] / newTps);
@@ -7748,9 +7819,9 @@ function _onCC_knobs(d1, d2) {
                  * every detent fires — much faster than per-lane nudge sens=4 to
                  * compensate for DSP-side latency when nudging 32 lanes at once). */
                 S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= (S.shiftHeld ? 1 : 8)) {
+                if (S.knobAccum[knobIdx] >= (S.altMode ? 1 : 8)) {
                     S.knobAccum[knobIdx] = 0;
-                    if (S.shiftHeld) {
+                    if (S.altMode) {
                         S.bankParams[t][7][1] += dir;
                         host_module_set_param('t' + t + '_all_lanes_nudge', String(dir));
                     } else {
@@ -7882,7 +7953,7 @@ function _onCC_knobs(d1, d2) {
             if (S.knobAccum[knobIdx] >= 2) {
                 S.knobAccum[knobIdx] = 0;
                 const step = knobIdx;
-                if (S.shiftHeld) {
+                if (S.altMode) {
                     const nv = Math.max(-50, Math.min(50, (S.drumRepeatNudge[t][lane][step] | 0) + dir));
                     if (nv !== S.drumRepeatNudge[t][lane][step]) {
                         S.drumRepeatNudge[t][lane][step] = nv;
@@ -7916,8 +7987,8 @@ function _onCC_knobs(d1, d2) {
             if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
             S.knobAccum[knobIdx]++;
 
-            /* Shift+turn: type/number ladder — AT (type 1) ↔ CC0 ↔ CC1 … CC127. sens=4 */
-            if (S.shiftHeld) {
+            /* alt mode: type/number ladder — AT (type 1) ↔ CC0 ↔ CC1 … CC127. sens=4 */
+            if (S.altMode) {
                 if (S.knobAccum[knobIdx] >= 4) {
                     S.knobAccum[knobIdx] = 0;
                     const cur = (S.trackCCType[t][knobIdx] === 1) ? -1 : S.trackCCAssign[t][knobIdx];
@@ -8008,7 +8079,7 @@ function _onCC_knobs(d1, d2) {
          * folds onto the unused Shift modifier on K1 with a label flip
          * "Rate"↔"ClkF" in the OLED render. Mirror stored in S.delayClockFb
          * since bankParams[t][3][6] now stores retrig. */
-        if (S.shiftHeld && S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM &&
+        if (S.altMode && S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM &&
                 bank === 3 && knobIdx === 0) {
             const t   = S.activeTrack;
             const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
@@ -8058,7 +8129,7 @@ function _onCC_knobs(d1, d2) {
             }
             S.knobAccum[knobIdx]++;
             /* Shift+Shft (Nudge mode) fires twice as fast as plain Clock Shift. */
-            const _effSens = (pm.dspKey === 'clock_shift' && S.shiftHeld) ? Math.max(1, (pm.sens >> 1)) : pm.sens;
+            const _effSens = (pm.dspKey === 'clock_shift' && S.altMode) ? Math.max(1, (pm.sens >> 1)) : pm.sens;
             if (S.knobAccum[knobIdx] >= _effSens) {
                 S.knobAccum[knobIdx] = 0;
                 S.screenDirty = true;
@@ -8107,8 +8178,8 @@ function _onCC_knobs(d1, d2) {
                             }
                         }
                     } else if (pm.dspKey === 'clock_shift') {
-                        if (S.shiftHeld) {
-                            /* Shift+Shft = Nudge — fire DSP, mirror counter for display, schedule re-read */
+                        if (S.altMode) {
+                            /* alt = Nudge — fire DSP, mirror counter for display, schedule re-read */
                             if (typeof host_module_set_param === 'function') {
                                 host_module_set_param('t' + t + '_nudge', String(dir));
                                 S.bankParams[t][bank][knobIdx] += dir;
@@ -8138,7 +8209,7 @@ function _onCC_knobs(d1, d2) {
                     const step = pm.step || 1;
                     let nv  = Math.max(pm.min, Math.min(pm.max, cur + dir * step));
                     if (nv !== cur) {
-                        if (S.shiftHeld && pm.dspKey === 'clip_resolution') {
+                        if (S.altMode && pm.dspKey === 'clip_resolution') {
                             const _t   = S.activeTrack;
                             const _ac  = effectiveClip(_t);
                             const _old_tps = S.clipTPS[_t][_ac];
