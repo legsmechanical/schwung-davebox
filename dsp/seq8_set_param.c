@@ -270,6 +270,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 inst->tick_accum          = 0;
                 inst->master_tick_in_step = 0;
                 inst->arp_master_tick     = 0;
+                reset_all_loop_cycles(inst);
                 for (t = 0; t < NUM_TRACKS; t++) {
                     seq8_track_t *_tr = &inst->tracks[t];
                     _tr->current_step       = _tr->clips[_tr->active_clip].loop_start;
@@ -369,6 +370,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             inst->master_tick_in_step = 0;
             inst->arp_master_tick     = 0;
             inst->count_in_ticks      = 0;
+            reset_all_loop_cycles(inst);
             for (t = 0; t < NUM_TRACKS; t++) {
                 seq8_track_t *_tr = &inst->tracks[t];
                 _tr->current_step       = _tr->clips[_tr->active_clip].loop_start;

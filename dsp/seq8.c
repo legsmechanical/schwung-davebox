@@ -7384,6 +7384,8 @@ static void convert_track_drum_to_melodic(seq8_instance_t *inst, int t) {
     inst->state_dirty = 1;
 }
 
+static void reset_all_loop_cycles(seq8_instance_t *inst);
+
 #include "seq8_set_param.c"
 
 /* ------------------------------------------------------------------ */
@@ -8238,6 +8240,42 @@ static uint32_t effective_note_tick(const note_t *n, const clip_t *cl, int quant
     return (uint32_t)eff_tick;
 }
 
+/* Per-step trig-condition gate (v=34 Iter + Random). Returns 1 if the note
+ * should fire, 0 to skip. Always advances *rng once so chord-mate notes get
+ * independent rolls regardless of which one short-circuits first.
+ *  Iter   gates the entire step on (loop_cycle % cycle_len == cycle_idx-1).
+ *  Random rolls per-note: skip if roll >= pct. */
+static int step_trig_pass(clip_t *cl, uint16_t sidx, uint32_t *rng) {
+    /* Always advance the rng so per-note rolls don't sync */
+    *rng = (*rng) * 1664525u + 1013904223u;
+    uint8_t iter = cl->step_iter[sidx];
+    if (iter) {
+        int len = (iter >> 4) & 0xF, idx = iter & 0xF;
+        if (len < 1 || idx < 1) return 1;   /* malformed -> treat as default */
+        if ((int)((uint32_t)cl->loop_cycle % (uint32_t)len) != (idx - 1))
+            return 0;
+    }
+    uint8_t rand = cl->step_random[sidx];
+    if (rand && rand < 100) {
+        unsigned roll = ((*rng) >> 8) % 100u;
+        if (roll >= (unsigned)rand) return 0;
+    }
+    return 1;
+}
+
+/* Reset loop_cycle on every clip (melodic + drum lanes) — called on
+ * transport-start edge so the Iter cycle counter starts from cycle 1. */
+static void reset_all_loop_cycles(seq8_instance_t *inst) {
+    int t, c, l;
+    for (t = 0; t < NUM_TRACKS; t++) {
+        for (c = 0; c < NUM_CLIPS; c++) {
+            inst->tracks[t].clips[c].loop_cycle = 0;
+            for (l = 0; l < DRUM_LANES; l++)
+                inst->tracks[t].drum_clips[c].lanes[l].clip.loop_cycle = 0;
+        }
+    }
+}
+
 /* Cut off all sounding notes and reset note state (legacy step-based path). */
 static void silence_track_notes(seq8_instance_t *inst, seq8_track_t *tr) {
     if (tr->note_active) {
@@ -8365,6 +8403,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 inst->master_tick_in_step = 0;
                 inst->global_tick         = 0;
                 inst->arp_master_tick     = 0;
+                reset_all_loop_cycles(inst);
                 for (t = 0; t < NUM_TRACKS; t++) {
                     seq8_track_t *_tr = &inst->tracks[t];
                     /* Start each track inside its window: melodic at the active
@@ -8749,6 +8788,11 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                             note_t *n = &dlc->notes[ni2];
                             if (!n->active || n->suppress_until_wrap) continue;
                             if (effective_note_tick(n, dlc, lane->pfx_params.quantize) != cct) continue;
+                            /* v=34 trig conditions (Iter + Random) — per-note */
+                            {
+                                uint16_t _sidx = note_step(n->tick, dlc->length, dlc->ticks_per_step);
+                                if (!step_trig_pass(dlc, _sidx, &dpx->rng)) continue;
+                            }
                             { int pp; for (pp = 0; pp < (int)tr->play_pending_count; pp++) {
                                 if (tr->play_pending[pp].pitch == lane_note) {
                                     drum_pfx_note_off(inst, tr, dpx, lane_note);
@@ -8779,6 +8823,11 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                         note_t *n = &cl->notes[ni2];
                         if (!n->active || n->suppress_until_wrap) continue;
                         if (effective_note_tick(n, cl, tr->pfx.quantize) != cct) continue;
+                        /* v=34 trig conditions (Iter + Random) — per-note */
+                        {
+                            uint16_t _sidx = note_step(n->tick, cl->length, cl->ticks_per_step);
+                            if (!step_trig_pass(cl, _sidx, &tr->pfx.rng)) continue;
+                        }
                         { int pp; for (pp = 0; pp < (int)tr->play_pending_count; pp++) {
                             if (tr->play_pending[pp].pitch == n->pitch) {
                                 pfx_note_off(inst, tr, n->pitch);
@@ -8917,6 +8966,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                                 uint16_t ni2;
                                 for (ni2 = 0; ni2 < dlc->note_count; ni2++)
                                     dlc->notes[ni2].suppress_until_wrap = 0;
+                                dlc->loop_cycle++;   /* v=34 Iter counter */
                             }
                             tr->drum_current_step[l] = ns2;
                         }
@@ -8940,6 +8990,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                             /* SEQ ARP retrigger=1: restart pattern on clip loop start. */
                             if (tr->pfx.arp.style != 0 && tr->pfx.arp.retrigger)
                                 tr->pfx.arp.pending_retrigger = 1;
+                            cl->loop_cycle++;   /* v=34 Iter counter */
                         }
                         tr->current_step = ns2;
                     }
