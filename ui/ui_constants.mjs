@@ -99,7 +99,7 @@ export function fmtPlain(v)  { return String(v); }
 export function fmtNA()      { return '-'; }
 export function fmtArpStyle(v) { return ['Off','Up','Dn','U/D','D/U','Cnv','Div','Ord','Rnd','RnO'][v] || 'Off'; }
 export function fmtArpRate(v)  { return ['1/32','1/16','1/16t','1/8','1/8t','1/4','1/4t','1/2','1/2t','1bar'][v] || '1/16'; }
-export function fmtArpSteps(v) { return ['Off','Mute','Skip'][v] || 'Off'; }
+export function fmtArpSteps(v) { return ['Off','Mute','Step'][v] || 'Mute'; }
 export function fmtArpOct(v)   { if (v === 0) return 'Off'; return (v > 0 ? '+' : '') + v; }
 export function fmtVelOverride(v) { return v === 0 ? 'Live' : String(v); }
 export function fmtDiq(v) { return ['Off','1/64','1/32','1/16','1/16T','1/8','1/8T','1/4','1/4T'][v|0] || 'Off'; }
@@ -296,7 +296,7 @@ export const BANKS = [
         p('Rate', 'Arp Rate',     'seq_arp_rate',       'track', 0,    9,   1, fmtArpRate,  16),
         p('Oct',  'Octave Range', 'seq_arp_octaves',    'track', -4,   4,   0, fmtArpOct,   16),
         p('Gate', 'Arp Gate',     'seq_arp_gate',       'track', 1,    200, 100, fmtPct,     4),
-        p('Stps', 'Steps Mode',   'seq_arp_steps_mode', 'track', 0,    2,   0, fmtArpSteps, 16),
+        p('Stps', 'Steps Mode',   'seq_arp_steps_mode', 'track', 1,    2,   1, fmtArpSteps, 16),
         p('Rtrg', 'Retrigger',    'seq_arp_retrigger',  'track', 0,    1,   1, fmtBool,     16),
         p('Sync', 'Sync to Clock', 'seq_arp_sync',      'track', 0,    1,   1, fmtBool,     16),
         _X,
@@ -307,7 +307,7 @@ export const BANKS = [
         p('Rate', 'Arp Rate',      'tarp_rate',       'track', 0,   9,   1,  fmtArpRate,  16),
         p('Oct',  'Octave Range',  'tarp_octaves',    'track', -4,  4,   0,  fmtArpOct,   16),
         p('Gate', 'Arp Gate',      'tarp_gate',       'track', 1,   200, 100, fmtPct,      4),
-        p('Stps', 'Steps Mode',    'tarp_steps_mode', 'track', 0,   2,   0,  fmtArpSteps, 16),
+        p('Stps', 'Steps Mode',    'tarp_steps_mode', 'track', 1,   2,   1,  fmtArpSteps, 16),
         p('Rtrg', 'Retrigger',    'tarp_retrigger',  'track', 0,   1,   0,  fmtBool,     16),
         p('Sync', 'Sync to Clock', 'tarp_sync',       'track', 0,   1,   1,  fmtBool,     16),
         p('Ltch', 'Latch',         'tarp_latch',      'track', 0,   1,   0,  fmtBool,     16),

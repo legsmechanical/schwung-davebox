@@ -1227,7 +1227,7 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
         if (tr2->tarp.rate_idx != ARP_RATE_DEFAULT)    fprintf(fp, ",\"t%d_tart\":%d",    t, (int)tr2->tarp.rate_idx);
         if (tr2->tarp.octaves != 0)                    fprintf(fp, ",\"t%d_taoc\":%d",    t, (int)tr2->tarp.octaves);
         if (tr2->tarp.gate_pct != 100)                 fprintf(fp, ",\"t%d_tagt\":%d",    t, (int)tr2->tarp.gate_pct);
-        if (tr2->tarp.steps_mode != 0)                 fprintf(fp, ",\"t%d_tasm\":%d",    t, (int)tr2->tarp.steps_mode);
+        if (tr2->tarp.steps_mode != 1)                 fprintf(fp, ",\"t%d_tasm\":%d",    t, (int)tr2->tarp.steps_mode);
         if (!tr2->tarp_sync)                           fprintf(fp, ",\"t%d_tasy\":0",     t);
         if (tr2->tarp.retrigger)                       fprintf(fp, ",\"t%d_targ\":1",     t);
         {
@@ -1287,7 +1287,7 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
                 if (p2->seq_arp_rate      != ARP_RATE_DEFAULT) fprintf(fp, ",\"t%dc%d_arrt\":%d", t, c, p2->seq_arp_rate);
                 if (p2->seq_arp_octaves   != 0)             fprintf(fp, ",\"t%dc%d_aroc\":%d", t, c, p2->seq_arp_octaves);
                 if (p2->seq_arp_gate      != 100)           fprintf(fp, ",\"t%dc%d_argt\":%d", t, c, p2->seq_arp_gate);
-                if (p2->seq_arp_steps_mode != 0)            fprintf(fp, ",\"t%dc%d_arsm\":%d", t, c, p2->seq_arp_steps_mode);
+                if (p2->seq_arp_steps_mode != 1)            fprintf(fp, ",\"t%dc%d_arsm\":%d", t, c, p2->seq_arp_steps_mode);
                 if (p2->seq_arp_retrigger != 1)             fprintf(fp, ",\"t%dc%d_artg\":%d", t, c, p2->seq_arp_retrigger);
                 if (p2->seq_arp_sync     != 1)              fprintf(fp, ",\"t%dc%d_arsy\":%d", t, c, p2->seq_arp_sync);
                 {
@@ -1726,7 +1726,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
         snprintf(key, sizeof(key), "t%d_tagt", t);
         tr2->tarp.gate_pct = (uint16_t)clamp_i(json_get_int(buf, key, 100), 1, 200);
         snprintf(key, sizeof(key), "t%d_tasm", t);
-        tr2->tarp.steps_mode = (uint8_t)clamp_i(json_get_int(buf, key, 0), 0, 2);
+        tr2->tarp.steps_mode = (uint8_t)clamp_i(json_get_int(buf, key, 1), 1, 2);
         snprintf(key, sizeof(key), "t%d_tasy", t);
         tr2->tarp_sync = (uint8_t)(json_get_int(buf, key, 1) ? 1 : 0);
         snprintf(key, sizeof(key), "t%d_targ", t);
@@ -1889,7 +1889,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
             snprintf(key, sizeof(key), "t%dc%d_argt", t, c);
             p2->seq_arp_gate      = clamp_i(json_get_int(buf, key, 100), 1, 200);
             snprintf(key, sizeof(key), "t%dc%d_arsm", t, c);
-            p2->seq_arp_steps_mode = clamp_i(json_get_int(buf, key, 0), 0, 2);
+            p2->seq_arp_steps_mode = clamp_i(json_get_int(buf, key, 1), 1, 2);
             snprintf(key, sizeof(key), "t%dc%d_artg", t, c);
             p2->seq_arp_retrigger = json_get_int(buf, key, 1) ? 1 : 0;
             snprintf(key, sizeof(key), "t%dc%d_arsy", t, c);
@@ -3274,7 +3274,7 @@ static void arp_init_defaults(arp_engine_t *a) {
     a->rate_idx  = ARP_RATE_DEFAULT;
     a->octaves   = 0;
     a->gate_pct  = 100;
-    a->steps_mode = 0;
+    a->steps_mode = 1;
     a->retrigger = 1;
     int i;
     /* step_vel level: 0=off, 1=row0(min), 4=row3(full incoming). Default 4. */
@@ -4989,7 +4989,7 @@ static void clip_pfx_params_init(clip_pfx_params_t *p) {
     p->seq_arp_rate      = ARP_RATE_DEFAULT;
     p->seq_arp_octaves   = 0;
     p->seq_arp_gate      = 100;
-    p->seq_arp_steps_mode = 0;
+    p->seq_arp_steps_mode = 1;
     p->seq_arp_retrigger = 1;
     p->seq_arp_sync      = 1;
     int i;
