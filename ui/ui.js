@@ -5636,10 +5636,29 @@ function _tickImpl() {
             let loopColor = LED_OFF;
             const _lt = S.activeTrack;
             const _rptLatched = S.drumRepeatLatched[_lt] || S.drumRepeat2LatchedLanes[_lt].size > 0;
+            /* TARP-latched indicator: when the active track has ARP IN on +
+             * latched with notes in the buffer, blink the Loop button at the
+             * arp's step-fire rate in the track color. fire_count is a DSP
+             * monotonic counter — parity drives a 50% duty cycle synced to
+             * each fired note. Gated to melodic tracks (TARP doesn't run on
+             * drum) and yields to perfViewLocked / drum-rpt latch above. */
+            let _tarpBlinkActive = false;
+            let _tarpBlinkOn = false;
+            if (!(S.sessionView && S.perfViewLocked) && !_rptLatched) {
+                const _tarpOn = parseInt(host_module_get_param('t' + _lt + '_tarp_on'), 10) === 1;
+                const _tarpLatch = parseInt(host_module_get_param('t' + _lt + '_tarp_latch'), 10) === 1;
+                if (_tarpOn && _tarpLatch) {
+                    const _fc = parseInt(host_module_get_param('t' + _lt + '_tarp_fc'), 10) || 0;
+                    _tarpBlinkActive = true;
+                    _tarpBlinkOn = (_fc % 2) === 0;
+                }
+            }
             if (S.sessionView && S.perfViewLocked) {
                 loopColor = flashAtRate(48) ? White : LED_OFF;
             } else if (_rptLatched) {
                 loopColor = flashAtRate(48) ? White : LED_OFF;
+            } else if (_tarpBlinkActive) {
+                loopColor = _tarpBlinkOn ? TRACK_COLORS[_lt] : LED_OFF;
             } else if (S.sessionView && S.perfLatchMode) {
                 loopColor = VividYellow;
             } else {

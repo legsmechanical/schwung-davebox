@@ -248,6 +248,12 @@ typedef struct {
     uint8_t  sounding_active;
     uint8_t  sounding_pitch;     /* primary pitch sent into NOTE FX */
     uint32_t gate_remaining;     /* in master ticks */
+
+    /* Monotonic counter of step-fire events. Incremented at the end of each
+     * arp_fire_step / tarp_fire_step. JS polls per-track via tN_tarp_fc to
+     * derive a blink phase synced to the arp's pulse (Loop button indicator
+     * while TARP is latched). Wraps freely — only parity is consumed. */
+    uint16_t fire_count;
 } arp_engine_t;
 
 typedef struct {
@@ -4095,6 +4101,7 @@ static void arp_fire_step(seq8_instance_t *inst, seq8_track_t *tr) {
     a->gate_remaining = gate;
 
     a->cycle_step_count++;
+    a->fire_count++;
 }
 
 /* Per master tick — called once per render-tick per track from render_block. */
@@ -4900,6 +4907,7 @@ static void tarp_fire_step(seq8_instance_t *inst, seq8_track_t *tr) {
     }
 
     a->cycle_step_count++;
+    a->fire_count++;
 }
 
 /* Per master tick — called alongside arp_tick from render_block. */
@@ -7859,6 +7867,11 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         /* tarp_held: space-separated MIDI pitches currently in TARP input buffer
          * (held physical + latched). Empty when buffer is empty. Polled by JS to
          * light source pads while TARP is latched. */
+        /* tarp_fc: monotonic count of TARP step-fire events. JS reads this
+         * each tick to drive the Loop button's TARP-rate blink while latched.
+         * Only parity is consumed; uint16 wrap is harmless. */
+        if (!strcmp(sub, "tarp_fc"))
+            return snprintf(out, out_len, "%u", (unsigned)tr->tarp.fire_count);
         if (!strcmp(sub, "tarp_held")) {
             int n = (int)tr->tarp.held_count;
             if (n <= 0) { out[0] = '\0'; return 0; }

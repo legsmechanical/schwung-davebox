@@ -7,6 +7,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com). Add entries to
 the section into a versioned heading at release time.
 
 ## [Unreleased]
+### Features
+- **Loop button blinks at the ARP IN rate while the active track is latched.** When the focused track has ARP IN on + Latch on with notes in the input buffer, the Loop button pulses in the track's color in sync with every arp step fire — turn the Rate knob and the blink follows. Yields to existing Loop-button states (Performance Mode view-lock, drum-repeat latch flash, Shift). Idle (dim grey) returns the moment the active track unlatches, the buffer empties, or focus moves to a non-latched track.
+
 ### Fixes
 - **SEQUENCE ARP and ARP IN with Retrig=On no longer stutter on rapid chord changes.** Previously, adding any new pitch to the held chord (under Retrig=On) zeroed the arp's rate-grid countdown and re-armed a "wait for the next rate boundary" — up to one rate-interval of silence per added pitch, audible as gaps when playing fast chord changes. Retrig=On now resets only the cycle position (which note plays next, Up direction, vel-decay counter, random-pick mask) and leaves the timing grid intact, so the next fire lands on the same beat it was already scheduled for — just with the cycle restarted from position 0 (lowest note on Up). Sync handling unchanged. Active-clip wrap also benefits from the same change.
 - **SEQ ARP and ARP IN Steps Mode (K5) now shows only Mute and Step** — "Off" removed; "Skip" renamed "Step". Default is Mute on all new sessions.
