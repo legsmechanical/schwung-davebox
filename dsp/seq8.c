@@ -1234,6 +1234,7 @@ static uint16_t initial_clip_step(uint16_t ls, uint16_t length, uint8_t dir);
 static int8_t initial_pp_dir(uint8_t dir);
 static inline int clip_in_reverse_motion(const clip_t *cl);
 static inline uint32_t note_audio_reverse_cmp_tick(const note_t *n, const clip_t *cl, int quantize);
+static inline uint32_t playback_audible_cct(const clip_t *cl, uint16_t current_step, uint16_t tick_in_step);
 
 static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
     int t, c;
@@ -3397,6 +3398,25 @@ static inline uint32_t note_audio_reverse_cmp_tick(const note_t *n, const clip_t
     uint32_t win_end_ticks = (uint32_t)(cl->loop_start + cl->length) * (uint32_t)cl->ticks_per_step;
     if (win_end_ticks > 0 && end_tick >= win_end_ticks) end_tick = win_end_ticks - 1u;
     return end_tick;
+}
+
+/* Audible cct: where the playhead is currently sounding in clip-tick space.
+ *   Step style, or Forward / PP ascending half: tick_in_step counts forward
+ *   within each step → cct = current_step*tps + tick_in_step.
+ *   Audio style + reverse motion (Bwd always, PP descending half only):
+ *   tick_in_step counts backward within each step → cct = current_step*tps
+ *   + (tps - 1 - tick_in_step). This descends monotonically as time
+ *   advances so when transport starts in Bwd-Audio the playhead lands at
+ *   the clip's last tick (where the last step's note's END position is)
+ *   and the first audible note fires immediately. */
+static inline uint32_t playback_audible_cct(const clip_t *cl,
+                                            uint16_t current_step,
+                                            uint16_t tick_in_step) {
+    uint16_t tps = cl->ticks_per_step;
+    if (tps == 0) return (uint32_t)current_step;
+    if (cl->playback_audio_reverse && clip_in_reverse_motion(cl))
+        return (uint32_t)current_step * tps + (uint32_t)(tps - 1u - tick_in_step);
+    return (uint32_t)current_step * tps + (uint32_t)tick_in_step;
 }
 
 /* ------------------------------------------------------------------ */
@@ -9441,8 +9461,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                         drum_pfx_t  *dpx  = &tr->drum_lane_pfx[l];
                         if (dlc->note_count == 0) continue;
                         if (effective_drum_mute(tr, l)) continue;
-                        uint32_t cct = (uint32_t)tr->drum_current_step[l] * dlc->ticks_per_step
-                                       + tr->drum_tick_in_step[l];
+                        uint32_t cct = playback_audible_cct(dlc, tr->drum_current_step[l], tr->drum_tick_in_step[l]);
                         uint8_t  lane_note = lane->midi_note;
                         uint16_t ni2;
                         for (ni2 = 0; ni2 < dlc->note_count; ni2++) {
@@ -9498,7 +9517,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
             } else {
                 /* Melodic note-centric note-on: scan active clip's notes[]. */
                 if (tr->clip_playing && !effective_mute(inst, t)) {
-                    uint32_t cct = (uint32_t)tr->current_step * cl->ticks_per_step + tr->tick_in_step;
+                    uint32_t cct = playback_audible_cct(cl, tr->current_step, tr->tick_in_step);
                     uint16_t ni2;
                     for (ni2 = 0; ni2 < cl->note_count; ni2++) {
                         note_t *n = &cl->notes[ni2];
@@ -9703,8 +9722,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                         tr->current_step = ns2;
                     }
                 }
-                tr->current_clip_tick = (uint32_t)tr->current_step * cl->ticks_per_step
-                                        + tr->tick_in_step;
+                tr->current_clip_tick = playback_audible_cct(cl, tr->current_step, tr->tick_in_step);
             }
         }
         /* Master tick advance: drives global_tick and launch-quant boundary */
