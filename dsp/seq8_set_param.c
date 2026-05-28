@@ -1543,6 +1543,8 @@ static void set_param(void *instance, const char *key, const char *val) {
                 dst->length     = src->length;
                 dst->loop_start = src->loop_start;
                 dst->active     = src->active;
+                dst->playback_dir = src->playback_dir;
+                dst->playback_audio_reverse = src->playback_audio_reverse;
                 dst->pfx_params = lane->pfx_params;
             }
             inst->drum_redo_track = (uint8_t)t;
@@ -1565,6 +1567,9 @@ static void set_param(void *instance, const char *key, const char *val) {
                 dst->length        = src->length;
                 dst->loop_start    = src->loop_start;
                 dst->active        = src->active;
+                dst->playback_dir  = src->playback_dir;
+                dst->playback_audio_reverse = src->playback_audio_reverse;
+                dst->pp_dir_state  = initial_pp_dir(dst->playback_dir);
                 lane->pfx_params   = src->pfx_params;
                 clip_migrate_to_notes(dst);
             }
@@ -1638,6 +1643,8 @@ static void set_param(void *instance, const char *key, const char *val) {
                 dst->length     = src->length;
                 dst->loop_start = src->loop_start;
                 dst->active     = src->active;
+                dst->playback_dir = src->playback_dir;
+                dst->playback_audio_reverse = src->playback_audio_reverse;
                 dst->pfx_params = lane->pfx_params;
             }
             inst->drum_undo_track = (uint8_t)t;

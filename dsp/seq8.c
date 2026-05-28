@@ -516,6 +516,10 @@ typedef struct {
     uint16_t length;
     uint16_t loop_start;
     uint8_t  active;
+    /* Per-lane playback direction + reverse style snapshot so drum-clip
+     * bake/undo restores K5 Dir and AltMode RvSt back to pre-bake values. */
+    uint8_t  playback_dir;
+    uint8_t  playback_audio_reverse;
     drum_pfx_params_t pfx_params;
 } drum_rec_snap_lane_t;
 
@@ -6334,6 +6338,8 @@ static void drum_row_snap(seq8_instance_t *inst, int row,
             d->length     = src->length;
             d->loop_start = src->loop_start;
             d->active     = src->active;
+            d->playback_dir = src->playback_dir;
+            d->playback_audio_reverse = src->playback_audio_reverse;
             d->pfx_params = lane->pfx_params;
         }
     }
@@ -6360,6 +6366,9 @@ static void drum_row_restore(seq8_instance_t *inst, int row,
             dst->length       = s->length;
             dst->loop_start   = s->loop_start;
             dst->active       = s->active;
+            dst->playback_dir = s->playback_dir;
+            dst->playback_audio_reverse = s->playback_audio_reverse;
+            dst->pp_dir_state = initial_pp_dir(dst->playback_dir);
             lane->pfx_params  = s->pfx_params;
             clip_migrate_to_notes(dst);
         }
@@ -6462,6 +6471,8 @@ static void undo_begin_drum_clip(seq8_instance_t *inst, int t, int c) {
         dst->length     = src->length;
         dst->loop_start = src->loop_start;
         dst->active     = src->active;
+        dst->playback_dir = src->playback_dir;
+        dst->playback_audio_reverse = src->playback_audio_reverse;
         dst->pfx_params = lane->pfx_params;
     }
     inst->drum_undo_valid = 1;
