@@ -3434,42 +3434,58 @@ static int compute_bake_emit_positions(uint8_t pdir, uint8_t audio_reverse,
                                        uint32_t rel_tick, uint32_t gate,
                                        uint32_t positions_out[2]) {
     if (length == 0 || tps == 0) return 0;
-    uint16_t S       = (uint16_t)(rel_tick / tps);
-    uint32_t micro   = rel_tick - (uint32_t)S * tps;
+    /* Step index uses note_step-style rounding so a note recorded just below
+     * a step boundary (e.g. tick 335 with tps=24, intended for step 14) maps
+     * to its quantized step rather than the floor below. Without rounding the
+     * descending-position math (2L-2-S, etc.) collides with the next-lower
+     * step and the baked output ends up with two notes piled on the wrong
+     * cycle slot. micro can be negative when the source tick rounded up. */
+    uint16_t S      = note_step(rel_tick, length, tps);
+    int32_t  micro  = (int32_t)rel_tick - (int32_t)S * (int32_t)tps;
     uint32_t end_tick = rel_tick + gate;
     uint32_t win_end  = (uint32_t)length * tps;
     if (end_tick >= win_end) end_tick = win_end - 1u;
-    uint16_t S_end   = (uint16_t)(end_tick / tps);
-    uint32_t micro_e = end_tick - (uint32_t)S_end * tps;
+    uint16_t S_end   = note_step(end_tick, length, tps);
+    int32_t  micro_e = (int32_t)end_tick - (int32_t)S_end * (int32_t)tps;
 
     int count = 0;
+    /* Helper macro: compute a position from a position-in-cycle (P) plus a
+     * forward sub-step offset; clamp to >= 0 (signed-safe). */
+    #define _POS_FWD(P, M) ((uint32_t)((int32_t)(P) * (int32_t)tps + (int32_t)(M) >= 0 \
+                              ? (int32_t)(P) * (int32_t)tps + (int32_t)(M) : 0))
+    /* Audio-reverse sub-step offset = (tps - 1 - micro_e). When micro_e < 0
+     * (source rounded up), that becomes tps - 1 - (negative) > tps - 1 — we
+     * fold it back into the next step's beginning. */
+    #define _POS_REV(P, ME) ((uint32_t)((int32_t)(P) * (int32_t)tps + (int32_t)tps - 1 - (int32_t)(ME) >= 0 \
+                              ? (int32_t)(P) * (int32_t)tps + (int32_t)tps - 1 - (int32_t)(ME) : 0))
+
     switch (pdir) {
     case 1: /* Backward */
         if (audio_reverse)
-            positions_out[count++] = (uint32_t)(length - 1u - S_end) * tps + (tps - 1u - micro_e);
+            positions_out[count++] = _POS_REV((int32_t)(length - 1u) - (int32_t)S_end, micro_e);
         else
-            positions_out[count++] = (uint32_t)(length - 1u - S) * tps + micro;
+            positions_out[count++] = _POS_FWD((int32_t)(length - 1u) - (int32_t)S, micro);
         break;
     case 2: /* Pingpong Forward */
         /* Ascending half — forward note-on at start (always). */
-        positions_out[count++] = (uint32_t)S * tps + micro;
+        positions_out[count++] = _POS_FWD((int32_t)S, micro);
         if (audio_reverse) {
             /* Cycle = 2L, endpoint repeats. Descending half: position = 2L-1-S_end. */
-            positions_out[count++] = (uint32_t)(2u * length - 1u - S_end) * tps + (tps - 1u - micro_e);
+            positions_out[count++] = _POS_REV((int32_t)(2u * length - 1u) - (int32_t)S_end, micro_e);
         } else if (S > 0 && S < (uint16_t)(length - 1) && length >= 2) {
             /* Cycle = 2L-2, endpoint plays once. Only middle steps emit twice. */
-            positions_out[count++] = (uint32_t)(2u * length - 2u - S) * tps + micro;
+            positions_out[count++] = _POS_FWD((int32_t)(2u * length - 2u) - (int32_t)S, micro);
         }
         break;
     case 3: /* Pingpong Backward */
         if (audio_reverse) {
             /* Descending first (0..L-1), ascending second (L..2L-1). */
-            positions_out[count++] = (uint32_t)(length - 1u - S_end) * tps + (tps - 1u - micro_e);
-            positions_out[count++] = (uint32_t)(length + S) * tps + micro;
+            positions_out[count++] = _POS_REV((int32_t)(length - 1u) - (int32_t)S_end, micro_e);
+            positions_out[count++] = _POS_FWD((int32_t)length + (int32_t)S, micro);
         } else {
-            positions_out[count++] = (uint32_t)(length - 1u - S) * tps + micro;
+            positions_out[count++] = _POS_FWD((int32_t)(length - 1u) - (int32_t)S, micro);
             if (S > 0 && S < (uint16_t)(length - 1) && length >= 2)
-                positions_out[count++] = (uint32_t)(length - 1u + S) * tps + micro;
+                positions_out[count++] = _POS_FWD((int32_t)(length - 1u) + (int32_t)S, micro);
         }
         break;
     case 0:
@@ -3477,6 +3493,8 @@ static int compute_bake_emit_positions(uint8_t pdir, uint8_t audio_reverse,
         positions_out[count++] = rel_tick;
         break;
     }
+    #undef _POS_FWD
+    #undef _POS_REV
     return count;
 }
 
