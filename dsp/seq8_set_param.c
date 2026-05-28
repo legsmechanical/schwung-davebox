@@ -1132,6 +1132,9 @@ static void set_param(void *instance, const char *key, const char *val) {
             dst->length        = src->length;
             dst->loop_start    = src->loop_start;
             dst->ticks_per_step = src->ticks_per_step;
+            dst->playback_dir   = src->playback_dir;
+            dst->playback_audio_reverse = src->playback_audio_reverse;
+            dst->pp_dir_state   = initial_pp_dir(dst->playback_dir);
             dst->pfx_params    = src->pfx_params;
             memcpy(dst->steps,           src->steps,           SEQ_STEPS);
             memcpy(dst->step_notes,      src->step_notes,      SEQ_STEPS * 8);
@@ -1169,6 +1172,9 @@ static void set_param(void *instance, const char *key, const char *val) {
             dst->length         = src->length;
             dst->loop_start     = src->loop_start;
             dst->ticks_per_step = src->ticks_per_step;
+            dst->playback_dir   = src->playback_dir;
+            dst->playback_audio_reverse = src->playback_audio_reverse;
+            dst->pp_dir_state   = initial_pp_dir(dst->playback_dir);
             dst->pfx_params     = src->pfx_params;
             memcpy(dst->steps,           src->steps,           SEQ_STEPS);
             memcpy(dst->step_notes,      src->step_notes,      SEQ_STEPS * 8);
@@ -1207,6 +1213,9 @@ static void set_param(void *instance, const char *key, const char *val) {
                 dc->length         = sc->length;
                 dc->loop_start     = sc->loop_start;
                 dc->ticks_per_step = sc->ticks_per_step;
+                dc->playback_dir   = sc->playback_dir;
+                dc->playback_audio_reverse = sc->playback_audio_reverse;
+                dc->pp_dir_state   = initial_pp_dir(dc->playback_dir);
                 dc->active         = sc->active;
                 ddst->lanes[l].midi_note = dst_midi_note;
                 clip_migrate_to_notes(dc);
@@ -1239,6 +1248,9 @@ static void set_param(void *instance, const char *key, const char *val) {
             dst->length         = src->length;
             dst->loop_start     = src->loop_start;
             dst->ticks_per_step = src->ticks_per_step;
+            dst->playback_dir   = src->playback_dir;
+            dst->playback_audio_reverse = src->playback_audio_reverse;
+            dst->pp_dir_state   = initial_pp_dir(dst->playback_dir);
             dst->pfx_params     = src->pfx_params;
             memcpy(dst->steps,            src->steps,            SEQ_STEPS);
             memcpy(dst->step_notes,       src->step_notes,       SEQ_STEPS * 8);
@@ -1380,6 +1392,9 @@ static void set_param(void *instance, const char *key, const char *val) {
                 dc->length        = sc->length;
                 dc->loop_start    = sc->loop_start;
                 dc->ticks_per_step = sc->ticks_per_step;
+                dc->playback_dir  = sc->playback_dir;
+                dc->playback_audio_reverse = sc->playback_audio_reverse;
+                dc->pp_dir_state  = initial_pp_dir(dc->playback_dir);
                 dc->active        = sc->active;
                 dst->lanes[l].pfx_params = src->lanes[l].pfx_params;
                 dst->lanes[l].midi_note = dst_midi_note;
@@ -1430,6 +1445,9 @@ static void set_param(void *instance, const char *key, const char *val) {
                 dc->length        = sc->length;
                 dc->loop_start    = sc->loop_start;
                 dc->ticks_per_step = sc->ticks_per_step;
+                dc->playback_dir  = sc->playback_dir;
+                dc->playback_audio_reverse = sc->playback_audio_reverse;
+                dc->pp_dir_state  = initial_pp_dir(dc->playback_dir);
                 dc->active        = sc->active;
                 dst->lanes[l].pfx_params = src->lanes[l].pfx_params;
                 dst->lanes[l].midi_note = dst_midi_note;
@@ -3318,6 +3336,9 @@ static void set_param(void *instance, const char *key, const char *val) {
                     dst->clip.length        = dlc->length;
                     dst->clip.loop_start    = dlc->loop_start;
                     dst->clip.ticks_per_step = dlc->ticks_per_step;
+                    dst->clip.playback_dir   = dlc->playback_dir;
+                    dst->clip.playback_audio_reverse = dlc->playback_audio_reverse;
+                    dst->clip.pp_dir_state   = initial_pp_dir(dst->clip.playback_dir);
                     dst->clip.active        = dlc->active;
                     dst->midi_note          = dst_midi_note;
                     dst->pfx_params         = dlane->pfx_params;
@@ -3353,6 +3374,9 @@ static void set_param(void *instance, const char *key, const char *val) {
                     dst->clip.length        = dlc->length;
                     dst->clip.loop_start    = dlc->loop_start;
                     dst->clip.ticks_per_step = dlc->ticks_per_step;
+                    dst->clip.playback_dir   = dlc->playback_dir;
+                    dst->clip.playback_audio_reverse = dlc->playback_audio_reverse;
+                    dst->clip.pp_dir_state   = initial_pp_dir(dst->clip.playback_dir);
                     dst->clip.active        = dlc->active;
                     dst->midi_note          = dst_midi_note;
                     clip_migrate_to_notes(&dst->clip);

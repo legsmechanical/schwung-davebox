@@ -7146,7 +7146,25 @@ function _onCC_transport(d1, d2) {
                 disarmRecord();
             }
             } /* end else (not counting in) */
-        } else if (!S.playing) {
+        } else {
+            /* Arming path. First gate: refuse if the active clip / lane is
+             * playing in any non-Forward direction or audio-reverse style.
+             * Recording into Bwd / PPf / PPb / Audio is confusing because the
+             * visual playhead is captured but next-loop semantics fire the
+             * note at a shifted position. Direct the user to bake first. */
+            const _at = S.activeTrack;
+            const _aac = S.trackActiveClip[_at];
+            const _aIsDrum = S.trackPadMode[_at] === PAD_MODE_DRUM;
+            const _apd = _aIsDrum
+                ? (S.drumLanePlaybackDir[_at][S.activeDrumLane[_at]] | 0)
+                : (S.clipPlaybackDir[_at][_aac] | 0);
+            const _apar = _aIsDrum
+                ? (S.drumLanePlaybackAudioReverse[_at][S.activeDrumLane[_at]] | 0)
+                : (S.clipPlaybackAudioReverse[_at][_aac] | 0);
+            if (_apd !== 0 || _apar !== 0) {
+                showActionPopup('NON-FWD', 'BAKE 1ST');
+                forceRedraw();
+            } else if (!S.playing) {
             /* Stopped → DSP-side 1-bar count-in; transport+recording fire from render thread */
             const rawBpm = typeof host_module_get_param === 'function'
                 ? parseFloat(host_module_get_param('bpm')) : 120;
@@ -7193,6 +7211,7 @@ function _onCC_transport(d1, d2) {
                 host_module_set_param('t' + _at + '_recording', _adaptive ? '2' : '1');
             S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
         }
+        } /* end arming else (direction-gated) */
     }
 
     /* Sample press (no modifier): track held state; cancel dialogs/merge immediately on press */
