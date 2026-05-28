@@ -726,7 +726,7 @@ export function updateTrackLEDs() {
             let hasShift = false;
             if      (S.activeBank === 0 && (k === 1 || k === 2)) hasShift = true; // K2 Nudg, K3 Zoom
             else if (S.activeBank === 7 && k === 1)              hasShift = true; // ALL LANES K2 Nudg
-            else if (S.activeBank === 1 && k === 2 && !_isDrum)  hasShift = true; // K3 Rnd algo
+            else if (S.activeBank === 1 && k === 7 && !_isDrum)  hasShift = true; // K8 Rnd algo
             else if (S.activeBank === 3 && k === 7 && !_isDrum)  hasShift = true; // K8 Rnd algo
             else if (S.activeBank === 5 && _isDrum)              hasShift = true; // K1-8 nudge
             else if (S.activeBank === 6)                         hasShift = true; // K1-8 CC assign

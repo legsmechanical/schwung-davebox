@@ -2041,16 +2041,19 @@ function refreshPerClipBankParams(t) {
     if (!snap) return;
     const v = snap.split(' ');
     if (v.length < 17) return;
-    /* NOTE FX bank (1): K0=oct K1=ofs K2=rnd K3=gate K4=vel K5=qnt */
-    S.bankParams[t][1][0] = parseInt(v[0], 10) | 0;  /* oct */
-    S.bankParams[t][1][1] = parseInt(v[1], 10) | 0;  /* ofs */
+    /* NOTE FX bank (1): K1=Oct K2=Ofs K3=Vel K4=Qnt K5=Len(placeholder) K6=Gate K7=blocked K8=Rnd
+     * (DSP snapshot still emits v[] in original order oct/ofs/gate/vel/qnt + rnd at v[31].) */
+    S.bankParams[t][1][0] = parseInt(v[0], 10) | 0;  /* K1 = Oct */
+    S.bankParams[t][1][1] = parseInt(v[1], 10) | 0;  /* K2 = Ofs */
+    S.bankParams[t][1][2] = parseInt(v[3], 10) | 0;  /* K3 = Vel */
+    S.bankParams[t][1][3] = parseInt(v[4], 10) | 0;  /* K4 = Qnt */
+    /* K5 (idx 4) = Len placeholder — no DSP backing, leave at 0 */
+    S.bankParams[t][1][5] = parseInt(v[2], 10) | 0;  /* K6 = Gate */
+    /* K7 (idx 6) = blocked — leave at 0 */
     /* NOTE FX random + modes packed at v[31..33] (right after step_vel[0..7] = v[23..30]) */
-    S.bankParams[t][1][2] = v.length >= 32 ? (parseInt(v[31], 10) | 0) : 0; /* rnd */
+    S.bankParams[t][1][7] = v.length >= 32 ? (parseInt(v[31], 10) | 0) : 0; /* K8 = Rnd */
     S.noteFXRandomMode[t]  = v.length >= 33 ? (parseInt(v[32], 10) | 0) : 2;
     S.midiDlyRandomMode[t] = v.length >= 34 ? (parseInt(v[33], 10) | 0) : 2;
-    S.bankParams[t][1][3] = parseInt(v[2], 10) | 0;  /* gate */
-    S.bankParams[t][1][4] = parseInt(v[3], 10) | 0;  /* vel */
-    S.bankParams[t][1][5] = parseInt(v[4], 10) | 0;  /* qnt */
     /* HARMZ bank (2): K0=oct K1=hrm1 K2=hrm2 K3=hrm3 (Unis retired in state v=33) */
     for (let k = 0; k < 4; k++) S.bankParams[t][2][k] = parseInt(v[5 + k], 10) | 0;
     /* MIDI DLY bank (3): K0=dly K1=lvl K2=rep K3=vfb K4=pfb K5=gfb K6=retrg K7=rnd
@@ -3867,7 +3870,7 @@ function drawUI() {
             print(colX, rowY + 12, col4(disp), hi ? 0 : 1);
         }
         } else if (S.shiftHeld && S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM &&
-                ((bank === 1 && S.knobTouched === 2) || (bank === 3 && S.knobTouched === 7))) {
+                ((bank === 1 && S.knobTouched === 7) || (bank === 3 && S.knobTouched === 7))) {
         /* Rnd algorithm selector: shown while Rnd knob is touched/recently turned */
         const t      = S.activeTrack;
         const isMidi = bank === 3;
@@ -3931,6 +3934,37 @@ function drawUI() {
                 print(colX, rowY + 12, col4(val), touchedHi ? 0 : 1);
             }
         }
+        } else if (S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM && bank === 1) {
+        /* Melodic NOTE FX: K1=Oct, K2=Ofs, K3=Vel, K4=Qnt, K5=Len> (placeholder, no-op),
+         * K6=>Gate (cell widened to fit 5-char label), K7=blocked, K8=Rnd. */
+        const t     = S.activeTrack;
+        const knobs = BANKS[1].knobs;
+        const vals  = S.bankParams[t][1];
+        drawBankHeading(BANKS[1].name);
+        for (let k = 0; k < 8; k++) {
+            if (k === 6) continue;  /* K7 blocked, no render */
+            const colX = 4 + (k % 4) * 30;
+            const rowY = k < 4 ? 12 : 36;
+            const hi   = (S.knobTouched === k);
+            /* K6 (>Gate) is 5 chars (30px) — widen its highlight cell and render
+             * the label raw, since col4 would truncate the leading '>'. */
+            const widen = (k === 5);
+            const cellW = widen ? 30 : 24;
+            if (hi) fill_rect(colX, rowY, cellW, 24, 1);
+            if (k === 4) {
+                /* K5 Len placeholder: hardcoded label + '--' value */
+                print(colX, rowY,      col4('Len>'), hi ? 0 : 1);
+                print(colX, rowY + 12, col4('--'),   hi ? 0 : 1);
+            } else if (widen) {
+                /* K6 >Gate raw label (5 chars), value via fmt */
+                print(colX, rowY,      '>Gate',                       hi ? 0 : 1);
+                print(colX, rowY + 12, col4(knobs[k].fmt(vals[k])),   hi ? 0 : 1);
+            } else {
+                print(colX, rowY,      col4(knobs[k].abbrev),         hi ? 0 : 1);
+                print(colX, rowY + 12, col4(knobs[k].fmt(vals[k])),   hi ? 0 : 1);
+            }
+        }
+
         } else if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 3) {
         /* Drum MIDI DLY: K1-K4 same as melodic, K5=Gate, K6=Clk, K7=Retrg, K8 empty.
          * Drum has no Pfb (no per-lane pitch) and no Rnd (no random pitch fb),
@@ -8370,9 +8404,9 @@ function _onCC_knobs(d1, d2) {
             S.screenDirty = true;
             return;
         }
-        /* Rnd knob in NOTE FX (K3) or MIDI DLY (K8) on melodic + Shift: scroll algorithm dialog */
+        /* Rnd knob in NOTE FX (K8) or MIDI DLY (K8) on melodic + Shift: scroll algorithm dialog */
         if (S.shiftHeld && S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM &&
-                ((bank === 1 && knobIdx === 2) || (bank === 3 && knobIdx === 7))) {
+                ((bank === 1 && knobIdx === 7) || (bank === 3 && knobIdx === 7))) {
             const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
             if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
             S.knobAccum[knobIdx]++;
@@ -9771,7 +9805,7 @@ function _onStepButtons(d1, d2) {
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('t' + t + '_quantize', '100');
             }
-            if (!isDrum) S.bankParams[t][1][5] = 100;
+            if (!isDrum) S.bankParams[t][1][3] = 100;  /* K4 = Qnt (melodic NOTE FX) */
             showActionPopup('QUANT 100%');
         }
         forceRedraw();

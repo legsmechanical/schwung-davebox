@@ -610,12 +610,13 @@ Non-destructive transforms applied to every note before output.
 |---|---|---|
 | K1 | Octave | Shifts all notes up/down by octave (±4) |
 | K2 | Offset | Shifts by semitones (±24), or scale degrees when Scale Aware is on |
-| K3 | Pitch Random | 0 = off. 1–24 = max deviation. **Shift + turn** to select algorithm: **Walk** (default — each note steps ±1 from previous, accumulating), **Uniform** (random offset within range), **Gaussian** (offsets cluster around center). Scale-aware: random pitches stay in key. |
-| K4 | Gate Time | Scales note duration 0–400%. 100% = unchanged. Below = staccato; above = legato. |
-| K5 | Velocity | Scales note velocity |
-| K6 | Quantize | Quantization amount applied at render time. **Melodic only.** |
+| K3 | Velocity | Scales note velocity |
+| K4 | Quantize | Quantization amount applied at render time. |
+| K5 | `Len>` | Placeholder reserved for a future length control. |
+| K6 | `>Gate` | Scales note duration 0–400%. 100% = unchanged. Below = staccato; above = legato. |
+| K8 | Pitch Random | 0 = off. 1–24 = max deviation. **Shift + turn** to select algorithm: **Walk** (default — each note steps ±1 from previous, accumulating), **Uniform** (random offset within range), **Gaussian** (offsets cluster around center). Scale-aware: random pitches stay in key. |
 
-K7 and K8 are unassigned on the NOTE FX bank (melodic).
+K7 is blocked on the NOTE FX bank (melodic).
 
 **On drum tracks**, the NOTE FX bank reuses the cells for per-lane controls: **K1+K2 (merged Oct/Note)** edit the active lane's MIDI note (K1 = ±12 semitones, K2 = ±1 semitone); **K3 (Vel), K4 (Qnt), K6 (>Gate)** apply to the active lane; **K5 (Len>)** is a placeholder reserved for a future per-lane length control; K7 and K8 are blocked. Use ALL LANES K3 to quantize every lane at once.
 
