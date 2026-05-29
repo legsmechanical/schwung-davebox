@@ -317,7 +317,30 @@ export function doClearSession() {
                 S.drumRepeatNudge[_t][_l][_s]    = 0;
             }
         }
+        S.trackAtMode[_t]              = 0;
+        S.trackMuted[_t]               = false;
+        S.trackSoloed[_t]              = false;
+        S.drumLaneMute[_t]             = 0;
+        S.drumLaneSolo[_t]             = 0;
+        S.noteFXRandomMode[_t]         = 2;
+        S.midiDlyRandomMode[_t]        = 2;
+        S.lastTarpStyle[_t]            = 1;
+        S.clipAdaptiveMode[_t]         = new Array(NUM_CLIPS).fill(false);
+        S.clipLengthManuallySet[_t]    = new Array(NUM_CLIPS).fill(false);
+        S.drumLaneLengthManuallySet[_t] = false;
     }
+    S.sessionView          = false;
+    S.beatMarkersEnabled   = true;
+    S.perfModsToggled      = 0;
+    S.perfLatchMode        = true;
+    S.perfRecalledSlot     = -1;
+    for (let _i = 8; _i < 16; _i++) S.perfSnapshots[_i] = 0;
+    S.swingAmt             = 0;
+    S.swingRes             = 0;
+    S.launchQuant          = 0;
+    S.midiInChannel        = 0;
+    S.metronomeOn          = 1;
+    S.inpQuant             = false;
     S.pendingSetLoad  = true;
     S.globalMenuOpen  = false;
     S.confirmClearSession = false;
