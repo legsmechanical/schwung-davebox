@@ -34,7 +34,7 @@ ssh ableton@move.local "tail -f /data/UserData/schwung/seq8.log"
 
 ## State format
 
-Version v=35 (only v=35 accepted). v≠35 → deleted + clean start.
+Version v=36 (only v=36 accepted). v≠36 → deleted + clean start.
 
 Note format: `tick:pitch:vel:gate;`
 

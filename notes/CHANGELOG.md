@@ -9,6 +9,7 @@ the section into a versioned heading at release time.
 ## [Unreleased]
 ### Features
 - **Sub-bar launch quant preserves playhead phase.** Quantized clip launches at 1/16, 1/8, 1/4, or 1/2 now phase-align the melodic playhead into the new clip's length instead of resetting to step 0. 1-bar quant still resets. All four playback directions (Fwd/Bwd/PPf/PPb) are fully supported.
+- **Clear Automation is now undoable.** CC and AT automation clear (CC PARAM bank → Delete+jog menu) can be undone with the Undo button. Additionally, undo of clip clear/copy/cut/bake/row operations now restores automation data that was previously silently lost.
 
 ### Performance / UX
 - **Random mode selector moved to jog-click alt param.** K8 on NOTE FX and DELAY banks now shows Algo (Pure/Gaus/Walk) in alt mode instead of the old Shift+turn full-screen dialog.
@@ -17,6 +18,8 @@ the section into a versioned heading at release time.
 - **Drum step edit overlay now uses 4-column layout** matching melodic step edit. Row 1: Leng / Vel / Nudg (K1-K3), Row 2: Iter / Prob / Ratch (K5-K7). K4 and K8 are unused.
 
 ### Fixes
+- **Clear Session now fully resets all state.** Global settings (key, scale, swing, metronome, launch quant, MIDI channel), mute/solo, snapshots, CC assigns, VelIn, and JS-side state (session view, beat markers, perf mods, aftertouch mode) were surviving Clear Session. All now reset to factory defaults.
+- **Global params persist on change.** Key, scale, BPM, metronome, scale-aware, input quantize, and launch quant now save immediately via deferred save instead of only on suspend. Switching sets or rebooting no longer loses these settings.
 - **Pad drop self-heal.** Periodic readback of DSP pad_note_map detects and corrects stale 0xFF entries within ~50ms. Unexpected drops logged to seq8-pad-drop.log for diagnosis.
 
 ### Fixes

@@ -38,7 +38,7 @@ ssh ableton@move.local "tail -f /data/UserData/schwung/seq8.log"
 
 ## State persistence
 
-DSP state v=35 (only v=35 accepted); v≠35 → deleted + clean start. Full key list in `dsp/CLAUDE.md`.
+DSP state v=36 (only v=36 accepted); v≠36 → deleted + clean start. Full key list in `dsp/CLAUDE.md`.
 
 JS `init()` reads UUID, compares with `state_uuid` get_param. Mismatch → `state_load=UUID` next tick → `pendingDspSync=5` → `syncClipsFromDsp()` → `restoreUiSidecar(true)`. Same path fires on resume when set changed while suspended (UUID mismatch on resume edge). `restoreUiSidecar(applyDefaultsNow)` — shared helper called from init() and pendingDspSync=0 completion; applies activeTrack/trackActiveClip/sessionView/activeDrumLane/perf/beatMarkers; handles no-sidecar first-run defaults.
 
