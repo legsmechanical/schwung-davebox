@@ -503,7 +503,7 @@ steps (3 IPC calls vs full resync), used by per-detent K2/K3 edits while stopped
 ## 20. State Version Bump Required for Any Structural State Change
 
 State files with `v` < current version are silently deleted on load and the module
-starts from scratch with no error or warning. The current version is `v=15`.
+starts from scratch with no error or warning. The current version is `v=36`.
 
 Any change that alters the state file format — new persisted field, changed key name,
 changed serialization format — requires incrementing the version constant in the DSP

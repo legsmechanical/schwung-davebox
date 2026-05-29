@@ -47,7 +47,7 @@ version, date = sys.argv[1], sys.argv[2]
 
 # CHANGELOG: ensure [Unreleased] has content, then rename to versioned and
 # insert a fresh empty [Unreleased] above.
-cl = pathlib.Path("notes/CHANGELOG.md")
+cl = pathlib.Path("CHANGELOG.md")
 text = cl.read_text()
 m = re.search(r"^## \[Unreleased\]\s*\n(.*?)(?=^## \[)", text, re.MULTILINE | re.DOTALL)
 if not m:
@@ -89,7 +89,7 @@ echo "Building release tarball..."
 ./scripts/build.sh
 
 # --- commit, tag, push ------------------------------------------------------
-git add notes/CHANGELOG.md release.json module.json
+git add CHANGELOG.md release.json module.json
 git commit -m "release: $TAG"
 git tag -a "$TAG" -m "Release $TAG"
 
@@ -106,4 +106,4 @@ echo
 echo "Next steps (manual):"
 echo "  1. Create v$VERSION release on GitHub"
 echo "  2. Upload dist/davebox-module.tar.gz as the release asset"
-echo "  3. Paste the [$VERSION] section from notes/CHANGELOG.md as the release notes"
+echo "  3. Paste the [$VERSION] section from CHANGELOG.md as the release notes"

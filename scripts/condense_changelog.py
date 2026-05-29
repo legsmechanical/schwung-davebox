@@ -27,7 +27,7 @@ import sys
 
 
 CHANGELOG_URL = (
-    "https://github.com/legsmechanical/schwung-davebox/blob/main/notes/CHANGELOG.md"
+    "https://github.com/legsmechanical/schwung-davebox/blob/main/CHANGELOG.md"
 )
 
 
@@ -143,7 +143,7 @@ def main() -> None:
     version = sys.argv[1].lstrip("v")
 
     repo_root = pathlib.Path(__file__).resolve().parent.parent
-    changelog = (repo_root / "notes" / "CHANGELOG.md").read_text()
+    changelog = (repo_root / "CHANGELOG.md").read_text()
 
     section = extract_section(changelog, version)
     groups = parse_groups(section)
