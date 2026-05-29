@@ -8086,7 +8086,7 @@ function _onCC_knobs(d1, d2) {
         S.screenDirty = true;
         const bank    = S.activeBank;
         /* Arp Steps interval-mode overlay: K1-K8 set per-step scale-degree
-         * offset (±14) for SEQ ARP (bank 4, per-clip) or TARP (bank 5, per-track).
+         * offset (±24) for SEQ ARP (bank 4, per-clip) or TARP (bank 5, per-track).
          * Sens=2: ~ half-turn covers the full range. */
         if (S.stepIntervalMode && (bank === 4 || bank === 5)) {
             const t   = S.activeTrack;
@@ -8098,7 +8098,7 @@ function _onCC_knobs(d1, d2) {
                 if (bank === 4) {
                     const ac = effectiveClip(t);
                     const cur = S.seqArpStepInt[t][ac][knobIdx] | 0;
-                    const nxt = Math.max(-14, Math.min(14, cur + dir));
+                    const nxt = Math.max(-24, Math.min(24, cur + dir));
                     if (nxt !== cur) {
                         S.seqArpStepInt[t][ac][knobIdx] = nxt;
                         /* Writes to active-clip pfx_params via pfx_set; matches the
@@ -8108,7 +8108,7 @@ function _onCC_knobs(d1, d2) {
                     }
                 } else {
                     const cur = S.tarpStepInt[t][knobIdx] | 0;
-                    const nxt = Math.max(-14, Math.min(14, cur + dir));
+                    const nxt = Math.max(-24, Math.min(24, cur + dir));
                     if (nxt !== cur) {
                         S.tarpStepInt[t][knobIdx] = nxt;
                         if (typeof host_module_set_param === 'function')

@@ -144,7 +144,7 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
         return;
     }
     if (!strcmp(key, "seq_arp_step_int")) {
-        /* Format: "S I" — step index 0..7, signed interval -14..+14 (scale degrees). */
+        /* Format: "S I" — step index 0..7, signed interval -24..+24 (scale degrees). */
         const char *p = val;
         int s = 0, iv = 0, sign = 1;
         while (*p == ' ') p++;
@@ -154,7 +154,7 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
         else if (*p == '+') { p++; }
         while (*p >= '0' && *p <= '9') { iv = iv * 10 + (*p - '0'); p++; }
         if (s < 0 || s > 7) return;
-        iv = clamp_i(iv * sign, -14, 14);
+        iv = clamp_i(iv * sign, -24, 24);
         cp->seq_arp_step_int[s] = (int8_t)iv;
         fx->arp.step_int[s]     = (int8_t)iv;
         inst->state_dirty = 1;
@@ -2629,7 +2629,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             return;
         }
         if (!strcmp(sub, "tarp_step_int")) {
-            /* Format: "S I" — step index 0..7, signed interval -14..+14 (scale degrees). */
+            /* Format: "S I" — step index 0..7, signed interval -24..+24 (scale degrees). */
             const char *p = val;
             int s = 0, iv = 0, sign = 1;
             while (*p == ' ') p++;
@@ -2639,7 +2639,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             else if (*p == '+') { p++; }
             while (*p >= '0' && *p <= '9') { iv = iv * 10 + (*p - '0'); p++; }
             if (s < 0 || s > 7) return;
-            iv = clamp_i(iv * sign, -14, 14);
+            iv = clamp_i(iv * sign, -24, 24);
             tr->tarp.step_int[s] = (int8_t)iv;
             inst->state_dirty = 1;
             return;

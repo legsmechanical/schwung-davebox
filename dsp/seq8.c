@@ -217,7 +217,7 @@ typedef struct {
     uint8_t  steps_mode;   /* 0=Off, 1=Mute, 2=Skip */
     uint8_t  retrigger;    /* 0/1 — reset cycle/step on new note + clip wrap */
     uint8_t  step_vel[8];  /* level 0..4 (0=off, 1..4=row 0..3) */
-    int8_t   step_int[8];  /* per-step scale-degree offset -14..+14; default 0 */
+    int8_t   step_int[8];  /* per-step scale-degree offset -24..+24; default 0 */
     uint8_t  step_loop_len; /* 1..8, default 8 — step pattern loop length */
     uint32_t master_anchor; /* arp_master_tick at last retrigger; step_pos = ((master-anchor)/rate) % step_loop_len */
 
@@ -368,7 +368,7 @@ typedef struct {
     int seq_arp_retrigger;     /* 0/1; default 1 */
     int seq_arp_sync;          /* 0=free, 1=sync to global rate boundary */
     uint8_t seq_arp_step_vel[8]; /* level 0..4 (0=off, 1..4=row 0..3); default 4 */
-    int8_t  seq_arp_step_int[8]; /* per-step scale-degree offset -14..+14; default 0 */
+    int8_t  seq_arp_step_int[8]; /* per-step scale-degree offset -24..+24; default 0 */
     uint8_t seq_arp_step_loop_len; /* 1..8, default 8 — step pattern loop length */
     /* NOTE FX K5 "Len": non-destructive fixed pre-gate note length.
      * 0=`--` passthrough, 1..8 = fixed multiples of tps (.25/.5/.75/1/2/4/8/16).
@@ -1812,7 +1812,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
                 snprintf(key, sizeof(key), "t%d_tasv%d", t, _i);
                 tr2->tarp.step_vel[_i] = (uint8_t)clamp_i(json_get_int(buf, key, 4), 0, 4);
                 snprintf(key, sizeof(key), "t%d_tasi%d", t, _i);
-                tr2->tarp.step_int[_i] = (int8_t)clamp_i(json_get_int(buf, key, 0), -14, 14);
+                tr2->tarp.step_int[_i] = (int8_t)clamp_i(json_get_int(buf, key, 0), -24, 24);
             }
         }
         snprintf(key, sizeof(key), "t%d_tasll", t);
@@ -1975,7 +1975,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
                     snprintf(key, sizeof(key), "t%dc%d_arsv%d", t, c, _i);
                     p2->seq_arp_step_vel[_i] = (uint8_t)clamp_i(json_get_int(buf, key, 4), 0, 4);
                     snprintf(key, sizeof(key), "t%dc%d_arsi%d", t, c, _i);
-                    p2->seq_arp_step_int[_i] = (int8_t)clamp_i(json_get_int(buf, key, 0), -14, 14);
+                    p2->seq_arp_step_int[_i] = (int8_t)clamp_i(json_get_int(buf, key, 0), -24, 24);
                 }
             }
             snprintf(key, sizeof(key), "t%dc%d_arsll", t, c);
@@ -3666,7 +3666,7 @@ static void arp_init_defaults(arp_engine_t *a) {
     int i;
     /* step_vel level: 0=off, 1=row0(min), 4=row3(full incoming). Default 4. */
     for (i = 0; i < 8; i++) a->step_vel[i] = 4;
-    /* step_int: per-step scale-degree offset -14..+14. Default 0. */
+    /* step_int: per-step scale-degree offset -24..+24. Default 0. */
     for (i = 0; i < 8; i++) a->step_int[i] = 0;
     a->step_loop_len = 8;
     arp_clear_runtime(a);
