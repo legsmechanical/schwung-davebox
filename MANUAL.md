@@ -405,7 +405,7 @@ Beyond the automatic save, you can keep up to **16 named save states** per set �
 - When you already have 16 snapshots, **Save state** opens a picker instead: choose which existing snapshot to overwrite, and confirm.
 - **Note/Session** backs out of the list (or out of a confirm prompt).
 
-Snapshots belong to the set they were saved in — each set has its own list. **Clear Session does not delete your snapshots**, so they remain available to load even after you clear the live project.
+Snapshots belong to the set they were saved in — each set has its own list. **Clear Session resets all snapshots** along with every other setting.
 
 After a dAVEBOx update that changes the save format, older snapshots can't be loaded; the Load list marks them `(old)` and offers to remove them the first time you open it.
 
@@ -544,7 +544,7 @@ New recordings go into whichever clip slot is currently focused. To record into 
 
 ### Undo
 
-Arming live recording snapshots the clip. A single **Undo** reverts the entire recorded session. On drum tracks the snapshot covers all 32 lanes.
+Arming live recording snapshots the clip. A single **Undo** reverts the entire recorded session. On drum tracks the snapshot covers all 32 lanes. Undo also covers clip clear, hard reset, copy, cut, bake, legato, double-fill, scene operations, and automation clears — any of these can be reverted with one press of the Undo button. **Shift + Undo** redoes the last undone action.
 
 ---
 
@@ -741,7 +741,7 @@ Knob→target **assignment is per-track**; the resting value and automation are 
 
 **Step-edit.** Hold a step in this bank: the OLED shows "CC S1–S16" with a 4×2 knob grid. Turning a knob writes a clean flat hold across that step (no stray ramp). From an unset step, turning up sets a value; turning **down past 0 clears** that knob's point back to "—".
 
-**Clearing.**
+**Clearing.** All automation clears are undoable via the **Undo** button.
 - **Tap Delete** (press & release, without turning the jog) opens the **CLEAR AUTOMATION** menu: jog to scroll the list — **Aftertouch (AT)**, **Pitch bend (PB)** (disabled placeholder), **Control Change (CC)**, **CLEAR**, **Cancel** — jog-click to check AT and/or CC, then **CLEAR** to wipe the checked types for the active clip. Exit without changing anything via **Cancel**, the **Note/Session** button, or **tapping Delete again**.
 - **Delete + jog click** and **Shift + Delete + jog** clear **all** automation (CC + AT) for the clip.
 - **Delete + knob touch (or turn)** clears that one knob's CC (automation + resting value). **Delete + a step button** clears **all** knobs' CC points at that step.
