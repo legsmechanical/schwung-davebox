@@ -5595,6 +5595,60 @@ static inline void drum_lane_anchor_playhead(seq8_instance_t *inst,
         ncl->notes[ni].suppress_until_wrap = 0;
 }
 
+/* Anchor a melodic track's playhead to where it would be if the new clip had
+ * been playing since transport start. Mirrors drum_lane_anchor_playhead but
+ * for the single melodic playhead. */
+static inline void melodic_anchor_playhead(seq8_instance_t *inst,
+                                           seq8_track_t *tr, clip_t *ncl) {
+    uint16_t ls  = ncl->loop_start;
+    uint16_t len = ncl->length > 0 ? ncl->length : 1;
+    uint16_t tps = ncl->ticks_per_step > 0 ? ncl->ticks_per_step
+                                            : (uint16_t)TICKS_PER_STEP;
+    uint32_t elapsed = (uint32_t)inst->global_tick * (uint32_t)TICKS_PER_STEP
+                       + (uint32_t)inst->master_tick_in_step;
+    uint32_t steps   = elapsed / tps;
+    uint16_t target;
+    int8_t   target_pp = +1;
+    switch (ncl->playback_dir) {
+    case 1: /* Backward */
+        target = (uint16_t)(ls + (len - 1u - (steps % len)));
+        break;
+    case 2: { /* Pingpong Forward */
+        if (len <= 1) { target = ls; break; }
+        if (ncl->playback_audio_reverse) {
+            uint32_t cyc = steps % (2u * (uint32_t)len);
+            if (cyc < len)  { target = (uint16_t)(ls + cyc);                     target_pp = +1; }
+            else            { target = (uint16_t)(ls + (2u * len - 1u - cyc));   target_pp = -1; }
+        } else {
+            uint32_t cyc = steps % (2u * (uint32_t)len - 2u);
+            if (cyc <= (uint32_t)(len - 1)) { target = (uint16_t)(ls + cyc);                     target_pp = +1; }
+            else                            { target = (uint16_t)(ls + (2u * len - 2u - cyc));   target_pp = -1; }
+        }
+        break;
+    }
+    case 3: { /* Pingpong Backward */
+        if (len <= 1) { target = ls; break; }
+        if (ncl->playback_audio_reverse) {
+            uint32_t cyc = steps % (2u * (uint32_t)len);
+            if (cyc < len)  { target = (uint16_t)(ls + (len - 1u - cyc));       target_pp = -1; }
+            else            { target = (uint16_t)(ls + (cyc - len));            target_pp = +1; }
+        } else {
+            uint32_t cyc = steps % (2u * (uint32_t)len - 2u);
+            if (cyc <= (uint32_t)(len - 1)) { target = (uint16_t)(ls + (len - 1u - cyc));       target_pp = -1; }
+            else                            { target = (uint16_t)(ls + (cyc - (len - 1u)));     target_pp = +1; }
+        }
+        break;
+    }
+    case 0:
+    default:
+        target = (uint16_t)(ls + (steps % len));
+        break;
+    }
+    tr->current_step  = target;
+    ncl->pp_dir_state = target_pp;
+    tr->tick_in_step  = elapsed % tps;
+}
+
 static void clip_init(clip_t *cl) {
     int s;
     cl->length         = SEQ_STEPS_DEFAULT;
@@ -9499,9 +9553,13 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                         pfx_sync_from_clip(tr);
                         cl = &tr->clips[tr->active_clip];
                         clip_clear_suppress(cl);
-                        tr->current_step = initial_clip_step(cl->loop_start, cl->length, cl->playback_dir);
-                        cl->pp_dir_state = initial_pp_dir(cl->playback_dir);
-                        tr->tick_in_step = 0;
+                        if (inst->launch_quant < 5) {
+                            melodic_anchor_playhead(inst, tr, cl);
+                        } else {
+                            tr->current_step = initial_clip_step(cl->loop_start, cl->length, cl->playback_dir);
+                            cl->pp_dir_state = initial_pp_dir(cl->playback_dir);
+                            tr->tick_in_step = 0;
+                        }
                     }
                     if (tr->record_armed) {
                         memset(tr->cc_auto_touch_frame, 0, sizeof(tr->cc_auto_touch_frame));
@@ -9563,9 +9621,13 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                             pfx_sync_from_clip(tr);
                             cl = &tr->clips[tr->active_clip];
                             clip_clear_suppress(cl);
-                            tr->current_step = initial_clip_step(cl->loop_start, cl->length, cl->playback_dir);
-                            cl->pp_dir_state = initial_pp_dir(cl->playback_dir);
-                            tr->tick_in_step = 0;
+                            if (inst->launch_quant < 5) {
+                                melodic_anchor_playhead(inst, tr, cl);
+                            } else {
+                                tr->current_step = initial_clip_step(cl->loop_start, cl->length, cl->playback_dir);
+                                cl->pp_dir_state = initial_pp_dir(cl->playback_dir);
+                                tr->tick_in_step = 0;
+                            }
                         }
                         if (tr->record_armed) {
                             memset(tr->cc_auto_touch_frame, 0, sizeof(tr->cc_auto_touch_frame));
