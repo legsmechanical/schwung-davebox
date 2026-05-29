@@ -23,6 +23,14 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
         { PFX_SET_BOTH(note_random, note_random, 0, 24); return; }
     if (!strcmp(key, "noteFX_random_mode"))
         { PFX_SET_BOTH(note_random_mode, note_random_mode, 0, 2); return; }
+    if (!strcmp(key, "noteFX_length_mode")) {
+        /* NOTE FX K5 Len: 0=`--` passthrough, 1..8 = fixed multiples
+         * (.25/.5/.75/1/2/4/8/16). Lives only on clip_pfx_params (no
+         * play_fx_t mirror — render reads cl->pfx_params directly). */
+        int _v = clamp_i(my_atoi(val), 0, 8);
+        cp->note_length_mode = (uint8_t)_v;
+        return;
+    }
 
     if (!strcmp(key, "harm_octaver"))
         { PFX_SET_BOTH(octaver, octaver, -4, 4); return; }
@@ -3316,6 +3324,15 @@ static void set_param(void *instance, const char *key, const char *val) {
                 inst->state_dirty = 1;
                 return;
             }
+            /* tN_lL_lgto_apply: destructive legato on this drum lane's clip.
+             * Each note's gate becomes (next-active-tick − this-tick); last-
+             * active note's gate fills to clip_end. Undoable. */
+            if (!strcmp(p2, "_lgto_apply")) {
+                undo_begin_drum_clip(inst, tidx, (int)tr->active_clip);
+                apply_legato_to_clip(&dlane->clip);
+                inst->state_dirty = 1;
+                return;
+            }
             if (!strcmp(p2, "_pfx_reset")) {
                 undo_begin_single(inst, tidx, (int)tr->active_clip);
                 drum_pfx_set(inst, tr, &dlane->pfx_params, &tr->drum_lane_pfx[lane_idx], "pfx_reset", "1");
@@ -5368,6 +5385,17 @@ static void set_param(void *instance, const char *key, const char *val) {
                     tr->current_step = cl->loop_start;
             }
             clip_migrate_to_notes(cl);
+            inst->state_dirty = 1;
+            return;
+        }
+
+        /* tN_lgto_apply: destructive legato on the active clip. Each note's
+         * gate becomes (next-active-tick − this-tick); last-active note's
+         * gate fills to clip_end. Undoable. */
+        if (!strcmp(sub, "lgto_apply")) {
+            undo_begin_single(inst, tidx, (int)tr->active_clip);
+            apply_legato_to_clip(&tr->clips[tr->active_clip]);
+            pfx_sync_from_clip(tr);
             inst->state_dirty = 1;
             return;
         }

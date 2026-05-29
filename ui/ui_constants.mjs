@@ -84,7 +84,14 @@ export function fmtStretch(exp) {
     if (exp > 0)   return 'x' + (1 << exp);
     return '/' + (1 << (-exp));
 }
-export function fmtLen(v)    { return v + 'st'; }
+/* NOTE FX K5 "Len" — 9-state pre-gate length param. Mode 0 is `--`
+ * passthrough; 1..8 are fixed step multiples. Destructive legato lives
+ * on CLIP K8 as a separate one-shot action knob (fmtLgto). */
+export const LEN_LABELS = ['--', '.25', '.50', '.75', '1', '2', '4', '8', '16'];
+export function fmtLen(v) { return LEN_LABELS[(v | 0)] || '--'; }
+/* CLIP K8 / DRUM LANE K8 "Lgto" — destructive one-shot action. The value
+ * cell shows "->" indicating right-turn opens the confirm dialog. */
+export function fmtLgto() { return '->'; }
 export function fmtRes(v)    { return ['1/32','1/16','1/8','1/4','1/2','1bar'][v] || '1/16'; }
 export function fmtPct(v)    { return v + '%'; }
 export function fmtNote(v)   { return NOTE_KEYS[((v | 0) % 12 + 12) % 12]; }
@@ -256,8 +263,8 @@ const _XQ = p(null, null, null, 'stub', 0, 100, -1, fmtNA);  /* bank 7 K4: quant
 export const BANKS = [
     /* 0 — CLIP (pad 92) — Beat Stretch, Clock Shift (Shift+turn = Nudge),
      * Resolution, K5=Dir (per-clip playback direction), K6=InQ (custom
-     * handling, mirrors drum ALL LANES K5), SqFl. K4 unassigned (clip length
-     * is set via the Loop+jog modifier shortcut). */
+     * handling, mirrors drum ALL LANES K5), SqFl, K8=Lgto (destructive
+     * one-shot — opens confirm dialog on right-turn). K4 unassigned. */
     { name: 'CLIP', knobs: [
         p('Stch', 'Beat Stretch',    'beat_stretch',    'action', 0, 0,   0,   fmtStretch, 16, '_factor', true),
         p('Shft', 'Clock Shift',     'clock_shift',     'action', 0, 0,   0,   fmtSign,    8),
@@ -266,21 +273,23 @@ export const BANKS = [
         p('Dir',  'Playback Dir',   'clip_playback_dir', 'clip',  0, 3,   0,   fmtPlayDir, 16),
         p('InQ',  'Input Quantize', 'diq',              'track', 0, 8, 0,  fmtDiq, 8),
         p('SqFl', 'Seq Follow',      null,              'seqfollow', 0, 1, 1,  fmtBool, 16),
-        _X,
+        p('Lgto', 'Apply Legato',   'lgto_apply',       'action', 0, 0,   0,   fmtLgto,    16, '_factor', true),
     ]},
     /* 1 — NOTE FX (pad 93). Layout (melodic, K-cells 1..8):
-     * K1=Oct, K2=Ofs, K3=Vel, K4=Qnt, K5=Len(placeholder), K6=>Gate, K7=blocked, K8=Rnd.
-     * Custom render branch hardcodes the K5 'Len>' label + K6 widened '>Gate' cell;
-     * K5/K7 stubs make the generic handler and LED ring no-op them. */
+     * K1=Oct, K2=Ofs, K3=Vel, K4=Qnt, K5=Len, K6=>Gate, K7=blocked, K8=Rnd.
+     * Custom render branch widens K6 to fit ">Gate" (5 chars); K7 stub
+     * blocks the generic handler and LED ring. Len is a fixed pre-gate
+     * length multiplier (non-destructive). Destructive legato lives on
+     * CLIP K8 / DRUM LANE K8. */
     { name: 'NOTE FX', knobs: [
-        p('Oct',  'Octave Shift',    'noteFX_octave',   'track', -4,   4,   0,   fmtSign,    16),
-        p('Ofs',  'Note Offset',     'noteFX_offset',   'track', -24,  24,  0,   fmtSign,    8),
-        p('Vel',  'Velocity Offset', 'noteFX_velocity', 'track', -127, 127, 0,   fmtSign       ),
-        p('Qnt',  'Quantize',        'quantize',        'track',  0,   100, 0,   fmtPct,     1, undefined, undefined, 2),
+        p('Oct',  'Octave Shift',    'noteFX_octave',      'track', -4,   4,   0,   fmtSign,     16),
+        p('Ofs',  'Note Offset',     'noteFX_offset',      'track', -24,  24,  0,   fmtSign,     8),
+        p('Vel',  'Velocity Offset', 'noteFX_velocity',    'track', -127, 127, 0,   fmtSign        ),
+        p('Qnt',  'Quantize',        'quantize',           'track',  0,   100, 0,   fmtPct,      1, undefined, undefined, 2),
+        p('Len>', 'Note Length',     'noteFX_length_mode', 'track',  0,   8,   0,   fmtLen,      8),
+        p('Gate', 'Gate Time',       'noteFX_gate',        'track',  0,   400, 100, fmtPct,      1, undefined, undefined, 2),
         _X,
-        p('Gate', 'Gate Time',       'noteFX_gate',     'track',  0,   400, 100, fmtPct,     1, undefined, undefined, 2),
-        _X,
-        p('Rnd',  'Pitch Random',    'noteFX_random',   'track',  0,   24,  0,   fmtPitchRnd, 4),
+        p('Rnd',  'Pitch Random',    'noteFX_random',      'track',  0,   24,  0,   fmtPitchRnd, 4),
     ]},
     /* 2 — HARMZ (pad 94) */
     { name: 'HARMONY', knobs: [

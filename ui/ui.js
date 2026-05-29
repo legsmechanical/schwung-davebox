@@ -69,7 +69,7 @@ import {
     FLAG_JUMP_TO_OVERTAKE, FLAG_JUMP_TO_TOOLS, SEQ8_NAV_FLAGS, NUM_STEPS,
     TRACK_COLORS, TRACK_DIM_COLORS, SCENE_LETTERS, TRACK_PAD_BASE, TOP_PAD_BASE,
     TPS_VALUES, NOTE_KEYS, SCALE_NAMES, SCALE_DISPLAY, DELAY_LABELS,
-    fmtSign, fmtStretch, fmtLen, fmtRes, fmtPct, fmtNote, fmtPages,
+    fmtSign, fmtStretch, fmtLen, fmtLgto, fmtRes, fmtPct, fmtNote, fmtPages,
     fmtDly, fmtBool, fmtRoute, fmtPlain, fmtNA, fmtGateMod,
     fmtArpStyle, fmtArpRate, fmtArpSteps, fmtArpOct, fmtVelOverride, fmtPlayDir, fmtRevStyle,
     col4, col5, parseActionRaw, MCUFONT, pixelPrint, pixelPrintC,
@@ -1371,6 +1371,29 @@ function drawRecordBlockedDialog() {
     _btn(58, 46, 64, 13, S.recordBlockedDialogSel === 1, 'BAKE NOW', 6);
 }
 
+/* Destructive Lgto confirm dialog. Right-turn of CLIP K8 / DRUM LANE K8
+ * opens this. OK applies; CANCEL aborts. Undoable. */
+function drawLgtoConfirm() {
+    clear_screen();
+    function _btn(x, y, w, h, sel, label, labelOff) {
+        if (sel) {
+            fill_rect(x, y, w, h, 1);
+            print(x + labelOff, y + 3, label, 0);
+        } else {
+            fill_rect(x, y, w, 1, 1);
+            fill_rect(x, y + h - 1, w, 1, 1);
+            fill_rect(x, y, 1, h, 1);
+            fill_rect(x + w - 1, y, 1, h, 1);
+            print(x + labelOff, y + 3, label, 1);
+        }
+    }
+    drawMenuHeader(S.confirmLgtoIsDrum ? 'Lgto (lane)' : 'Lgto (clip)');
+    print(4, 16, 'Destructive', 1);
+    print(4, 25, 'Proceed?', 1);
+    _btn(6,  46, 46, 13, S.confirmLgtoSel === 0, 'OK',     19);
+    _btn(58, 46, 64, 13, S.confirmLgtoSel === 1, 'CANCEL', 14);
+}
+
 function drawBakeConfirm() {
     clear_screen();
     function _btn(x, y, w, h, sel, label, labelOff) {
@@ -1995,6 +2018,8 @@ function refreshDrumLaneBankParams(t, lane) {
                (K6 of the drum delay bank layout). */
             for (let k = 0; k < 6; k++) S.bankParams[t][3][k] = parseInt(v[3 + k], 10) | 0;
             if (v.length >= 10) S.bankParams[t][3][6] = parseInt(v[9], 10) | 0;
+            /* NOTE FX K5 Len mode (v[10]) — per-lane mirror. */
+            if (v.length >= 11) S.drumLaneLenMode[t][lane] = parseInt(v[10], 10) | 0;
         }
     }
     /* DRUM LANE bank (0): Res (K3=idx2), Eucl (K4=idx3), Dir (K5=idx4),
@@ -2041,13 +2066,14 @@ function refreshPerClipBankParams(t) {
     if (!snap) return;
     const v = snap.split(' ');
     if (v.length < 17) return;
-    /* NOTE FX bank (1): K1=Oct K2=Ofs K3=Vel K4=Qnt K5=Len(placeholder) K6=Gate K7=blocked K8=Rnd
+    /* NOTE FX bank (1): K1=Oct K2=Ofs K3=Vel K4=Qnt K5=Len K6=Gate K7=blocked K8=Rnd
      * (DSP snapshot still emits v[] in original order oct/ofs/gate/vel/qnt + rnd at v[31].) */
     S.bankParams[t][1][0] = parseInt(v[0], 10) | 0;  /* K1 = Oct */
     S.bankParams[t][1][1] = parseInt(v[1], 10) | 0;  /* K2 = Ofs */
     S.bankParams[t][1][2] = parseInt(v[3], 10) | 0;  /* K3 = Vel */
     S.bankParams[t][1][3] = parseInt(v[4], 10) | 0;  /* K4 = Qnt */
-    /* K5 (idx 4) = Len placeholder — no DSP backing, leave at 0 */
+    /* K5 = Len mode at v[43] (appended after seq_arp_step_loop_len at v[42]) */
+    S.bankParams[t][1][4] = v.length >= 44 ? (parseInt(v[43], 10) | 0) : 0;
     S.bankParams[t][1][5] = parseInt(v[2], 10) | 0;  /* K6 = Gate */
     /* K7 (idx 6) = blocked — leave at 0 */
     /* NOTE FX random + modes packed at v[31..33] (right after step_vel[0..7] = v[23..30]) */
@@ -3409,6 +3435,7 @@ function drawUI() {
     }
     if (S.pendingSchwungSlotPicker) { drawSchwungSlotPicker(); return; }
     if (S.recordBlockedDialog) { drawRecordBlockedDialog(); return; }
+    if (S.confirmLgto)         { drawLgtoConfirm();         return; }
     if (S.confirmBakeScene) { drawBakeSceneConfirm(); return; }
     if (S.confirmBake) { drawBakeConfirm(); return; }
     if (S.globalMenuOpen || S.tapTempoOpen) { ensureGlobalMenuFresh(); drawGlobalMenu(); return; }
@@ -3735,7 +3762,7 @@ function drawUI() {
             const tpsIdx = Math.max(0, TPS_VALUES.indexOf(S.drumLaneTPS[t]));
             const sqfl   = S.clipSeqFollow[t][ac] ? 1 : 0;
             const eucN = Math.min(S.drumLaneEuclidN[t][lane] | 0, len);
-            const drumLaneLabels = ['Stch', S.altMode ? 'Nudg' : 'Shft', S.altMode ? 'Zoom' : 'Res', 'Eucl', S.altMode ? 'RvSt' : 'Dir', 'SqFl', null, null];
+            const drumLaneLabels = ['Stch', S.altMode ? 'Nudg' : 'Shft', S.altMode ? 'Zoom' : 'Res', 'Eucl', S.altMode ? 'RvSt' : 'Dir', 'SqFl', null, 'Lgto'];
             const drumLaneVals  = [
                 fmtStretch(S.bankParams[t][0][0]),
                 fmtSign(S.bankParams[t][0][1]),
@@ -3744,10 +3771,10 @@ function drawUI() {
                 S.altMode ? fmtRevStyle(S.drumLanePlaybackAudioReverse[t][lane] | 0)
                           : fmtPlayDir(S.drumLanePlaybackDir[t][lane] | 0),
                 fmtBool(sqfl),
-                null, null,
+                null, '->',
             ];
             drawBankHeading('DRUM LANE >>');
-            for (let k = 0; k < 6; k++) {
+            for (let k = 0; k < 8; k++) {
                 if (!drumLaneLabels[k]) continue;
                 const colX = 4 + (k % 4) * 30;
                 const rowY = k < 4 ? 12 : 36;
@@ -3812,10 +3839,13 @@ function drawUI() {
             print(LX + Math.floor(LW/2) + Math.floor((LW/2 - 24) / 2),      LY + 1,  'Note', _lc);
             print(LX + Math.floor((LW - _noteStr.length * 6) / 2), LY + 13, _noteStr, _lc);
         }
-        /* K3=Vel, K4=Qnt (row 1 right half); K5=Len placeholder, K6=Gate (row 2 left half) */
+        /* K3=Vel, K4=Qnt (row 1 right half); K5=Len, K6=Gate (row 2 left half) */
         {
+            const _lane = S.activeDrumLane[t];
             const nfxLabels = [null, null, 'Vel', 'Qnt', 'Len>', '>Gate', null, null];
-            const nfxVals   = [null, null, fmtSign(vals[1]), fmtPct(vals[2]), '--', fmtPct(vals[0]), null, null];
+            const nfxVals   = [null, null, fmtSign(vals[1]), fmtPct(vals[2]),
+                               fmtLen(S.drumLaneLenMode[t][_lane] | 0), fmtPct(vals[0]),
+                               null, null];
             for (let k = 2; k < 6; k++) {
                 const colX = 4 + (k % 4) * 30;
                 const rowY = k < 4 ? 12 : 36;
@@ -3935,8 +3965,8 @@ function drawUI() {
             }
         }
         } else if (S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM && bank === 1) {
-        /* Melodic NOTE FX: K1=Oct, K2=Ofs, K3=Vel, K4=Qnt, K5=Len> (placeholder, no-op),
-         * K6=>Gate (cell widened to fit 5-char label), K7=blocked, K8=Rnd. */
+        /* Melodic NOTE FX: K1=Oct, K2=Ofs, K3=Vel, K4=Qnt, K5=Len, K6=>Gate
+         * (widened cell for 5-char label), K7=blocked, K8=Rnd. */
         const t     = S.activeTrack;
         const knobs = BANKS[1].knobs;
         const vals  = S.bankParams[t][1];
@@ -3951,11 +3981,7 @@ function drawUI() {
             const widen = (k === 5);
             const cellW = widen ? 30 : 24;
             if (hi) fill_rect(colX, rowY, cellW, 24, 1);
-            if (k === 4) {
-                /* K5 Len placeholder: hardcoded label + '--' value */
-                print(colX, rowY,      col4('Len>'), hi ? 0 : 1);
-                print(colX, rowY + 12, col4('--'),   hi ? 0 : 1);
-            } else if (widen) {
+            if (widen) {
                 /* K6 >Gate raw label (5 chars), value via fmt */
                 print(colX, rowY,      '>Gate',                       hi ? 0 : 1);
                 print(colX, rowY + 12, col4(knobs[k].fmt(vals[k])),   hi ? 0 : 1);
@@ -6135,6 +6161,31 @@ function _onCC_jog(d1, d2) {
         return;
     }
 
+    /* Lgto confirm: jog click commits (OK applies, CANCEL aborts). */
+    if (d1 === 3 && d2 === 127 && S.confirmLgto) {
+        const _sel = S.confirmLgtoSel | 0;
+        S.confirmLgto = false;
+        if (_sel === 0 && typeof host_module_set_param === 'function') {
+            const _t = S.activeTrack;
+            if (S.confirmLgtoIsDrum) {
+                const _l = S.activeDrumLane[_t];
+                host_module_set_param('t' + _t + '_l' + _l + '_lgto_apply', '1');
+                S.pendingDrumResync      = 2;
+                S.pendingDrumResyncTrack = _t;
+            } else {
+                host_module_set_param('t' + _t + '_lgto_apply', '1');
+                S.pendingStepsReread      = 2;
+                S.pendingStepsRereadTrack = _t;
+                S.pendingStepsRereadClip  = S.trackActiveClip[_t];
+            }
+            S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
+            showActionPopup('LGTO', 'APPLIED');
+        }
+        S.screenDirty = true;
+        forceRedraw();
+        return;
+    }
+
     /* REC Unavailable dialog: jog click commits selection (OK = dismiss,
      * BAKE NOW = open standard bake confirm pre-targeted at active clip). */
     if (d1 === 3 && d2 === 127 && S.recordBlockedDialog) {
@@ -6461,6 +6512,14 @@ function _onCC_jog(d1, d2) {
             const delta = decodeDelta(d2);
             if (delta !== 0) {
                 S.recordBlockedDialogSel = S.recordBlockedDialogSel === 0 ? 1 : 0;
+                S.screenDirty = true;
+            }
+            return;
+        }
+        if (S.confirmLgto) {
+            const delta = decodeDelta(d2);
+            if (delta !== 0) {
+                S.confirmLgtoSel = S.confirmLgtoSel === 0 ? 1 : 0;
                 S.screenDirty = true;
             }
             return;
@@ -6807,6 +6866,9 @@ function _onCC_buttons(d1, d2) {
                 forceRedraw();
             } else if (S.recordBlockedDialog) {
                 S.recordBlockedDialog = false;
+                forceRedraw();
+            } else if (S.confirmLgto) {
+                S.confirmLgto = false;
                 forceRedraw();
             } else if (S.confirmBake) {
                 S.confirmBake          = false;
@@ -8113,6 +8175,23 @@ function _onCC_knobs(d1, d2) {
                 }
                 return;
             }
+            if (knobIdx === 7) {
+                /* K8 = Lgto: destructive one-shot. Right-turn opens confirm
+                 * dialog; on confirm, DSP rewrites each note's gate to its
+                 * distance from the next note (or to clip end). Undoable. */
+                if (S.knobLocked[knobIdx]) return;
+                if (dir !== 1) return;  /* one-way: right-turn only */
+                S.knobAccum[knobIdx]++;
+                if (S.knobAccum[knobIdx] >= 16) {
+                    S.knobAccum[knobIdx] = 0;
+                    S.confirmLgto       = true;
+                    S.confirmLgtoSel    = 0;  /* default OK */
+                    S.confirmLgtoIsDrum = true;
+                    S.knobLocked[knobIdx] = true;
+                    forceRedraw();
+                }
+                return;
+            }
         }
         /* ALL LANES bank (drum, bank 7): K1=Stch K2=Shft K3=Qnt K4=VelIn K5=InQ K6=SyncRpt */
         if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 7) {
@@ -8269,7 +8348,19 @@ function _onCC_knobs(d1, d2) {
                 return;
             }
             if (knobIdx === 4) {
-                /* K5 = Len placeholder — no-op until defined */
+                /* K5 = Len: 0..8 (--/.25/.5/.75/1/2/4/8/16), sens=8 */
+                S.knobAccum[knobIdx]++;
+                if (S.knobAccum[knobIdx] >= 8) {
+                    S.knobAccum[knobIdx] = 0;
+                    const cur = S.drumLaneLenMode[t][lane] | 0;
+                    const nv  = Math.max(0, Math.min(8, cur + dir));
+                    if (nv !== cur) {
+                        S.drumLaneLenMode[t][lane] = nv;
+                        if (typeof host_module_set_param === 'function')
+                            host_module_set_param('t' + t + '_l' + lane + '_pfx_set', 'note_length_mode ' + nv);
+                    }
+                    S.screenDirty = true;
+                }
                 return;
             }
             if (knobIdx === 5) {
@@ -8485,6 +8576,17 @@ function _onCC_knobs(d1, d2) {
                     const t   = S.activeTrack;
                     const ac  = S.trackActiveClip[t];
                     const len = S.clipLength[t][ac];
+                    /* Lgto knob (CLIP K8): right-turn opens the destructive
+                     * confirm dialog. Left-turn is a no-op (one-way action). */
+                    if (pm.dspKey === 'lgto_apply') {
+                        if (dir !== 1) return;
+                        S.confirmLgto       = true;
+                        S.confirmLgtoSel    = 0;  /* default OK */
+                        S.confirmLgtoIsDrum = false;
+                        S.knobLocked[knobIdx] = true;
+                        forceRedraw();
+                        return;
+                    }
                     if (pm.lock) {
                         /* Beat Stretch: one-shot, then lock until touch release */
                         const canFire = dir === 1 ? (len * 2 <= 256) : (len >= 2);

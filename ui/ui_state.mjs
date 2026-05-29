@@ -121,6 +121,14 @@ export const S = {
     drumLaneMute: new Array(8).fill(0),
     drumLaneSolo: new Array(8).fill(0),
     drumLaneQnt: new Array(8).fill(0),
+    /* NOTE FX K5 Len: per-track[8] × per-lane[32], 0..8 (0=`--`, 1..8 = fixed). */
+    drumLaneLenMode: Array.from({length: 8}, () => new Array(32).fill(0)),
+    /* CLIP K8 / DRUM LANE K8 "Lgto" destructive confirm dialog. Set when the
+     * user right-turns the Lgto knob. Sel: 0=OK (default, apply), 1=CANCEL.
+     * Jog turn flips selection; jog click commits. */
+    confirmLgto: false,
+    confirmLgtoSel: 0,
+    confirmLgtoIsDrum: false,
     allLanesQntResetTick: -1,   /* tick at which to reset bankParams[t][7][3] to -1 after knob release */
     allLanesQntResetTrack: -1,
     drumPerformMode: new Array(8).fill(0),

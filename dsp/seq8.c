@@ -368,6 +368,11 @@ typedef struct {
     uint8_t seq_arp_step_vel[8]; /* level 0..4 (0=off, 1..4=row 0..3); default 4 */
     int8_t  seq_arp_step_int[8]; /* per-step scale-degree offset -14..+14; default 0 */
     uint8_t seq_arp_step_loop_len; /* 1..8, default 8 — step pattern loop length */
+    /* NOTE FX K5 "Len": non-destructive fixed pre-gate note length.
+     * 0=`--` passthrough, 1..8 = fixed multiples of tps (.25/.5/.75/1/2/4/8/16).
+     * Destructive legato lives on CLIP K8 as a one-shot action — see the
+     * lgto_apply handler. State v=36. */
+    uint8_t note_length_mode;
 } clip_pfx_params_t;
 
 /* ------------------------------------------------------------------ */
@@ -386,6 +391,8 @@ typedef struct {
     int fb_gate_time;       /* 0..10: 0=Off, 1..10=fixed gate (1/64..1bar) */
     int fb_clock;           /* -100..+100 */
     int delay_retrig;       /* 0/1: when 1, new note drops in-flight delay echoes */
+    /* NOTE FX K5 "Len" — see clip_pfx_params_t.note_length_mode. */
+    uint8_t note_length_mode;
 } drum_pfx_params_t;
 
 #define DRUM_PFX_MAX_EVENTS 64
@@ -1247,7 +1254,7 @@ static int compute_bake_emit_positions(uint8_t pdir, uint8_t audio_reverse,
 
 static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
     int t, c;
-    fprintf(fp, "{\"v\":35,\"playing\":%d", inst->playing);
+    fprintf(fp, "{\"v\":36,\"playing\":%d", inst->playing);
     for (t = 0; t < NUM_TRACKS; t++)
         fprintf(fp, ",\"t%d_ac\":%d", t, inst->tracks[t].active_clip);
     for (t = 0; t < NUM_TRACKS; t++)
@@ -1350,6 +1357,8 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
                 }
                 if (p2->seq_arp_step_loop_len != 8 && p2->seq_arp_step_loop_len != 0)
                     fprintf(fp, ",\"t%dc%d_arsll\":%d", t, c, (int)p2->seq_arp_step_loop_len);
+                if (p2->note_length_mode != 0)
+                    fprintf(fp, ",\"t%dc%d_nlen\":%d", t, c, (int)p2->note_length_mode);
             }
             /* note list: "tick:pitch:vel:gate;" for each active note */
             if (cl->note_count > 0) {
@@ -1439,6 +1448,7 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
                     if (dp->fb_gate_time    != 0)   fprintf(fp, ",\"t%dc%dl%d_dpfbg\":%d", t, c, l, dp->fb_gate_time);
                     if (dp->fb_clock        != 0)   fprintf(fp, ",\"t%dc%dl%d_dpfbc\":%d", t, c, l, dp->fb_clock);
                     if (dp->delay_retrig    != 1)   fprintf(fp, ",\"t%dc%dl%d_dpdrt\":%d", t, c, l, dp->delay_retrig);
+                    if (dp->note_length_mode != 0)  fprintf(fp, ",\"t%dc%dl%d_dpnl\":%d",  t, c, l, (int)dp->note_length_mode);
                 }
             }
         }
@@ -1592,10 +1602,10 @@ static void seq8_load_state(seq8_instance_t *inst) {
     if (!n) { free(buf); remove(inst->state_path); return; }
     buf[n] = '\0';
 
-    /* Version gate: only v=35 accepted (dev build; wipe on version mismatch). */
+    /* Version gate: only v=36 accepted (dev build; wipe on version mismatch). */
     {
         int sv = json_get_int(buf, "v", -1);
-        if (sv != 35) {
+        if (sv != 36) {
             free(buf);
             remove(inst->state_path);
             seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
@@ -1964,6 +1974,8 @@ static void seq8_load_state(seq8_instance_t *inst) {
             }
             snprintf(key, sizeof(key), "t%dc%d_arsll", t, c);
             p2->seq_arp_step_loop_len = (uint8_t)clamp_i(json_get_int(buf, key, 8), 1, 8);
+            snprintf(key, sizeof(key), "t%dc%d_nlen", t, c);
+            p2->note_length_mode = (uint8_t)clamp_i(json_get_int(buf, key, 0), 0, 8);
             /* v=34 per-step trig conditions (iter/random/ratchet hex blobs) */
             {
                 clip_t *_cl = &inst->tracks[t].clips[c];
@@ -2068,6 +2080,8 @@ static void seq8_load_state(seq8_instance_t *inst) {
                     dp->fb_clock        = clamp_i(json_get_int(buf, key, 0), -100, 100);
                     snprintf(key, sizeof(key), "t%dc%dl%d_dpdrt", t, c, l);
                     dp->delay_retrig    = clamp_i(json_get_int(buf, key, 1), 0, 1);
+                    snprintf(key, sizeof(key), "t%dc%dl%d_dpnl",  t, c, l);
+                    dp->note_length_mode = (uint8_t)clamp_i(json_get_int(buf, key, 0), 0, 8);
                     drum_pfx_apply_params(&inst->tracks[t].drum_lane_pfx[l], dp);
                 }
                 /* v=34 per-step trig conditions (drum lane) */
@@ -3500,6 +3514,70 @@ static int compute_bake_emit_positions(uint8_t pdir, uint8_t audio_reverse,
     #undef _POS_FWD
     #undef _POS_REV
     return count;
+}
+
+/* ------------------------------------------------------------------ */
+/* NOTE FX "Len" — pre-gate fixed note length                          */
+/* ------------------------------------------------------------------ */
+/* Len mode 0..8: 0=`--` passthrough, 1..8 = fixed multiples of tps.
+ * Multipliers: .25, .50, .75, 1, 2, 4, 8, 16. Destructive Lgto is a
+ * separate one-shot action (see apply_legato_to_clip). */
+static const uint8_t LEN_TICK_NUM[9] = { 0, 1, 1, 3, 1, 2, 4, 8, 16 };
+static const uint8_t LEN_TICK_DEN[9] = { 1, 4, 2, 4, 1, 1, 1, 1,  1 };
+
+/* Resolve effective per-note gate (ticks) for step-playback paths
+ * (live render + bake + Ableton export). Honors NOTE FX K5 Len +
+ * K6 gate_time. No cycle awareness needed — Len is a position-
+ * independent fixed multiplier. */
+static inline uint32_t compute_effective_gate_ticks(
+    uint16_t tps,
+    uint16_t source_gate,
+    uint8_t  len_mode,
+    int      gate_time_pct)
+{
+    uint32_t base;
+    if (len_mode == 0u || len_mode > 8u || tps == 0u) {
+        base = (uint32_t)source_gate;
+    } else {
+        uint32_t num = (uint32_t)LEN_TICK_NUM[len_mode];
+        uint32_t den = (uint32_t)LEN_TICK_DEN[len_mode];
+        base = (num * (uint32_t)tps + den / 2u) / den;
+    }
+    if (base < 1u) base = 1u;
+    uint32_t eff = (base * (uint32_t)gate_time_pct + 50u) / 100u;
+    if (eff < 1u) eff = 1u;
+    if (eff > 65535u) eff = 65535u;
+    return eff;
+}
+
+/* Destructive legato: for each note in `cl`, set its gate to the distance
+ * between this note's tick and the next note's tick anywhere in the clip
+ * (clip end for the last note). Same-tick chord notes share one gate. */
+static void apply_legato_to_clip(clip_t *cl) {
+    if (cl->note_count == 0) return;
+    uint16_t tps = cl->ticks_per_step ? cl->ticks_per_step : (uint16_t)TICKS_PER_STEP;
+    uint32_t clip_end_tick = (uint32_t)cl->length * tps;
+    uint16_t i, j;
+    for (i = 0; i < cl->note_count; i++) {
+        note_t *n = &cl->notes[i];
+        if (!n->active) continue;
+        uint32_t next_tick = clip_end_tick;
+        for (j = 0; j < cl->note_count; j++) {
+            if (j == i) continue;
+            note_t *m = &cl->notes[j];
+            if (!m->active) continue;
+            if (m->tick <= n->tick) continue;          /* skip same-tick chords + earlier notes */
+            if (m->tick < next_tick) next_tick = m->tick;
+        }
+        if (next_tick <= n->tick) continue;            /* defensive */
+        uint32_t new_gate = next_tick - n->tick;
+        if (new_gate < 1u) new_gate = 1u;
+        if (new_gate > 65535u) new_gate = 65535u;
+        n->gate = (uint16_t)new_gate;
+    }
+    /* Rebuild step_gate[] mirror so step-edit displays + step-write paths
+     * see the new gates. occ_dirty also flips for the occupancy bitmap. */
+    clip_build_steps_from_notes(cl);
 }
 
 /* Audible cct: where the playhead is currently sounding in clip-tick space.
@@ -5291,6 +5369,7 @@ static void clip_pfx_params_init(clip_pfx_params_t *p) {
     for (i = 0; i < 8; i++) p->seq_arp_step_vel[i] = 4;
     for (i = 0; i < 8; i++) p->seq_arp_step_int[i] = 0;
     p->seq_arp_step_loop_len = 8;
+    p->note_length_mode = 0;  /* `--` passthrough */
 }
 
 static void drum_pfx_params_init(drum_pfx_params_t *p) {
@@ -5304,6 +5383,7 @@ static void drum_pfx_params_init(drum_pfx_params_t *p) {
     p->fb_gate_time    = 0;
     p->fb_clock        = 0;
     p->delay_retrig    = 1;
+    p->note_length_mode = 0;  /* `--` passthrough */
 }
 
 static void drum_pfx_init_defaults(drum_pfx_t *px, uint8_t t_idx, uint8_t l_idx) {
@@ -5341,9 +5421,10 @@ static void drum_pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
                           const char *key, const char *val) {
     (void)inst;
     if (!strcmp(key, "pfx_reset") || !strcmp(key, "pfx_noteFx_reset")) {
-        p->gate_time       = 100;
-        p->velocity_offset = 0;
-        p->quantize        = 0;
+        p->gate_time         = 100;
+        p->velocity_offset   = 0;
+        p->quantize          = 0;
+        p->note_length_mode  = 0;
     }
     if (!strcmp(key, "pfx_reset") || !strcmp(key, "pfx_delay_reset")) {
         p->delay_time_idx = DEFAULT_DRUM_DELAY_TIME_IDX;
@@ -5374,6 +5455,8 @@ static void drum_pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
         p->fb_clock        = clamp_i(my_atoi(val), -100, 100);
     if (!strcmp(key, "delay_retrig"))
         p->delay_retrig    = clamp_i(my_atoi(val), 0, 1);
+    if (!strcmp(key, "note_length_mode") || !strcmp(key, "noteFX_length_mode"))
+        p->note_length_mode = (uint8_t)clamp_i(my_atoi(val), 0, 8);
     /* Silence and sync note-offs when delay is cleared */
     if (!strcmp(key, "pfx_delay_reset") || !strcmp(key, "pfx_reset") ||
             !strcmp(key, "delay_level") || !strcmp(key, "repeat_times")) {
@@ -7024,10 +7107,8 @@ static int render_melodic_clip(seq8_instance_t *inst, int t, int c, int loops,
             uint16_t _sidx = note_step(nn->tick, length, tps);
             if (!step_trig_pass(cl, _sidx, (uint32_t)loop, &fx.rng)) continue;
             uint32_t rel_tick = nn->tick - win_start_tick;
-            uint32_t gate = (uint32_t)nn->gate;
-            if (fx.gate_time != 100 && fx.gate_time > 0)
-                gate = gate * (uint32_t)fx.gate_time / 100u;
-            if (gate < 1) gate = 1; if (gate > 65535u) gate = 65535u;
+            uint32_t gate = compute_effective_gate_ticks(
+                tps, nn->gate, cl->pfx_params.note_length_mode, fx.gate_time);
             int vel = (int)nn->vel + fx.velocity_offset;
             if (vel < 1) vel = 1; if (vel > 127) vel = 127;
             uint8_t gen[MAX_GEN_NOTES];
@@ -7158,10 +7239,8 @@ static void bake_clip(seq8_instance_t *inst, int t, int c, int loops, int wrap) 
             if (!step_trig_pass(cl, _sidx, (uint32_t)loop, &fx.rng)) continue;
             uint32_t rel_tick = nn->tick - win_start_tick;
 
-            uint32_t gate = (uint32_t)nn->gate;
-            if (fx.gate_time != 100 && fx.gate_time > 0)
-                gate = gate * (uint32_t)fx.gate_time / 100u;
-            if (gate < 1) gate = 1; if (gate > 65535u) gate = 65535u;
+            uint32_t gate = compute_effective_gate_ticks(
+                tps, nn->gate, cl->pfx_params.note_length_mode, fx.gate_time);
             int vel = (int)nn->vel + fx.velocity_offset;
             if (vel < 1) vel = 1; if (vel > 127) vel = 127;
             uint8_t gen[MAX_GEN_NOTES];
@@ -7314,10 +7393,8 @@ static void bake_drum_lane(seq8_instance_t *inst, int t, int c, int lane, int lo
                 uint16_t _sidx = note_step(nn->tick, length, tps);
                 if (!step_trig_pass(cl, _sidx, (uint32_t)loop, &fx.rng)) continue;
                 uint32_t rel_tick = nn->tick - win_start_tick;
-                uint32_t gate = (uint32_t)nn->gate;
-                if (fx.gate_time != 100 && fx.gate_time > 0)
-                    gate = gate * (uint32_t)fx.gate_time / 100u;
-                if (gate < 1) gate = 1; if (gate > 65535u) gate = 65535u;
+                uint32_t gate = compute_effective_gate_ticks(
+                    tps, nn->gate, dl->pfx_params.note_length_mode, fx.gate_time);
                 int vel = (int)nn->vel + fx.velocity_offset;
                 if (vel < 1) vel = 1; if (vel > 127) vel = 127;
 
@@ -7468,10 +7545,8 @@ static int render_drum_lane_nd(seq8_instance_t *inst, int t, int c, int lane,
             uint16_t _sidx = note_step(nn->tick, length, tps);
             if (!step_trig_pass(cl, _sidx, (uint32_t)loop, &fx.rng)) continue;
             uint32_t rel_tick = nn->tick - win_start_tick;
-            uint32_t gate = (uint32_t)nn->gate;
-            if (fx.gate_time != 100 && fx.gate_time > 0)
-                gate = gate * (uint32_t)fx.gate_time / 100u;
-            if (gate < 1) gate = 1; if (gate > 65535u) gate = 65535u;
+            uint32_t gate = compute_effective_gate_ticks(
+                tps, nn->gate, dl->pfx_params.note_length_mode, fx.gate_time);
             int vel = (int)nn->vel + fx.velocity_offset;
             if (vel < 1) vel = 1; if (vel > 127) vel = 127;
 
@@ -7638,10 +7713,8 @@ static void bake_drum_clip(seq8_instance_t *inst, int t, int c, int loops, int w
                 uint16_t _sidx = note_step(nn->tick, length, tps);
                 if (!step_trig_pass(cl, _sidx, (uint32_t)loop, &fx.rng)) continue;
                 uint32_t rel_tick = nn->tick - win_start_tick;
-                uint32_t gate = (uint32_t)nn->gate;
-                if (fx.gate_time != 100 && fx.gate_time > 0)
-                    gate = gate * (uint32_t)fx.gate_time / 100u;
-                if (gate < 1) gate = 1; if (gate > 65535u) gate = 65535u;
+                uint32_t gate = compute_effective_gate_ticks(
+                    tps, nn->gate, dl->pfx_params.note_length_mode, fx.gate_time);
                 int vel = (int)nn->vel + fx.velocity_offset;
                 if (vel < 1) vel = 1; if (vel > 127) vel = 127;
                 uint8_t gen[MAX_GEN_NOTES];
@@ -8005,6 +8078,10 @@ static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
     if (!strcmp(key, "noteFX_offset"))    return snprintf(out, out_len, "%d", fx->note_offset);
     if (!strcmp(key, "noteFX_random"))      return snprintf(out, out_len, "%d", fx->note_random);
     if (!strcmp(key, "noteFX_random_mode")) return snprintf(out, out_len, "%d", fx->note_random_mode);
+    /* Len mode lives only on clip_pfx_params (no play_fx_t mirror); read directly. */
+    if (!strcmp(key, "noteFX_length_mode"))
+        return snprintf(out, out_len, "%d",
+                        (int)tr->clips[tr->active_clip].pfx_params.note_length_mode);
     if (!strcmp(key, "noteFX_gate"))      return snprintf(out, out_len, "%d", fx->gate_time);
     if (!strcmp(key, "noteFX_velocity"))  return snprintf(out, out_len, "%d", fx->velocity_offset);
     if (!strcmp(key, "quantize"))         return snprintf(out, out_len, "%d", fx->quantize);
@@ -8396,12 +8473,14 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                 drum_pfx_params_t *dp = &dlane->pfx_params;
                 /* Slot 9 (10th value) is delay_retrig — K6 in the drum bank
                  * layout after K7=Retrg was unblocked. JS reader at
-                 * refreshDrumLaneBankParams maps slot 9 → bankParams[3][6]. */
+                 * refreshDrumLaneBankParams maps slot 9 → bankParams[3][6].
+                 * Slot 10 (11th value) = note_length_mode (NOTE FX K5 Len). */
                 return snprintf(out, out_len,
-                    "%d %d %d %d %d %d %d %d %d %d",
+                    "%d %d %d %d %d %d %d %d %d %d %d",
                     dp->gate_time, dp->velocity_offset, dp->quantize,
                     dp->delay_time_idx, dp->delay_level, dp->repeat_times,
-                    dp->fb_velocity, dp->fb_gate_time, dp->fb_clock, dp->delay_retrig);
+                    dp->fb_velocity, dp->fb_gate_time, dp->fb_clock, dp->delay_retrig,
+                    (int)dp->note_length_mode);
             }
             /* _repeat_state: gate vs0..vs7 n0..n7 (18 space-separated values) */
             if (!strcmp(p2, "_repeat_state")) {
@@ -8733,13 +8812,14 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                  *   23..30 SEQ ARP step_vel[0..7]
                  *   31..33 NOTE FX random + modes (filled in for JS parser)
                  *   34..41 SEQ ARP step_int[0..7] (Arp Steps interval mode)
-                 *   42     SEQ ARP step_loop_len (1..8) */
+                 *   42     SEQ ARP step_loop_len (1..8)
+                 *   43     NOTE FX note_length_mode (Len knob 0..8) */
                 return snprintf(out, out_len,
                     "%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d "
                     "%d %d %d %d %d %d %d %d "
                     "%d %d %d "
                     "%d %d %d %d %d %d %d %d "
-                    "%d",
+                    "%d %d",
                     cp->octave_shift, cp->note_offset, cp->gate_time,
                     cp->velocity_offset, cp->quantize,
                     cp->octaver, cp->harmonize_1, cp->harmonize_2, cp->harmonize_3,
@@ -8758,7 +8838,8 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                     (int)cp->seq_arp_step_int[2], (int)cp->seq_arp_step_int[3],
                     (int)cp->seq_arp_step_int[4], (int)cp->seq_arp_step_int[5],
                     (int)cp->seq_arp_step_int[6], (int)cp->seq_arp_step_int[7],
-                    (int)cp->seq_arp_step_loop_len);
+                    (int)cp->seq_arp_step_loop_len,
+                    (int)cp->note_length_mode);
             }
             return -1;
         }
@@ -9482,7 +9563,10 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                                     break;
                                 }
                             }}
-                            int eff_gate = (int)n->gate * lane->pfx_params.gate_time / 100;
+                            int eff_gate = (int)compute_effective_gate_ticks(
+                                dlc->ticks_per_step, n->gate,
+                                lane->pfx_params.note_length_mode,
+                                lane->pfx_params.gate_time);
                             if (eff_gate < 1) eff_gate = 1;
                             /* v=34 Ratchet: r evenly-spaced sub-hits tiling exactly one
                              * step (Elektron-style). Sub-interval = TPS / r, regardless
@@ -9537,7 +9621,10 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                                 break;
                             }
                         }}
-                        int eff_gate = (int)n->gate * tr->pfx.gate_time / 100;
+                        int eff_gate = (int)compute_effective_gate_ticks(
+                            cl->ticks_per_step, n->gate,
+                            cl->pfx_params.note_length_mode,
+                            tr->pfx.gate_time);
                         if (eff_gate < 1) eff_gate = 1;
                         /* v=34 Ratchet: r evenly-spaced sub-hits tiling exactly one
                          * step (Elektron-style). Sub-interval = TPS / r, regardless

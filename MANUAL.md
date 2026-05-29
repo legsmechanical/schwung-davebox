@@ -593,8 +593,9 @@ Timing and playback settings for the active clip. **K1–K3 are destructive** �
 | K6 | InQ (Input Quantize) | Per-track recording snap: Off, 1/64, 1/32, 1/16, 1/16T, 1/8, 1/8T, 1/4, 1/4T. Snaps each recorded note to the nearest boundary on this grid. Off = capture raw timing. On drum tracks the equivalent control lives at ALL LANES K5 (same underlying per-track field). |
 | K5 | Dir (Playback Direction) | Per-clip playback direction: **Fwd** (forward, default), **Bwd** (backward — playhead starts at last step, walks down), **PPf** (pingpong, forward start), **PPb** (pingpong, backward start). Pingpong endpoints play once per direction change, so a steady rhythm pattern stays steady through the bounce. Persisted with the set. Mid-playback changes pivot live without resetting the playhead. **AltMode + turn = RvSt** (Reverse Style): toggles **Step** (default) ↔ **Audio**. Audio style swaps note-on with note-off during any reverse motion (notes play "tape-reversed") and switches pingpong to endpoint-plays-twice (cycle = 2L) — exactly what you want for fugue-machine-style polyrhythms. |
 | K7 | SeqFollow | On (default): Track View auto-scrolls to follow the playhead. Off: view stays put. |
+| K8 | `Lgto` (Apply Legato) | **Destructive one-shot.** Right-turn the knob to open a confirm popup; click jog to apply. Rewrites every note's gate to the distance from its tick to the next note's tick (clip end for the last note); same-tick chord notes share one gate. Both extends short notes and compresses long ones — every note ends exactly when the next note begins. Undoable via the Undo button. Left-turn is a no-op. |
 
-K4 and K8 are unassigned on the CLIP bank. Clip length is set via **Loop + jog rotate** — hold Loop and turn the jog wheel to grow/shrink the active clip by ±1 step. See [Loop view (Track View + Loop held)](#loop-view-track-view--loop-held).
+K4 is unassigned on the CLIP bank. Clip length is set via **Loop + jog rotate** — hold Loop and turn the jog wheel to grow/shrink the active clip by ±1 step. See [Loop view (Track View + Loop held)](#loop-view-track-view--loop-held).
 
 **Direction notes.** Step LEDs, OLED playhead, and live recording all follow the visual playhead — recording into a Bwd clip captures notes at the step the playhead is on, so you can play and record in any direction. *Adaptive record arm* (the "grow when near end" press-record behavior) is forward-biased and is forced to fixed-mode arm when the active clip is non-Forward. Within each step, micro-timing still flows forward; the engine reverses step order, not the notes themselves.
 
@@ -612,13 +613,13 @@ Non-destructive transforms applied to every note before output.
 | K2 | Offset | Shifts by semitones (±24), or scale degrees when Scale Aware is on |
 | K3 | Velocity | Scales note velocity |
 | K4 | Quantize | Quantization amount applied at render time. |
-| K5 | `Len>` | Placeholder reserved for a future length control. |
+| K5 | `Len>` | Fixed pre-gate note length, non-destructive. **`--`** = passthrough (use note's source gate). **`.25`** · **`.50`** · **`.75`** · **`1`** · **`2`** · **`4`** · **`8`** · **`16`** = note rings for that many step-multiples (independent of position in cycle). K6 `>Gate` then scales the result. For destructive legato (set each note's gate to the distance to the next note), see CLIP K8 / DRUM LANE K8. |
 | K6 | `>Gate` | Scales note duration 0–400%. 100% = unchanged. Below = staccato; above = legato. |
 | K8 | Pitch Random | 0 = off. 1–24 = max deviation. **Shift + turn** to select algorithm: **Walk** (default — each note steps ±1 from previous, accumulating), **Uniform** (random offset within range), **Gaussian** (offsets cluster around center). Scale-aware: random pitches stay in key. |
 
 K7 is blocked on the NOTE FX bank (melodic).
 
-**On drum tracks**, the NOTE FX bank reuses the cells for per-lane controls: **K1+K2 (merged Oct/Note)** edit the active lane's MIDI note (K1 = ±12 semitones, K2 = ±1 semitone); **K3 (Vel), K4 (Qnt), K6 (>Gate)** apply to the active lane; **K5 (Len>)** is a placeholder reserved for a future per-lane length control; K7 and K8 are blocked. Use ALL LANES K3 to quantize every lane at once.
+**On drum tracks**, the NOTE FX bank reuses the cells for per-lane controls: **K1+K2 (merged Oct/Note)** edit the active lane's MIDI note (K1 = ±12 semitones, K2 = ±1 semitone); **K3 (Vel), K4 (Qnt), K5 (Len>), K6 (>Gate)** apply to the active lane; K7 and K8 are blocked. Use ALL LANES K3 to quantize every lane at once.
 
 > **Try this.** Set Pitch Random to Walk at a low value (3–5) on a melody. The sequence drifts gradually rather than jumping — coherent variation without chaos.
 
@@ -813,10 +814,9 @@ Per-lane settings for the active lane. (Replaces CLIP on drum tracks.) **K1–K4
 | K4 | Eucl (Euclidean) | Spreads N hits evenly across the active lane's length (0..length). Only the positions that change between the old and new count update, so hand-placed hits outside the Euclidean grid are preserved. Persists per-lane, per-clip. |
 | K5 | Dir (Playback Direction) | Per-lane playback direction (same modes as melodic CLIP K5: Fwd · Bwd · PPf · PPb). Each lane has its own direction — mix Fwd hats with a Bwd snare for free, and each lane stays in phase across mid-play clip switches. **AltMode + turn = RvSt** (Reverse Style): per-lane toggle of **Step** ↔ **Audio**; same semantics as melodic — Audio swaps note-on/off in reverse motion and uses 2L pingpong cycle. |
 | K6 | SeqFollow | Per-clip auto-scroll on/off |
-| K7 | Oct (Lane Note) | Shifts the active lane's MIDI note by ±1 octave. OLED shows note name and number. |
-| K8 | Note (Lane Note) | Shifts the active lane's MIDI note by ±1 semitone |
+| K8 | `Lgto` (Apply Legato) | **Destructive one-shot, per-lane.** Right-turn opens the confirm popup; click jog to apply. Rewrites every note in the active drum lane's clip to gate = distance-to-next-note (clip end for last note); same-tick notes share one gate. Both extends and compresses. Undoable. Left-turn is a no-op. |
 
-Per-lane length is set via **Loop + jog rotate** — hold Loop and turn the jog wheel to grow/shrink the active lane by ±1 step.
+K7 is unassigned on the DRUM LANE bank. Per-lane length is set via **Loop + jog rotate** — hold Loop and turn the jog wheel to grow/shrink the active lane by ±1 step. Lane MIDI note assignment is on NOTE FX K1+K2 (per-lane Oct/Note).
 
 Lane MIDI note assignments and playback direction persist across saves and reloads.
 
