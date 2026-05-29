@@ -3606,26 +3606,30 @@ function drawUI() {
             return;
         }
         if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
-            /* Drum step edit: 2-row 3-col grid. Row 1: K1 Dur, K2 Vel, K3 Ndg.
-             * Row 2: K4 Iter, K5 Rand, K6 Ratch. */
+            /* Drum step edit: 2-row 4-col grid matching melodic layout width.
+             * Row 1: K1 Leng, K2 Vel, K3 Nudg, K4 —.
+             * Row 2: K5 Iter, K6 Prob, K7 Ratch, K8 —. */
             const t    = S.activeTrack;
             const lane = S.activeDrumLane[t];
             if (S.heldStepNotes.length > 0) {
                 const tps   = S.drumLaneTPS[t] || 24;
-                const LABELS = ['Leng', 'Vel', 'Nudg', 'Iter', 'Prob', 'Ratch'];
+                const LABELS = ['Leng', 'Vel', 'Nudg', '--', 'Iter', 'Prob', 'Ratch', '--'];
                 const VALS   = [
                     (S.stepEditGate / tps).toFixed(1),
                     String(S.stepEditVel),
                     (S.stepEditNudge >= 0 ? '+' : '') + String(S.stepEditNudge),
+                    '',
                     formatStepIter(S.stepEditIter),
                     formatStepRand(S.stepEditRand),
-                    formatStepRatch(S.stepEditRatch)
+                    formatStepRatch(S.stepEditRatch),
+                    ''
                 ];
-                const COL_X = [2, 45, 88];
-                const ROW_Y = [13, 35];   /* label baseline */
-                const CELL_W = 38, CELL_H = 22;
-                for (let i = 0; i < 6; i++) {
-                    const col = i % 3, row = (i / 3) | 0;
+                const COL_X = [0, 32, 64, 96];
+                const ROW_Y = [13, 35];
+                const CELL_W = 31, CELL_H = 22;
+                for (let i = 0; i < 8; i++) {
+                    if (i === 3 || i === 7) continue;
+                    const col = i % 4, row = (i / 4) | 0;
                     const x = COL_X[col], y = ROW_Y[row];
                     const hi = (S.knobTouched === i);
                     if (hi) fill_rect(x, y - 3, CELL_W, CELL_H, 1);
@@ -7864,7 +7868,7 @@ function _onCC_stepedit(d1, d2) {
         return;
     }
 
-    /* Drum step edit: K1 Dur, K2 Vel, K3 Ndg, K4 Iter, K5 Rand, K6 Ratch; K7/K8 swallowed */
+    /* Drum step edit: K1 Leng, K2 Vel, K3 Nudg, K4 —, K5 Iter, K6 Prob, K7 Ratch, K8 — */
     if (S.heldStep >= 0 && S.heldStepNotes.length > 0 && d1 >= 71 && d1 <= 78 &&
             S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
         const knobIdx = d1 - 71;
@@ -7874,7 +7878,7 @@ function _onCC_stepedit(d1, d2) {
         S.knobTouched          = knobIdx;
         S.knobTurnedTick[knobIdx] = S.tickCount;
         S.screenDirty = true;
-        if (knobIdx >= 6) return;   /* K7/K8 swallowed in drum step-edit */
+        if (knobIdx === 3 || knobIdx === 7) return;
         if (knobIdx === 0) {
             const _tpsD = S.drumLaneTPS[t] || 24;
             const _gmaxD = Math.min(65535, 256 * _tpsD);
@@ -7899,8 +7903,8 @@ function _onCC_stepedit(d1, d2) {
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_nudge', String(S.stepEditNudge));
             }
-        } else if (knobIdx === 3) {
-            /* K4 Iter: one entry per detent (no accel — 36-entry list, ~1 turn end-to-end) */
+        } else if (knobIdx === 4) {
+            /* K5 Iter: one entry per detent (no accel — 36-entry list, ~1 turn end-to-end) */
             S.knobAccum[knobIdx] = (dir === S.knobLastDir[knobIdx]) ? S.knobAccum[knobIdx] + 1 : 1;
             S.knobLastDir[knobIdx] = dir;
             if (S.knobAccum[knobIdx] >= 3) {
@@ -7912,16 +7916,16 @@ function _onCC_stepedit(d1, d2) {
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_iter', String(S.stepEditIter));
             }
-        } else if (knobIdx === 4) {
-            /* K5 Rand: 0..100 with accel */
+        } else if (knobIdx === 5) {
+            /* K6 Prob: 0..100 with accel */
             const acc = ccKnobDelta(d2, knobIdx);
             if (acc !== 0) {
                 S.stepEditRand = Math.max(0, Math.min(100, S.stepEditRand + acc));
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_rand', String(S.stepEditRand));
             }
-        } else if (knobIdx === 5) {
-            /* K6 Ratch: 0..4, sens=8 (10 detents per step at low gain) */
+        } else if (knobIdx === 6) {
+            /* K7 Ratch: 0..4, sens=8 (10 detents per step at low gain) */
             S.knobAccum[knobIdx] = (dir === S.knobLastDir[knobIdx]) ? S.knobAccum[knobIdx] + 1 : 1;
             S.knobLastDir[knobIdx] = dir;
             if (S.knobAccum[knobIdx] >= 8) {

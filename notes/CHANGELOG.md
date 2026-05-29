@@ -7,6 +7,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com). Add entries to
 the section into a versioned heading at release time.
 
 ## [Unreleased]
+### Performance / UX
+- **Drum step edit overlay now uses 4-column layout** matching melodic step edit. Row 1: Leng / Vel / Nudg (K1-K3), Row 2: Iter / Prob / Ratch (K5-K7). K4 and K8 are unused.
+
 ### Fixes
 - **Bank param resets now also reset Dir→Fwd, RvSt→Step, SqFl→On.** Both Delete+Jog (single bank reset) and Shift+Delete+Jog (full clip/lane params reset) now clear playback direction, audio-reverse style, and seq-follow back to defaults on drum and melodic tracks.
 - **Drum Shift+Delete+Jog popup now reads "LANE PARAMS RESET"** instead of the misleading "CLIP PARAMS RESET".

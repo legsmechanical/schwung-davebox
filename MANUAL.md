@@ -458,7 +458,7 @@ While holding a step, the OLED shows the notes in it, e.g. `C4 E4 G4`. **Up / Do
 
 Hold multiple step buttons at once to edit them all together.
 
-On **drum tracks** the overlay is the same 2-row layout with three cells per row: row 1 = Leng / Vel / Nudg (K1-K3), row 2 = Iter / Prob / Ratch (K4-K6).
+On **drum tracks** the overlay uses the same 2-row 4-column layout: row 1 = Leng / Vel / Nudg / — (K1-K4), row 2 = Iter / Prob / Ratch / — (K5-K8).
 
 ### 4.2.1 Trig conditions: Iter / Prob / Ratch
 
@@ -788,11 +788,11 @@ The step buttons always show the active lane's pattern. To **select a lane silen
 
 | Knob | Function |
 |---|---|
-| K3 (Dur) | Adjust the hit's gate length |
-| K4 (Vel) | Adjust velocity |
-| K5 (Ndg) | Nudge timing (±23 ticks max) |
+| K1 (Leng) | Adjust the hit's gate length |
+| K2 (Vel) | Adjust velocity |
+| K3 (Ndg) | Nudge timing (±23 ticks max) |
 
-K1 (Oct) and K2 (Pit) are not available in drum step edit. To change a lane's MIDI note, use NOTE FX bank K1+K2 (per-lane Oct/Note).
+To change a lane's MIDI note, use NOTE FX bank K1+K2 (per-lane Oct/Note).
 
 ## 6.4 Per-lane independence (the polyrhythm trick)
 
