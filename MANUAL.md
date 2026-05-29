@@ -405,7 +405,7 @@ Beyond the automatic save, you can keep up to **16 named save states** per set �
 - When you already have 16 snapshots, **Save state** opens a picker instead: choose which existing snapshot to overwrite, and confirm.
 - **Note/Session** backs out of the list (or out of a confirm prompt).
 
-Snapshots belong to the set they were saved in — each set has its own list. **Clear Session resets all snapshots** along with every other setting.
+Snapshots belong to the set they were saved in — each set has its own list. **Clear Session does not delete your snapshots**, so they remain available to load even after you clear the live project.
 
 After a dAVEBOx update that changes the save format, older snapshots can't be loaded; the Load list marks them `(old)` and offers to remove them the first time you open it.
 
