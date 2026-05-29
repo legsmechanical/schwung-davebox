@@ -3216,7 +3216,7 @@ function drawSessionOverview() {
     }
 
     /* Cell content: white (1) inside band, black (0) outside. */
-    const blinkOn = Math.floor(S.tickCount / 96) % 2 === 0;
+    const blinkOn = S.flashEighth;
     for (let t = 0; t < NUM_TRACKS; t++) {
         const x  = t * 16 + 1;
         const ac = S.trackActiveClip[t];
@@ -3766,7 +3766,7 @@ function drawUI() {
             const tpsIdx = Math.max(0, TPS_VALUES.indexOf(S.drumLaneTPS[t]));
             const sqfl   = S.clipSeqFollow[t][ac] ? 1 : 0;
             const eucN = Math.min(S.drumLaneEuclidN[t][lane] | 0, len);
-            const drumLaneLabels = [S.altMode ? 'Zoom' : 'Res', 'Stch', S.altMode ? 'Nudg' : 'Shft', 'Lgto', 'Eucl', '-', S.altMode ? 'RvSt' : 'Dir', 'SqFl'];
+            const drumLaneLabels = [S.altMode ? 'Zoom' : 'Res', 'Stch', S.altMode ? 'Nudg' : 'Shft', 'Lgto', 'Eucl', '-', S.altMode ? 'Rvrs' : 'Dir', 'SqFl'];
             const drumLaneVals  = [
                 fmtRes(tpsIdx),
                 fmtStretch(S.bankParams[t][0][1]),
@@ -3795,7 +3795,7 @@ function drawUI() {
             const qv = S.bankParams[t][7][3];
             const dv = S.bankParams[t][7][6];
             const DIQ_LABELS = ['Off','1/64','1/32','1/16','1/16T','1/8','1/8T','1/4','1/4T'];
-            const allLabels = ['Res', 'Stch', S.altMode ? 'Nudg' : 'Shft', 'Qnt', 'VelIn', 'InQ', S.altMode ? 'RvSt' : 'Dir', 'SyncRpt'];
+            const allLabels = ['Res', 'Stch', S.altMode ? 'Nudg' : 'Shft', 'Qnt', 'VelIn', 'InQ', S.altMode ? 'Rvrs' : 'Dir', 'SyncRpt'];
             const allVals = [
                 rv < 0 ? '--' : fmtRes(rv),
                 fmtStretch(S.bankParams[t][7][1]),
@@ -4040,7 +4040,7 @@ function drawUI() {
             if (S.altMode) {
                 if      (knobs[k].dspKey === 'clock_shift')    _lbl = 'Nudg';
                 else if (knobs[k].dspKey === 'clip_resolution') _lbl = 'Zoom';
-                else if (knobs[k].dspKey === 'clip_playback_dir') _lbl = 'RvSt';
+                else if (knobs[k].dspKey === 'clip_playback_dir') _lbl = 'Rvrs';
                 else if (_delayShiftClkF)                       _lbl = 'ClkF';
             }
             print(colX, rowY,      _lbl, hi ? 0 : 1);
@@ -5862,7 +5862,7 @@ function _tickImpl() {
 
         /* Session overview blink: mark dirty when animation state toggles */
         if (S.sessionOverlayHeld) {
-            const blinkOn = Math.floor(S.tickCount / 96) % 2 === 0;
+            const blinkOn = S.flashEighth;
             if (blinkOn !== S.lastBlinkOn) { S.lastBlinkOn = blinkOn; S.screenDirty = true; }
         } else {
             S.lastBlinkOn = null;
@@ -6362,9 +6362,17 @@ function _onCC_jog(d1, d2) {
 
     if (d1 === 3 && d2 === 127 && S.shiftHeld && S.deleteHeld && !S.sessionView) {
         if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
-            /* Drum: Shift+Delete+jog = reset all real-time FX banks */
-            resetFxBanks(S.activeTrack);
-            showActionPopup('CLIP PARAMS', 'RESET');
+            /* Drum: Shift+Delete+jog = reset all real-time FX banks + Dir/RvSt/SqFl */
+            const _dt = S.activeTrack, _dl = S.activeDrumLane[_dt], _dac = effectiveClip(_dt);
+            resetFxBanks(_dt);
+            S.drumLanePlaybackDir[_dt][_dl] = 0;
+            S.drumLanePlaybackAudioReverse[_dt][_dl] = 0;
+            S.bankParams[_dt][0][6] = 0;
+            S.clipSeqFollow[_dt][_dac] = true;
+            S.bankParams[_dt][0][7] = 1;
+            S.pendingDefaultSetParams.push({ key: 't' + _dt + '_l' + _dl + '_playback_dir', val: '0' });
+            S.pendingDefaultSetParams.push({ key: 't' + _dt + '_l' + _dl + '_playback_audio_reverse', val: '0' });
+            showActionPopup('LANE PARAMS', 'RESET');
         } else {
             /* Melodic: full reset — NOTE FX, HARMZ, MIDI DLY, + SEQ ARP */
             const _arpTrack = S.activeTrack;
@@ -6385,6 +6393,14 @@ function _onCC_jog(d1, d2) {
             S.pendingDefaultSetParams.push({ key: 't' + _arpTrack + '_cc_auto_clear', val: String(_ac2) });
             S.pendingDefaultSetParams.push({ key: 't' + _arpTrack + '_c' + _ac2 + '_at_clear', val: '1' });
             S.undoSeqArpSnapshot = { track: _arpTrack, params: _arpParams };
+            const _mac = effectiveClip(_arpTrack);
+            S.clipPlaybackDir[_arpTrack][_mac] = 0;
+            S.clipPlaybackAudioReverse[_arpTrack][_mac] = 0;
+            S.bankParams[_arpTrack][0][6] = 0;
+            S.clipSeqFollow[_arpTrack][_mac] = true;
+            S.bankParams[_arpTrack][0][7] = 1;
+            S.pendingDefaultSetParams.push({ key: 't' + _arpTrack + '_clip_playback_dir', val: '0' });
+            S.pendingDefaultSetParams.push({ key: 't' + _arpTrack + '_clip_playback_audio_reverse', val: '0' });
             showActionPopup('CLIP PARAMS', 'RESET');
         }
         return;
@@ -6427,12 +6443,20 @@ function _onCC_jog(d1, d2) {
                 S.pendingDefaultSetParams.push({ key: 't' + _rt + '_l' + _rl + '_repeat_groove_reset', val: '1' });
                 showActionPopup('RPT GROOVE', 'RESET');
             } else {
-                /* Drum: Delete+jog = reset only the active real-time FX bank */
+                /* Drum: Delete+jog = reset only the active real-time FX bank + Dir/RvSt/SqFl */
                 const REAL_TIME_BANKS = [1, 2, 3];
                 if (REAL_TIME_BANKS.indexOf(S.activeBank) >= 0) {
                     resetSingleFxBank(S.activeTrack, S.activeBank);
-                    showActionPopup('BANK RESET');
                 }
+                const _bt = S.activeTrack, _bl = S.activeDrumLane[_bt], _bac = effectiveClip(_bt);
+                S.drumLanePlaybackDir[_bt][_bl] = 0;
+                S.drumLanePlaybackAudioReverse[_bt][_bl] = 0;
+                S.bankParams[_bt][0][6] = 0;
+                S.clipSeqFollow[_bt][_bac] = true;
+                S.bankParams[_bt][0][7] = 1;
+                S.pendingDefaultSetParams.push({ key: 't' + _bt + '_l' + _bl + '_playback_dir', val: '0' });
+                S.pendingDefaultSetParams.push({ key: 't' + _bt + '_l' + _bl + '_playback_audio_reverse', val: '0' });
+                showActionPopup('BANK RESET');
             }
         } else if (S.activeBank === 5) {
             /* ARP IN bank: dedicated reset that clears every TARP param
@@ -6442,8 +6466,16 @@ function _onCC_jog(d1, d2) {
             resetTarp(S.activeTrack);
             showActionPopup('ARP IN', 'RESET');
         } else {
-            resetFxBanks(S.activeTrack);
+            const _mt = S.activeTrack, _mac2 = effectiveClip(_mt);
+            resetFxBanks(_mt);
             S.undoSeqArpSnapshot = null;
+            S.clipPlaybackDir[_mt][_mac2] = 0;
+            S.clipPlaybackAudioReverse[_mt][_mac2] = 0;
+            S.bankParams[_mt][0][6] = 0;
+            S.clipSeqFollow[_mt][_mac2] = true;
+            S.bankParams[_mt][0][7] = 1;
+            S.pendingDefaultSetParams.push({ key: 't' + _mt + '_clip_playback_dir', val: '0' });
+            S.pendingDefaultSetParams.push({ key: 't' + _mt + '_clip_playback_audio_reverse', val: '0' });
             showActionPopup('BANK RESET');
         }
         return;
@@ -10158,11 +10190,13 @@ function _onStepButtons(d1, d2) {
             if (tappedStep !== S.heldStep) {
                 const len     = S.clipLength[S.activeTrack][ac_tap];
                 const tps     = S.clipTPS[S.activeTrack][ac_tap] || 24;
-                /* Extend THROUGH the tapped step (see drum-mode counterpart). */
+                /* Extend THROUGH the tapped step; shrink if already at that span. */
                 const dist    = tappedStep > S.heldStep
                     ? tappedStep - S.heldStep + 1
                     : len - S.heldStep + tappedStep + 1;
-                const newGate = Math.max(1, Math.min(dist * tps, 65535));
+                const spanGate = dist * tps;
+                const newGate = Math.max(1, Math.min(
+                    S.stepEditGate >= spanGate ? (dist - 1) * tps : spanGate, 65535));
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('t' + S.activeTrack + '_c' + ac_tap + '_step_' + S.heldStep + '_gate', String(newGate));
                 S.stepEditGate = newGate;
@@ -10668,7 +10702,7 @@ function _onMidiInternalImpl(data) {
                     S.knobAccum[d1]  = 0;
                     S.screenDirty = true;
                 }
-                if (d1 === MoveMainTouch && S.jogTouched) { S.jogTouched = false; forceRedraw(); }
+                if (d1 === MoveMainTouch && S.jogTouched) { S.jogTouched = false; S.bankSelectTick = -1; forceRedraw(); }
             }
             return;
         }
@@ -10713,7 +10747,7 @@ function _onMidiInternalImpl(data) {
                 S.knobAccum[d1]  = 0;
                 S.screenDirty = true;
             }
-            if (d1 === MoveMainTouch && S.jogTouched) { S.jogTouched = false; forceRedraw(); }
+            if (d1 === MoveMainTouch && S.jogTouched) { S.jogTouched = false; S.bankSelectTick = -1; forceRedraw(); }
             return;
         }
     }
