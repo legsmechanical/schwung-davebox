@@ -7,6 +7,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com). Add entries to
 the section into a versioned heading at release time.
 
 ## [Unreleased]
+### Features
+- **Sub-bar launch quant preserves playhead phase.** Quantized clip launches at 1/16, 1/8, 1/4, or 1/2 now phase-align the melodic playhead into the new clip's length instead of resetting to step 0. 1-bar quant still resets. All four playback directions (Fwd/Bwd/PPf/PPb) are fully supported.
+
 ### Performance / UX
 - **Random mode selector moved to jog-click alt param.** K8 on NOTE FX and DELAY banks now shows Algo (Pure/Gaus/Walk) in alt mode instead of the old Shift+turn full-screen dialog.
 - **All Lanes bank now requires confirmation.** Entering ALL LANES shows "Edits will affect all lanes." with OK; knobs are blocked until jog-click confirms. Bank navigation remains unblocked.
