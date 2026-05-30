@@ -18,8 +18,9 @@
 - **Cutting a release**: `./scripts/cut_release.sh <version>` (e.g. `0.2.0`). Requires clean tree (including no untracked files — park untracked `notes/` files aside if needed, but NOT the tracked `CHANGELOG.md`, which the release reads and finalizes), non-empty `[Unreleased]`, no existing `v<version>` tag. The script: finalizes CHANGELOG, bumps `release.json` *and* `module.json` (atomic — Module Store update detection compares installed `module.json` against repo `release.json`), runs `build.sh` for a fresh tarball, commits, tags, pushes main + tag. After it succeeds, publish the release with condensed user-facing notes: `python3 scripts/condense_changelog.py <ver> > dist/release-notes-v<ver>.md` → `gh release create v<ver> dist/davebox-module.tar.gz --title "v<ver>" --notes-file dist/release-notes-v<ver>.md`. Then `./scripts/draft_announcement.sh <ver>` copies a Discord-pasteable announcement to the macOS clipboard for manual paste into the Schwung Discord release channel.
 - **State version bump**: **Avoid bumping the state version** — users see a confirm dialog on mismatch and lose their session data. Prefer migrating old fields in `seq8_load_state` (default missing keys, clamp out-of-range values). Only bump when the format is genuinely incompatible (struct layout change that can't be migrated). When a bump is unavoidable during dev, wipe state files on device: `ssh root@move.local "find /data/UserData/schwung/set_state -name 'seq8-state.json' -exec rm {} \; && find /data/UserData/schwung/set_state -name 'seq8-ui-state.json' -exec rm {} \;"`.
 - **DSP calls / pfx code**: read `docs/DAVEBOX_API.md` for parameter keys, structs, and algorithm details.
-- **DSP work**: read `dsp/CLAUDE.md` for logging, build, state format keys, and deferred save details.- **Schwung patches**: see `docs/SCHWUNG_PATCHES.md`. Patched Schwung lives on `legsmechanical/schwung` (fork of `charlesvestal/schwung`); unified patch at `patches/davebox-local.patch`. After any upstream Schwung upgrade: cherry-pick local commits onto the new base, regenerate the patch (`git diff <new-base>..main -- src/ > patches/davebox-local.patch`), rebuild shim, deploy to `/data/UserData/schwung/schwung-shim.so` (not `/usr/lib/` symlink).
-- **Schwung-patch-dependent features (capability gating)**: features that rely on patched Schwung APIs (e.g. chain-edit co-run via `Edit Slot...`) MUST be capability-gated so dAVEBOx still ships from `main` for users on stock Schwung. Pattern: gate the user-facing entry point (e.g. menu item) with `typeof shadow_xxx === 'function'`, and defensively guard every API call site. On stock Schwung the entry doesn't render and the feature is invisible; all downstream code is dormant. No second branch required — see the `Edit Slot...` action in `buildGlobalMenuItems()` for the canonical example.
+- **DSP work**: read `dsp/CLAUDE.md` for logging, build, state format keys, and deferred save details.
+- **Schwung patches**: see `docs/SCHWUNG_PATCHES.md`. Fork at `legsmechanical/schwung`. Deploy: `cd ~/schwung && ./scripts/build.sh && ./scripts/install.sh local --skip-confirmation`.
+- **Capability gating**: patched-Schwung features gate on `typeof shadow_xxx === 'function'`. See `Edit Slot...` in `buildGlobalMenuItems()` for the pattern.
 
 dAVEBOx is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move — standalone 8-track MIDI sequencer. No audio. C (DSP) + JavaScript (UI). `button_passthrough: [79]` + `claims_master_knob: true` — Move firmware handles CC 79 natively; `claims_master_knob` prevents Schwung host from running its own acceleration, which caused inconsistent knob speed and MIDI output pauses.
 
@@ -63,9 +64,7 @@ Set-duplicate inheritance: when init detects a Copy-suffixed name + missing stat
 
 ## Pad drop diagnostic
 
-Intermittent bug: drum pad live notes stop reaching the output while sequenced playback continues. Suspected cause: `pad_note_map` in DSP stuck at all-0xFF after a coalesced `tN_padmap` push (e.g. session view exit + modifier edge in the same buffer). Self-heal in `tick()` reads back `pad_note_map_0` every 5 ticks and re-pushes on mismatch. DSP `on_midi` logs unexpected drops to `/data/UserData/schwung/seq8-pad-drop.log` (separate from seq8.log).
-
-**Session start check**: `ssh ableton@move.local "cat /data/UserData/schwung/seq8-pad-drop.log 2>/dev/null"`. If non-empty, report contents to user and note timestamp context. The file persists across reboots until manually cleared. Key fields: `pad` (0-31 index), `t` (track), `enabled` (should be 1). If the file never appears, the cause is upstream of `on_midi` (Schwung not delivering pad MIDI).
+Intermittent: drum pads go silent while sequencer plays. Self-heal in `tick()` re-pushes padmap on mismatch. DSP logs drops to `seq8-pad-drop.log`. Session start check: `ssh ableton@move.local "cat /data/UserData/schwung/seq8-pad-drop.log 2>/dev/null"` — if non-empty, report to user.
 
 ## QuickJS compatibility
 
@@ -75,27 +74,15 @@ shadow_ui runs QuickJS, not V8. Node.js `--check` is NOT a reliable validator.
 
 ## JS internals
 
-- **Two-tick deferred pattern** (`_toggle` / `_set_notes`): `_toggle` tick N activates step; `_set_notes` tick N+1 writes chord/notes. Phase-2 check must precede phase-1 in tick() to prevent same-tick coalescing. `_set_notes` is a no-op on empty steps — activate first.
-- **Count-in preroll chord capture**: `pendingPrerollNotes[]` (ui_state.mjs) accumulates all chord notes pressed during count-in on melodic tracks. At flush (all notes released + 1 step elapsed after transport start): first note fires `step_0_toggle`; remaining notes drain via `pendingPrerollToggleQueue` — one `step_0_toggle` per tick, last entry sets `pendingPrerollGate`. Drum preroll uses separate `pendingPrerollNote` (single object, unchanged).
-- `pendingDrumResync` deferred 2 ticks after drum clip switch — `tN_lL_steps` reads active_clip implicitly; must wait for `tN_launch_clip` to process.
-- `pendingStepsReread` 2 ticks after `_reassign`/`_copy_to`.
-- `pollDSP` overwrites `trackActiveClip[t]` when playing; change triggers `refreshPerClipBankParams(t)` + drum resync.
-- `bankParams[t][b][k]`: 7 banks (0=CLIP..6=CC PARAM), refreshed via `tN_cC_pfx_snapshot` on clip/track switch. Track config (Ch/Route/Mode/VelIn/Looper) uses dedicated arrays + `readTrackConfig`/`applyTrackConfig` — NOT in bankParams.
-- `clipTPS[t][c]`: JS mirror of per-clip tps, synced via `t{n}_c{c}_tps` get_param.
-- `tarpStepVel[t][s]`: per-track TARP step vel mirror, read via `tN_tarp_sv` batch get on init/track switch.
-- `pendingDefaultSetParams`: first-run defaults (`scale_aware=1`, `metro_vol=100`, `t0_pad_mode=PAD_MODE_DRUM`).
-- **JS tick rate**: ~94 Hz on device (512-sample buffers at 48kHz). `STEP_HOLD_TICKS=19` calibrated for ~94 Hz. Older constants (`NO_NOTE_FLASH_TICKS=118`, `STEP_SAVE_HOLD_TICKS=150`, `STEP_SAVE_FLASH_TICKS=40`) use 196 Hz assumptions — run at ~half speed on device.
+- **Two-tick deferred pattern** (`_toggle` / `_set_notes`): activate step on tick N, write notes on tick N+1. Phase-2 check must precede phase-1 in tick().
+- `pendingDrumResync` deferred 2 ticks after drum clip switch; `pendingStepsReread` 2 ticks after `_reassign`/`_copy_to`.
+- `bankParams[t][b][k]`: 7 banks, refreshed via `tN_cC_pfx_snapshot`. Track config uses dedicated arrays + `readTrackConfig`/`applyTrackConfig` — NOT in bankParams.
+- `pendingDefaultSetParams`: first-run defaults drain one per tick after state settles.
+- **JS tick rate**: ~94 Hz on device. `STEP_HOLD_TICKS=19` calibrated for ~94 Hz. Older constants use 196 Hz assumptions.
 
 ## graphify
 
-This project has a graphify knowledge graph at graphify-out/.
+Knowledge graph at `graphify-out/`. Auto-updates via post-commit hook.
 
-Rules:
-- **Session start**: read `graphify-out/GRAPH_REPORT.md` immediately after the docs update — required, not optional.
-- **Before any grep or file search — mandatory gate**: classify the question first. If it is a navigation question (where is X defined?), a relationship question (what calls Y? what does Z depend on?), or a call-chain question (what does changing W cascade into?) — you MUST use graphify before grep. No exceptions. The PreToolUse hook reminder is a hard stop, not a suggestion.
-- **Grep is only permitted** when: (a) graphify has already been consulted and could not answer, or (b) you already know the exact file and line and are confirming a specific string, or (c) the target is outside this codebase (e.g. Schwung source, schwung-docs).
-- **Code navigation**: `graphify query "<question>"` (BFS, broad context) · `graphify path "<A>" "<B>"` (shortest path) · `graphify explain "<concept>"` (node definition + connections). Use BEFORE reaching for grep or raw file reads.
-- **Impact analysis**: `graphify query "<question>" --dfs` for dependency chains — use DFS when you need to know what a change cascades into (e.g. touching a god node like `set_param`).
-- **Architecture questions**: always consult the graph first. God nodes (`set_param`, `drawUI`, `pfx_send`, `render_block`) are cross-community bridges — tracing them via graph beats manual grep.
-- **Wiki**: if `graphify-out/wiki/index.md` exists, navigate it instead of reading raw files.
-- **After code changes**: graph auto-updates via git post-commit hook. Run `graphify update .` manually only if you need the graph current mid-session before committing.
+- **Session start**: read `graphify-out/GRAPH_REPORT.md` after docs update.
+- **Before grep** — use graphify first for navigation/relationship/call-chain questions. `query` (BFS), `query --dfs` (impact), `path` (shortest path), `explain` (definition). Grep only when graphify can't answer or target is outside the codebase.
