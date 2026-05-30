@@ -6122,12 +6122,31 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
 
     seq8_load_state(inst);
 
+    /* Default track 0 to drum mode if no tracks loaded as drum.
+     * Matches the JS first-run default (restoreUiSidecar else branch).
+     * Schwung host drops tN_pad_mode, so JS's pendingDefaultSetParams
+     * push never reaches DSP — set it here instead. */
+    { int _any_drum = 0, _dt;
+      for (_dt = 0; _dt < NUM_TRACKS; _dt++)
+        if (inst->tracks[_dt].pad_mode == PAD_MODE_DRUM) { _any_drum = 1; break; }
+      if (!_any_drum) {
+        inst->tracks[0].pad_mode = PAD_MODE_DRUM;
+        drum_clips_alloc(inst, &inst->tracks[0]);
+      }
+    }
+
     {
+        int _dc_count = 0;
+        { int _t, _c;
+          for (_t = 0; _t < NUM_TRACKS; _t++)
+            for (_c = 0; _c < NUM_CLIPS; _c++)
+              if (inst->tracks[_t].drum_clips[_c]) _dc_count++;
+        }
         char szlog[128];
         snprintf(szlog, sizeof(szlog),
-                 "SEQ8 init: inst=%zu track=%zu ccauto=%zu drum=%zu bpm=%.1f",
+                 "SEQ8 init: inst=%zu track=%zu drum_alloc=%d/%d bpm=%.1f",
                  sizeof(seq8_instance_t), sizeof(seq8_track_t),
-                 sizeof(cc_auto_t), sizeof(drum_clip_t),
+                 _dc_count, NUM_TRACKS * NUM_CLIPS,
                  inst->tracks[0].pfx.cached_bpm);
         seq8_ilog(inst, szlog);
     }
@@ -9517,7 +9536,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
              * any OOB write that slips past per-handler clamps so out-of-window
              * notes can never fire. Logs once per snap event as a breadcrumb. */
             if (tr->clip_playing) {
-                if (tr->pad_mode == PAD_MODE_DRUM) {
+                if (tr->pad_mode == PAD_MODE_DRUM && tr->drum_clips[tr->active_clip]) {
                     int _dl;
                     for (_dl = 0; _dl < DRUM_LANES; _dl++) {
                         clip_t *_dlc = &tr->drum_clips[tr->active_clip]->lanes[_dl].clip;
@@ -9648,14 +9667,14 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                      * prior session that never saw a loop wrap (because the
                      * user switched clips before the cycle completed) stay
                      * suppressed and miss their first cycle on re-launch. */
-                    if (tr->pad_mode == PAD_MODE_DRUM) {
+                    if (tr->pad_mode == PAD_MODE_DRUM && tr->drum_clips[tr->active_clip]) {
                         int _dl;
                         for (_dl = 0; _dl < DRUM_LANES; _dl++) {
                             clip_t *_nc = &tr->drum_clips[tr->active_clip]->lanes[_dl].clip;
                             clip_clear_suppress(_nc);
                             drum_lane_anchor_playhead(inst, tr, _dl, _nc);
                         }
-                    } else {
+                    } else if (tr->pad_mode != PAD_MODE_DRUM) {
                         pfx_sync_from_clip(tr);
                         cl = &tr->clips[tr->active_clip];
                         clip_clear_suppress(cl);
@@ -9687,7 +9706,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                     tr->recording              = 1;
                     if (tr->recording_adaptive_arm) {
                         tr->recording_adaptive_arm = 0;
-                        if (tr->pad_mode == PAD_MODE_DRUM) {
+                        if (tr->pad_mode == PAD_MODE_DRUM && tr->drum_clips[tr->active_clip]) {
                             int _dl;
                             for (_dl = 0; _dl < DRUM_LANES; _dl++) {
                                 clip_t *_dlc = &tr->drum_clips[tr->active_clip]->lanes[_dl].clip;
@@ -9695,7 +9714,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                                 _dlc->pp_dir_state = initial_pp_dir(_dlc->playback_dir);
                                 tr->drum_tick_in_step[_dl] = 0;
                             }
-                        } else {
+                        } else if (tr->pad_mode != PAD_MODE_DRUM) {
                             clip_t *_mcl = &tr->clips[tr->active_clip];
                             tr->current_step = initial_clip_step(_mcl->loop_start, _mcl->length, _mcl->playback_dir);
                             _mcl->pp_dir_state = initial_pp_dir(_mcl->playback_dir);
@@ -9716,14 +9735,14 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                         tr->clip_playing = 1;
                         /* Clear lingering recording-suppressor flags on the
                          * newly-launched clip — see queued-launch path above. */
-                        if (tr->pad_mode == PAD_MODE_DRUM) {
+                        if (tr->pad_mode == PAD_MODE_DRUM && tr->drum_clips[tr->active_clip]) {
                             int _dl;
                             for (_dl = 0; _dl < DRUM_LANES; _dl++) {
                                 clip_t *_nc = &tr->drum_clips[tr->active_clip]->lanes[_dl].clip;
                                 clip_clear_suppress(_nc);
                                 drum_lane_anchor_playhead(inst, tr, _dl, _nc);
                             }
-                        } else {
+                        } else if (tr->pad_mode != PAD_MODE_DRUM) {
                             pfx_sync_from_clip(tr);
                             cl = &tr->clips[tr->active_clip];
                             clip_clear_suppress(cl);
@@ -9747,7 +9766,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
 
             /* Note-on: drum and melodic paths share the same note-firing logic but
              * drum iterates all 32 lanes, applying each lane's pfx params before scanning. */
-            if (tr->pad_mode == PAD_MODE_DRUM) {
+            if (tr->pad_mode == PAD_MODE_DRUM && tr->drum_clips[tr->active_clip]) {
                 if (tr->clip_playing && !effective_mute(inst, t)) {
                     int l;
                     for (l = 0; l < DRUM_LANES; l++) {
@@ -9973,7 +9992,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
         /* Per-track tick advance and step advance */
         for (t = 0; t < NUM_TRACKS; t++) {
             seq8_track_t *tr = &inst->tracks[t];
-            if (tr->pad_mode == PAD_MODE_DRUM) {
+            if (tr->pad_mode == PAD_MODE_DRUM && tr->drum_clips[tr->active_clip]) {
                 /* Drum: advance per-lane tick counters independently. */
                 int l;
                 for (l = 0; l < DRUM_LANES; l++) {

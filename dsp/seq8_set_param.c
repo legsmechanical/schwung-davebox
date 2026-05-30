@@ -287,6 +287,7 @@ static void set_param(void *instance, const char *key, const char *val) {
     seq8_instance_t *inst = (seq8_instance_t *)instance;
     if (!inst || !key || !val) return;
 
+
     /* --- Transport (global) --- */
     if (!strcmp(key, "transport")) {
         /* play_focus:T:C — same as "play" but ARM the focused track's
@@ -2994,7 +2995,17 @@ static void set_param(void *instance, const char *key, const char *val) {
             const char *p2 = sub + 1;
             while (*p2 >= '0' && *p2 <= '9') { lane_idx = lane_idx * 10 + (*p2 - '0'); p2++; }
             if (lane_idx < 0 || lane_idx >= DRUM_LANES) return;
+            /* Schwung host drops tN_pad_mode and tN_convert_to_drum, so
+             * pad_mode may not be set on the DSP side when JS sends lane
+             * writes. tN_lL_* keys are drum-only by construction (JS never
+             * sends them for melodic tracks), so allocate here on first
+             * lane write as the reliable drum-mode entry point. */
+            if (tr->pad_mode != PAD_MODE_DRUM) {
+                tr->pad_mode = PAD_MODE_DRUM;
+                drum_clips_alloc(inst, tr);
+            }
             drum_clip_t *_dlc_guard = tr->drum_clips[tr->active_clip];
+            if (!_dlc_guard) { drum_clips_alloc(inst, tr); _dlc_guard = tr->drum_clips[tr->active_clip]; }
             if (!_dlc_guard) return;
             drum_lane_t *dlane = &_dlc_guard->lanes[lane_idx];
             clip_t      *dlc   = &dlane->clip;
