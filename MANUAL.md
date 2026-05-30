@@ -1007,6 +1007,15 @@ Up to **16 snapshots** per set — full state backups stamped with date/time.
 - Snapshots belong to the set. **Clear Session does not delete snapshots.**
 - After a format-changing update, old snapshots are marked `(old)` and can be removed.
 
+## Version compatibility
+
+If you load a set that was saved by an older dAVEBOx version, a dialog appears:
+
+> **Incompatible State** — Session incompatible with current dB ver. Erase and proceed?
+
+- **Yes** — erases the old state and starts with a clean session.
+- **No** (default) / **Back** — exits the module. The old state file is preserved so you can back it up or downgrade.
+
 ## What persists per set
 
 Auto-saves on suspend (Back) and exit (Shift+Back / Quit).
