@@ -244,6 +244,10 @@ export const S = {
     trackCCAssign: Array.from({length: 8}, () => CC_ASSIGN_DEFAULTS.slice()),
     /* Per-knob continuous-modulation type: 0 = CC, 1 = Channel Pressure (aftertouch), 2 = Sch (chain knob). Per-track. */
     trackCCType: Array.from({length: 8}, () => new Array(8).fill(0)),
+    /* Sch label cache: per-track per-lane param name string, null = not fetched. */
+    schLabel: Array.from({length: 8}, () => new Array(8).fill(null)),
+    /* Sch label fetch cursor: -1 = idle, 0-7 = fetching lane N next tick. */
+    schLabelFetchLane: -1,
     /* Per-clip resting value ("clip CC") per knob; -1 = "—" (unset, send nothing). */
     clipCCVal: Array.from({length: 8}, () => Array.from({length: 16}, () => new Array(8).fill(-1))),
     trackCCAutoBits: Array.from({length: 8}, () => new Array(16).fill(0)),

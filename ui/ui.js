@@ -617,6 +617,20 @@ function setPaletteEntryRGB(idx, r, g, b) {
 
 function reapplyPalette() { move_midi_internal_send(_CC_REAPPLY_PKT); }
 
+/* Resolve the Schwung chain slot index for a dAVEBOx track's MIDI channel.
+ * shadow_get_slots() returns {channel, name} per slot where channel is 1-16
+ * (matching trackChannel) or 0 for "All". Returns -1 if no match. */
+function schSlotForTrack(t) {
+    if (typeof shadow_get_slots !== 'function') return -1;
+    const ch = S.trackChannel[t];
+    const slots = shadow_get_slots();
+    if (!slots) return -1;
+    for (let i = 0; i < slots.length; i++) {
+        if (slots[i].channel === ch || slots[i].channel === 0) return i;
+    }
+    return -1;
+}
+
 /* Format CC number as a 4-char display label: CC7→"CC7 ", CC74→"CC74", C100→"C100" */
 function fmtCCLabel(cc) {
     const n = (cc | 0);
@@ -2680,6 +2694,17 @@ function readBankParams(t, bankIdx) {
             const tp = typs.split(' ');
             for (let k = 0; k < 8; k++) S.trackCCType[t][k] = parseInt(tp[k], 10) || 0;
         }
+        /* Default Schwung-routed tracks to Sch1-8 when all lanes are at factory CC defaults.
+         * Deferred one-per-tick via pendingDefaultSetParams to avoid coalescing. */
+        if (S.trackRoute[t] === 0 && typeof shadow_set_param === 'function' &&
+                S.trackCCType[t].every(function(tp) { return tp === 0; })) {
+            for (let k = 0; k < 8; k++) {
+                S.trackCCType[t][k] = 2;
+                S.trackCCAssign[t][k] = k + 1;
+                S.schLabel[t][k] = null;
+                S.pendingDefaultSetParams.push({ key: 't' + t + '_cc_type_assign', val: k + ' 2 ' + (k + 1) });
+            }
+        }
         for (let c = 0; c < NUM_CLIPS; c++) {
             const bits = host_module_get_param('t' + t + '_c' + c + '_cc_auto_bits');
             S.trackCCAutoBits[t][c] = bits !== null ? (parseInt(bits, 10) || 0) : 0;
@@ -3994,6 +4019,11 @@ function drawUI() {
                 print(colX, rowY,      col4(lbl), touchedHi ? 0 : 1);
                 print(colX, rowY + 12, col4(val), touchedHi ? 0 : 1);
             }
+        }
+        /* Bottom line: show full param name when a Sch knob is touched. */
+        if (S.knobTouched >= 0 && S.trackCCType[t][S.knobTouched] === 2) {
+            const _pn = S.schLabel[t][S.knobTouched];
+            if (_pn) print(0, 56, _pn, 1);
         }
         } else if (S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM && bank === 1) {
         /* Melodic NOTE FX: K1=Oct, K2=Ofs, K3=Vel, K4=Qnt, K5=Len, K6=>Gate
@@ -5315,9 +5345,23 @@ function _tickImpl() {
     /* Sch (chain knob) automation routing: poll cc_auto_cur_val for every
      * playing track that has Sch lanes, and push values to chain slots via
      * shadow_set_param. Runs regardless of active bank. */
-    /* Sch (chain knob) automation: DSP handles playback and live sends via
-     * pfx_send (CC 102-109 → chain on_midi absolute knob handler). No JS
-     * routing needed. */
+    /* Sch label fetch: one shadow_get_param per tick to avoid blocking.
+     * Triggered on bank-6 entry; fetches param name for each Sch lane. */
+    if (S.schLabelFetchLane >= 0 && S.schLabelFetchLane < 8 &&
+            typeof shadow_get_param === 'function') {
+        const _ft = S.activeTrack;
+        const _fk = S.schLabelFetchLane;
+        S.schLabelFetchLane++;
+        if (S.trackCCType[_ft][_fk] === 2) {
+            const _slot = schSlotForTrack(_ft);
+            if (_slot >= 0) {
+                const _name = shadow_get_param(_slot, 'knob_' + S.trackCCAssign[_ft][_fk] + '_param');
+                S.schLabel[_ft][_fk] = _name || null;
+            }
+        }
+        if (S.schLabelFetchLane >= 8) S.schLabelFetchLane = -1;
+        S.screenDirty = true;
+    }
 
     /* CC-bank step-LED gradient palette: 6 white brightness levels (the playhead
      * uses the track color instead). Written on bank-6 entry / track switch
@@ -6844,6 +6888,7 @@ function _onCC_jog(d1, d2) {
                         S.activeBank = next;
                         S.trackActiveBank[S.activeTrack] = next;
                         if (next === 7) S.allLanesConfirmed = false;
+                        if (next === 6) S.schLabelFetchLane = 0;
                         readBankParams(S.activeTrack, next);
                         S.bankSelectTick = S.tickCount;
                         writeSidecar();
@@ -8653,6 +8698,7 @@ function _onCC_knobs(d1, d2) {
                         const schKnob = -(nx + 1);
                         S.trackCCType[t][knobIdx] = 2;
                         S.trackCCAssign[t][knobIdx] = schKnob;
+                        S.schLabel[t][knobIdx] = null;
                         _setp('cc_type_assign', knobIdx + ' 2 ' + schKnob);
                     } else if (nx === -1) {
                         S.trackCCType[t][knobIdx] = 1;
@@ -9440,6 +9486,7 @@ function _onPadPressTrackView(status, d1, d2) {
                     S.activeBank = bankIdx;
                     S.trackActiveBank[S.activeTrack] = bankIdx;
                     if (bankIdx === 7) S.allLanesConfirmed = false;
+                    if (bankIdx === 6) S.schLabelFetchLane = 0;
                     readBankParams(S.activeTrack, bankIdx);
                     S.bankSelectTick = S.tickCount;
                     writeSidecar();
