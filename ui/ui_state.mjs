@@ -331,6 +331,10 @@ export const S = {
     bpmWasEditing: false,
     lastSentMenuEditValue: null,
     confirmClearSession: false,
+    /* State version mismatch confirm dialog — shown when DSP detects an
+     * old-format state file. Yes = wipe + clean start; No = exit module. */
+    confirmStateWipe: false,
+    confirmStateWipeSel: 1,   /* 0=Yes, 1=No (default) */
     /* Keys->Drums track conversion confirm dialog (transient, not persisted). */
     confirmConvertToDrum: false,
     confirmConvertToDrumSel: 1,   /* 0=Yes, 1=No (default) */

@@ -780,7 +780,8 @@ static void set_param(void *instance, const char *key, const char *val) {
     }
 
     if (!strcmp(key, "save")) {
-        seq8_save_state(inst);
+        if (!inst->state_version_mismatch)
+            seq8_save_state(inst);
         return;
     }
 

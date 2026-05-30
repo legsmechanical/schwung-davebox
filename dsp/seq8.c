@@ -830,6 +830,11 @@ typedef struct {
     /* Monotonic nonce: unique per create_instance call; JS polls to detect DSP hot-reload */
     uint32_t instance_nonce;
 
+    /* Set by seq8_load_state when a genuine version mismatch is found (sv>0 && sv!=36).
+     * JS reads via get_param, shows confirm dialog. On "Yes" JS sends state_load which
+     * re-enters seq8_load_state — flag being set means "delete and start clean". */
+    uint8_t state_version_mismatch;
+
     /* Mute/solo per track: 0=off, 1=on */
     uint8_t mute[NUM_TRACKS];
     uint8_t solo[NUM_TRACKS];
@@ -1608,16 +1613,25 @@ static void seq8_load_state(seq8_instance_t *inst) {
     if (!n) { free(buf); remove(inst->state_path); return; }
     buf[n] = '\0';
 
-    /* Version gate: only v=36 accepted (dev build; wipe on version mismatch). */
+    /* Version gate: only v=36 accepted. Clear Session sentinel (v=0) is silently
+     * wiped. Genuine old-format files (v>0 && v!=36) defer deletion behind a JS
+     * confirm dialog — flag is set on first encounter, consumed on re-entry. */
     {
         int sv = json_get_int(buf, "v", -1);
         if (sv != 36) {
             free(buf);
+            if (sv > 0 && !inst->state_version_mismatch) {
+                inst->state_version_mismatch = 1;
+                seq8_ilog(inst, "SEQ8 state: version mismatch, awaiting JS confirm");
+                return;
+            }
+            inst->state_version_mismatch = 0;
             remove(inst->state_path);
             seq8_ilog(inst, "SEQ8 state: wrong version, deleted");
             return;
         }
     }
+    inst->state_version_mismatch = 0;
 
     /* AT automation: clear all lanes before the sparse parse below (frees lanes
      * to 254 and prevents append-on-reload). */
@@ -6095,7 +6109,8 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
 static void destroy_instance(void *instance) {
     seq8_instance_t *inst = (seq8_instance_t *)instance;
     if (!inst) return;
-    seq8_save_state(inst);  /* Option C: persist state before teardown */
+    if (!inst->state_version_mismatch)
+        seq8_save_state(inst);
     int t;
     for (t = 0; t < NUM_TRACKS; t++) {
         inst->tracks[t].pfx.event_count = 0;
@@ -8262,7 +8277,7 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
          * state_buf when clean made JS pollDSP unconditionally overwrite the
          * on-disk file with stale state — defeating Clear Session and the
          * deferred clear path. */
-        if (!inst->state_dirty) {
+        if (!inst->state_dirty || inst->state_version_mismatch) {
             out[0] = '\0';
             return 0;
         }
@@ -8326,6 +8341,8 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         return snprintf(out, out_len, "6");
     if (!strcmp(key, "instance_id"))
         return snprintf(out, out_len, "%u", inst ? inst->instance_nonce : 0);
+    if (!strcmp(key, "state_version_mismatch"))
+        return snprintf(out, out_len, "%d", inst ? (int)inst->state_version_mismatch : 0);
     if (!strcmp(key, "state_uuid")) {
         /* Extract UUID from state_path: .../set_state/<UUID>/seq8-state.json */
         if (!inst) return snprintf(out, out_len, "");

@@ -35,10 +35,10 @@ export const NUM_TRACKS          = 8;
 export const NUM_CLIPS           = 16;
 export const DRUM_LANES          = 32;
 export const DRUM_BASE_NOTE      = 36;
-/* DSP state-format version — mirrors `v=32` in dsp/seq8.c. Bump BOTH together.
+/* DSP state-format version — mirrors `v=36` in dsp/seq8.c. Bump BOTH together.
  * Snapshots store the version they were saved at; a mismatch marks them
  * incompatible (offered for wipe when the Load list opens). */
-export const STATE_VERSION       = 32;
+export const STATE_VERSION       = 36;
 
 /* shim ui_flags bits that must be masked while SEQ8 owns the display. */
 export const FLAG_JUMP_TO_OVERTAKE = 0x04;

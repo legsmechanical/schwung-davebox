@@ -1351,6 +1351,28 @@ function ensureGlobalMenuFresh() {
  * is pressed on a clip / lane in any non-Forward direction or Audio reverse
  * style. OK dismisses; BAKE NOW opens the standard bake confirm dialog
  * pre-targeted at the active clip / drum lane. */
+function drawStateWipeConfirm() {
+    clear_screen();
+    function _btn(x, y, w, h, sel, label, labelOff) {
+        if (sel) {
+            fill_rect(x, y, w, h, 1);
+            print(x + labelOff, y + 3, label, 0);
+        } else {
+            fill_rect(x, y, w, 1, 1);
+            fill_rect(x, y + h - 1, w, 1, 1);
+            fill_rect(x, y, 1, h, 1);
+            fill_rect(x + w - 1, y, 1, h, 1);
+            print(x + labelOff, y + 3, label, 1);
+        }
+    }
+    drawMenuHeader('Incompatible State');
+    print(4, 16, 'Session incompatible', 1);
+    print(4, 25, 'with current dB ver.', 1);
+    print(4, 34, 'Erase and proceed?', 1);
+    _btn(6,  46, 46, 13, S.confirmStateWipeSel === 0, 'Yes', 14);
+    _btn(74, 46, 46, 13, S.confirmStateWipeSel === 1, 'No',  17);
+}
+
 function drawRecordBlockedDialog() {
     clear_screen();
     function _btn(x, y, w, h, sel, label, labelOff) {
@@ -3437,6 +3459,7 @@ function drawUI() {
         print(4, 50, 'Capture cancels',      1);
         return;
     }
+    if (S.confirmStateWipe) { drawStateWipeConfirm(); return; }
     if (S.pendingSchwungSlotPicker) { drawSchwungSlotPicker(); return; }
     if (S.recordBlockedDialog) { drawRecordBlockedDialog(); return; }
     if (S.confirmLgto)         { drawLgtoConfirm();         return; }
@@ -4933,7 +4956,17 @@ globalThis.init = function () {
     const dspUuid = (typeof host_module_get_param === 'function')
         ? (host_module_get_param('state_uuid') || '') : '';
     if (currentDspNonce) S.lastDspInstanceId = currentDspNonce;
-    if (inheritResult === 'auto') {
+    /* Check if DSP flagged a state version mismatch during create_instance.
+     * If so, show the confirm dialog and suppress any pendingSetLoad — the
+     * dialog's "Yes" handler will trigger state_load after the user confirms. */
+    const _svMismatch = (typeof host_module_get_param === 'function')
+        ? host_module_get_param('state_version_mismatch') : null;
+    if (_svMismatch && parseInt(_svMismatch, 10) === 1) {
+        S.confirmStateWipe = true;
+        S.confirmStateWipeSel = 1;
+        S.pendingSetLoad = false;
+        S.screenDirty = true;
+    } else if (inheritResult === 'auto') {
         S.pendingSetLoad = true;
     } else if (inheritResult === 'picker') {
         /* state_load deferred until resolveInheritPicker fires */
@@ -6230,6 +6263,21 @@ function _onCC_jog(d1, d2) {
         return;
     }
 
+    /* State version mismatch dialog: Yes = wipe + clean start; No = exit module. */
+    if (d1 === 3 && d2 === 127 && S.confirmStateWipe) {
+        S.confirmStateWipe = false;
+        if (S.confirmStateWipeSel === 0) {
+            S.pendingSetLoad = true;
+        } else {
+            removeFlagsWrap();
+            clearAllLEDs();
+            if (typeof host_exit_module === 'function') host_exit_module();
+        }
+        S.screenDirty = true;
+        forceRedraw();
+        return;
+    }
+
     /* REC Unavailable dialog: jog click commits selection (OK = dismiss,
      * BAKE NOW = open standard bake confirm pre-targeted at active clip). */
     if (d1 === 3 && d2 === 127 && S.recordBlockedDialog) {
@@ -6590,6 +6638,14 @@ function _onCC_jog(d1, d2) {
             }
             return;
         }
+        if (S.confirmStateWipe) {
+            const delta = decodeDelta(d2);
+            if (delta !== 0) {
+                S.confirmStateWipeSel = S.confirmStateWipeSel === 0 ? 1 : 0;
+                S.screenDirty = true;
+            }
+            return;
+        }
         if (S.recordBlockedDialog) {
             const delta = decodeDelta(d2);
             if (delta !== 0) {
@@ -6945,6 +7001,12 @@ function _onCC_buttons(d1, d2) {
                 else { openGlobalMenu(); }
             } else if (S.tapTempoOpen) {
                 closeTapTempo();
+                forceRedraw();
+            } else if (S.confirmStateWipe) {
+                S.confirmStateWipe = false;
+                removeFlagsWrap();
+                clearAllLEDs();
+                if (typeof host_exit_module === 'function') host_exit_module();
                 forceRedraw();
             } else if (S.recordBlockedDialog) {
                 S.recordBlockedDialog = false;
@@ -8079,7 +8141,7 @@ function _onCC_knobs(d1, d2) {
     if (d1 >= 71 && d1 <= 78) {
         /* Exclusive overlays — knob turns have no visible effect and should be swallowed. */
         if (S.heldStep >= 0) return;
-        if (S.globalMenuOpen || S.tapTempoOpen || S.confirmBake || S.confirmClearSession || S.confirmConvertToDrum || S.confirmExport || S.exportDoneDialog || S.recordBlockedDialog) return;
+        if (S.globalMenuOpen || S.tapTempoOpen || S.confirmBake || S.confirmClearSession || S.confirmConvertToDrum || S.confirmExport || S.exportDoneDialog || S.recordBlockedDialog || S.confirmStateWipe) return;
         const knobIdx = d1 - 71;
         S.knobTouched          = knobIdx;
         S.knobTurnedTick[knobIdx] = S.tickCount;
