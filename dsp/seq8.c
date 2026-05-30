@@ -589,7 +589,7 @@ typedef struct {
     /* Drum mode: 16 clips, each containing 32 monophonic lanes.
      * Active when pad_mode == PAD_MODE_DRUM. active_clip/queued_clip/clip_playing
      * apply to drum_clips[] exactly as they do to clips[] in melodic mode. */
-    drum_clip_t drum_clips[NUM_CLIPS];
+    drum_clip_t *drum_clips[NUM_CLIPS];
     /* Per-lane pfx runtime state (monophonic delay chains, not persisted as live runtime). */
     drum_pfx_t drum_lane_pfx[DRUM_LANES];
     /* Per-lane render-state tick counters (not persisted; reset on transport play/clip launch). */
@@ -1050,6 +1050,38 @@ typedef struct {
 static const host_api_v1_t *g_host = NULL;
 static seq8_instance_t     *g_inst = NULL;
 
+/* ------------------------------------------------------------------ */
+/* Drum clip lazy allocation helpers                                    */
+/* ------------------------------------------------------------------ */
+
+static void seq8_ilog(seq8_instance_t *inst, const char *msg);
+static void clip_init(clip_t *cl);
+static void drum_pfx_params_init(drum_pfx_params_t *p);
+
+static void drum_clips_alloc(seq8_instance_t *inst, seq8_track_t *tr) {
+    int c, l;
+    for (c = 0; c < NUM_CLIPS; c++) {
+        if (tr->drum_clips[c]) continue;
+        tr->drum_clips[c] = (drum_clip_t *)calloc(1, sizeof(drum_clip_t));
+        if (!tr->drum_clips[c]) {
+            seq8_ilog(inst, "drum_clips_alloc: calloc failed");
+            continue;
+        }
+        for (l = 0; l < DRUM_LANES; l++) {
+            clip_init(&tr->drum_clips[c]->lanes[l].clip);
+            drum_pfx_params_init(&tr->drum_clips[c]->lanes[l].pfx_params);
+            tr->drum_clips[c]->lanes[l].midi_note = (uint8_t)(DRUM_BASE_NOTE + l);
+        }
+    }
+}
+
+static void drum_clips_free(seq8_track_t *tr) {
+    int c;
+    for (c = 0; c < NUM_CLIPS; c++) {
+        free(tr->drum_clips[c]);
+        tr->drum_clips[c] = NULL;
+    }
+}
 
 /* ------------------------------------------------------------------ */
 /* Mute/solo                                                            */
@@ -1406,7 +1438,7 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
         for (c = 0; c < NUM_CLIPS; c++) {
             int l;
             for (l = 0; l < DRUM_LANES; l++) {
-                drum_lane_t *dl = &inst->tracks[t].drum_clips[c].lanes[l];
+                drum_lane_t *dl = &inst->tracks[t].drum_clips[c]->lanes[l];
                 clip_t *dlc = &dl->clip;
                 uint16_t ni;
                 int has_active = 0;
@@ -1762,6 +1794,8 @@ static void seq8_load_state(seq8_instance_t *inst) {
     for (t = 0; t < NUM_TRACKS; t++) {
         snprintf(key, sizeof(key), "t%d_pm", t);
         inst->tracks[t].pad_mode = (uint8_t)clamp_i(json_get_int(buf, key, 0), 0, 1);
+        if (inst->tracks[t].pad_mode == PAD_MODE_DRUM)
+            drum_clips_alloc(inst, &inst->tracks[t]);
     }
     /* Per-track: drum lane mute/solo bitmasks */
     for (t = 0; t < NUM_TRACKS; t++) {
@@ -2016,7 +2050,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
         for (c = 0; c < NUM_CLIPS; c++) {
             int l;
             for (l = 0; l < DRUM_LANES; l++) {
-                drum_lane_t *dl = &inst->tracks[t].drum_clips[c].lanes[l];
+                drum_lane_t *dl = &inst->tracks[t].drum_clips[c]->lanes[l];
                 clip_t *dlc = &dl->clip;
                 char search[48];
                 snprintf(search, sizeof(search), "\"t%dc%dl%d_n\":\"", t, c, l);
@@ -2153,7 +2187,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
             int l;
             for (l = 0; l < DRUM_LANES; l++)
                 clip_build_steps_from_notes(
-                    &inst->tracks[t].drum_clips[c].lanes[l].clip);
+                    &inst->tracks[t].drum_clips[c]->lanes[l].clip);
         }
     }
     /* Sync each track's tr->pfx params from its active clip's pfx_params */
@@ -2243,17 +2277,17 @@ static void merge_place(seq8_instance_t *inst, int row) {
             /* Wipe lanes for this row, then size + fill from pending pitches. */
             int l;
             for (l = 0; l < DRUM_LANES; l++) {
-                clip_init(&tr->drum_clips[row].lanes[l].clip);
-                tr->drum_clips[row].lanes[l].clip.length         = (uint16_t)steps;
-                tr->drum_clips[row].lanes[l].clip.ticks_per_step = (uint16_t)inst->merge_tps;
+                clip_init(&tr->drum_clips[row]->lanes[l].clip);
+                tr->drum_clips[row]->lanes[l].clip.length         = (uint16_t)steps;
+                tr->drum_clips[row]->lanes[l].clip.ticks_per_step = (uint16_t)inst->merge_tps;
             }
             int pi;
             for (pi = 0; pi < inst->merge_pending_count[t]; pi++) {
                 uint8_t pitch = inst->merge_pending[t][pi].pitch;
                 for (l = 0; l < DRUM_LANES; l++) {
-                    if (tr->drum_clips[row].lanes[l].midi_note == pitch) {
+                    if (tr->drum_clips[row]->lanes[l].midi_note == pitch) {
                         clip_insert_note(
-                            &tr->drum_clips[row].lanes[l].clip,
+                            &tr->drum_clips[row]->lanes[l].clip,
                             inst->merge_pending[t][pi].tick_at_on,
                             inst->merge_pending[t][pi].gate,
                             pitch, inst->merge_pending[t][pi].vel);
@@ -2262,7 +2296,7 @@ static void merge_place(seq8_instance_t *inst, int row) {
                 }
             }
             for (l = 0; l < DRUM_LANES; l++) {
-                clip_t *lc = &tr->drum_clips[row].lanes[l].clip;
+                clip_t *lc = &tr->drum_clips[row]->lanes[l].clip;
                 if (lc->note_count > 0) clip_build_steps_from_notes(lc);
             }
         } else {
@@ -4164,7 +4198,7 @@ static void drum_pfx_note_off_imm(seq8_instance_t *inst, seq8_track_t *tr,
 static void drum_lane_note_off_imm(seq8_instance_t *inst, seq8_track_t *tr, uint8_t pitch) {
     int l;
     for (l = 0; l < DRUM_LANES; l++) {
-        if (tr->drum_clips[tr->active_clip].lanes[l].midi_note == pitch) {
+        if (tr->drum_clips[tr->active_clip]->lanes[l].midi_note == pitch) {
             drum_pfx_note_off_imm(inst, tr, &tr->drum_lane_pfx[l], pitch);
             return;
         }
@@ -4839,7 +4873,7 @@ static void drum_repeat_tick(seq8_instance_t *inst, seq8_track_t *tr) {
             if (vel < 1) vel = 1;
             if (vel > 127) vel = 127;
 
-            drum_lane_t *dlane = &tr->drum_clips[tr->active_clip].lanes[lane];
+            drum_lane_t *dlane = &tr->drum_clips[tr->active_clip]->lanes[lane];
             uint8_t pitch = dlane->midi_note;
 
             /* Cancel pending note-off for this pitch if still open */
@@ -4863,7 +4897,7 @@ static void drum_repeat_tick(seq8_instance_t *inst, seq8_track_t *tr) {
              * degenerate. */
             if (tr->recording) {
                 int ac = (int)tr->active_clip;
-                clip_t *rlc = &tr->drum_clips[ac].lanes[lane].clip;
+                clip_t *rlc = &tr->drum_clips[ac]->lanes[lane].clip;
                 uint16_t rs = tr->drum_current_step[lane];
                 if (rs < rlc->length) {
                     int16_t off = (int16_t)tr->drum_tick_in_step[lane];
@@ -4984,7 +5018,7 @@ static void drum_repeat2_tick(seq8_instance_t *inst, seq8_track_t *tr) {
             vel = vel * scale / 100;
             if (vel < 1) vel = 1;
             if (vel > 127) vel = 127;
-            drum_lane_t *dlane = &tr->drum_clips[tr->active_clip].lanes[l];
+            drum_lane_t *dlane = &tr->drum_clips[tr->active_clip]->lanes[l];
             uint8_t pitch = dlane->midi_note;
             { int pp;
               for (pp = 0; pp < (int)tr->play_pending_count; pp++) {
@@ -4999,7 +5033,7 @@ static void drum_repeat2_tick(seq8_instance_t *inst, seq8_track_t *tr) {
             drum_pfx_note_on(inst, tr, &tr->drum_lane_pfx[l], pitch, (uint8_t)vel);
             if (tr->recording) {
                 int ac = (int)tr->active_clip;
-                clip_t *rlc = &tr->drum_clips[ac].lanes[l].clip;
+                clip_t *rlc = &tr->drum_clips[ac]->lanes[l].clip;
                 uint16_t rs = tr->drum_current_step[l];
                 if (rs < rlc->length) {
                     int16_t off = (int16_t)tr->drum_tick_in_step[l];
@@ -5056,7 +5090,7 @@ static void live_note_on(seq8_instance_t *inst, seq8_track_t *tr,
                          uint8_t pitch, uint8_t vel) {
     if (tr->pad_mode == PAD_MODE_DRUM) {
         for (int l = 0; l < DRUM_LANES; l++) {
-            if (tr->drum_clips[tr->active_clip].lanes[l].midi_note == pitch) {
+            if (tr->drum_clips[tr->active_clip]->lanes[l].midi_note == pitch) {
                 inst->emit_bypass_swing = 1;
                 drum_pfx_note_on(inst, tr, &tr->drum_lane_pfx[l], pitch, vel);
                 inst->emit_bypass_swing = 0;
@@ -5543,7 +5577,7 @@ static void pfx_sync_from_clip(seq8_track_t *tr) {
         int l;
         for (l = 0; l < DRUM_LANES; l++)
             drum_pfx_apply_params(&tr->drum_lane_pfx[l],
-                                  &tr->drum_clips[tr->active_clip].lanes[l].pfx_params);
+                                  &tr->drum_clips[tr->active_clip]->lanes[l].pfx_params);
         return;
     }
     pfx_apply_params(&tr->pfx, &tr->clips[tr->active_clip].pfx_params);
@@ -5700,14 +5734,8 @@ static void clip_init(clip_t *cl) {
 
 static void drum_track_init(seq8_track_t *tr, int track_idx) {
     int c, l;
-    for (c = 0; c < NUM_CLIPS; c++) {
-        for (l = 0; l < DRUM_LANES; l++) {
-            drum_lane_t *lane = &tr->drum_clips[c].lanes[l];
-            clip_init(&lane->clip);
-            drum_pfx_params_init(&lane->pfx_params);
-            lane->midi_note = (uint8_t)(DRUM_BASE_NOTE + l);
-        }
-    }
+    for (c = 0; c < NUM_CLIPS; c++)
+        tr->drum_clips[c] = NULL;
     for (l = 0; l < DRUM_LANES; l++) {
         tr->drum_rec_pending_tick[l]   = 0;
         tr->drum_rec_pending_step[l]   = 0;
@@ -6119,6 +6147,7 @@ static void destroy_instance(void *instance) {
     }
     send_panic(inst);
     g_inst = NULL;
+    { int _t; for (_t = 0; _t < NUM_TRACKS; _t++) drum_clips_free(&inst->tracks[_t]); }
     seq8_ilog(inst, "SEQ8 instance destroyed");
     if (inst->log_fp) fclose(inst->log_fp);
     free(inst);
@@ -6294,7 +6323,7 @@ static int drum_pad_event(seq8_instance_t *inst, seq8_track_t *tr,
      * needed for both audible preview AND for record-slot population. */
     int lane = (int)tr->active_drum_lane;
     if (lane < 0 || lane >= DRUM_LANES) return 1;
-    drum_clip_t *dc = &tr->drum_clips[tr->active_clip];
+    drum_clip_t *dc = tr->drum_clips[tr->active_clip];
     uint8_t laneNote = dc->lanes[lane].midi_note;
     if (laneNote == 0xFF) return 1;
 
@@ -6424,7 +6453,7 @@ static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
     if (tr->recording || _is_preroll) {
         if (tr->pad_mode == PAD_MODE_DRUM) {
             int ac = (int)tr->active_clip;
-            drum_clip_t *dc = &tr->drum_clips[ac];
+            drum_clip_t *dc = tr->drum_clips[ac];
             int lane = -1;
             { int l; for (l = 0; l < DRUM_LANES; l++) {
                 if (dc->lanes[l].midi_note == pitch) { lane = l; break; }
@@ -6504,7 +6533,11 @@ static void drum_row_snap(seq8_instance_t *inst, int row,
                           drum_rec_snap_lane_t dst[NUM_TRACKS][DRUM_LANES]) {
     int t, l;
     for (t = 0; t < NUM_TRACKS; t++) {
-        drum_clip_t *dc = &inst->tracks[t].drum_clips[row];
+        drum_clip_t *dc = inst->tracks[t].drum_clips[row];
+        if (!dc) {
+            memset(dst[t], 0, sizeof(drum_rec_snap_lane_t) * DRUM_LANES);
+            continue;
+        }
         for (l = 0; l < DRUM_LANES; l++) {
             const drum_lane_t *lane = &dc->lanes[l];
             const clip_t *src = &lane->clip;
@@ -6532,7 +6565,27 @@ static void drum_row_restore(seq8_instance_t *inst, int row,
                              const drum_rec_snap_lane_t src[NUM_TRACKS][DRUM_LANES]) {
     int t, l;
     for (t = 0; t < NUM_TRACKS; t++) {
-        drum_clip_t *dc = &inst->tracks[t].drum_clips[row];
+        drum_clip_t *dc = inst->tracks[t].drum_clips[row];
+        /* Check if snapshot has any data for this track */
+        int has_data = 0;
+        for (l = 0; l < DRUM_LANES; l++)
+            if (src[t][l].active) { has_data = 1; break; }
+        if (!dc && !has_data) continue;
+        if (!dc && has_data) {
+            dc = (drum_clip_t *)calloc(1, sizeof(drum_clip_t));
+            if (!dc) continue;
+            inst->tracks[t].drum_clips[row] = dc;
+            for (l = 0; l < DRUM_LANES; l++) {
+                clip_init(&dc->lanes[l].clip);
+                drum_pfx_params_init(&dc->lanes[l].pfx_params);
+                dc->lanes[l].midi_note = (uint8_t)(DRUM_BASE_NOTE + l);
+            }
+        }
+        if (dc && !has_data) {
+            free(dc);
+            inst->tracks[t].drum_clips[row] = NULL;
+            continue;
+        }
         for (l = 0; l < DRUM_LANES; l++) {
             drum_lane_t *lane = &dc->lanes[l];
             clip_t *dst = &lane->clip;
@@ -6649,7 +6702,7 @@ static void undo_begin_scene_bake(seq8_instance_t *inst, int clip) {
 static void undo_begin_drum_clip(seq8_instance_t *inst, int t, int c) {
     if (inst->undo_locked) return;
     int l;
-    drum_clip_t *dc = &inst->tracks[t].drum_clips[c];
+    drum_clip_t *dc = inst->tracks[t].drum_clips[c];
     for (l = 0; l < DRUM_LANES; l++) {
         const drum_lane_t *lane = &dc->lanes[l];
         const clip_t *src = &lane->clip;
@@ -7438,7 +7491,7 @@ static void bake_clip(seq8_instance_t *inst, int t, int c, int loops, int wrap) 
 static void bake_drum_lane(seq8_instance_t *inst, int t, int c, int lane, int loops, int wrap) {
     seq8_track_t *tr = &inst->tracks[t];
     int ni;
-    if (tr->drum_clips[c].lanes[lane].clip.note_count == 0) return;
+    if (tr->drum_clips[c]->lanes[lane].clip.note_count == 0) return;
     if (loops < 1) loops = 1;
     if (loops > 4) loops = 4;
 
@@ -7450,7 +7503,7 @@ static void bake_drum_lane(seq8_instance_t *inst, int t, int c, int lane, int lo
     static bake_note_t dl_out[BAKE_BUF * 4];
 
     {
-        drum_lane_t *dl = &tr->drum_clips[c].lanes[lane];
+        drum_lane_t *dl = &tr->drum_clips[c]->lanes[lane];
         clip_t *cl = &dl->clip;
 
         play_fx_t fx;
@@ -7575,7 +7628,7 @@ static void bake_drum_lane(seq8_instance_t *inst, int t, int c, int lane, int lo
     }
     if (c == (int)tr->active_clip)
         drum_pfx_apply_params(&tr->drum_lane_pfx[lane],
-                              &tr->drum_clips[c].lanes[lane].pfx_params);
+                              &tr->drum_clips[c]->lanes[lane].pfx_params);
     inst->state_dirty = 1;
 }
 
@@ -7602,7 +7655,7 @@ static int render_drum_lane_nd(seq8_instance_t *inst, int t, int c, int lane,
     seq8_track_t *tr = &inst->tracks[t];
     int ni, si, ri;
     if (out_lane_ticks) *out_lane_ticks = 0;
-    drum_lane_t *dl = &tr->drum_clips[c].lanes[lane];
+    drum_lane_t *dl = &tr->drum_clips[c]->lanes[lane];
     clip_t *cl = &dl->clip;
     if (cl->note_count == 0) return 0;
     if (loops < 1) loops = 1;
@@ -7724,7 +7777,7 @@ static void bake_drum_clip(seq8_instance_t *inst, int t, int c, int loops, int w
     int l, ni;
     int any = 0;
     for (l = 0; l < DRUM_LANES; l++) {
-        if (tr->drum_clips[c].lanes[l].clip.note_count > 0) { any = 1; break; }
+        if (tr->drum_clips[c]->lanes[l].clip.note_count > 0) { any = 1; break; }
     }
     if (!any) return;
     if (loops < 1) loops = 1;
@@ -7743,7 +7796,7 @@ static void bake_drum_clip(seq8_instance_t *inst, int t, int c, int loops, int w
     uint32_t ref_cycle_ticks = 0;
     {
         for (l = 0; l < DRUM_LANES; l++) {
-            clip_t *cl = &tr->drum_clips[c].lanes[l].clip;
+            clip_t *cl = &tr->drum_clips[c]->lanes[l].clip;
             if (cl->note_count > 0 && cl->ticks_per_step > 0 && cl->length > 0) {
                 uint16_t cs = playback_cycle_steps(cl->playback_dir,
                                                     cl->playback_audio_reverse,
@@ -7770,7 +7823,7 @@ static void bake_drum_clip(seq8_instance_t *inst, int t, int c, int loops, int w
 
     /* Pass 1: bake each lane with N loops, collect into pool */
     for (l = 0; l < DRUM_LANES; l++) {
-        drum_lane_t *dl = &tr->drum_clips[c].lanes[l];
+        drum_lane_t *dl = &tr->drum_clips[c]->lanes[l];
         clip_t *cl = &dl->clip;
         if (cl->note_count == 0) continue;
 
@@ -7893,7 +7946,7 @@ static void bake_drum_clip(seq8_instance_t *inst, int t, int c, int loops, int w
 
     /* Pass 2: clear all lanes, reset pfx_params, set new length, route pool notes */
     for (l = 0; l < DRUM_LANES; l++) {
-        drum_lane_t *dl2 = &tr->drum_clips[c].lanes[l];
+        drum_lane_t *dl2 = &tr->drum_clips[c]->lanes[l];
         clip_t *cl = &dl2->clip;
         clip_init(cl);
         cl->ticks_per_step = ref_tps;
@@ -7908,7 +7961,7 @@ static void bake_drum_clip(seq8_instance_t *inst, int t, int c, int loops, int w
         bake_note_t *bn = &dc_pool[pi];
         if (bn->tick < new_ticks) {
             for (l = 0; l < DRUM_LANES; l++) {
-                drum_lane_t *dl = &tr->drum_clips[c].lanes[l];
+                drum_lane_t *dl = &tr->drum_clips[c]->lanes[l];
                 if (dl->midi_note == bn->pitch) {
                     clip_insert_note(&dl->clip, bn->tick, bn->gate, bn->pitch, bn->vel);
                     break;
@@ -7918,7 +7971,7 @@ static void bake_drum_clip(seq8_instance_t *inst, int t, int c, int loops, int w
     }
 
     for (l = 0; l < DRUM_LANES; l++) {
-        clip_t *cl = &tr->drum_clips[c].lanes[l].clip;
+        clip_t *cl = &tr->drum_clips[c]->lanes[l].clip;
         if (cl->note_count > 0)
             clip_build_steps_from_notes(cl);
     }
@@ -7939,9 +7992,11 @@ static int track_is_empty(seq8_track_t *tr) {
     int c, l;
     for (c = 0; c < NUM_CLIPS; c++)
         if (tr->clips[c].note_count > 0) return 0;
-    for (c = 0; c < NUM_CLIPS; c++)
+    for (c = 0; c < NUM_CLIPS; c++) {
+        if (!tr->drum_clips[c]) continue;
         for (l = 0; l < DRUM_LANES; l++)
-            if (tr->drum_clips[c].lanes[l].clip.note_count > 0) return 0;
+            if (tr->drum_clips[c]->lanes[l].clip.note_count > 0) return 0;
+    }
     return 1;
 }
 
@@ -7963,11 +8018,14 @@ static void convert_track_melodic_to_drum(seq8_instance_t *inst, int t) {
     tr->record_armed = 0;
     tr->recording_pending_page = 0;
 
+    /* Allocate drum clips for this track (entering drum mode). */
+    drum_clips_alloc(inst, tr);
+
     /* Empty track: skip the per-clip rewrite (nothing to translate or clear). */
     if (!track_is_empty(tr))
     for (c = 0; c < NUM_CLIPS; c++) {
         clip_t *src = &tr->clips[c];
-        drum_clip_t *dc = &tr->drum_clips[c];
+        drum_clip_t *dc = tr->drum_clips[c];
 
         /* Clean slate for this clip's lanes. */
         for (l = 0; l < DRUM_LANES; l++) {
@@ -8051,7 +8109,7 @@ static void convert_track_melodic_to_drum(seq8_instance_t *inst, int t) {
     tr->current_step = 0;
     tr->tick_in_step = 0;
     for (l = 0; l < DRUM_LANES; l++) {
-        clip_t *_dlc = &tr->drum_clips[tr->active_clip].lanes[l].clip;
+        clip_t *_dlc = &tr->drum_clips[tr->active_clip]->lanes[l].clip;
         tr->drum_current_step[l] = initial_clip_step(_dlc->loop_start, _dlc->length, _dlc->playback_dir);
         _dlc->pp_dir_state = initial_pp_dir(_dlc->playback_dir);
         tr->drum_tick_in_step[l] = 0;
@@ -8080,7 +8138,7 @@ static void convert_track_drum_to_melodic(seq8_instance_t *inst, int t) {
     /* Empty track: skip the per-clip rewrite (nothing to translate or clear). */
     if (!track_is_empty(tr))
     for (c = 0; c < NUM_CLIPS; c++) {
-        drum_clip_t *dc = &tr->drum_clips[c];
+        drum_clip_t *dc = tr->drum_clips[c];
         clip_t *dst = &tr->clips[c];
 
         /* Meta from the first non-empty lane. */
@@ -8126,6 +8184,9 @@ static void convert_track_drum_to_melodic(seq8_instance_t *inst, int t) {
     }
 
     tr->pad_mode = PAD_MODE_MELODIC_SCALE;
+
+    /* Free drum clips (leaving drum mode). */
+    drum_clips_free(tr);
 
     /* Reset drum-only track state (no melodic equivalent). */
     tr->drum_lane_mute = 0;
@@ -8469,8 +8530,10 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
             /* Bitmask of lanes whose current step has an active hit (bit l = lane l). */
             uint32_t mask = 0;
             int l;
+            if (!tr->drum_clips[tr->active_clip])
+                return snprintf(out, out_len, "0");
             for (l = 0; l < DRUM_LANES; l++) {
-                clip_t *dlc = &tr->drum_clips[tr->active_clip].lanes[l].clip;
+                clip_t *dlc = &tr->drum_clips[tr->active_clip]->lanes[l].clip;
                 uint16_t cs = tr->drum_current_step[l];
                 if (dlc->note_count > 0 && cs < SEQ_STEPS && dlc->steps[cs])
                     mask |= (1u << l);
@@ -8520,7 +8583,8 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
             const char *p2 = sub + 1;
             while (*p2 >= '0' && *p2 <= '9') { lidx = lidx * 10 + (*p2 - '0'); p2++; }
             if (lidx < 0 || lidx >= DRUM_LANES) return -1;
-            drum_lane_t *dlane = &tr->drum_clips[tr->active_clip].lanes[lidx];
+            if (!tr->drum_clips[tr->active_clip]) return snprintf(out, out_len, "0");
+            drum_lane_t *dlane = &tr->drum_clips[tr->active_clip]->lanes[lidx];
             clip_t      *dlc   = &dlane->clip;
             if (!strcmp(p2, "_lane_note"))
                 return snprintf(out, out_len, "%d", (int)dlane->midi_note);
@@ -8719,8 +8783,9 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                 return snprintf(out, out_len, "%d", (int)cl->active);
             if (!strncmp(p, "_drum_has_content", 17)) {
                 int dl, any = 0;
-                for (dl = 0; dl < DRUM_LANES && !any; dl++)
-                    if (tr->drum_clips[cidx].lanes[dl].clip.note_count > 0) any = 1;
+                if (tr->drum_clips[cidx])
+                    for (dl = 0; dl < DRUM_LANES && !any; dl++)
+                        if (tr->drum_clips[cidx]->lanes[dl].clip.note_count > 0) any = 1;
                 return snprintf(out, out_len, "%d", any);
             }
             if (!strncmp(p, "_tps", 4))
@@ -8778,13 +8843,15 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                  * reads it identically. Empty → "0 0". n=-1 on write failure.
                  * Cap: pool DRUM_BAKE_POOL; span clamped to EXPORT_DRUM_MAX_TICKS
                  * (snapped to a clean multiple of the longest lane). */
+                if (!tr->drum_clips[cidx])
+                    return snprintf(out, out_len, "0 0");
                 int t_idx = (int)(tr - inst->tracks);
                 static bake_note_t drm_tmp[BAKE_BUF];
                 static bake_note_t drm_pool[DRUM_BAKE_POOL];
                 uint64_t span64 = 0; uint32_t max_lt = 0;
                 int lane, any = 0;
                 for (lane = 0; lane < DRUM_LANES; lane++) {
-                    clip_t *lc = &tr->drum_clips[cidx].lanes[lane].clip;
+                    clip_t *lc = &tr->drum_clips[cidx]->lanes[lane].clip;
                     if (lc->note_count == 0) continue;
                     uint16_t ltps = lc->ticks_per_step ? lc->ticks_per_step : (uint16_t)TICKS_PER_STEP;
                     uint32_t lt = (uint32_t)lc->length * ltps;
@@ -8806,7 +8873,7 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
 
                 int pcount = 0;
                 for (lane = 0; lane < DRUM_LANES && pcount < DRUM_BAKE_POOL; lane++) {
-                    clip_t *_lc = &tr->drum_clips[cidx].lanes[lane].clip;
+                    clip_t *_lc = &tr->drum_clips[cidx]->lanes[lane].clip;
                     if (_lc->note_count == 0) continue;
                     uint16_t _ltps = _lc->ticks_per_step ? _lc->ticks_per_step : (uint16_t)TICKS_PER_STEP;
                     uint32_t _lct  = (uint32_t)_lc->length * _ltps;
@@ -9070,8 +9137,9 @@ static void reset_all_loop_cycles(seq8_instance_t *inst) {
     for (t = 0; t < NUM_TRACKS; t++) {
         for (c = 0; c < NUM_CLIPS; c++) {
             inst->tracks[t].clips[c].loop_cycle = 0;
-            for (l = 0; l < DRUM_LANES; l++)
-                inst->tracks[t].drum_clips[c].lanes[l].clip.loop_cycle = 0;
+            if (inst->tracks[t].drum_clips[c])
+                for (l = 0; l < DRUM_LANES; l++)
+                    inst->tracks[t].drum_clips[c]->lanes[l].clip.loop_cycle = 0;
         }
     }
 }
@@ -9218,12 +9286,14 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                         _mcl->pp_dir_state = initial_pp_dir(_mcl->playback_dir);
                         /* Per-lane drum init too (this loop runs for all tracks,
                          * not just the active-pad-mode one). */
+                        if (_tr->drum_clips[_tr->active_clip]) {
                         int _li;
                         for (_li = 0; _li < DRUM_LANES; _li++) {
-                            clip_t *_dlc = &_tr->drum_clips[_tr->active_clip].lanes[_li].clip;
+                            clip_t *_dlc = &_tr->drum_clips[_tr->active_clip]->lanes[_li].clip;
                             _tr->drum_current_step[_li] = initial_clip_step(_dlc->loop_start, _dlc->length, _dlc->playback_dir);
                             _dlc->pp_dir_state = initial_pp_dir(_dlc->playback_dir);
                             _tr->drum_tick_in_step[_li] = 0;
+                        }
                         }
                     }
                     _tr->tick_in_step       = 0;
@@ -9297,10 +9367,10 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                         for (_pp = 0; _pp < (int)_tr->play_pending_count; _pp++)
                             _tr->play_pending[_pp].ticks_remaining = 0;
                     }
-                    {
+                    if (_tr->drum_clips[_tr->active_clip]) {
                         int _dl;
                         for (_dl = 0; _dl < DRUM_LANES; _dl++) {
-                            clip_t *_dlc = &_tr->drum_clips[_tr->active_clip].lanes[_dl].clip;
+                            clip_t *_dlc = &_tr->drum_clips[_tr->active_clip]->lanes[_dl].clip;
                             _tr->drum_current_step[_dl] = initial_clip_step(_dlc->loop_start, _dlc->length, _dlc->playback_dir);
                             _dlc->pp_dir_state = initial_pp_dir(_dlc->playback_dir);
                         }
@@ -9449,7 +9519,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 if (tr->pad_mode == PAD_MODE_DRUM) {
                     int _dl;
                     for (_dl = 0; _dl < DRUM_LANES; _dl++) {
-                        clip_t *_dlc = &tr->drum_clips[tr->active_clip].lanes[_dl].clip;
+                        clip_t *_dlc = &tr->drum_clips[tr->active_clip]->lanes[_dl].clip;
                         uint16_t _dle = (uint16_t)(_dlc->loop_start + _dlc->length);
                         if (tr->drum_current_step[_dl] < _dlc->loop_start
                                 || tr->drum_current_step[_dl] >= _dle) {
@@ -9580,7 +9650,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                     if (tr->pad_mode == PAD_MODE_DRUM) {
                         int _dl;
                         for (_dl = 0; _dl < DRUM_LANES; _dl++) {
-                            clip_t *_nc = &tr->drum_clips[tr->active_clip].lanes[_dl].clip;
+                            clip_t *_nc = &tr->drum_clips[tr->active_clip]->lanes[_dl].clip;
                             clip_clear_suppress(_nc);
                             drum_lane_anchor_playhead(inst, tr, _dl, _nc);
                         }
@@ -9619,7 +9689,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                         if (tr->pad_mode == PAD_MODE_DRUM) {
                             int _dl;
                             for (_dl = 0; _dl < DRUM_LANES; _dl++) {
-                                clip_t *_dlc = &tr->drum_clips[tr->active_clip].lanes[_dl].clip;
+                                clip_t *_dlc = &tr->drum_clips[tr->active_clip]->lanes[_dl].clip;
                                 tr->drum_current_step[_dl] = initial_clip_step(_dlc->loop_start, _dlc->length, _dlc->playback_dir);
                                 _dlc->pp_dir_state = initial_pp_dir(_dlc->playback_dir);
                                 tr->drum_tick_in_step[_dl] = 0;
@@ -9648,7 +9718,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                         if (tr->pad_mode == PAD_MODE_DRUM) {
                             int _dl;
                             for (_dl = 0; _dl < DRUM_LANES; _dl++) {
-                                clip_t *_nc = &tr->drum_clips[tr->active_clip].lanes[_dl].clip;
+                                clip_t *_nc = &tr->drum_clips[tr->active_clip]->lanes[_dl].clip;
                                 clip_clear_suppress(_nc);
                                 drum_lane_anchor_playhead(inst, tr, _dl, _nc);
                             }
@@ -9680,7 +9750,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 if (tr->clip_playing && !effective_mute(inst, t)) {
                     int l;
                     for (l = 0; l < DRUM_LANES; l++) {
-                        drum_lane_t *lane = &tr->drum_clips[tr->active_clip].lanes[l];
+                        drum_lane_t *lane = &tr->drum_clips[tr->active_clip]->lanes[l];
                         clip_t      *dlc  = &lane->clip;
                         drum_pfx_t  *dpx  = &tr->drum_lane_pfx[l];
                         if (dlc->note_count == 0) continue;
@@ -9906,7 +9976,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 /* Drum: advance per-lane tick counters independently. */
                 int l;
                 for (l = 0; l < DRUM_LANES; l++) {
-                    clip_t *dlc = &tr->drum_clips[tr->active_clip].lanes[l].clip;
+                    clip_t *dlc = &tr->drum_clips[tr->active_clip]->lanes[l].clip;
                     tr->drum_tick_in_step[l]++;
                     if (tr->drum_tick_in_step[l] >= dlc->ticks_per_step) {
                         tr->drum_tick_in_step[l] = 0;
