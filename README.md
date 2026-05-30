@@ -1,6 +1,8 @@
 # dAVEBOx
 
-**MORE BETTER TRACKS FOR YOUR MOVE. dAVEBOx is a creative 8-track MIDI sequencer for the [Schwung](https://github.com/charlesvestal/schwung) framework on Ableton Move.**
+**MORE BETTER TRACKS FOR YOUR MOVE** 
+
+**dAVEBOx is a creative 8-track MIDI sequencer for the [Schwung](https://github.com/charlesvestal/schwung) framework on Ableton Move.**
 
 ![dAVEBOx](https://github.com/user-attachments/files/28072600/Untitled.-.May.20.2026.at.14.49.53.2.bmp)
 
