@@ -1,6 +1,6 @@
 {
-  "version": "1.0b",
-  "download_url": "https://github.com/legsmechanical/schwung-davebox/releases/download/v1.0b/davebox-module.tar.gz",
+  "version": "1.0b2",
+  "download_url": "https://github.com/legsmechanical/schwung-davebox/releases/download/v1.0b2/davebox-module.tar.gz",
   "name": "dAVEBOx",
   "description": "Creative 8-track MIDI sequencer with per-clip effects chains and live performance modes."
 }
