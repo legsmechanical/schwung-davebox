@@ -8,6 +8,7 @@ the section into a versioned heading at release time.
 
 ## [Unreleased]
 
+## [1.0b3] — 2026-05-30
 ### Features
 - **Schwung chain knob automation (Sch lanes).** AUTO bank lanes can now target Schwung chain knob assignments (CC 102-109 absolute knob control). In ASSIGN mode, scroll left past AT to reach Sch1–Sch8 — each maps to a chain slot knob mapping. Recording, playback, resting values, step-edit, and delete all work identically to CC lanes. Routed via DSP `pfx_send` on the internal MIDI path — same-buffer delivery, no JS overhead. Requires patched Schwung with CC 102-109 chain handler; capability-gated (Sch lanes hidden on stock Schwung).
 
