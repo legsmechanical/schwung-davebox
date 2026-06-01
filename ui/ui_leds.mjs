@@ -248,7 +248,7 @@ export function updateStepLEDs() {
             }
             S.ccGradKey = key;
         }
-        const _blip = (S.tickCount % 47) < 2;
+        const _blip = (S.tickCount % 47) < 4;
         const baseCC = pg * 16;
         for (let i = 0; i < 16; i++) {
             const absStep = baseCC + i;

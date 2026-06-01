@@ -2414,13 +2414,22 @@ function pollDSP() {
         const _sft = S.activeTrack;
         const _sfac = effectiveClip(_sft);
         if (S.clipSeqFollow[_sft][_sfac] && S.trackClipPlaying[_sft]) {
-            const _cs = S.trackCurrentStep[_sft];
-            if (_cs >= 0) {
-                const newPage = Math.floor(_cs / 16);
-                if (newPage !== S.trackCurrentPage[_sft]) {
-                    S.trackCurrentPage[_sft] = newPage;
-                    S.screenDirty = true;
-                }
+            var newPage;
+            if (S.activeBank === 6 && S.trackPadMode[_sft] !== PAD_MODE_DRUM) {
+                var _ccLsf = S.ccActiveLane[_sft];
+                var _lTpsSf = S.ccLaneTps[_sft][_sfac][_ccLsf] || (S.clipTPS[_sft][_sfac] || 24);
+                var _effLenSf = S.ccLaneLength[_sft][_sfac][_ccLsf] || S.clipLength[_sft][_sfac];
+                var _lLenTicksSf = _effLenSf * _lTpsSf;
+                var _progressSf = (S.masterPos % _lLenTicksSf) / _lLenTicksSf;
+                var _laneStep = Math.floor(_progressSf * _effLenSf);
+                newPage = Math.floor(_laneStep / 16);
+            } else {
+                var _cs = S.trackCurrentStep[_sft];
+                if (_cs >= 0) newPage = Math.floor(_cs / 16);
+            }
+            if (newPage !== undefined && newPage !== S.trackCurrentPage[_sft]) {
+                S.trackCurrentPage[_sft] = newPage;
+                S.screenDirty = true;
             }
         }
     }

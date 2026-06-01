@@ -9020,31 +9020,30 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                 uint32_t _tps = cl->ticks_per_step;
                 uint32_t _ws  = (uint32_t)cl->loop_start * _tps;
                 uint32_t _we  = (uint32_t)(cl->loop_start + cl->length) * _tps;
+                uint32_t _t1 = (uint32_t)_sidx * _tps;
+                uint32_t _t2 = _t1 + (_tps ? _tps - 1 : 0);
                 int _pos = 0, _k2;
                 for (_k2 = 0; _k2 < 8; _k2++) {
-                    uint32_t _ktps = (_ca->lane_tps[_k2] > 0)
-                                   ? _ca->lane_tps[_k2] : _tps;
-                    uint32_t _t1k = (uint32_t)_sidx * _ktps;
-                    uint32_t _t2k = _t1k + (_ktps ? _ktps - 1 : 0);
                     int _pv = -1, _ip;
                     for (_ip = 0; _ip < (int)_ca->count[_k2]; _ip++) {
                         uint16_t _tk = _ca->ticks[_k2][_ip];
-                        if (_tk >= (uint16_t)_t1k && _tk <= (uint16_t)_t2k) { _pv = _ca->vals[_k2][_ip]; break; }
+                        if (_tk >= (uint16_t)_t1 && _tk <= (uint16_t)_t2) { _pv = _ca->vals[_k2][_ip]; break; }
                     }
                     _pos += snprintf(out + _pos, (size_t)(out_len - _pos), _k2 ? " %d" : "%d", _pv);
                 }
                 for (_k2 = 0; _k2 < 8; _k2++) {
-                    uint32_t _ktps2 = (_ca->lane_tps[_k2] > 0)
-                                    ? _ca->lane_tps[_k2] : _tps;
-                    uint32_t _et = (uint32_t)_sidx * _ktps2;
+                    uint32_t _et = _t1;
                     uint32_t _ews = _ws, _ewe = _we;
-                    if (_ca->lane_length[_k2] > 0) {
+                    if (_ca->lane_length[_k2] > 0 || _ca->lane_tps[_k2] > 0) {
                         uint32_t _ltps = _ca->lane_tps[_k2] > 0
                                        ? _ca->lane_tps[_k2] : _tps;
-                        _ews = (uint32_t)_ca->lane_loop_start[_k2] * _ltps;
-                        uint32_t _llen = (uint32_t)_ca->lane_length[_k2] * _ltps;
-                        _ewe = _ews + _llen;
-                        _et  = cc_lane_wrap_tick(_et, _ews, _llen);
+                        uint32_t _elen = _ca->lane_length[_k2] > 0
+                                       ? _ca->lane_length[_k2] : cl->length;
+                        uint32_t _cycle = (uint32_t)_elen * _ltps;
+                        uint32_t _data_len = (uint32_t)_elen * _tps;
+                        _ews = (uint32_t)_ca->lane_loop_start[_k2] * _tps;
+                        _ewe = _ews + _data_len;
+                        if (_t1 >= _ewe) _et = _ews + ((_t1 - _ews) % _data_len);
                     }
                     int _def, _ov = cc_auto_eval(_ca, _k2, _et, _ews, _ewe, &_def);
                     _pos += snprintf(out + _pos, (size_t)(out_len - _pos), " %d", _def ? _ov : -1);
@@ -9065,18 +9064,16 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                 uint32_t _ws  = (uint32_t)cl->loop_start * _tps;
                 uint32_t _we  = (uint32_t)(cl->loop_start + cl->length) * _tps;
                 uint32_t _ews = _ws, _ewe = _we;
-                uint32_t _llen = 0;
+                uint32_t _dlen = 0;
                 if (_ca->lane_length[_k2] > 0) {
-                    uint32_t _ltps = _ca->lane_tps[_k2] > 0
-                                   ? _ca->lane_tps[_k2] : _tps;
-                    _ews = (uint32_t)_ca->lane_loop_start[_k2] * _ltps;
-                    _llen = (uint32_t)_ca->lane_length[_k2] * _ltps;
-                    _ewe = _ews + _llen;
+                    _ews = (uint32_t)_ca->lane_loop_start[_k2] * _tps;
+                    _dlen = (uint32_t)_ca->lane_length[_k2] * _tps;
+                    _ewe = _ews + _dlen;
                 }
                 int _pos = 0, _s;
                 for (_s = 0; _s < 16; _s++) {
                     uint32_t _t = (uint32_t)(_pg * 16 + _s) * _tps;
-                    if (_llen > 0) _t = cc_lane_wrap_tick(_t, _ews, _llen);
+                    if (_dlen > 0) _t = cc_lane_wrap_tick(_t, _ews, _dlen);
                     int _def, _ov = cc_auto_eval(_ca, _k2, _t, _ews, _ewe, &_def);
                     _pos += snprintf(out + _pos, (size_t)(out_len - _pos),
                                      _s ? " %d" : "%d", _def ? _ov : 255);
