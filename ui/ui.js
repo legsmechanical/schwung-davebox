@@ -6259,11 +6259,16 @@ function _tickImpl() {
         /* Contextual button LEDs: dim available indicator (16) on actionable buttons. */
         setButtonLED(MoveShift,       16);
         setButtonLED(MoveNoteSession, 16);
-        /* Blink Session/Track view button while in Global Menu, Tap Tempo, or
-         * co-run (Edit Synth / Edit Slot) to advertise it as the exit
-         * affordance — Menu press exits all of these. */
-        if (S.globalMenuOpen || S.tapTempoOpen ||
-            S.moveCoRunTrack >= 0 || S.schwungCoRunSlot >= 0) {
+        /* Session/Track view button as exit affordance. In co-run (either mode:
+         * Edit Slot / Edit Synth) hold it SOLID bright white; force-resend every
+         * POLL_INTERVAL so the steady value re-asserts over the layer that owns
+         * LEDs underneath — the Schwung shim's overtake loop, or Move firmware's
+         * pass-through writes under skip_led_clear. (A non-changing value is
+         * otherwise cache-gated, sent once then eaten.) Global Menu / Tap Tempo
+         * keep the blink, since there's no competing LED layer there. */
+        if (S.schwungCoRunSlot >= 0 || S.moveCoRunTrack >= 0) {
+            setButtonLED(MoveNoteSession, White, (S.tickCount % POLL_INTERVAL) === 0);
+        } else if (S.globalMenuOpen || S.tapTempoOpen) {
             const _exitBlink = (Math.floor(S.tickCount / 24) % 2) ? 16 : LED_OFF;
             setButtonLED(MoveNoteSession, _exitBlink);
         }
