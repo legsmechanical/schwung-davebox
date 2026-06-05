@@ -52,6 +52,7 @@ typedef struct { uint8_t s; uint8_t d1; uint8_t d2; } ext_msg_t;
 /* Pad input modes */
 #define PAD_MODE_MELODIC_SCALE  0   /* isomorphic 4ths diatonic layout */
 #define PAD_MODE_DRUM           1   /* 32-lane drum sequencer */
+#define PAD_MODE_CONDUCT        2   /* Conductor: drives transposition, emits no MIDI */
 
 /* Drum mode */
 #define DRUM_LANES          32

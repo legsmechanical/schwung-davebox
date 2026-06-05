@@ -73,7 +73,7 @@ import {
     fmtDly, fmtBool, fmtRoute, fmtPlain, fmtNA, fmtGateMod,
     fmtArpStyle, fmtArpRate, fmtArpSteps, fmtArpOct, fmtVelOverride, fmtPlayDir, fmtRevStyle,
     col4, col5, parseActionRaw, MCUFONT, pixelPrint, pixelPrintC,
-    BANKS, ACTION_POPUP_TICKS, PAD_MODE_DRUM, PAD_MODE_MELODIC_SCALE,
+    BANKS, ACTION_POPUP_TICKS, PAD_MODE_DRUM, PAD_MODE_MELODIC_SCALE, PAD_MODE_CONDUCT,
     POLL_INTERVAL, TAP_TEMPO_FLASH_TICKS, TAP_TEMPO_RESET_MS,
     PARAM_LED_BANKS, STATE_VERSION,
     CC_GRADIENT_BASE, CC_GRADIENT_LEVELS, CC_GRADIENT_SCALARS
