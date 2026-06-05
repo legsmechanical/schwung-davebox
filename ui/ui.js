@@ -10469,6 +10469,17 @@ function _resolveLoopGesture(fireFallback) {
 }
 
 function _onStepButtons(d1, d2) {
+    /* Co-run (Schwung chain-edit or Move-native): the step grid is blanked down
+     * to a single exit affordance (the blinking Step 3 button + lit icon).
+     * Step 3 (idx 2) exits co-run; every other step press is swallowed so it
+     * can't edit the clip hidden underneath. Mirrors the Menu (CC 50) exit. */
+    if (S.schwungCoRunSlot >= 0 || S.moveCoRunTrack >= 0) {
+        if (d1 - 16 === 2) {
+            if (S.moveCoRunTrack >= 0) exitMoveNativeCoRun();
+            else { exitSchwungCoRun(); forceRedraw(); }
+        }
+        return;
+    }
     if (S.tapTempoOpen) return;
     if (d2 > 0 && S.shiftTrackLEDActive) { S.shiftTrackLEDActive = false; S.screenDirty = true; }
     S.stepOpTick = S.tickCount;

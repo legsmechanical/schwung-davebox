@@ -53,6 +53,32 @@ export function invalidateLEDCache() {
 
 export function updateStepLEDs() {
     if (!S.ledInitComplete) return;
+
+    /* Co-run (Schwung chain-edit or Move-native): the co-run target owns the
+     * surface, so blank the step button main LEDs — except Step 3 (index 2),
+     * which blinks dark-grey/off at a steady rate as the "Edit Slot/Synth"
+     * affordance. Return early so the normal step grid neither paints nor burns
+     * LED budget (see SCHWUNG_DAVEBOX_LIMITATIONS.md §14). */
+    if (S.schwungCoRunSlot >= 0 || S.moveCoRunTrack >= 0) {
+        /* Blink off wall-clock, NOT tickCount: dAVEBOx's tick() runs at a slower
+         * wall-clock rate in Schwung co-run (the host also services Schwung's
+         * chain editor) than in Move co-run, so a tickCount-based blink looks
+         * slower in Schwung. ~250ms half-period ≈ the Move-co-run feel of the
+         * old tickCount/24 at ~94Hz. Date.now() works on-device (see ui.js). */
+        const _blinkOn = (Math.floor(Date.now() / 250) % 2) === 1;
+        /* Force-resend every POLL_INTERVAL so the blanking re-asserts over the
+         * other layer's writes — Move firmware paints these step buttons (its
+         * own LED writes pass through under skip_led_clear, e.g. red on track 1)
+         * in Move co-run, and the shim's overtake LED loop eats the blink's lit
+         * phase in Schwung co-run (making it look slower). Mirrors the step-icon
+         * force below. Without it our LED_OFF lands once then loses to that layer. */
+        const _force = (S.tickCount % POLL_INTERVAL) === 0;
+        for (let i = 0; i < 16; i++) {
+            setLED(16 + i, i === 2 ? (_blinkOn ? DarkGrey : LED_OFF) : LED_OFF, _force);
+        }
+        return;
+    }
+
     const ac = effectiveClip(S.activeTrack);
 
     /* Loop-held pages view (no jog active): 16 step buttons = 16 possible 16-step pages.
@@ -437,19 +463,27 @@ export function updateTrackLEDs() {
             (S.activeBank === 0 && (_kt === 1 || _kt === 2)) ||
             (S.activeBank === 7 && _kt === 1);
         const _compoundHeld = S.muteHeld || S.deleteHeld || S.copyHeld || S.loopHeld;
+        const _inCoRun = S.schwungCoRunSlot >= 0 || S.moveCoRunTrack >= 0;
         for (let i = 0; i < 16; i++) {
-            let on = false;
-            if (S.shiftHeld && !_knobShiftMode && !_compoundHeld) {
-                if (i === 1 || (i >= 4 && i <= 6) || i === 8) on = true; /* shared shortcuts */
-                if (!S.sessionView) {
-                    if (i === 2)                            on = true; /* Step3 = Edit Slot/Synth — Track View only */
-                    else if (i === 7)                       on = true;
-                    else if (i === 9)                       on = true;
-                    else if (i === 10 && !isDrum)           on = true;
-                    else if (i === 14 || i === 15)          on = true;
+            let color;
+            if (_inCoRun) {
+                /* Co-run: only the Step 3 icon stays lit (solid White) as the
+                 * Edit Slot/Synth affordance; all other step icons go dark. */
+                color = (i === 2) ? White : LED_OFF;
+            } else {
+                let on = false;
+                if (S.shiftHeld && !_knobShiftMode && !_compoundHeld) {
+                    if (i === 1 || (i >= 4 && i <= 6) || i === 8) on = true; /* shared shortcuts */
+                    if (!S.sessionView) {
+                        if (i === 2)                            on = true; /* Step3 = Edit Slot/Synth — Track View only */
+                        else if (i === 7)                       on = true;
+                        else if (i === 9)                       on = true;
+                        else if (i === 10 && !isDrum)           on = true;
+                        else if (i === 14 || i === 15)          on = true;
+                    }
                 }
+                color = on ? LightGrey : LED_OFF;
             }
-            const color = on ? LightGrey : LED_OFF;
             if (force) {
                 lastSentButtonLED[16 + i] = color;
                 setButtonLED(16 + i, color, true);
@@ -633,7 +667,7 @@ export function updateTrackLEDs() {
         } else {
         const _autoGrey    = S.activeBank === 6;
         const rootColor    = _autoGrey ? 118 : (_inCoRunPad ? DarkGrey : TRACK_COLORS[S.activeTrack]);
-        const nonRootColor = _autoGrey ? 124 : (_inCoRunPad ? TRACK_COLORS[S.activeTrack] : DarkGrey);
+        const nonRootColor = _autoGrey ? 124 : (_inCoRunPad ? TRACK_DIM_COLORS[S.activeTrack] : DarkGrey);
         const _tarpActive = (S.bankParams[S.activeTrack][5][7] | 0) !== 0 &&
                             (S.bankParams[S.activeTrack][5][0] | 0) !== 0;
         const _tarpHeld = _tarpActive ? S.tarpHeldNotes[S.activeTrack] : null;
