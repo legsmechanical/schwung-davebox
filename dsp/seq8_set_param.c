@@ -968,6 +968,7 @@ static void set_param(void *instance, const char *key, const char *val) {
         inst->swing_res       = 0;
         memset(inst->mute, 0, NUM_TRACKS);
         memset(inst->solo, 0, NUM_TRACKS);
+        inst->conductor_track = -1;
         { int _sn;
           for (_sn = 0; _sn < 16; _sn++) {
               inst->snap_valid[_sn] = 0;

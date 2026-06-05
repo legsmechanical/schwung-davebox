@@ -853,6 +853,9 @@ typedef struct {
     uint8_t mute[NUM_TRACKS];
     uint8_t solo[NUM_TRACKS];
 
+    /* Conductor role: track index that is the Conductor, or -1 = none */
+    int8_t   conductor_track;
+
     /* Mute/solo snapshots: 16 slots */
     uint8_t snap_mute[16][NUM_TRACKS];
     uint8_t snap_solo[16][NUM_TRACKS];
@@ -1521,6 +1524,9 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
     fprintf(fp, ",\"solo\":\"");
     for (t = 0; t < NUM_TRACKS; t++) fputc(inst->solo[t] ? '1' : '0', fp);
     fputc('"', fp);
+    /* Conductor role (sparse — only when a Conductor exists) */
+    if (inst->conductor_track >= 0)
+        fprintf(fp, ",\"cndt\":%d", inst->conductor_track);
     /* Snapshots — only emit occupied slots */
     {
         int n;
@@ -2210,6 +2216,13 @@ static void seq8_load_state(seq8_instance_t *inst) {
     /* Global settings */
     inst->pad_key      = (uint8_t)clamp_i(json_get_int(buf, "key",   9), 0, 11);
     inst->pad_scale    = (uint8_t)clamp_i(json_get_int(buf, "scale", 1), 0, 13);
+    /* Conductor role (sparse; default -1 = none). Validate range; out-of-range → none. */
+    inst->conductor_track = -1;
+    {
+        int cndt = json_get_int(buf, "cndt", -1);
+        if (cndt >= 0 && cndt < NUM_TRACKS)
+            inst->conductor_track = (int8_t)cndt;
+    }
     inst->xpose_preview_active = 0;  /* transient — never persisted; clear on (re)load */
     inst->launch_quant = (uint8_t)clamp_i(json_get_int(buf, "lq",    0), 0,  5);
     {
@@ -6184,6 +6197,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     metro_wav_open(inst);
     inst->looper_sync            = 1;
     inst->looper_pending_silence = 0;
+    inst->conductor_track        = -1;  /* no Conductor by default */
     memset(inst->perf_emitted_pitch, 0xFF, sizeof(inst->perf_emitted_pitch));
     memset(inst->pad_note_map, 0xFF, sizeof(inst->pad_note_map));
     memset(inst->pad_live_pitch, 0xFF, sizeof(inst->pad_live_pitch));
