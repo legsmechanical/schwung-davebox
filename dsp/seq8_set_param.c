@@ -2820,6 +2820,8 @@ static void set_param(void *instance, const char *key, const char *val) {
                 seq8_ilog(inst, "convert_to_conduct refused: conductor exists");
                 return; /* JS reads back conductor_track and shows the OLED message */
             }
+            if (tr->pad_mode == PAD_MODE_CONDUCT)
+                return; /* idempotent: already the Conductor, redundant push is a no-op */
             convert_track_to_conduct(inst, tidx);
             inst->conductor_track = (int8_t)tidx;
             inst->state_dirty = 1;

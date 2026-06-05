@@ -8435,6 +8435,13 @@ static void convert_track_to_conduct(seq8_instance_t *inst, int t) {
     }
     memset(tr->cc_auto_last_sent, 0xFF, 8);
     memset(tr->cc_auto_cur_val, 0xFF, 8);
+    /* Reset CC latch-recording state (mirrors create_instance seq8.c:6246-6249).
+     * If converted mid-recording, a stale cc_was_recording=1 would make the next
+     * tick run cc_finalize_latch against the just-cleared automation. */
+    tr->cc_latched       = 0;
+    tr->cc_was_recording = 0;
+    tr->cc_prev_ct       = 0;
+    memset(tr->cc_latch_last_snap, 0xFF, sizeof(tr->cc_latch_last_snap));
     memset(tr->at_last_sent, 0xFF, AT_MAX_LANES);
     tr->at_last_clip = 0xFF;
 
@@ -8447,6 +8454,9 @@ static void convert_track_to_conduct(seq8_instance_t *inst, int t) {
     tr->pad_mode = PAD_MODE_CONDUCT;
 
     silence_track_notes_v2(inst, tr);
+    /* Playhead/step state (current_step/tick_in_step) is intentionally left as-is:
+     * the Conductor emits no MIDI, so there is nothing to re-anchor. (The sibling
+     * convert_track_*_to_* functions reset these; this one deliberately does not.) */
     /* Re-pull the now-cleared per-clip pfx into the live track pfx stages
      * (matches the convert_track_*_to_* tails; preserves route/looper_on). */
     pfx_sync_from_clip(tr);
