@@ -4037,6 +4037,14 @@ static void pfx_note_off_imm(seq8_instance_t *inst, seq8_track_t *tr,
 
 static void drum_pfx_emit(drum_pfx_t *px, uint8_t status, uint8_t d1, uint8_t d2) {
     if (!g_host) return;
+    /* Conductor track emits NO MIDI. The drum playback path (drum_pfx_send →
+     * swing-defer queue → drum_pfx_q_fire → drum_pfx_send → here) bypasses
+     * pfx_emit and calls the host MIDI routes directly, so the Conductor guard
+     * must be mirrored here. Drop at emit only — drum step-advance/playhead in
+     * the render path is untouched, exactly like the melodic pfx_emit guard. */
+    if (g_inst && px->track_idx < NUM_TRACKS &&
+            g_inst->tracks[px->track_idx].pad_mode == PAD_MODE_CONDUCT)
+        return;
     if (px->route == ROUTE_MOVE) {
         if (!g_host->midi_inject_to_move) return;
         uint8_t pkt[4] = { (uint8_t)(0x20 | (status >> 4)), status, d1, d2 };
@@ -8469,6 +8477,16 @@ static void convert_track_to_conduct(seq8_instance_t *inst, int t) {
     inst->solo[t] = 0;
 
     silence_track_notes_v2(inst, tr);
+    /* Flush any pending per-lane drum pfx swing-defer queues. silence_track_notes_v2
+     * clears play_pending but NOT the drum_lane_pfx[].events[] swing queue, which the
+     * unconditional per-track drain (drum_pfx_q_fire) would otherwise still fire as
+     * MIDI mid-drain. The drum_pfx_emit guard already blocks the actual send, but
+     * zeroing event_count here leaves nothing stranded in the queue. */
+    {
+        int _fl;
+        for (_fl = 0; _fl < DRUM_LANES; _fl++)
+            tr->drum_lane_pfx[_fl].event_count = 0;
+    }
     /* Playhead/step state (current_step/tick_in_step) is intentionally left as-is:
      * the Conductor emits no MIDI, so there is nothing to re-anchor. (The sibling
      * convert_track_*_to_* functions reset these; this one deliberately does not.) */
