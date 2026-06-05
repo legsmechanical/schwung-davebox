@@ -2804,6 +2804,25 @@ static void set_param(void *instance, const char *key, const char *val) {
         if (!strcmp(sub, "convert_to_melodic")) {
             if (tr->pad_mode == PAD_MODE_DRUM)
                 convert_track_drum_to_melodic(inst, tidx);
+            else if (tr->pad_mode == PAD_MODE_CONDUCT)
+                tr->pad_mode = PAD_MODE_MELODIC_SCALE;  /* note data already melodic */
+            /* Leaving the Conductor role: clear the one-Conductor latch. */
+            if (inst->conductor_track == tidx) {
+                inst->conductor_track = -1;
+                inst->state_dirty = 1;
+            }
+            return;
+        }
+        if (!strcmp(sub, "convert_to_conduct")) {
+            /* TEMP device-verification log — leave in for now (user verifies on hardware) */
+            seq8_ilog(inst, "convert_to_conduct hit");
+            if (inst->conductor_track >= 0 && inst->conductor_track != tidx) {
+                seq8_ilog(inst, "convert_to_conduct refused: conductor exists");
+                return; /* JS reads back conductor_track and shows the OLED message */
+            }
+            convert_track_to_conduct(inst, tidx);
+            inst->conductor_track = (int8_t)tidx;
+            inst->state_dirty = 1;
             return;
         }
 

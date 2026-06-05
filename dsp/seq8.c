@@ -8406,6 +8406,53 @@ static void convert_track_drum_to_melodic(seq8_instance_t *inst, int t) {
     inst->state_dirty = 1;
 }
 
+/* Melodic/Drum -> Conductor: PRESERVES each clip's melodic note/step data
+ * (notes[], steps[], step_iter, step_random — note + duration + iteration +
+ * probability) but CLEARS pfx, TARP (track arp / ARP IN), and CC/AT automation,
+ * resetting them to the same defaults a fresh track gets. A drum track is first
+ * converted to melodic so its note data survives as melodic notes. The role flag
+ * (inst->conductor_track) is set by the set_param handler, NOT here. */
+static void convert_track_to_conduct(seq8_instance_t *inst, int t) {
+    seq8_track_t *tr = &inst->tracks[t];
+    int c;
+
+    /* Force-disarm recording so nothing writes into a clip mid-rewrite. */
+    tr->recording = 0;
+    tr->record_armed = 0;
+    tr->recording_pending_page = 0;
+
+    /* Drum -> melodic first so the note data becomes melodic notes (preserves
+     * the music). This also frees drum clips and resets drum-only config. */
+    if (tr->pad_mode == PAD_MODE_DRUM)
+        convert_track_drum_to_melodic(inst, t);
+
+    /* Clear per-clip pfx + automation to fresh-track defaults. Note/step data
+     * (notes[], steps[], step_iter, step_random) is left untouched. */
+    for (c = 0; c < NUM_CLIPS; c++) {
+        clip_pfx_params_init(&tr->clips[c].pfx_params);
+        cc_auto_reset(&tr->clip_cc_auto[c]);
+        at_auto_reset(&tr->clip_at_auto[c]);
+    }
+    memset(tr->cc_auto_last_sent, 0xFF, 8);
+    memset(tr->cc_auto_cur_val, 0xFF, 8);
+    memset(tr->at_last_sent, 0xFF, AT_MAX_LANES);
+    tr->at_last_clip = 0xFF;
+
+    /* Clear TARP (track arp / ARP IN). Silence any sounding TARP note first,
+     * then reset to defaults. (Track routing — channel/route/looper_on — is
+     * track config, not pfx, and is intentionally preserved.) */
+    tarp_silence(inst, tr);
+    tarp_init_defaults(tr);
+
+    tr->pad_mode = PAD_MODE_CONDUCT;
+
+    silence_track_notes_v2(inst, tr);
+    /* Re-pull the now-cleared per-clip pfx into the live track pfx stages
+     * (matches the convert_track_*_to_* tails; preserves route/looper_on). */
+    pfx_sync_from_clip(tr);
+    inst->state_dirty = 1;
+}
+
 static void reset_all_loop_cycles(seq8_instance_t *inst);
 
 #include "seq8_set_param.c"
@@ -8580,6 +8627,8 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         return snprintf(out, out_len, "%d", inst ? (int)inst->pad_key : 9);
     if (!strcmp(key, "scale"))
         return snprintf(out, out_len, "%d", inst ? (int)inst->pad_scale : 0);
+    if (!strcmp(key, "conductor_track"))
+        return snprintf(out, out_len, "%d", inst ? (int)inst->conductor_track : -1);
     if (!strcmp(key, "scale_aware"))
         return snprintf(out, out_len, "%d", inst ? (int)inst->scale_aware : 0);
     if (!strcmp(key, "inp_quant"))
