@@ -360,9 +360,20 @@ export const S = {
     confirmConvertToDrum: false,
     confirmConvertToDrumSel: 1,   /* 0=Yes, 1=No (default) */
     confirmConvertTrack: 0,
+    /* Keys->Conductor track conversion confirm dialog (transient, not persisted). */
+    confirmConvertToConduct: false,
+    confirmConvertToConductSel: 1,   /* 0=Yes, 1=No (default) */
     /* Deferred track-type conversion request: {t, toDrum} or null. Drained in
      * tick() so syncClipsFromDsp's get_param round-trips run in tick context. */
     pendingTrackConvert: null,
+    /* Deferred Keys/Drums->Conductor convert request: track index or null.
+     * Drained in tick() so convertTrackToConduct's get_param runs in context. */
+    pendingConductConvert: null,
+    /* Post-convert Conductor role readback: {t, prevMode} or null. Drained in
+     * tick()/poll (get_param-safe) to detect a one-Conductor refusal. */
+    pendingConductReadback: null,
+    /* Current Conductor track index mirror (-1 = none). */
+    conductorTrack: -1,
     confirmBake: false,
     confirmBakeSel: 1,
     confirmBakeIsDrum: false,

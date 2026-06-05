@@ -237,13 +237,23 @@ function buildGlobalMenuItems() {
                     } else {
                         S.pendingTrackConvert = { t: t, toDrum: true };
                     }
+                } else if (v === PAD_MODE_CONDUCT) {
+                    /* Keys/Drums -> Conductor: always confirm. Keeps notes but
+                     * clears FX/ARP/Auto, and the DSP enforces one Conductor. */
+                    S.confirmConvertToConduct    = true;
+                    S.confirmConvertToConductSel = 1;   /* default No */
+                    S.confirmConvertTrack        = t;
+                    S.screenDirty = true;
                 } else {
-                    /* Drums -> Keys: no prompt. Defer to tick() (get_param-safe). */
+                    /* Drums/Conductor -> Keys: no prompt. Defer to tick()
+                     * (get_param-safe). Clear the role mirror if we are
+                     * converting the current Conductor back. */
+                    if (S.conductorTrack === t) S.conductorTrack = -1;
                     S.pendingTrackConvert = { t: t, toDrum: false };
                 }
             },
-            options: [0, 1],
-            format: function(v) { return v ? 'Drums' : 'Keys'; }
+            options: [0, 1, 2],
+            format: function(v) { return v === PAD_MODE_CONDUCT ? 'Cond' : (v ? 'Drums' : 'Keys'); }
         }),
         createEnum('Layout', {
             get: function() { return S.padLayoutChromatic[S.activeTrack] ? 1 : 0; },
@@ -3038,10 +3048,29 @@ function convertTrackType(t, toDrum) {
     forceRedraw();
 }
 
+/* Route a track to Conductor. The DSP enforces one-Conductor: if another track
+ * already holds the role, the convert handler returns without changing anything.
+ * We optimistically flip the local mode, then verify the role next tick via
+ * pendingConductReadback to detect (and revert) a refusal. */
+function convertTrackToConduct(t) {
+    if (typeof host_module_set_param !== 'function') return;
+    const prevMode = S.trackPadMode[t];
+    host_module_set_param('t' + t + '_convert_to_conduct', '1');
+    S.trackPadMode[t] = PAD_MODE_CONDUCT;
+    S.pendingConductReadback = { t: t, prevMode: prevMode };
+    /* Mirror convertTrackType's ordering: rebuild pad LEDs without get_param
+     * (the convert set_param must drain before any same-buffer push). The
+     * refusal readback runs in tick() where get_param is valid. */
+    computePadNoteMap();
+    invalidateLEDCache();
+    forceRedraw();
+}
+
 /* Tear down the Keys->Drums confirm dialog and the menu's edit state so a
  * lingering enum edit doesn't replay. Call on Yes, No, and Back-cancel. */
 function closeConvertConfirm() {
     S.confirmConvertToDrum = false;
+    S.confirmConvertToConduct = false;
     if (S.globalMenuState) S.globalMenuState.editing = false;
     if (S.globalMenuState) S.globalMenuState.editValue = null;
     S.lastSentMenuEditValue = null;
@@ -5477,6 +5506,31 @@ function _tickImpl() {
         convertTrackType(_pc.t, _pc.toDrum);
     }
 
+    if (S.pendingConductConvert !== null) {
+        const _cct = S.pendingConductConvert;
+        S.pendingConductConvert = null;
+        convertTrackToConduct(_cct);
+    }
+
+    /* Verify the Conductor role landed (or detect a one-Conductor refusal).
+     * Runs in tick() so get_param is valid. */
+    if (S.pendingConductReadback !== null && typeof host_module_get_param === 'function') {
+        const _rb  = S.pendingConductReadback;
+        S.pendingConductReadback = null;
+        const _raw = host_module_get_param('conductor_track');
+        const _ct  = parseInt(_raw, 10);
+        const _val = isNaN(_ct) ? -1 : _ct;
+        S.conductorTrack = _val;
+        if (_val !== _rb.t) {
+            /* Refused — another track already holds the role. Revert. */
+            S.trackPadMode[_rb.t] = _rb.prevMode;
+            computePadNoteMap();
+            invalidateLEDCache();
+            forceRedraw();
+            showActionPopup('CONDUCTOR', 'EXISTS ON T' + (_val + 1));
+        }
+    }
+
     if (S.pendingPadNoteMapRecompute && S.pendingDefaultSetParams.length === 0
             && S.clearDrainHold === 0) {
         S.pendingPadNoteMapRecompute = false;
@@ -6904,6 +6958,16 @@ function _onCC_jog(d1, d2) {
             S.screenDirty = true;
             return;
         }
+        if (S.confirmConvertToConduct) {
+            const _ct  = S.confirmConvertTrack;
+            const _yes = S.confirmConvertToConductSel === 0;
+            closeConvertConfirm();
+            /* Defer to tick() — convertTrackToConduct's role readback uses
+             * get_param, which returns null in the on_midi path. */
+            if (_yes) S.pendingConductConvert = _ct;
+            S.screenDirty = true;
+            return;
+        }
         if (S.confirmExport) {
             if (S.confirmExportSel === 0) confirmExportStart();   /* arms pendingExport, drained in tick() */
             else S.confirmExport = false;
@@ -7224,6 +7288,9 @@ function _onCC_jog(d1, d2) {
             } else if (S.confirmConvertToDrum) {
                 const delta = decodeDelta(d2);
                 if (delta !== 0) { S.confirmConvertToDrumSel = S.confirmConvertToDrumSel === 0 ? 1 : 0; S.screenDirty = true; }
+            } else if (S.confirmConvertToConduct) {
+                const delta = decodeDelta(d2);
+                if (delta !== 0) { S.confirmConvertToConductSel = S.confirmConvertToConductSel === 0 ? 1 : 0; S.screenDirty = true; }
             } else if (S.confirmExport) {
                 const delta = decodeDelta(d2);
                 if (delta !== 0) { S.confirmExportSel = S.confirmExportSel === 0 ? 1 : 0; S.screenDirty = true; }
@@ -7570,6 +7637,9 @@ function _onCC_buttons(d1, d2) {
             } else if (S.globalMenuOpen && S.confirmConvertToDrum) {
                 closeConvertConfirm();
                 forceRedraw();
+            } else if (S.globalMenuOpen && S.confirmConvertToConduct) {
+                closeConvertConfirm();
+                forceRedraw();
             } else if (S.globalMenuOpen && S.exportDoneDialog) {
                 S.exportDoneDialog = false;
                 S.globalMenuOpen   = false;
@@ -7872,6 +7942,9 @@ function _onCC_transport(d1, d2) {
             S.confirmClearSession = false;
             forceRedraw();
         } else if (S.globalMenuOpen && S.confirmConvertToDrum) {
+            closeConvertConfirm();
+            forceRedraw();
+        } else if (S.globalMenuOpen && S.confirmConvertToConduct) {
             closeConvertConfirm();
             forceRedraw();
         } else if (S.globalMenuOpen && S.exportDoneDialog) {
@@ -8767,7 +8840,7 @@ function _onCC_knobs(d1, d2) {
     if (d1 >= 71 && d1 <= 78) {
         /* Exclusive overlays — knob turns have no visible effect and should be swallowed. */
         if (S.heldStep >= 0) return;
-        if (S.globalMenuOpen || S.tapTempoOpen || S.confirmBake || S.confirmClearSession || S.confirmConvertToDrum || S.confirmExport || S.exportDoneDialog || S.recordBlockedDialog || S.confirmStateWipe) return;
+        if (S.globalMenuOpen || S.tapTempoOpen || S.confirmBake || S.confirmClearSession || S.confirmConvertToDrum || S.confirmConvertToConduct || S.confirmExport || S.exportDoneDialog || S.recordBlockedDialog || S.confirmStateWipe) return;
         const knobIdx = d1 - 71;
         S.knobTouched          = knobIdx;
         S.knobTurnedTick[knobIdx] = S.tickCount;
