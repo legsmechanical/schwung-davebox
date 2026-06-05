@@ -84,7 +84,7 @@ import { saveState, writeSidecar, doClearSession, showActionPopup, uuidToStatePa
     SNAPSHOT_CAP, snapshotLabel, loadSnapshotManifest, commitSnapshot, applySnapshotToLive, dropSnapshots } from '/data/UserData/schwung/modules/tools/davebox/ui_persistence.mjs';
 import { drawGlobalMenu } from '/data/UserData/schwung/modules/tools/davebox/ui_dialogs.mjs';
 import { trackClipHasContent, sceneAllQueued, updateSceneMapLEDs } from '/data/UserData/schwung/modules/tools/davebox/ui_scene.mjs';
-import { effectiveClip, updateStepLEDs, updateSessionLEDs, updateTrackLEDs, flashAtRate, drawPositionBar, invalidateLEDCache, paintCoRunSideButtons } from '/data/UserData/schwung/modules/tools/davebox/ui_leds.mjs';
+import { effectiveClip, updateStepLEDs, updateSessionLEDs, updateTrackLEDs, flashAtRate, drawPositionBar, invalidateLEDCache, paintCoRunSideButtons, trackColor, trackDimColor } from '/data/UserData/schwung/modules/tools/davebox/ui_leds.mjs';
 import { SPLASH_FRAMES, SPLASH_COUNT, SPLASH_W, SPLASH_H, pickSplashIdx } from '/data/UserData/schwung/modules/tools/davebox/ui_splash.mjs';
 import { requestExport, confirmExportStart, pollPendingExport } from '/data/UserData/schwung/modules/tools/davebox/ui_export.mjs';
 
@@ -720,6 +720,10 @@ function setTrackMute(t, on) {
 }
 
 function setTrackSolo(t, on) {
+    /* Solo is disabled on the Conductor track — the control is inert. (It emits
+     * no MIDI, and soloing it would wrongly silence every other track.) Mute
+     * stays functional via setTrackMute. */
+    if (S.trackPadMode[t] === PAD_MODE_CONDUCT) return;
     S.trackSoloed[t] = on;
     if (on && S.trackMuted[t]) {
         S.trackMuted[t] = false;
@@ -6408,7 +6412,7 @@ function _tickImpl() {
             } else if (_rptLatched) {
                 loopColor = flashAtRate(48) ? White : LED_OFF;
             } else if (_tarpBlinkActive) {
-                loopColor = _tarpBlinkOn ? TRACK_COLORS[_lt] : LED_OFF;
+                loopColor = _tarpBlinkOn ? trackColor(_lt) : LED_OFF;
             } else if (S.sessionView && S.perfLatchMode) {
                 loopColor = VividYellow;
             } else {
@@ -11503,7 +11507,7 @@ function _onMidiInternalImpl(data) {
                         S.trackLooper[_lt] = _newLooper;
                         applyTrackConfig(_lt, 'track_looper', _newLooper);
                         showActionPopup('LOOPER ' + (_newLooper ? 'ON' : 'OFF'), 'TRACK ' + (_lt + 1));
-                        setButtonLED(71 + _lt, _newLooper ? TRACK_COLORS[_lt] : LED_OFF, true);
+                        setButtonLED(71 + _lt, _newLooper ? trackColor(_lt) : LED_OFF, true);
                     }
                     /* CC bank: Delete+touch clears this knob's automation + resting value → "—" */
                     if (S.activeBank === 6 && S.deleteHeld && !S.shiftHeld &&

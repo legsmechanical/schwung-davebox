@@ -2026,8 +2026,12 @@ static void set_param(void *instance, const char *key, const char *val) {
             return;
         }
 
-        /* tN_solo: set solo state; setting solo clears mute on same track */
+        /* tN_solo: set solo state; setting solo clears mute on same track.
+         * The Conductor track can never be soloed — solo is inert on it (it
+         * emits no MIDI; soloing it would also wrongly silence every other
+         * track). Mute stays functional. */
         if (!strcmp(sub, "solo")) {
+            if (tr->pad_mode == PAD_MODE_CONDUCT) return;
             inst->solo[tidx] = (val[0] == '1') ? 1 : 0;
             if (inst->solo[tidx]) inst->mute[tidx] = 0;
             silence_muted_tracks(inst);

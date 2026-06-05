@@ -2,7 +2,7 @@ import { S } from '/data/UserData/schwung/modules/tools/davebox/ui_state.mjs';
 import {
     NUM_STEPS, NUM_TRACKS, LED_OFF,
     TRACK_COLORS, TRACK_DIM_COLORS, TRACK_PAD_BASE, SCENE_BTN_FLASH_TICKS,
-    PAD_MODE_DRUM, BANKS,
+    PAD_MODE_DRUM, PAD_MODE_CONDUCT, BANKS,
     POLL_INTERVAL, TAP_TEMPO_FLASH_TICKS, PARAM_LED_BANKS,
     CC_GRADIENT_BASE, CC_GRADIENT_LEVELS
 } from '/data/UserData/schwung/modules/tools/davebox/ui_constants.mjs';
@@ -50,6 +50,10 @@ export function invalidateLEDCache() {
     lastSentNoteLED.fill(-1);
     lastSentButtonLED.fill(-1);
 }
+
+/* White / light-gray for the Conductor track; indexed color otherwise. */
+export function trackColor(t)    { return (S.trackPadMode[t] === PAD_MODE_CONDUCT) ? White     : TRACK_COLORS[t]; }
+export function trackDimColor(t) { return (S.trackPadMode[t] === PAD_MODE_CONDUCT) ? LightGrey : TRACK_DIM_COLORS[t]; }
 
 /* Co-run side clip buttons (CC 40-43): blink the buttons whose bit is set in
  * `litMask` (bit 0 = TOP = CC 43 .. bit 3 = bottom = CC 40) between dark-grey and
@@ -100,7 +104,7 @@ export function updateStepLEDs() {
      * white as a "waiting for end tap" affordance. */
     if (S.loopHeld && !S.loopJogActive) {
         const t = S.activeTrack;
-        const trackColor = TRACK_COLORS[t];
+        const tCol = trackColor(t);
         const pulsOn = S.playing ? S.flashSixteenth : (Math.floor(S.tickCount / 24) % 2);
         const gestureHeldPage = (S.loopGestureStart >= 0 && S.loopGestureTrack === t) ? S.loopGestureStart : -1;
         if (S.trackPadMode[t] === PAD_MODE_DRUM) {
@@ -123,7 +127,7 @@ export function updateStepLEDs() {
                     for (let s = base; s < end; s++) {
                         if (ls[s] !== '0') { hasNotes = true; break; }
                     }
-                    color = hasNotes ? (pulsOn ? trackColor : LED_OFF) : trackColor;
+                    color = hasNotes ? (pulsOn ? tCol : LED_OFF) : tCol;
                 }
                 setLED(16 + p, color);
             }
@@ -152,7 +156,7 @@ export function updateStepLEDs() {
                     for (let s = base; s < end; s++) {
                         if (steps[s] !== 0) { hasNotes = true; break; }
                     }
-                    color = hasNotes ? (pulsOn ? trackColor : LED_OFF) : trackColor;
+                    color = hasNotes ? (pulsOn ? tCol : LED_OFF) : tCol;
                 }
                 setLED(16 + p, color);
             }
@@ -203,8 +207,8 @@ export function updateStepLEDs() {
             let color;
             if (absStep < lsBase || absStep >= winEnd) color = DarkGrey;
             else if (S.playing && absStep === cs)      color = White;
-            else if (ls[absStep] === '1')              color = TRACK_COLORS[t];
-            else                                       color = (S.beatMarkersEnabled && i % 4 === 0) ? TRACK_DIM_COLORS[t] : LED_OFF;
+            else if (ls[absStep] === '1')              color = trackColor(t);
+            else                                       color = (S.beatMarkersEnabled && i % 4 === 0) ? trackDimColor(t) : LED_OFF;
             setLED(16 + i, color);
         }
         /* Gate span overlay: fixed index 56 across the steps the held note sounds
@@ -329,9 +333,9 @@ export function updateStepLEDs() {
         } else if (S.playing && absStep === cs) {
             color = White;
         } else if (steps[absStep] === 1) {
-            color = TRACK_COLORS[S.activeTrack];
+            color = trackColor(S.activeTrack);
         } else {
-            color = (S.beatMarkersEnabled && i % 4 === 0) ? TRACK_DIM_COLORS[S.activeTrack] : LED_OFF;
+            color = (S.beatMarkersEnabled && i % 4 === 0) ? trackDimColor(S.activeTrack) : LED_OFF;
         }
         setLED(16 + i, color);
     }
@@ -405,15 +409,15 @@ export function updateSessionLEDs() {
             } else if (!hasActive) {
                 color = DarkGrey;
             } else if (isPlaying && isPendingStop) {
-                color = (!S.playing || S.flashSixteenth) ? TRACK_DIM_COLORS[t] : LED_OFF;
+                color = (!S.playing || S.flashSixteenth) ? trackDimColor(t) : LED_OFF;
             } else if (isPlaying) {
-                color = S.flashEighth ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
+                color = S.flashEighth ? trackColor(t) : trackDimColor(t);
             } else if (isQueued) {
-                color = (!S.playing || S.flashSixteenth) ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
+                color = (!S.playing || S.flashSixteenth) ? trackColor(t) : trackDimColor(t);
             } else if (isWillRelaunch) {
-                color = TRACK_COLORS[t];
+                color = trackColor(t);
             } else {
-                color = TRACK_DIM_COLORS[t];
+                color = trackDimColor(t);
             }
             /* Copy source blink: JS-side timer (transport-independent) */
             if (S.copySrc) {
@@ -534,8 +538,8 @@ export function updateTrackLEDs() {
         const t  = S.activeTrack;
         const ac = effectiveClip(t);
         const sv = S.seqArpStepVel[t][ac];
-        const tc = TRACK_COLORS[t];
-        const td = TRACK_DIM_COLORS[t];
+        const tc = trackColor(t);
+        const td = trackDimColor(t);
         const ll = S.seqArpStepLoopLen[t][ac] | 0;
         const loopLen = (ll >= 1 && ll <= 8) ? ll : 8;
         for (let i = 0; i < 32; i++) {
@@ -555,8 +559,8 @@ export function updateTrackLEDs() {
     if (!S.sessionView && S.stepIntervalMode && S.activeBank === 5) {
         const t  = S.activeTrack;
         const sv = S.tarpStepVel[t];
-        const tc = TRACK_COLORS[t];
-        const td = TRACK_DIM_COLORS[t];
+        const tc = trackColor(t);
+        const td = trackDimColor(t);
         const ll = S.tarpStepLoopLen[t] | 0;
         const loopLen = (ll >= 1 && ll <= 8) ? ll : 8;
         for (let i = 0; i < 32; i++) {
@@ -582,15 +586,15 @@ export function updateTrackLEDs() {
             const t        = S.activeTrack;
             const selLane  = S.activeDrumLane[t];
             const velZone  = S.drumLastVelZone[t];
-            const tc       = _inCoRunPad ? White     : TRACK_COLORS[t];
-            const td       = _inCoRunPad ? LightGrey : TRACK_DIM_COLORS[t];
+            const tc       = _inCoRunPad ? White     : trackColor(t);
+            const td       = _inCoRunPad ? LightGrey : trackDimColor(t);
             /* True track colors for the co-run lane inversion: in co-run the
              * SELECTED lane takes the track color (bright = has data, dim =
              * empty) while every other lane goes white — the inverse of the
              * regular scheme (selected lane White, data lanes track-colored).
              * tc/td stay White/LightGrey so the right-col gate mask is unchanged. */
-            const tcReal   = TRACK_COLORS[t];
-            const tdReal   = TRACK_DIM_COLORS[t];
+            const tcReal   = trackColor(t);
+            const tdReal   = trackDimColor(t);
             const flashDur = 2 * POLL_INTERVAL;
             for (let i = 0; i < 32; i++) {
                 const col = i % 8;
@@ -678,8 +682,8 @@ export function updateTrackLEDs() {
             }
         } else {
         const _autoGrey    = S.activeBank === 6;
-        const rootColor    = _autoGrey ? 118 : (_inCoRunPad ? DarkGrey : TRACK_COLORS[S.activeTrack]);
-        const nonRootColor = _autoGrey ? 124 : (_inCoRunPad ? TRACK_DIM_COLORS[S.activeTrack] : DarkGrey);
+        const rootColor    = _autoGrey ? 118 : (_inCoRunPad ? DarkGrey : trackColor(S.activeTrack));
+        const nonRootColor = _autoGrey ? 124 : (_inCoRunPad ? trackDimColor(S.activeTrack) : DarkGrey);
         const _tarpActive = (S.bankParams[S.activeTrack][5][7] | 0) !== 0 &&
                             (S.bankParams[S.activeTrack][5][0] | 0) !== 0;
         const _tarpHeld = _tarpActive ? S.tarpHeldNotes[S.activeTrack] : null;
@@ -742,15 +746,15 @@ export function updateTrackLEDs() {
             const slowPulse = Math.floor(S.tickCount / 98) % 2;
             const isWillRelaunch = S.trackWillRelaunch[t] && S.trackActiveClip[t] === sceneIdx;
             if (isPlaying) {
-                color = S.flashEighth ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
+                color = S.flashEighth ? trackColor(t) : trackDimColor(t);
             } else if (isFocused && isWillRelaunch && S.playing) {
-                color = slowPulse ? TRACK_COLORS[t] : TRACK_DIM_COLORS[t];
+                color = slowPulse ? trackColor(t) : trackDimColor(t);
             } else if (isFocused) {
-                color = TRACK_COLORS[t];
+                color = trackColor(t);
             } else if (!trackClipHasContent(t, sceneIdx)) {
                 color = DarkGrey;
             } else {
-                color = TRACK_DIM_COLORS[t];
+                color = trackDimColor(t);
             }
         }
         /* Copy source blink: JS-side timer (transport-independent) */
@@ -768,7 +772,7 @@ export function updateTrackLEDs() {
     for (let k = 0; k < NUM_TRACKS; k++) {
         let ledVal = LED_OFF;
         if (S.perfViewLocked) {
-            ledVal = S.trackLooper[k] !== 0 ? TRACK_COLORS[k] : LED_OFF;
+            ledVal = S.trackLooper[k] !== 0 ? trackColor(k) : LED_OFF;
         } else if (S.sessionView) {
             ledVal = (k === S.activeTrack) ? White : LED_OFF;
         } else if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.activeBank === 5) {
@@ -825,8 +829,8 @@ export function updateTrackLEDs() {
         const _ttPhase = (Math.floor(S.tickCount / 24) % 2) === 1;
         for (let i = 0; i < NUM_TRACKS; i++) {
             const color = (i === S.activeTrack)
-                ? TRACK_COLORS[i]
-                : (_ttPhase ? DarkGrey : TRACK_DIM_COLORS[i]);
+                ? trackColor(i)
+                : (_ttPhase ? DarkGrey : trackDimColor(i));
             cachedSetLED(TRACK_PAD_BASE + i, color);
         }
     }

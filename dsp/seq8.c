@@ -2542,6 +2542,15 @@ static void pfx_send(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
  * pfx_send hooks (ARP, looper, merge, swing). Used for already-deferred events. */
 static void pfx_emit(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
     if (!g_host) return;
+    /* Conductor track emits NO MIDI. This is the single hardware-send choke
+     * point (all three routes flow through here, reached both from pfx_send and
+     * from the deferred-queue drain), so dropping here guarantees no note/CC/AT
+     * from a Conductor track ever leaves. The Conductor's sequencer still
+     * advances steps/playhead in the render path — only the output is silenced;
+     * a later phase reads its currently-playing note to drive transposition. */
+    if (g_inst && fx->track_idx < NUM_TRACKS &&
+            g_inst->tracks[fx->track_idx].pad_mode == PAD_MODE_CONDUCT)
+        return;
     /* Output-pitch refcount gate. See play_fx_t.pitch_refcount comment.
      * Note-on (0x90 with vel>0): increment; drop if was already sounding.
      * Note-off (0x80, or 0x90 with vel=0): decrement (clamp at 0); drop if
@@ -8452,6 +8461,12 @@ static void convert_track_to_conduct(seq8_instance_t *inst, int t) {
     tarp_init_defaults(tr);
 
     tr->pad_mode = PAD_MODE_CONDUCT;
+
+    /* Solo is disabled on the Conductor: clear any pre-existing solo on this
+     * track so it can never sit in the soloed set (which would wrongly silence
+     * every other track). Mute is intentionally preserved — it stays functional
+     * on the Conductor. */
+    inst->solo[t] = 0;
 
     silence_track_notes_v2(inst, tr);
     /* Playhead/step state (current_step/tick_in_step) is intentionally left as-is:
