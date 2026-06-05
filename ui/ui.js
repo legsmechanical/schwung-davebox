@@ -3058,9 +3058,14 @@ function convertTrackToConduct(t) {
     host_module_set_param('t' + t + '_convert_to_conduct', '1');
     S.trackPadMode[t] = PAD_MODE_CONDUCT;
     S.pendingConductReadback = { t: t, prevMode: prevMode };
-    /* Mirror convertTrackType's ordering: rebuild pad LEDs without get_param
-     * (the convert set_param must drain before any same-buffer push). The
-     * refusal readback runs in tick() where get_param is valid. */
+    /* Mirror convertTrackType's drain barrier: the convert set_param must drain
+     * before computePadNoteMap pushes tN_padmap, or same-buffer tN_* coalescing
+     * drops the convert (DSP never sets the role → false refusal). The first
+     * get_param in syncClipsFromDsp flushes the queued convert; empty tracks use
+     * a bare get_param barrier. The refusal readback runs in tick() (get_param
+     * valid there). */
+    if (trackHasAnyData(t)) syncClipsFromDsp();
+    else host_module_get_param('t' + t + '_pad_mode');
     computePadNoteMap();
     invalidateLEDCache();
     forceRedraw();
