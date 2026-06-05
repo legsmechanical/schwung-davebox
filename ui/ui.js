@@ -5525,14 +5525,26 @@ function _tickImpl() {
         const _raw = host_module_get_param('conductor_track');
         const _ct  = parseInt(_raw, 10);
         const _val = isNaN(_ct) ? -1 : _ct;
-        S.conductorTrack = _val;
-        if (_val !== _rb.t) {
-            /* Refused — another track already holds the role. Revert. */
+        if (_val === _rb.t) {
+            /* SUCCESS — the role landed on the requested track. */
+            S.conductorTrack = _val;
+        } else if (_val >= 0) {
+            /* Refused — a different track already holds the role. Revert. */
+            S.conductorTrack = _val;
             S.trackPadMode[_rb.t] = _rb.prevMode;
             computePadNoteMap();
             invalidateLEDCache();
             forceRedraw();
             showActionPopup('CONDUCTOR', 'EXISTS ON T' + (_val + 1));
+        } else {
+            /* Unexpected — DSP reports no conductor right after convert.
+             * Revert the optimistic mode but do NOT show the misleading
+             * "exists" popup. */
+            S.conductorTrack = _val;
+            S.trackPadMode[_rb.t] = _rb.prevMode;
+            computePadNoteMap();
+            invalidateLEDCache();
+            forceRedraw();
         }
     }
 
