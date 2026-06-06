@@ -205,15 +205,27 @@ function buildGlobalMenuItems() {
     return [
         createValue('Channel', {
             get: function() { return S.trackChannel[S.activeTrack]; },
-            set: function(v) { applyTrackConfig(S.activeTrack, 'channel', v); },
+            /* Conductor has no MIDI channel — inert + shows '-'. */
+            set: function(v) {
+                if (S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT) return;
+                applyTrackConfig(S.activeTrack, 'channel', v);
+            },
             min: 1, max: 16, step: 1,
-            format: function(v) { return String(v); }
+            format: function(v) {
+                return S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT ? fmtNA() : String(v);
+            }
         }),
         createEnum('Route', {
             get: function() { return S.trackRoute[S.activeTrack]; },
-            set: function(v) { applyTrackConfig(S.activeTrack, 'route', v); },
+            /* Conductor routes nowhere (drives transposition) — inert + shows '-'. */
+            set: function(v) {
+                if (S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT) return;
+                applyTrackConfig(S.activeTrack, 'route', v);
+            },
             options: [0, 1, 2],
-            format: function(v) { return fmtRoute(v); }
+            format: function(v) {
+                return S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT ? fmtNA() : fmtRoute(v);
+            }
         }),
         createEnum('Mode', {
             get: function() { return S.trackPadMode[S.activeTrack]; },
