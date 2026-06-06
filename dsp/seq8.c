@@ -318,14 +318,6 @@ typedef struct {
      * another still-held pad is legitimately sourcing. Runtime only — not
      * persisted; zeroed by pfx_reset and at the top of send_panic. */
     uint8_t      pitch_refcount[128];
-    /* Conductor "Next": raw input pitch -> emitted (transposed) pitch while a
-     * responder note is sounding; 0xFF = no latch. The note-on transposes per
-     * the live conductor state and latches the result here; the matching
-     * note-off reads the latch so its emitted pitch equals its on-time pitch,
-     * even if the conductor offset changed mid-note. Keeps the refcount gate
-     * balanced (on/off use the same d1) → no stuck notes. Runtime only — not
-     * persisted; reset to 0xFF wherever pitch_refcount is reset. */
-    uint8_t      cond_emit_pitch[128];
 } play_fx_t;
 
 /* ------------------------------------------------------------------ */
@@ -853,6 +845,7 @@ typedef struct {
     uint8_t  conductor_sounding;    /* 1 while a Conductor note is held this step (transient) */
     int16_t  conductor_off_deg;     /* scale-degree offset (scale-aware path) (transient) */
     int16_t  conductor_off_semi;    /* semitone offset (chromatic path) (transient) */
+    int      conductor_held;        /* count of held Conductor notes (legato/sequenced) (transient) */
 
     /* External MIDI queue: ROUTE_MOVE note events buffered here; JS drains each tick */
     ext_msg_t ext_queue[EXT_QUEUE_SIZE];
@@ -2647,65 +2640,10 @@ static void pfx_emit(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
     if (g_inst && fx->track_idx < NUM_TRACKS &&
             g_inst->tracks[fx->track_idx].pad_mode == PAD_MODE_CONDUCT)
         return;
-    /* Conductor responder transposition (Phase 3 — "Next" mode). Applied to the
-     * outgoing pitch AFTER the conductor-suppress return (so the conductor never
-     * transposes itself) and BEFORE the refcount gate / hardware send, so all of
-     * a responder's notes (primary + harmony + arp) shift uniformly. The live
-     * offset is driven by the conductor's playback (Task 3.2): conductor_sounding
-     * is 0 on an empty/muted step → snap to written pitch. Non-destructive: only
-     * the transient d1 here is changed; clip note data is untouched. Drum tracks
-     * do not respond (melodic-only guard). */
-    /* Strand-safe "Next": the note-on transposes per the CURRENT conductor
-     * state and LATCHES the emitted pitch per raw input pitch; the matching
-     * note-off reads that latch so its emitted pitch equals the on-time pitch
-     * regardless of how the conductor offset has moved since. Mirrors the
-     * looper's perf_emitted_pitch raw->emitted map. The OFF retrieval must NOT
-     * be gated on conductor_sounding / cond_resp (a held note keeps its pitch
-     * even after the conductor changes/stops) — only the track-eligibility
-     * guard applies to both directions. Without this, the on increments
-     * refcount[A] and a later off (under a changed offset) decrements
-     * refcount[B] → note A never releases → stuck note. */
-    if (g_inst) {
-        int t = fx->track_idx;
-        if (t < NUM_TRACKS && t != g_inst->conductor_track &&
-                g_inst->tracks[t].pad_mode == PAD_MODE_MELODIC_SCALE &&
-                d1 < 128) {
-            uint8_t _st = status & 0xF0;
-            int raw = (int)d1;
-            if (_st == 0x90 && d2 > 0) {
-                /* note-on: transpose per current conductor state, latch result
-                 * (== raw when not transposed, so the off path is uniform). */
-                int pitch = raw;
-                if (g_inst->conductor_track >= 0 && g_inst->conductor_sounding) {
-                    seq8_track_t *_cnd = &g_inst->tracks[g_inst->conductor_track];
-                    clip_t       *_cc  = &_cnd->clips[_cnd->active_clip];
-                    if (_cc->cond_resp[t]) {
-                        int oct = _cc->cond_oct[t];
-                        if (g_inst->scale_aware) {
-                            int n = (int)SCALE_SIZES[eff_pad_scale(g_inst)];
-                            pitch = scale_transpose(g_inst, raw,
-                                        g_inst->conductor_off_deg + oct * n);
-                        } else {
-                            pitch = clamp_i(raw + g_inst->conductor_off_semi +
-                                            oct * 12, 0, 127);
-                        }
-                    }
-                }
-                fx->cond_emit_pitch[raw] = (uint8_t)pitch;
-                d1 = (uint8_t)pitch;
-            } else if (_st == 0x80 || (_st == 0x90 && d2 == 0)) {
-                /* note-off: use the latched on-time pitch so it matches the on,
-                 * regardless of how the conductor offset has changed since. */
-                uint8_t lp = fx->cond_emit_pitch[raw];
-                if (lp != 0xFF) {
-                    d1 = lp;
-                    fx->cond_emit_pitch[raw] = 0xFF;
-                }
-            }
-            /* CC/AT/PB (other status) untouched — only notes are latched. */
-        }
-    }
-    /* Output-pitch refcount gate. See play_fx_t.pitch_refcount comment.
+    /* Conductor responder transposition is now applied at note-record level in
+     * pfx_note_on (stored into an->gen_notes), so every emitted on AND its
+     * matching off carry the same transposed pitch — no emit-time latch needed.
+     * Output-pitch refcount gate. See play_fx_t.pitch_refcount comment.
      * Note-on (0x90 with vel>0): increment; drop if was already sounding.
      * Note-off (0x80, or 0x90 with vel=0): decrement (clamp at 0); drop if
      * still sounding from another source. When refcount is already 0 we let
@@ -3237,11 +3175,11 @@ static void send_panic(seq8_instance_t *inst) {
     for (t = 0; t < NUM_TRACKS; t++) {
         memset(inst->tracks[t].pfx.pitch_refcount, 0,
                sizeof(inst->tracks[t].pfx.pitch_refcount));
-        /* Drop conductor on-pitch latches too — a panic ends all sounding
-         * responder notes, so stale latches must not influence a later off. */
-        memset(inst->tracks[t].pfx.cond_emit_pitch, 0xFF,
-               sizeof(inst->tracks[t].pfx.cond_emit_pitch));
     }
+    /* A panic ends all sounding notes — drop the conductor offset/held count so
+     * stale state can't transpose the next note-ons. */
+    conductor_clear_offset(inst);
+    inst->conductor_held = 0;
     for (t = 0; t < NUM_TRACKS; t++) {
         play_fx_t *fx = &inst->tracks[t].pfx;
         if (fx->route >= 0 && fx->route < 3 && !route_pfx[fx->route])
@@ -4089,7 +4027,6 @@ static void pfx_reset(play_fx_t *fx) {
     fx->quantize        = 0;
     arp_init_defaults(&fx->arp);
     memset(fx->pitch_refcount, 0, sizeof(fx->pitch_refcount));
-    memset(fx->cond_emit_pitch, 0xFF, sizeof(fx->cond_emit_pitch));
 }
 
 /* Process a note-on through the chain. Sends immediate output via
@@ -4105,12 +4042,54 @@ static void pfx_note_on(seq8_instance_t *inst, seq8_track_t *tr,
     uint8_t      ch  = tr->channel;
     uint64_t     now = fx->sample_counter;
     pfx_active_t *an = &fx->active_notes[orig_note];
+    int t_idx = (int)(tr - inst->tracks);
+
+    /* Conductor drives the live transpose offset from its OWN played note
+     * (raw orig_note). Covers BOTH sequenced (sequencer → pfx_note_on) and
+     * live-pad (live_note_on → pfx_note_on) input, since both flow here. The
+     * conductor's own gen/emit still runs but is suppressed at pfx_emit. Held
+     * count handles legato overlap (monophonic conductor → 0/1). */
+    if (t_idx == inst->conductor_track && tr->pad_mode == PAD_MODE_CONDUCT) {
+        conductor_set_offset_from_note(inst, (int)orig_note);
+        inst->conductor_held++;
+    }
 
     int v = clamp_i((int)vel + fx->velocity_offset, 1, 127);
 
     int is_scale_aware = inst->scale_aware && (tr->pad_mode == PAD_MODE_MELODIC_SCALE);
     uint8_t gen[MAX_GEN_NOTES];
     int gc = pfx_build_gen_notes(inst, is_scale_aware, fx, (int)orig_note, gen);
+
+    /* Conductor responder transpose ("Next"): apply the conductor offset to
+     * each gen[] note (primary + harmonies) HERE — before the record is stored
+     * and before any on/off is emitted — so the on, every future off (read from
+     * an->gen_notes), and the retrigger-guard release all use the SAME pitch.
+     * Captured at note-on; the note keeps this pitch for its whole life even if
+     * the conductor offset changes later (off matches on → no stuck notes).
+     * Non-destructive: clip note data untouched; only transient gen[] shifts.
+     * Deferred follow-up: SEQ ARP (arp_fire_step → pfx_send with arp_emitting)
+     * and the global looper bypass pfx_note_on, so their output does not yet
+     * follow the conductor. */
+    if (inst->conductor_track >= 0 && inst->conductor_sounding &&
+            t_idx != inst->conductor_track &&
+            tr->pad_mode == PAD_MODE_MELODIC_SCALE) {
+        seq8_track_t *_cnd = &inst->tracks[inst->conductor_track];
+        clip_t       *_cc  = &_cnd->clips[_cnd->active_clip];
+        if (_cc->cond_resp[t_idx]) {
+            int oct = _cc->cond_oct[t_idx];
+            int gi;
+            for (gi = 0; gi < gc; gi++) {
+                if (inst->scale_aware) {
+                    int n = (int)SCALE_SIZES[eff_pad_scale(inst)];
+                    gen[gi] = (uint8_t)scale_transpose(inst, gen[gi],
+                                  inst->conductor_off_deg + oct * n);
+                } else {
+                    gen[gi] = (uint8_t)clamp_i((int)gen[gi] +
+                                  inst->conductor_off_semi + oct * 12, 0, 127);
+                }
+            }
+        }
+    }
 
     /* Retrigger guard: if this note is already active, clean up first. */
     if (an->active) {
@@ -4176,6 +4155,14 @@ static void pfx_note_off(seq8_instance_t *inst, seq8_track_t *tr,
                          uint8_t orig_note) {
     play_fx_t   *fx  = &tr->pfx;
     pfx_active_t *an = &fx->active_notes[orig_note];
+
+    /* Conductor release: drop the live offset when the last held note ends. */
+    if ((int)(tr - inst->tracks) == inst->conductor_track &&
+            tr->pad_mode == PAD_MODE_CONDUCT) {
+        if (inst->conductor_held > 0) inst->conductor_held--;
+        if (inst->conductor_held == 0) conductor_clear_offset(inst);
+    }
+
     if (!an->active) return;
 
     uint64_t now      = fx->sample_counter;
@@ -4205,6 +4192,14 @@ static void pfx_note_off_imm(seq8_instance_t *inst, seq8_track_t *tr,
                               uint8_t orig_note) {
     play_fx_t   *fx  = &tr->pfx;
     pfx_active_t *an = &fx->active_notes[orig_note];
+
+    /* Conductor release: drop the live offset when the last held note ends. */
+    if ((int)(tr - inst->tracks) == inst->conductor_track &&
+            tr->pad_mode == PAD_MODE_CONDUCT) {
+        if (inst->conductor_held > 0) inst->conductor_held--;
+        if (inst->conductor_held == 0) conductor_clear_offset(inst);
+    }
+
     if (!an->active) return;
 
     uint64_t now     = fx->sample_counter;
@@ -6414,6 +6409,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     inst->conductor_sounding     = 0;   /* transient live transposition offset */
     inst->conductor_off_deg      = 0;
     inst->conductor_off_semi     = 0;
+    inst->conductor_held         = 0;   /* transient held-note count */
     memset(inst->perf_emitted_pitch, 0xFF, sizeof(inst->perf_emitted_pitch));
     memset(inst->pad_note_map, 0xFF, sizeof(inst->pad_note_map));
     memset(inst->pad_live_pitch, 0xFF, sizeof(inst->pad_live_pitch));
@@ -10468,52 +10464,14 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 }
             }
 
-            /* Conductor transposition offset (Phase 3, Task 3.2): drive the live
-             * offset from the Conductor track's own step playback. The Conductor
-             * emits no MIDI (suppressed at the pfx_emit/drum_pfx_emit choke point)
-             * — here we only read its currently-playing step note to set the
-             * offset state that Task 3.3 applies to responder emits.
-             *
-             * Per-step set/clear model (matches spec §4 "empty step → snap to
-             * zero"): evaluated once per step boundary (tick_in_step == 0). The
-             * Conductor is monophonic, so the step's primary note (step_notes[s][0])
-             * is the played note. Step with a note → set offset from that pitch;
-             * empty step OR Conductor muted → clear (snap to zero). We use the
-             * step-centric model (step_notes/step_note_count) rather than hooking
-             * the note-centric note-on loop because per-step boundary evaluation
-             * gives a clean "is this step empty?" answer. */
-            if (t == inst->conductor_track && tr->pad_mode == PAD_MODE_CONDUCT) {
-                int16_t _prev_deg  = inst->conductor_off_deg;
-                int16_t _prev_semi = inst->conductor_off_semi;
-                uint8_t _prev_snd  = inst->conductor_sounding;
-                if (effective_mute(inst, t)) {
-                    /* Mute (or solo-elsewhere) → snap to zero every tick. */
-                    conductor_clear_offset(inst);
-                } else if (tr->tick_in_step == 0) {
-                    /* Step boundary: read this step's primary note (monophonic). */
-                    clip_t  *_ccl = &tr->clips[tr->active_clip];
-                    uint16_t _cs  = tr->current_step;
-                    if (_cs < SEQ_STEPS && _ccl->step_note_count[_cs] > 0)
-                        conductor_set_offset_from_note(inst, (int)_ccl->step_notes[_cs][0]);
-                    else
-                        conductor_clear_offset(inst);
-                }
-                /* TEMP (device verification — remove after user confirms, like
-                 * convert_to_conduct): log offset only when it changes so the
-                 * user can confirm different Conductor notes change the offset
-                 * and empty steps / mute zero it. seq8_ilog has no varargs. */
-                if (inst->conductor_off_deg  != _prev_deg  ||
-                    inst->conductor_off_semi != _prev_semi ||
-                    inst->conductor_sounding != _prev_snd) {
-                    char _cmsg[96];
-                    snprintf(_cmsg, sizeof(_cmsg),
-                        "CONDUCT t%d offset deg=%d semi=%d sounding=%d step=%u",
-                        t, (int)inst->conductor_off_deg,
-                        (int)inst->conductor_off_semi,
-                        (int)inst->conductor_sounding,
-                        (unsigned)tr->current_step);
-                    seq8_ilog(inst, _cmsg);
-                }
+            /* Conductor offset is now driven from the Conductor's own
+             * pfx_note_on / pfx_note_off (covers sequenced + live pad). This
+             * per-tick safety only handles MUTE: a muted Conductor snaps to
+             * zero immediately, even mid-gate (no note-off fires when muted). */
+            if (t == inst->conductor_track && tr->pad_mode == PAD_MODE_CONDUCT &&
+                    effective_mute(inst, t)) {
+                conductor_clear_offset(inst);
+                inst->conductor_held = 0;
             }
 
             /* Drum Repeat: fire held-rate-pad retriggers independent of sequencer. */
