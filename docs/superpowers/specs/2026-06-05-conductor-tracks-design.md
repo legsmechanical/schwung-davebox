@@ -46,7 +46,7 @@ only to drive the transposition state.
 | Empty step / Conductor mute | **Snap to zero** (responders play written pitch). |
 | Reference pitch `R` | **Root pitch-class + 60 (MIDI octave 4 / C4 in C major)**, matching the existing `defaultStepNote` convention. |
 | Octave bank scale-awareness | Octave offset is applied in the **same space** as the Conductor offset: one octave = `scale_size` degrees when scale-aware, ×12 semitones when chromatic. Folded into a single transpose op. |
-| Bake "Apply Conductor?" | Conductor advanced **in lockstep across the N baked loops**; its trig conditions (iteration cycle + probability roll) evaluated exactly like regular bake. |
+| Bake "Apply Conductor?" | **SCENE bake only** (not clip bake): folds each responder clip against its scene's Conductor clip (full chain incl. NoteFX + CdLk + per-track Octave, lockstep across N loops), then **auto-disables** that Conductor clip's Responder flags for the baked tracks so live playback doesn't double-apply. |
 | "Cannot be baked" | The Conductor track has **no bake action** of its own (it can be live-merged). |
 | Track color | Conductor keeps its **pre-assigned per-index track color** (the always-white idea was dropped as confusing). |
 
@@ -93,9 +93,15 @@ emit-time math because the Conductor changes every step.
 The Conductor's jog wheel cycles exactly five banks (no pfx/tarp/auto), in order
 **Conduct → NoteFX → Responder → Octave → When**.
 
-1. **Conduct** — functionally identical to the CLIP bank
-   (`ui/ui_constants.mjs:267`): Res, Stch, Shft, Lgto, InQ, (unassigned), Dir,
-   SqFl. Same handlers, header relabeled "Conduct".
+1. **Conduct** — reuses the CLIP bank (`ui/ui_constants.mjs:267`): Res, Stch,
+   Shft, Lgto, InQ, **CdLk** (K6, Conductor-only — the CLIP bank's K6 is otherwise
+   unassigned), Dir, SqFl. Header relabeled "Conduct".
+   - **CdLk** (Conductor Lock, per Conductor clip): **Off** = gate-hold (current —
+     transposition lasts the Conductor note's gate, snaps to zero in gaps).
+     **Lock** = sample-and-hold — the transposition persists through gaps and only
+     changes when the Conductor plays the next note (never self-reverts to zero;
+     play the root@oct4 to return to no-transpose). Mute still snaps to zero in
+     both modes.
 2. **NoteFX** — a slimmed reuse of the melodic NOTE FX bank (index 1), exposing
    **Octave** (K1), **Offset** (K2), **Random** (K8), and **Random-mode** (Shift+K8,
    uniform/gaussian/walk); other knobs greyed. **Per Conductor clip** (uses the
@@ -164,23 +170,39 @@ out-of-scale notes are treated consistently with the Conductor shift.
 Mixed Next/Now across responder tracks is supported — the offset is global state;
 each track reads it per its own When setting.
 
-### 5. Bake — "Apply Conductor?"
+### 5. Bake — "Apply Conductor?" (SCENE bake only)
 
-When baking a melodic clip AND a Conductor clip is active AND that track is On in
-the active Conductor clip's Responder bank, a final dialog is appended to the
-existing bake flow (`ui/ui.js:1495` `drawBakeConfirm`): **"Apply Conductor?" —
-Yes / No / Cancel.**
+**Decision (revised):** Conductor bake lives on **scene bake**, NOT clip bake. The
+Conductor is a cross-track, scene-wide modulator — a responder clip's
+transposition is only well-defined relative to the Conductor clip playing in the
+same scene. Clip bake in isolation would have to assume a Conductor clip + phase
+and freeze a context-dependent result. Scene bake (bake all tracks at clip index
+C) has the whole scene in hand, so it folds each responder clip against **its own
+scene's Conductor clip** (the Conductor's clip at index C). Clip bake has **no**
+Apply-Conductor option.
 
-- **Yes:** the Conductor is advanced in lockstep across the same N baked loops
-  the bake dialog selects. For each baked responder note at absolute tick `t`,
-  the active Conductor step is the one at `t mod conductor_clip_len` (Conductor
-  wraps at its own length); that Conductor step's trig conditions are evaluated
-  exactly like regular bake — iteration cycle advances per loop, probability
-  rolls fresh per occurrence via the bake RNG (`step_trig_pass`, `seq8.c:7589`).
-  If the Conductor step doesn't fire → offset 0 for that span; if it fires → the
-  degree/semitone offset (+ Octave, scale-aware) is folded into the baked pitch.
+When scene-baking at clip index C AND a Conductor exists AND its clip C has any
+responder track On, append **"Apply Conductor?" — Yes / No / Cancel** to the
+scene-bake flow.
+
+- **Yes:** for each responder track baked at scene C, fold the Conductor's
+  transposition into the baked notes. The offset for a baked responder note at
+  absolute tick `t` is reconstructed offline from Conductor clip C, replicating
+  the live chain: the Conductor note sounding at `t` (honoring **gate-hold vs
+  CdLk Lock**, and the Conductor clip's iteration/probability trig conditions,
+  lockstep across the N baked loops) → its NOTE FX (octave/offset/random →
+  `gen[0]`) → degree/semitone offset (scale-aware) → **+ per-track Octave
+  (`cond_oct`)**. Each responder note takes the offset at its own onset (Next-
+  style; "Now" live-retrigger doesn't apply to a flattened note). Conductor clip
+  C wraps at its own length (`t mod conductor_clip_len`).
+- **Then auto-disable (model b):** after baking, set the Conductor clip C's
+  Responder flag **off** (`cond_resp[track] = 0`) for each baked track, so live
+  playback of the now-baked scene does **not** double-apply the transposition.
 - **No:** bake ignores the Conductor (written pitches only).
-- **Cancel:** backs out of the whole bake.
+- **Cancel:** backs out of the whole scene bake.
+
+(The Conductor track itself is never baked — it has no output. Export already
+ignores the live Conductor, so a baked-then-exported scene is clean either way.)
 
 ### 6. Ableton export
 
