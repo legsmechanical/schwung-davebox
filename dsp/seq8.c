@@ -1829,7 +1829,9 @@ static void seq8_load_state(seq8_instance_t *inst) {
     /* Per-track: pad_mode (route/channel already loaded above) */
     for (t = 0; t < NUM_TRACKS; t++) {
         snprintf(key, sizeof(key), "t%d_pm", t);
-        inst->tracks[t].pad_mode = (uint8_t)clamp_i(json_get_int(buf, key, 0), 0, 1);
+        /* clamp 0..2 so PAD_MODE_CONDUCT (2) survives a reload; clamping to 0..1
+         * silently turned a saved Conductor into a Drum track. */
+        inst->tracks[t].pad_mode = (uint8_t)clamp_i(json_get_int(buf, key, 0), 0, 2);
         if (inst->tracks[t].pad_mode == PAD_MODE_DRUM)
             drum_clips_alloc(inst, &inst->tracks[t]);
     }
