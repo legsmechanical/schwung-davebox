@@ -2363,6 +2363,7 @@ static void arp_remove_note  (arp_engine_t *a, uint8_t pitch);
 static void arp_silence      (seq8_instance_t *inst, seq8_track_t *tr);
 static int  scale_transpose  (seq8_instance_t *inst, int note, int deg_offset);
 static int  note_abs_degree  (seq8_instance_t *inst, int note);
+static inline int eff_pad_scale(seq8_instance_t *inst);
 static void conductor_set_offset_from_note(seq8_instance_t *inst, int played);
 static void conductor_clear_offset(seq8_instance_t *inst);
 
@@ -2638,6 +2639,36 @@ static void pfx_emit(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
     if (g_inst && fx->track_idx < NUM_TRACKS &&
             g_inst->tracks[fx->track_idx].pad_mode == PAD_MODE_CONDUCT)
         return;
+    /* Conductor responder transposition (Phase 3 — "Next" mode). Applied to the
+     * outgoing pitch AFTER the conductor-suppress return (so the conductor never
+     * transposes itself) and BEFORE the refcount gate / hardware send, so all of
+     * a responder's notes (primary + harmony + arp) shift uniformly. The live
+     * offset is driven by the conductor's playback (Task 3.2): conductor_sounding
+     * is 0 on an empty/muted step → snap to written pitch. Non-destructive: only
+     * the transient d1 here is changed; clip note data is untouched. Drum tracks
+     * do not respond (melodic-only guard). */
+    if (g_inst) {
+        int t = fx->track_idx;
+        if (g_inst->conductor_track >= 0 && g_inst->conductor_sounding &&
+                t < NUM_TRACKS && t != g_inst->conductor_track &&
+                g_inst->tracks[t].pad_mode == PAD_MODE_MELODIC_SCALE) {
+            seq8_track_t *_cnd = &g_inst->tracks[g_inst->conductor_track];
+            clip_t       *_cc  = &_cnd->clips[_cnd->active_clip];
+            if (_cc->cond_resp[t]) {
+                int oct   = _cc->cond_oct[t];
+                int pitch = (int)d1;
+                if (g_inst->scale_aware) {
+                    int n = (int)SCALE_SIZES[eff_pad_scale(g_inst)];
+                    pitch = scale_transpose(g_inst, pitch,
+                                            g_inst->conductor_off_deg + oct * n);
+                } else {
+                    pitch = clamp_i(pitch + g_inst->conductor_off_semi + oct * 12,
+                                    0, 127);
+                }
+                d1 = (uint8_t)pitch;
+            }
+        }
+    }
     /* Output-pitch refcount gate. See play_fx_t.pitch_refcount comment.
      * Note-on (0x90 with vel>0): increment; drop if was already sounding.
      * Note-off (0x80, or 0x90 with vel=0): decrement (clamp at 0); drop if
