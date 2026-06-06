@@ -10231,6 +10231,7 @@ function _onPadPressTrackView(status, d1, d2) {
         } else if (S.shiftHeld && padIdx >= 24 && padIdx <= 31) {
             const _padOff = padIdx - 24;
             const _isDrum = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
+            const _isConduct = S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT;
             let bankIdx;
             if (_isDrum) {
                 /* Drum pad map: 92=ALL LANES(7) 93=DRUM LANE(0) 94=NOTE FX(1)
@@ -10238,10 +10239,15 @@ function _onPadPressTrackView(status, d1, d2) {
                                  98=CC PARAM(6) 99=hidden */
                 const DRUM_PAD_MAP = [7, 0, 1, 3, 5, -1, 6, -1];
                 bankIdx = DRUM_PAD_MAP[_padOff];
+            } else if (_isConduct) {
+                /* Conductor reaches only its four banks: pads 0-3 select
+                   CONDUCT(0)/RESPONDER/OCTAVE/WHEN; pads 4-7 are no-ops. */
+                const CONDUCT_PAD_MAP = [0, BANK_RESPONDER, BANK_OCTAVE, BANK_WHEN, -1, -1, -1, -1];
+                bankIdx = CONDUCT_PAD_MAP[_padOff];
             } else {
                 bankIdx = _padOff;
             }
-            if (bankIdx >= 0 && bankIdx <= 7 && BANKS[bankIdx]) {
+            if (bankIdx >= 0 && bankIdx < BANKS.length && BANKS[bankIdx]) {
                 if (S.activeBank === bankIdx) {
                     S.bankSelectTick = -1;
                 } else {
