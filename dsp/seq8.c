@@ -449,6 +449,12 @@ typedef struct {
     uint8_t  step_iter[SEQ_STEPS];
     uint8_t  step_random[SEQ_STEPS];
     uint8_t  step_ratchet[SEQ_STEPS];
+    /* Conductor per-clip control banks (meaningful only on the Conductor
+     * track's clips; storage exists on every clip). One entry per dAVEBOx
+     * track. Phase 3 reads these; stored + persisted here in Phase 2. */
+    uint8_t  cond_resp[NUM_TRACKS];   /* Conductor: responder on/off per track; default 1 */
+    int8_t   cond_oct [NUM_TRACKS];   /* Conductor: octave offset per track -4..+4; default 0 */
+    uint8_t  cond_when[NUM_TRACKS];   /* Conductor: 0=Next, 1=Now; default 0 */
     /* Loop-cycle counter for Iter trig. Increments on each loop wrap during
      * playback. Reset to 0 on transport-start edge (not on un-pause). Not
      * persisted — always starts at 0 after load. */
@@ -1376,6 +1382,33 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
                 fprintf(fp, ",\"t%dc%d_cs\":%d", t, c, (int)cl->clock_shift_pos);
             if (cl->ticks_per_step != TICKS_PER_STEP)
                 fprintf(fp, ",\"t%dc%d_tps\":%d", t, c, (int)cl->ticks_per_step);
+            /* Conductor per-clip control banks — only this track's clips, sparse:
+             * responder mask (default all-1), octave (default 0), when (default 0). */
+            if (t == inst->conductor_track) {
+                int ci, any;
+                any = 0;
+                for (ci = 0; ci < NUM_TRACKS; ci++) if (cl->cond_resp[ci] != 1) { any = 1; break; }
+                if (any) {
+                    fprintf(fp, ",\"t%dc%d_crsp\":\"", t, c);
+                    for (ci = 0; ci < NUM_TRACKS; ci++) fputc(cl->cond_resp[ci] ? '1' : '0', fp);
+                    fputc('"', fp);
+                }
+                any = 0;
+                for (ci = 0; ci < NUM_TRACKS; ci++) if (cl->cond_oct[ci] != 0) { any = 1; break; }
+                if (any) {
+                    fprintf(fp, ",\"t%dc%d_coct\":\"", t, c);
+                    for (ci = 0; ci < NUM_TRACKS; ci++)
+                        fprintf(fp, "%s%d", ci ? " " : "", (int)cl->cond_oct[ci]);
+                    fputc('"', fp);
+                }
+                any = 0;
+                for (ci = 0; ci < NUM_TRACKS; ci++) if (cl->cond_when[ci] != 0) { any = 1; break; }
+                if (any) {
+                    fprintf(fp, ",\"t%dc%d_cwhn\":\"", t, c);
+                    for (ci = 0; ci < NUM_TRACKS; ci++) fputc(cl->cond_when[ci] ? '1' : '0', fp);
+                    fputc('"', fp);
+                }
+            }
             /* Per-clip play-effect params (sparse — only non-default) */
             {
                 const clip_pfx_params_t *p2 = &cl->pfx_params;
@@ -2234,6 +2267,37 @@ static void seq8_load_state(seq8_instance_t *inst) {
         if (_ctr->pad_mode != PAD_MODE_CONDUCT) {
             if (_ctr->pad_mode == PAD_MODE_DRUM) drum_clips_free(_ctr);
             _ctr->pad_mode = PAD_MODE_CONDUCT;
+        }
+        /* Conductor per-clip control banks (sparse; absent keys keep clip_init
+         * defaults: resp=1, oct=0, when=0). Validate ranges on load. */
+        {
+            int t = inst->conductor_track, c, ci;
+            for (c = 0; c < NUM_CLIPS; c++) {
+                clip_t *_cl = &_ctr->clips[c];
+                char k[24];
+                /* responder mask: 8 chars '0'/'1' */
+                snprintf(k, sizeof(k), "t%dc%d_crsp", t, c);
+                json_get_steps(buf, k, _cl->cond_resp, NUM_TRACKS);
+                /* when: 8 chars '0'/'1' */
+                snprintf(k, sizeof(k), "t%dc%d_cwhn", t, c);
+                json_get_steps(buf, k, _cl->cond_when, NUM_TRACKS);
+                /* octave: 8 space-separated signed ints, clamp -4..+4 */
+                snprintf(k, sizeof(k), "\"t%dc%d_coct\":\"", t, c);
+                {
+                    const char *p = strstr(buf, k);
+                    if (p) {
+                        p += strlen(k);
+                        for (ci = 0; ci < NUM_TRACKS && *p && *p != '"'; ci++) {
+                            while (*p == ' ') p++;
+                            int sign = 1;
+                            if (*p == '-') { sign = -1; p++; }
+                            int val = 0;
+                            while (*p >= '0' && *p <= '9') val = val * 10 + (*p++ - '0');
+                            _cl->cond_oct[ci] = (int8_t)clamp_i(val * sign, -4, 4);
+                        }
+                    }
+                }
+            }
         }
     }
     inst->xpose_preview_active = 0;  /* transient — never persisted; clear on (re)load */
@@ -5904,6 +5968,14 @@ static void clip_init(clip_t *cl) {
         cl->step_random[s]     = 0;
         cl->step_ratchet[s]    = 0;
     }
+    {
+        int ti;
+        for (ti = 0; ti < NUM_TRACKS; ti++) {
+            cl->cond_resp[ti] = 1;   /* responder ON by default */
+            cl->cond_oct[ti]  = 0;   /* no octave offset */
+            cl->cond_when[ti] = 0;   /* 0 = Next */
+        }
+    }
     cl->loop_cycle = 0;
     cl->note_count = 0;
     memset(cl->notes, 0, sizeof(cl->notes));
@@ -9095,6 +9167,30 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
             }
             if (!strncmp(p, "_tps", 4))
                 return snprintf(out, out_len, "%d", (int)cl->ticks_per_step);
+            /* Conductor per-clip control banks (8-wide). Phase 2 storage readback. */
+            if (!strcmp(p, "_cond_resp")) {
+                int ci;
+                if (out_len < NUM_TRACKS + 1) return -1;
+                for (ci = 0; ci < NUM_TRACKS; ci++) out[ci] = cl->cond_resp[ci] ? '1' : '0';
+                out[NUM_TRACKS] = '\0';
+                return NUM_TRACKS;
+            }
+            if (!strcmp(p, "_cond_when")) {
+                int ci;
+                if (out_len < NUM_TRACKS + 1) return -1;
+                for (ci = 0; ci < NUM_TRACKS; ci++) out[ci] = cl->cond_when[ci] ? '1' : '0';
+                out[NUM_TRACKS] = '\0';
+                return NUM_TRACKS;
+            }
+            if (!strcmp(p, "_cond_oct")) {
+                int ci, pos = 0;
+                for (ci = 0; ci < NUM_TRACKS; ci++) {
+                    if (ci > 0 && pos < out_len - 1) out[pos++] = ' ';
+                    pos += snprintf(out + pos, (size_t)(out_len - pos),
+                                    "%d", (int)cl->cond_oct[ci]);
+                }
+                return pos;
+            }
             if (!strcmp(p, "_export")) {
                 /* Non-destructive melodic bake for Ableton export. Writes the
                  * notes ("<tick>:<pitch>:<vel>:<gate>;...") to EXPORT_RENDER_PATH

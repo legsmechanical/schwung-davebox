@@ -2564,6 +2564,38 @@ static void set_param(void *instance, const char *key, const char *val) {
                 inst->state_dirty = 1;
                 return;
             }
+            /* Conductor per-clip control banks. Payload "<trackIdx> <value>".
+             * Phase 2: storage only — no transposition behavior yet. */
+            if (!strcmp(p, "_cond_resp")) {
+                int ti = my_atoi(val);
+                const char *vp = val;
+                while (*vp && *vp != ' ') vp++;
+                int vv = (*vp == ' ') ? my_atoi(vp + 1) : 0;
+                if (ti >= 0 && ti < NUM_TRACKS)
+                    cl->cond_resp[ti] = (uint8_t)(vv ? 1 : 0);
+                inst->state_dirty = 1;
+                return;
+            }
+            if (!strcmp(p, "_cond_oct")) {
+                int ti = my_atoi(val);
+                const char *vp = val;
+                while (*vp && *vp != ' ') vp++;
+                int vv = (*vp == ' ') ? my_atoi(vp + 1) : 0;
+                if (ti >= 0 && ti < NUM_TRACKS)
+                    cl->cond_oct[ti] = (int8_t)clamp_i(vv, -4, 4);
+                inst->state_dirty = 1;
+                return;
+            }
+            if (!strcmp(p, "_cond_when")) {
+                int ti = my_atoi(val);
+                const char *vp = val;
+                while (*vp && *vp != ' ') vp++;
+                int vv = (*vp == ' ') ? my_atoi(vp + 1) : 0;
+                if (ti >= 0 && ti < NUM_TRACKS)
+                    cl->cond_when[ti] = (uint8_t)(vv ? 1 : 0);
+                inst->state_dirty = 1;
+                return;
+            }
             if (!strncmp(p, "_clear", 6) && p[6] == '\0') {
                 /* tN_cC_clear — wipe step data in clip.
                  * Preserves: length, loop_start, ticks_per_step, stretch_exp,
@@ -2818,10 +2850,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             return;
         }
         if (!strcmp(sub, "convert_to_conduct")) {
-            /* TEMP device-verification log — leave in for now (user verifies on hardware) */
-            seq8_ilog(inst, "convert_to_conduct hit");
             if (inst->conductor_track >= 0 && inst->conductor_track != tidx) {
-                seq8_ilog(inst, "convert_to_conduct refused: conductor exists");
                 return; /* JS reads back conductor_track and shows the OLED message */
             }
             if (tr->pad_mode == PAD_MODE_CONDUCT)
