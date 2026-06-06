@@ -2225,6 +2225,17 @@ static void seq8_load_state(seq8_instance_t *inst) {
         if (cndt >= 0 && cndt < NUM_TRACKS)
             inst->conductor_track = (int8_t)cndt;
     }
+    /* Reconcile: conductor_track is authoritative for the role. If pad_mode and
+     * cndt disagree (e.g. a file saved by a build that clamped pad_mode to 0..1),
+     * force the Conductor track to PAD_MODE_CONDUCT and drop any drum clips that
+     * an erroneous Drum load allocated for it. */
+    if (inst->conductor_track >= 0) {
+        seq8_track_t *_ctr = &inst->tracks[inst->conductor_track];
+        if (_ctr->pad_mode != PAD_MODE_CONDUCT) {
+            if (_ctr->pad_mode == PAD_MODE_DRUM) drum_clips_free(_ctr);
+            _ctr->pad_mode = PAD_MODE_CONDUCT;
+        }
+    }
     inst->xpose_preview_active = 0;  /* transient — never persisted; clear on (re)load */
     inst->launch_quant = (uint8_t)clamp_i(json_get_int(buf, "lq",    0), 0,  5);
     {
