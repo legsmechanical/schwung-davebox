@@ -352,7 +352,16 @@ export const BANKS = [
         _XR,  /* K7: Dir — all-lane playback dir, custom handling, def=-1 */
         p('SyncRpt', 'Repeat Sync', 'drum_repeat_sync', 'track', 0, 1, 1, fmtBool, 16),
     ]},
+    /* 8 — RESPONDER (conduct) — per-track on/off, custom render+handler (Task 2.3/2.4) */
+    { name: 'RESPONDER', knobs: [_X,_X,_X,_X,_X,_X,_X,_X] },
+    /* 9 — OCTAVE (conduct) — per-track octave -4..+4, custom render+handler */
+    { name: 'OCTAVE',    knobs: [_X,_X,_X,_X,_X,_X,_X,_X] },
+    /* 10 — WHEN (conduct) — per-track Next/Now, custom render+handler */
+    { name: 'WHEN',      knobs: [_X,_X,_X,_X,_X,_X,_X,_X] },
 ];
+
+/* Conductor bank indices. Bank 0 (CLIP) is reused as the "Conduct" bank. */
+export const BANK_RESPONDER = 8, BANK_OCTAVE = 9, BANK_WHEN = 10;
 
 export const ACTION_POPUP_TICKS = 49; /* ~520ms at 94Hz */
 export const POLL_INTERVAL = 4;

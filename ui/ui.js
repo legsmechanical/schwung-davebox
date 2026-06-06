@@ -74,6 +74,7 @@ import {
     fmtArpStyle, fmtArpRate, fmtArpSteps, fmtArpOct, fmtVelOverride, fmtPlayDir, fmtRevStyle,
     col4, col5, parseActionRaw, MCUFONT, pixelPrint, pixelPrintC,
     BANKS, ACTION_POPUP_TICKS, PAD_MODE_DRUM, PAD_MODE_MELODIC_SCALE, PAD_MODE_CONDUCT,
+    BANK_RESPONDER, BANK_OCTAVE, BANK_WHEN,
     POLL_INTERVAL, TAP_TEMPO_FLASH_TICKS, TAP_TEMPO_RESET_MS,
     PARAM_LED_BANKS, STATE_VERSION,
     CC_GRADIENT_BASE, CC_GRADIENT_LEVELS, CC_GRADIENT_SCALARS
@@ -3116,6 +3117,14 @@ function applyExtMidiRemap() {
  * REPEAT GROOVE(5), ALL LANES(7). The CC bank is melodic-only (its knob handler
  * returns early for drum), so bank 6 is NOT an alt bank on drum tracks. Keep in
  * sync with the shiftHeld→altMode migration sites. */
+/* Bank header label. Identical to BANKS[bank].name except a Conductor track
+ * relabels bank 0 (CLIP) to "CONDUCT" — the CLIP bank is reused as the Conduct
+ * bank. Does NOT rename BANKS[0] globally (other track types keep "CLIP"). */
+function bankHeaderName(t, bank) {
+    if (bank === 0 && S.trackPadMode[t] === PAD_MODE_CONDUCT) return 'CONDUCT';
+    return BANKS[bank].name;
+}
+
 function bankHasAltParams(t, bank) {
     if (S.trackPadMode[t] === PAD_MODE_DRUM) return bank === 0 || bank === 5 || bank === 7;
     /* Melodic CLIP(0), NOTE FX(1), DELAY(3), SEQ ARP(4), ARP IN(5), AUTO/CC(6).
@@ -4515,7 +4524,7 @@ function drawUI() {
         const knobs = BANKS[bank].knobs;
         const vals  = S.bankParams[S.activeTrack][bank];
         const _isDrum = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
-        (bank === 5 ? drawBankHeadingInverted : drawBankHeading)((_isDrum ? '>> ' : '') + BANKS[bank].name);
+        (bank === 5 ? drawBankHeadingInverted : drawBankHeading)((_isDrum ? '>> ' : '') + bankHeaderName(S.activeTrack, bank));
         for (let k = 0; k < 8; k++) {
             const colX = 4 + (k % 4) * 30;
             const rowY = k < 4 ? 12 : 36;
@@ -4594,7 +4603,7 @@ function drawUI() {
         const keyScl  = NOTE_KEYS[S.padKey] + ' ' + (SCALE_DISPLAY[S.padScale] || '?');
         const CHAR_W  = 6;
         const keySclX = 128 - 4 - keyScl.length * CHAR_W;
-        (S.activeBank === 5 || S.activeBank === 6 ? drawBankHeadingInverted : drawBankHeading)(BANKS[S.activeBank].name + recTag, false);
+        (S.activeBank === 5 || S.activeBank === 6 ? drawBankHeadingInverted : drawBankHeading)(bankHeaderName(S.activeTrack, S.activeBank) + recTag, false);
         pixelPrint(4, 10, octStr, 1);
         if (S.bankParams[S.activeTrack][5][0]) {
             if (S.bankParams[S.activeTrack][5][7]) {
@@ -7511,8 +7520,15 @@ function _onCC_jog(d1, d2) {
                 } else {
                     const cur = S.activeBank;
                     const isDrumJog = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
+                    const isConductJog = S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT;
                     let next;
-                    if (isDrumJog) {
+                    if (isConductJog) {
+                        /* Conductor cycles exactly 4 banks: Conduct(0=CLIP) → Responder → Octave → When */
+                        const CONDUCT_BANK_ORDER = [0, BANK_RESPONDER, BANK_OCTAVE, BANK_WHEN];
+                        const ci = CONDUCT_BANK_ORDER.indexOf(cur);
+                        const ni = Math.max(0, Math.min(CONDUCT_BANK_ORDER.length - 1, (ci >= 0 ? ci : 0) + delta));
+                        next = CONDUCT_BANK_ORDER[ni];
+                    } else if (isDrumJog) {
                         /* Drum bank order: ALL LANES(7) → DRUM LANE(0) → NOTE FX(1) → MIDI DLY(3) → RPT GROOVE(5) → CC PARAM(6) */
                         const DRUM_BANK_ORDER = [7, 0, 1, 3, 5, 6];
                         const ci = DRUM_BANK_ORDER.indexOf(cur);
