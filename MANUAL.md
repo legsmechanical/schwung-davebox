@@ -887,6 +887,8 @@ Tap **Capture** → pick a target row (tap scene launcher or step 1–16). Then 
 
 Alternative: **Sample + scene launcher** goes directly to the confirm dialog.
 
+**Apply Conductor?** — if a Conductor exists and its clip at the baked scene has any Responder turned on, an extra **Apply Conductor? — YES / NO / CANCEL** step appears after Wrap. **YES** folds the Conductor's transposition permanently into each responding clip (honoring gate-hold vs CdLk Lock, the Conductor clip's Iter/Prob trig conditions, NOTE FX, and per-track Octave), then automatically turns off that Conductor clip's Responder flags for the baked tracks so live playback doesn't transpose them a second time. **NO** bakes the written pitches only. **CANCEL** aborts the whole scene bake. (Note-FX random and step probability are re-rolled while folding — the result is a frozen snapshot, not a re-derivable live performance.) Single-track clip bake has no Conductor option — scene context is required.
+
 ## Live Merge
 
 Live Merge records the actual output of all 8 tracks simultaneously as they play — capturing a live performance, effects and all, into new clips.
