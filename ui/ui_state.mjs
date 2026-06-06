@@ -377,6 +377,15 @@ export const S = {
     pendingConductReadback: null,
     /* Current Conductor track index mirror (-1 = none). */
     conductorTrack: -1,
+    /* Per-Conductor-clip mirrors of the three Conductor banks, indexed
+     * [clip][track]. Populated from DSP get_params on sync (Task 2.3); written
+     * by the knob handlers (Task 2.4). 16 clips x 8 tracks. */
+    condResp: Array.from({length: 16}, function() { return new Array(8).fill(1); }),  /* responder on/off, default ON */
+    condOct:  Array.from({length: 16}, function() { return new Array(8).fill(0); }),  /* octave offset -4..+4 */
+    condWhen: Array.from({length: 16}, function() { return new Array(8).fill(0); }),  /* 0=Next, 1=Now */
+    /* Mirror of the Conductor track's active clip index (which clip's bank
+     * values the OLED grid renders). */
+    condActiveClip: 0,
     confirmBake: false,
     confirmBakeSel: 1,
     confirmBakeIsDrum: false,

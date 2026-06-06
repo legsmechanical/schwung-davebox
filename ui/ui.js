@@ -121,6 +121,23 @@ function drawBankHeadingInverted(name, showTrack) {
     }
 }
 
+/* Conductor bank render: standard white bank header + a 2x4 (2 rows x 4 cols)
+ * grid of per-track cells labeled Tr1..Tr8, value rendered under each label.
+ * Column/row metrics match the standard 8-knob bank overview (colX = 4 + col*30,
+ * rowY = 12 | 36, value at rowY+12). valFn(trackIdx) -> short string. The
+ * Conductor's own track cell shows inertLabel instead of a value. */
+function drawConductTrackGrid(header, valFn, inertLabel) {
+    drawBankHeading(header, false);
+    for (let i = 0; i < 8; i++) {
+        const col = i % 4, row = (i < 4) ? 0 : 1;
+        const x = 4 + col * 30;
+        const y = row === 0 ? 12 : 36;
+        print(x, y, 'Tr' + (i + 1), 1);
+        const isCond = (i === S.conductorTrack);
+        print(x, y + 12, isCond ? inertLabel : valFn(i), 1);
+    }
+}
+
 /* Down-arrow affordance for banks that expose alt params. Always drawn in the
  * header text color (steady) when alt mode is off; flashes on/off ~2x/sec when
  * alt mode is on. `hdrBgWhite` true = header background is white (so arrow draws
@@ -4253,6 +4270,21 @@ function drawUI() {
         return;
     }
 
+    /* Conductor banks (Responder/Octave/When): per-track 2x4 grid, always shown
+     * (touched or idle) when the active track is the Conductor. Gated on
+     * PAD_MODE_CONDUCT so it never affects melodic/drum tracks. */
+    if (S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT &&
+            (bank === BANK_RESPONDER || bank === BANK_OCTAVE || bank === BANK_WHEN)) {
+        if (bank === BANK_RESPONDER) {
+            drawConductTrackGrid('RESPONDER', function(k){ return S.condResp[S.condActiveClip][k] ? 'ON' : 'off'; }, 'Cndct');
+        } else if (bank === BANK_OCTAVE) {
+            drawConductTrackGrid('OCTAVE', function(k){ const o = S.condOct[S.condActiveClip][k]; return o === 0 ? '--' : (o > 0 ? '+' + o : '' + o); }, '--');
+        } else { /* BANK_WHEN */
+            drawConductTrackGrid('WHEN', function(k){ return S.condWhen[S.condActiveClip][k] ? 'Now' : 'Next'; }, '--');
+        }
+        return;
+    }
+
     if (bank >= 0 && (S.knobTouched >= 0 || inTimeout ||
             (S.altMode && bankHasAltParams(S.activeTrack, bank)) ||
             (S.shiftHeld && bank === 1 && S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM))) {
@@ -5891,6 +5923,34 @@ function _tickImpl() {
                 if (!isNaN(_ct) && _ct >= 0 && _ct < NUM_TRACKS) {
                     S.conductorTrack = _ct;
                     S.trackPadMode[_ct] = PAD_MODE_CONDUCT;
+                    /* Pull the Conductor's per-clip bank values back from DSP.
+                     * get_param is valid here (tick/sync context). Read all the
+                     * Conductor track's clips so every Conductor clip's grid is
+                     * correct, and mirror its active clip into S.condActiveClip
+                     * (the clip whose values the OLED grid renders).
+                     * GET shapes (Task 2.1): _cond_resp / _cond_when = 8-char
+                     * '0'/'1' strings; _cond_oct = 8 space-separated signed ints. */
+                    S.condActiveClip = S.trackActiveClip[_ct] | 0;
+                    for (let _c = 0; _c < NUM_CLIPS; _c++) {
+                        const _resp = host_module_get_param('t' + _ct + '_c' + _c + '_cond_resp');
+                        const _when = host_module_get_param('t' + _ct + '_c' + _c + '_cond_when');
+                        const _oct  = host_module_get_param('t' + _ct + '_c' + _c + '_cond_oct');
+                        if (typeof _resp === 'string' && _resp.length >= NUM_TRACKS) {
+                            for (let _k = 0; _k < NUM_TRACKS; _k++)
+                                S.condResp[_c][_k] = (_resp.charAt(_k) === '1') ? 1 : 0;
+                        }
+                        if (typeof _when === 'string' && _when.length >= NUM_TRACKS) {
+                            for (let _k = 0; _k < NUM_TRACKS; _k++)
+                                S.condWhen[_c][_k] = (_when.charAt(_k) === '1') ? 1 : 0;
+                        }
+                        if (typeof _oct === 'string' && _oct.length > 0) {
+                            const _op = _oct.split(' ');
+                            for (let _k = 0; _k < NUM_TRACKS && _k < _op.length; _k++) {
+                                const _ov = parseInt(_op[_k], 10);
+                                if (!isNaN(_ov)) S.condOct[_c][_k] = _ov;
+                            }
+                        }
+                    }
                 } else {
                     S.conductorTrack = -1;
                 }
@@ -10247,6 +10307,7 @@ function _onPadPressTrackView(status, d1, d2) {
             } else {
                 bankIdx = _padOff;
             }
+            /* 8-10 reachable only via CONDUCT_PAD_MAP; drum/melodic cap at 7 */
             if (bankIdx >= 0 && bankIdx < BANKS.length && BANKS[bankIdx]) {
                 if (S.activeBank === bankIdx) {
                     S.bankSelectTick = -1;
