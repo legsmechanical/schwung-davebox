@@ -9184,10 +9184,13 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
             }
             if (!strcmp(p, "_cond_oct")) {
                 int ci, pos = 0;
+                if (out_len < 1) return -1;
+                out[0] = '\0';
                 for (ci = 0; ci < NUM_TRACKS; ci++) {
-                    if (ci > 0 && pos < out_len - 1) out[pos++] = ' ';
-                    pos += snprintf(out + pos, (size_t)(out_len - pos),
-                                    "%d", (int)cl->cond_oct[ci]);
+                    int n = snprintf(out + pos, (size_t)(out_len - pos),
+                                     "%s%d", (ci ? " " : ""), (int)cl->cond_oct[ci]);
+                    if (n < 0 || pos + n >= out_len) break;
+                    pos += n;
                 }
                 return pos;
             }
