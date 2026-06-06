@@ -9091,12 +9091,35 @@ function _onCC_knobs(d1, d2) {
         }
         /* Conductor Responder/Octave/When banks: knob k edits track k's per-clip
          * value. Gated strictly on the active track being a Conductor AND one of
-         * the three banks, so normal bank editing is untouched. One detent = one
-         * handler call (single-fire toggle for Responder/When; ±1 for Octave). */
+         * the three banks, so normal bank editing is untouched. The Move emits
+         * MULTIPLE CC msgs per physical detent, so we route through the SAME
+         * accumulation siblings use → ONE detent = ONE action:
+         *   - Octave: knobAccum threshold (sens=16, matches drum LaneOct/LaneNote
+         *     at ~9424) → one ±1 step per detent.
+         *   - Responder/When: knobLocked one-action-per-gesture (matches K2 Stch
+         *     ~9150 / K4 Lgto ~9196) → one toggle flip per physical turn,
+         *     regardless of msg count; lock clears on knob touch-release. */
         if (S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT &&
                 (bank === BANK_RESPONDER || bank === BANK_OCTAVE || bank === BANK_WHEN)) {
             const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
-            applyConductGridKnob(bank, knobIdx, dir);
+            if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
+            if (bank === BANK_OCTAVE) {
+                /* sens=16 — matches drum NOTE FX LaneOct/LaneNote ±1 stepping */
+                S.knobAccum[knobIdx]++;
+                if (S.knobAccum[knobIdx] >= 16) {
+                    S.knobAccum[knobIdx] = 0;
+                    applyConductGridKnob(BANK_OCTAVE, knobIdx, dir);
+                }
+            } else {
+                /* Responder / When: single-fire toggle, locked per gesture */
+                if (S.knobLocked[knobIdx]) return;
+                S.knobAccum[knobIdx]++;
+                if (S.knobAccum[knobIdx] >= 16) {
+                    S.knobAccum[knobIdx] = 0;
+                    S.knobLocked[knobIdx] = true;
+                    applyConductGridKnob(bank, knobIdx, dir);
+                }
+            }
             return;
         }
         if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 0) {
