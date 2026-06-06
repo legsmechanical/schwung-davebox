@@ -318,6 +318,14 @@ typedef struct {
      * another still-held pad is legitimately sourcing. Runtime only — not
      * persisted; zeroed by pfx_reset and at the top of send_panic. */
     uint8_t      pitch_refcount[128];
+    /* Conductor "Next": raw input pitch -> emitted (transposed) pitch while a
+     * responder note is sounding; 0xFF = no latch. The note-on transposes per
+     * the live conductor state and latches the result here; the matching
+     * note-off reads the latch so its emitted pitch equals its on-time pitch,
+     * even if the conductor offset changed mid-note. Keeps the refcount gate
+     * balanced (on/off use the same d1) → no stuck notes. Runtime only — not
+     * persisted; reset to 0xFF wherever pitch_refcount is reset. */
+    uint8_t      cond_emit_pitch[128];
 } play_fx_t;
 
 /* ------------------------------------------------------------------ */
@@ -2647,26 +2655,54 @@ static void pfx_emit(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
      * is 0 on an empty/muted step → snap to written pitch. Non-destructive: only
      * the transient d1 here is changed; clip note data is untouched. Drum tracks
      * do not respond (melodic-only guard). */
+    /* Strand-safe "Next": the note-on transposes per the CURRENT conductor
+     * state and LATCHES the emitted pitch per raw input pitch; the matching
+     * note-off reads that latch so its emitted pitch equals the on-time pitch
+     * regardless of how the conductor offset has moved since. Mirrors the
+     * looper's perf_emitted_pitch raw->emitted map. The OFF retrieval must NOT
+     * be gated on conductor_sounding / cond_resp (a held note keeps its pitch
+     * even after the conductor changes/stops) — only the track-eligibility
+     * guard applies to both directions. Without this, the on increments
+     * refcount[A] and a later off (under a changed offset) decrements
+     * refcount[B] → note A never releases → stuck note. */
     if (g_inst) {
         int t = fx->track_idx;
-        if (g_inst->conductor_track >= 0 && g_inst->conductor_sounding &&
-                t < NUM_TRACKS && t != g_inst->conductor_track &&
-                g_inst->tracks[t].pad_mode == PAD_MODE_MELODIC_SCALE) {
-            seq8_track_t *_cnd = &g_inst->tracks[g_inst->conductor_track];
-            clip_t       *_cc  = &_cnd->clips[_cnd->active_clip];
-            if (_cc->cond_resp[t]) {
-                int oct   = _cc->cond_oct[t];
-                int pitch = (int)d1;
-                if (g_inst->scale_aware) {
-                    int n = (int)SCALE_SIZES[eff_pad_scale(g_inst)];
-                    pitch = scale_transpose(g_inst, pitch,
-                                            g_inst->conductor_off_deg + oct * n);
-                } else {
-                    pitch = clamp_i(pitch + g_inst->conductor_off_semi + oct * 12,
-                                    0, 127);
+        if (t < NUM_TRACKS && t != g_inst->conductor_track &&
+                g_inst->tracks[t].pad_mode == PAD_MODE_MELODIC_SCALE &&
+                d1 < 128) {
+            uint8_t _st = status & 0xF0;
+            int raw = (int)d1;
+            if (_st == 0x90 && d2 > 0) {
+                /* note-on: transpose per current conductor state, latch result
+                 * (== raw when not transposed, so the off path is uniform). */
+                int pitch = raw;
+                if (g_inst->conductor_track >= 0 && g_inst->conductor_sounding) {
+                    seq8_track_t *_cnd = &g_inst->tracks[g_inst->conductor_track];
+                    clip_t       *_cc  = &_cnd->clips[_cnd->active_clip];
+                    if (_cc->cond_resp[t]) {
+                        int oct = _cc->cond_oct[t];
+                        if (g_inst->scale_aware) {
+                            int n = (int)SCALE_SIZES[eff_pad_scale(g_inst)];
+                            pitch = scale_transpose(g_inst, raw,
+                                        g_inst->conductor_off_deg + oct * n);
+                        } else {
+                            pitch = clamp_i(raw + g_inst->conductor_off_semi +
+                                            oct * 12, 0, 127);
+                        }
+                    }
                 }
+                fx->cond_emit_pitch[raw] = (uint8_t)pitch;
                 d1 = (uint8_t)pitch;
+            } else if (_st == 0x80 || (_st == 0x90 && d2 == 0)) {
+                /* note-off: use the latched on-time pitch so it matches the on,
+                 * regardless of how the conductor offset has changed since. */
+                uint8_t lp = fx->cond_emit_pitch[raw];
+                if (lp != 0xFF) {
+                    d1 = lp;
+                    fx->cond_emit_pitch[raw] = 0xFF;
+                }
             }
+            /* CC/AT/PB (other status) untouched — only notes are latched. */
         }
     }
     /* Output-pitch refcount gate. See play_fx_t.pitch_refcount comment.
@@ -3198,9 +3234,14 @@ static void send_panic(seq8_instance_t *inst) {
     int t, ch, n;
     /* Zero every track's output-pitch refcount so the panic sweep's note-offs
      * (which decrement) don't go negative and so the next note-ons fire fresh. */
-    for (t = 0; t < NUM_TRACKS; t++)
+    for (t = 0; t < NUM_TRACKS; t++) {
         memset(inst->tracks[t].pfx.pitch_refcount, 0,
                sizeof(inst->tracks[t].pfx.pitch_refcount));
+        /* Drop conductor on-pitch latches too — a panic ends all sounding
+         * responder notes, so stale latches must not influence a later off. */
+        memset(inst->tracks[t].pfx.cond_emit_pitch, 0xFF,
+               sizeof(inst->tracks[t].pfx.cond_emit_pitch));
+    }
     for (t = 0; t < NUM_TRACKS; t++) {
         play_fx_t *fx = &inst->tracks[t].pfx;
         if (fx->route >= 0 && fx->route < 3 && !route_pfx[fx->route])
@@ -4048,6 +4089,7 @@ static void pfx_reset(play_fx_t *fx) {
     fx->quantize        = 0;
     arp_init_defaults(&fx->arp);
     memset(fx->pitch_refcount, 0, sizeof(fx->pitch_refcount));
+    memset(fx->cond_emit_pitch, 0xFF, sizeof(fx->cond_emit_pitch));
 }
 
 /* Process a note-on through the chain. Sends immediate output via
