@@ -363,6 +363,9 @@ export const S = {
     /* Keys->Conductor track conversion confirm dialog (transient, not persisted). */
     confirmConvertToConduct: false,
     confirmConvertToConductSel: 1,   /* 0=Yes, 1=No (default) */
+    /* "Conductor already exists" INFO dialog: holds existing conductor track index
+     * (-1 = closed). Single OK button; any click/Back dismisses. */
+    confirmConductExists: -1,
     /* Deferred track-type conversion request: {t, toDrum} or null. Drained in
      * tick() so syncClipsFromDsp's get_param round-trips run in tick context. */
     pendingTrackConvert: null,
