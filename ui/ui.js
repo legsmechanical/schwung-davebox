@@ -4316,9 +4316,9 @@ function drawUI() {
         if (bank === BANK_RESPONDER) {
             drawConductTrackGrid('RESPONDER', function(k){ return S.condResp[S.trackActiveClip[S.activeTrack] | 0][k] ? 'ON' : 'off'; }, 'Cndct');
         } else if (bank === BANK_OCTAVE) {
-            drawConductTrackGrid('OCTAVE', function(k){ const o = S.condOct[S.trackActiveClip[S.activeTrack] | 0][k]; return o === 0 ? '--' : (o > 0 ? '+' + o : '' + o); }, '--');
+            drawConductTrackGrid('OCTAVE', function(k){ const o = S.condOct[S.trackActiveClip[S.activeTrack] | 0][k]; return o === 0 ? '--' : (o > 0 ? '+' + o : '' + o); }, 'Cndct');
         } else { /* BANK_WHEN */
-            drawConductTrackGrid('WHEN', function(k){ return S.condWhen[S.trackActiveClip[S.activeTrack] | 0][k] ? 'Now' : 'Next'; }, '--');
+            drawConductTrackGrid('WHEN', function(k){ return S.condWhen[S.trackActiveClip[S.activeTrack] | 0][k] ? 'Now' : 'Next'; }, 'Cndct');
         }
         return;
     }

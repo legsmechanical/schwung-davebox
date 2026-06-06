@@ -112,8 +112,9 @@ melodic step trig-condition editing (`step_iter`, `step_random`).
 (rows × columns) label/param grid. Each of the 8 cells is labeled **"Tr1"…"Tr8"**
 (the track number) in all three banks, with the param value rendered under the
 label — on/off for Responder, the octave value (or "--") for Octave, and
-Next/Now for When. The Conductor's own track cell reads "Cndct" (Responder) /
-"--" (Octave/When) and is inert.
+Next/Now for When. The Conductor's own track cell reads "Cndct" (truncated to
+"Cndc" by the fixed-width cell) and is inert in all three banks — distinct from
+Octave's "--" center value, so the conductor's own row is unambiguous.
 
 ### 3. Reference pitch
 
