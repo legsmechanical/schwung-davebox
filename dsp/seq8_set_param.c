@@ -1075,27 +1075,41 @@ static void set_param(void *instance, const char *key, const char *val) {
         if (bt >= 0 && bt < NUM_TRACKS && bc >= 0 && bc < NUM_CLIPS) {
             if (bm == 1)      bake_drum_lane(inst, bt, bc, clamp_i(bl, 0, DRUM_LANES-1), clamp_i(bn, 1, 4), bw ? 1 : 0);
             else if (bm == 2) bake_drum_clip(inst, bt, bc, clamp_i(bn, 1, 4), bw ? 1 : 0);
-            else              bake_clip(inst, bt, bc, clamp_i(bn, 1, 4), bw ? 1 : 0);
+            else              bake_clip(inst, bt, bc, clamp_i(bn, 1, 4), bw ? 1 : 0, 0); /* clip bake: never folds conductor */
         }
         return;
     }
     if (!strcmp(key, "bake_scene")) {
-        /* val = "C N W" — C: clip index, N: loop count (1/2/4), W: 1=wrap tails */
-        int sc = 0, sn = 1, sw = 0;
+        /* val = "C N W [A]" — C: clip index, N: loop count (1/2/4), W: 1=wrap
+         * tails, A: 1=Apply Conductor (fold transposition + auto-disable
+         * responders). A defaults to 0 if absent (back-compat). */
+        int sc = 0, sn = 1, sw = 0, sa = 0;
         int t;
-        sscanf(val, "%d %d %d", &sc, &sn, &sw);
+        sscanf(val, "%d %d %d %d", &sc, &sn, &sw, &sa);
         if (sc >= 0 && sc < NUM_CLIPS) {
             sn = clamp_i(sn, 1, 4);
             sw = sw ? 1 : 0;
-            undo_begin_scene_bake(inst, sc);
+            sa = sa ? 1 : 0;
+            undo_begin_scene_bake(inst, sc);  /* snapshots conductor clip incl. cond_resp[] */
             inst->undo_locked = 1;
             for (t = 0; t < NUM_TRACKS; t++) {
                 if (inst->tracks[t].pad_mode == PAD_MODE_DRUM)
                     bake_drum_clip(inst, t, sc, sn, sw);
                 else
-                    bake_clip(inst, t, sc, sn, sw);
+                    bake_clip(inst, t, sc, sn, sw, sa);
             }
             inst->undo_locked = 0;
+            /* Auto-disable: clear the Conductor clip C's responder flags for the
+             * tracks just folded, so live playback won't double-apply. */
+            if (sa && inst->conductor_track >= 0) {
+                clip_t *ccl = &inst->tracks[inst->conductor_track].clips[sc];
+                for (t = 0; t < NUM_TRACKS; t++) {
+                    if (t == inst->conductor_track) continue;
+                    if (inst->tracks[t].pad_mode == PAD_MODE_DRUM) continue;
+                    if (inst->tracks[t].pad_mode == PAD_MODE_CONDUCT) continue;
+                    if (ccl->cond_resp[t]) ccl->cond_resp[t] = 0;
+                }
+            }
             inst->state_dirty = 1;
             seq8_ilog(inst, "SEQ8 bake_scene");
         }

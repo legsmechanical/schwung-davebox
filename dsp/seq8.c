@@ -7849,17 +7849,117 @@ static int render_melodic_clip(seq8_instance_t *inst, int t, int c, int loops,
     return total_out;
 }
 
-static void bake_clip(seq8_instance_t *inst, int t, int c, int loops, int wrap) {
+/* Offline conductor-offset reconstruction for SCENE bake "Apply Conductor?".
+ * Replicates the live transpose chain (conductor note -> NOTE FX gen[0] ->
+ * degree/semitone offset relative to R) for a responder note whose absolute
+ * tick across the N baked loops is `abs_tick`. Returns 1 and sets *deg/*semi
+ * when a conductor note governs that tick (per gate-hold vs CdLk Lock + the
+ * conductor clip's iteration/probability trig conditions), else 0 (snap to
+ * zero -> no transpose).
+ *
+ * `cc`      = the conductor's clip at the scene index.
+ * `cond_fx` = a play_fx_t built once from cc->pfx_params (conductor NOTE FX).
+ * Polymeter: the conductor wraps at ITS OWN window length, independent of the
+ *   responder. We compute the conductor-relative tick `rel = abs_tick %
+ *   condWindowTicks` and the conductor trig cycle `condCycle = abs_tick /
+ *   condWindowTicks`, so iteration trig advances per conductor wrap.
+ * NoteFX random / step probability re-roll per call (per responder occurrence);
+ *   acceptable freeze behavior — a flattened clip can't reproduce live S&H of
+ *   a single RNG draw across all responders. */
+static int conductor_bake_offset(seq8_instance_t *inst, clip_t *cc,
+                                 play_fx_t *cond_fx, uint32_t abs_tick,
+                                 uint32_t *cond_rng, int *deg, int *semi) {
+    uint16_t ctps = cc->ticks_per_step ? cc->ticks_per_step
+                                       : (uint16_t)TICKS_PER_STEP;
+    uint32_t cond_win = (uint32_t)cc->length * ctps;
+    if (cond_win == 0) return 0;
+    /* Conductor wraps at its own window (polymeter). The conductor window is
+     * anchored at loop_start, mirroring melodic playback. */
+    uint32_t cwin_start = (uint32_t)cc->loop_start * ctps;
+    uint32_t condCycle  = abs_tick / cond_win;
+    uint32_t rel        = (abs_tick % cond_win) + cwin_start;
+
+    note_t *chosen = NULL;
+    if (cc->cond_lock) {
+        /* Lock (sample-and-hold): most-recent conductor note onset <= rel that
+         * passes trig; hold its offset. None at/before rel -> no transpose. */
+        uint32_t best_tick = 0; int have = 0;
+        uint16_t ni;
+        for (ni = 0; ni < cc->note_count; ni++) {
+            note_t *nn = &cc->notes[ni];
+            if (!nn->active || nn->suppress_until_wrap) continue;
+            if (nn->tick < cwin_start || nn->tick >= cwin_start + cond_win) continue;
+            if (nn->tick > rel) continue;
+            if (!have || nn->tick > best_tick) {
+                uint16_t sidx = note_step(nn->tick, cc->length, ctps);
+                if (step_trig_pass(cc, sidx, condCycle, cond_rng)) {
+                    best_tick = nn->tick; chosen = nn; have = 1;
+                }
+            }
+        }
+    } else {
+        /* gate-hold: a conductor note active over [tick, tick+gate) covering rel
+         * whose trig passes. */
+        uint16_t ni;
+        for (ni = 0; ni < cc->note_count; ni++) {
+            note_t *nn = &cc->notes[ni];
+            if (!nn->active || nn->suppress_until_wrap) continue;
+            if (nn->tick < cwin_start || nn->tick >= cwin_start + cond_win) continue;
+            if (!(nn->tick <= rel && rel < (uint32_t)nn->tick + nn->gate)) continue;
+            uint16_t sidx = note_step(nn->tick, cc->length, ctps);
+            if (step_trig_pass(cc, sidx, condCycle, cond_rng)) { chosen = nn; break; }
+        }
+    }
+    if (!chosen) return 0;
+
+    /* Conductor effective note = post-NOTE-FX gen[0]. Conductor is scale-aware
+     * (offset math uses scale degrees) when global Scale-Aware is on. */
+    int sa = (int)inst->scale_aware;
+    uint8_t tmp[MAX_GEN_NOTES];
+    int gc = pfx_build_gen_notes(inst, sa, cond_fx, (int)chosen->pitch, tmp);
+    if (gc < 1) return 0;
+    int gen0 = (int)tmp[0];
+    int R = eff_pad_key(inst) + 60;
+    *semi = gen0 - R;
+    *deg  = note_abs_degree(inst, gen0) - note_abs_degree(inst, R);
+    return 1;
+}
+
+static void bake_clip(seq8_instance_t *inst, int t, int c, int loops, int wrap,
+                      int apply_conductor) {
     seq8_track_t *tr = &inst->tracks[t];
     clip_t *cl;
     int ni, si, ri;
     if (tr->pad_mode == PAD_MODE_DRUM) return;
+    if (tr->pad_mode == PAD_MODE_CONDUCT) return; /* Conductor has no bake output */
     cl = &tr->clips[c];
     if (cl->note_count == 0) return;
     if (loops < 1) loops = 1;
     if (loops > 4) loops = 4;
 
     undo_begin_single(inst, t, c);
+
+    /* SCENE-bake "Apply Conductor?": fold the Conductor's transposition into
+     * this responder clip against the Conductor's clip at the same scene index.
+     * Only when requested, a Conductor exists, this isn't the Conductor track,
+     * and this track responds in the Conductor's clip C. cond_fx is built once
+     * (NOTE FX random re-rolls per responder occurrence — freeze behavior). */
+    int do_cond = 0;
+    clip_t *cond_cl = NULL;
+    play_fx_t cond_fx;
+    uint32_t cond_rng = 0xC04D1234u;
+    if (apply_conductor && inst->conductor_track >= 0 &&
+        t != inst->conductor_track) {
+        cond_cl = &inst->tracks[inst->conductor_track].clips[c];
+        if (cond_cl->cond_resp[t]) {
+            pfx_init_defaults(&cond_fx);
+            pfx_apply_params(&cond_fx, &cond_cl->pfx_params);
+            cond_fx.track_idx = (uint8_t)inst->conductor_track;
+            cond_fx.route     = ROUTE_SCHWUNG;
+            cond_fx.rng       = 0xC04DBEEFu;
+            do_cond = 1;
+        }
+    }
 
     play_fx_t fx;
     pfx_init_defaults(&fx);
@@ -7924,6 +8024,31 @@ static void bake_clip(seq8_instance_t *inst, int t, int c, int loops, int wrap) 
             if (vel < 1) vel = 1; if (vel > 127) vel = 127;
             uint8_t gen[MAX_GEN_NOTES];
             int gc = pfx_build_gen_notes(inst, scale_aware, &fx, (int)nn->pitch, gen);
+
+            /* Apply Conductor (SCENE bake, Next-style): each baked responder
+             * note takes the conductor offset at its OWN onset (loop_offset +
+             * rel_tick = abs tick across the N baked loops). Mirrors
+             * conductor_transpose_gen: scale-aware degree / chromatic semitone +
+             * per-track Octave (cond_oct). */
+            if (do_cond) {
+                int cdeg = 0, csemi = 0;
+                uint32_t resp_abs = loop_offset + rel_tick;
+                if (conductor_bake_offset(inst, cond_cl, &cond_fx, resp_abs,
+                                          &cond_rng, &cdeg, &csemi)) {
+                    int coct = cond_cl->cond_oct[t];
+                    int gj;
+                    for (gj = 0; gj < gc; gj++) {
+                        if (inst->scale_aware) {
+                            int sn = (int)SCALE_SIZES[eff_pad_scale(inst)];
+                            gen[gj] = (uint8_t)scale_transpose(inst, gen[gj],
+                                          cdeg + coct * sn);
+                        } else {
+                            gen[gj] = (uint8_t)clamp_i((int)gen[gj] +
+                                          csemi + coct * 12, 0, 127);
+                        }
+                    }
+                }
+            }
 
             uint32_t emit_ticks[2];
             int emit_count = compute_bake_emit_positions(pdir, paud, length, tps,

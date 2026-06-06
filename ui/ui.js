@@ -1714,6 +1714,51 @@ function drawClearAutoMenu() {
     }
 }
 
+/* True when scene-baking at clipIdx should offer "Apply Conductor?":
+ * a Conductor exists and its clip at clipIdx has at least one responder On for a
+ * non-conductor melodic track (something there is to fold). */
+function sceneBakeHasConductor(clipIdx) {
+    const ct = S.conductorTrack | 0;
+    if (ct < 0) return false;
+    const mask = S.condResp[clipIdx | 0];
+    if (!mask) return false;
+    let t;
+    for (t = 0; t < 8; t++) {
+        if (t === ct) continue;
+        if (S.trackPadMode[t] !== PAD_MODE_MELODIC_SCALE) continue;
+        if (mask[t]) return true;
+    }
+    return false;
+}
+
+/* Push the scene-bake set_param and arm post-bake resync. apply=1 folds the
+ * Conductor (4th token A) and the DSP auto-disables the conductor clip's
+ * responder flags for the baked tracks. */
+function commitSceneBake(clipIdx, loops, wrap, apply) {
+    S.pendingDefaultSetParams.push({
+        key: 'bake_scene',
+        val: clipIdx + ' ' + loops + ' ' + (wrap ? 1 : 0) + ' ' + (apply ? 1 : 0)
+    });
+    S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
+    showActionPopup('SCENE', 'BAKED');
+    S.pendingSceneBakeResync = 2;
+    S.pendingSceneBakeClip   = clipIdx;
+    /* DSP cleared the conductor clip's responder flags for the baked tracks.
+     * Mirror that locally so the Responder bank UI reflects the auto-disable
+     * without waiting for the next full per-clip re-read. */
+    if (apply && S.conductorTrack >= 0) {
+        const ct = S.conductorTrack | 0;
+        const mask = S.condResp[clipIdx | 0];
+        if (mask) {
+            for (let t = 0; t < 8; t++) {
+                if (t === ct) continue;
+                if (S.trackPadMode[t] !== PAD_MODE_MELODIC_SCALE) continue;
+                mask[t] = 0;
+            }
+        }
+    }
+}
+
 function drawBakeSceneConfirm() {
     clear_screen();
     function _btn(x, y, w, h, sel, label, labelOff) {
@@ -1730,7 +1775,13 @@ function drawBakeSceneConfirm() {
     }
     drawMenuHeader('BAKE SCENE?');
     const mH = 11;
-    if (S.confirmBakeSceneWrapPhase) {
+    if (S.confirmBakeSceneCondPhase) {
+        print(4, 22, 'Apply Conductor?', 1);
+        const bY = 47, bW = 36;
+        _btn(4,  bY, bW, mH, S.confirmBakeSceneCondSel === 0, 'YES',    9);
+        _btn(45, bY, bW, mH, S.confirmBakeSceneCondSel === 1, 'NO',    14);
+        _btn(86, bY, bW, mH, S.confirmBakeSceneCondSel === 2, 'CANCEL', 1);
+    } else if (S.confirmBakeSceneWrapPhase) {
         print(4, 22, 'Wrap tails?', 1);
         const bY = 47, bW = 36;
         _btn(4,  bY, bW, mH, S.confirmBakeSceneWrapSel === 0, 'YES',    9);
@@ -6914,18 +6965,38 @@ function _onCC_jog(d1, d2) {
     }
     /* Scene bake confirm: two-phase jog flow — loop count, then wrap yes/no. */
     if (d1 === 3 && d2 === 127 && S.confirmBakeScene) {
+        if (S.confirmBakeSceneCondPhase) {
+            /* Apply-Conductor dialog: 0=YES, 1=NO, 2=CANCEL */
+            if (S.confirmBakeSceneCondSel === 2) {
+                /* Cancel: abort the whole scene bake. */
+                S.confirmBakeSceneCondPhase = false;
+                S.confirmBakeScene          = false;
+                S.screenDirty               = true;
+                return;
+            }
+            const _apply = S.confirmBakeSceneCondSel === 0 ? 1 : 0;
+            commitSceneBake(S.confirmBakeSceneClip, S.confirmBakeSceneLoops,
+                            S.confirmBakeSceneWrap, _apply);
+            S.confirmBakeSceneCondPhase = false;
+            S.confirmBakeScene          = false;
+            S.screenDirty               = true;
+            return;
+        }
         if (S.confirmBakeSceneWrapPhase) {
             /* Wrap dialog: 0=YES, 1=NO, 2=CANCEL */
             if (S.confirmBakeSceneWrapSel < 2) {
                 const _wrap = S.confirmBakeSceneWrapSel === 0 ? 1 : 0;
-                S.pendingDefaultSetParams.push({
-                    key: 'bake_scene',
-                    val: S.confirmBakeSceneClip + ' ' + S.confirmBakeSceneLoops + ' ' + _wrap
-                });
-                S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
-                showActionPopup('SCENE', 'BAKED');
-                S.pendingSceneBakeResync = 2;
-                S.pendingSceneBakeClip   = S.confirmBakeSceneClip;
+                if (sceneBakeHasConductor(S.confirmBakeSceneClip)) {
+                    /* Advance to the Apply-Conductor phase; hold loop+wrap. */
+                    S.confirmBakeSceneWrap      = _wrap;
+                    S.confirmBakeSceneWrapPhase = false;
+                    S.confirmBakeSceneCondPhase = true;
+                    S.confirmBakeSceneCondSel   = 1; /* default: NO */
+                    S.screenDirty               = true;
+                    return;
+                }
+                /* No conductor / no responders: commit immediately (A=0). */
+                commitSceneBake(S.confirmBakeSceneClip, S.confirmBakeSceneLoops, _wrap, 0);
             }
             S.confirmBakeSceneWrapPhase = false;
             S.confirmBakeScene          = false;
@@ -7430,7 +7501,9 @@ function _onCC_jog(d1, d2) {
         if (S.confirmBakeScene) {
             const delta = decodeDelta(d2);
             if (delta !== 0) {
-                if (S.confirmBakeSceneWrapPhase)
+                if (S.confirmBakeSceneCondPhase)
+                    S.confirmBakeSceneCondSel = (S.confirmBakeSceneCondSel + (delta > 0 ? 1 : 2)) % 3;
+                else if (S.confirmBakeSceneWrapPhase)
                     S.confirmBakeSceneWrapSel = (S.confirmBakeSceneWrapSel + (delta > 0 ? 1 : 2)) % 3;
                 else
                     S.confirmBakeSceneSel = (S.confirmBakeSceneSel + (delta > 0 ? 1 : 3)) % 4;
@@ -8629,6 +8702,7 @@ function _onCC_side(d1, d2) {
             S.pendingSceneBakePicker    = false;
             S.confirmBakeScene          = true;
             S.confirmBakeSceneWrapPhase = false;
+            S.confirmBakeSceneCondPhase = false;
             S.confirmBakeSceneSel       = 1;
             S.confirmBakeSceneClip      = clipIdx;
             S.screenDirty               = true;
@@ -11023,7 +11097,9 @@ function _onStepButtons(d1, d2) {
          * press selects scene → straight to scene-bake confirm. */
         if (S.pendingSceneBakePicker) {
             S.pendingSceneBakePicker = false;
-            S.confirmBakeScene       = true;
+            S.confirmBakeScene          = true;
+            S.confirmBakeSceneWrapPhase = false;
+            S.confirmBakeSceneCondPhase = false;
             S.confirmBakeSceneSel    = 1;
             S.confirmBakeSceneClip   = idx;
             S.screenDirty            = true;
