@@ -4044,21 +4044,33 @@ static void pfx_note_on(seq8_instance_t *inst, seq8_track_t *tr,
     pfx_active_t *an = &fx->active_notes[orig_note];
     int t_idx = (int)(tr - inst->tracks);
 
-    /* Conductor drives the live transpose offset from its OWN played note
-     * (raw orig_note). Covers BOTH sequenced (sequencer → pfx_note_on) and
+    /* Conductor drives the live transpose offset from its OWN played note —
+     * but from the POST-NOTE-FX pitch (gen[0]), not the raw orig_note, so the
+     * Conductor's slimmed NOTE FX bank (Octave/Offset/Random) shapes the note
+     * BEFORE the responder offset is derived. The offset SET is deferred until
+     * after pfx_build_gen_notes fills gen[] (below). Held count is bumped here
+     * so on/off counting is unaffected; it handles legato overlap (monophonic
+     * conductor → 0/1). Covers BOTH sequenced (sequencer → pfx_note_on) and
      * live-pad (live_note_on → pfx_note_on) input, since both flow here. The
-     * conductor's own gen/emit still runs but is suppressed at pfx_emit. Held
-     * count handles legato overlap (monophonic conductor → 0/1). */
-    if (t_idx == inst->conductor_track && tr->pad_mode == PAD_MODE_CONDUCT) {
-        conductor_set_offset_from_note(inst, (int)orig_note);
-        inst->conductor_held++;
-    }
+     * conductor's own gen/emit still runs but is suppressed at pfx_emit. */
+    int _is_conductor = (t_idx == inst->conductor_track &&
+                         tr->pad_mode == PAD_MODE_CONDUCT);
+    if (_is_conductor) inst->conductor_held++;
 
     int v = clamp_i((int)vel + fx->velocity_offset, 1, 127);
 
-    int is_scale_aware = inst->scale_aware && (tr->pad_mode == PAD_MODE_MELODIC_SCALE);
+    /* Conductor is scale-aware (NOTE FX Offset/Random apply as scale degrees
+     * when global Scale-Aware is on); melodic-scale tracks likewise. Octave is
+     * ×12 inside pfx_build_gen_notes regardless. */
+    int is_scale_aware = inst->scale_aware &&
+        (tr->pad_mode == PAD_MODE_MELODIC_SCALE || tr->pad_mode == PAD_MODE_CONDUCT);
     uint8_t gen[MAX_GEN_NOTES];
     int gc = pfx_build_gen_notes(inst, is_scale_aware, fx, (int)orig_note, gen);
+
+    /* Conductor offset from the post-NOTE-FX primary pitch. gen[1+] harmonies
+     * are irrelevant for the conductor (its own emit is suppressed). */
+    if (_is_conductor)
+        conductor_set_offset_from_note(inst, (int)gen[0]);
 
     /* Conductor responder transpose ("Next"): apply the conductor offset to
      * each gen[] note (primary + harmonies) HERE — before the record is stored

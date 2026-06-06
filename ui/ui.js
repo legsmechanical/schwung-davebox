@@ -4545,6 +4545,10 @@ function drawUI() {
         const knobs = BANKS[1].knobs;
         const vals  = S.bankParams[t][1];
         const RND_ALG_NAMES_NFX = ['Pure', 'Gaus', 'Walk'];
+        /* Conductor reuses melodic NOTE FX but only Oct(K1)/Ofs(K2)/Rnd(K8) +
+         * alt-K8 random-mode apply — they shape the conductor note before its
+         * offset is derived. K3-K6 (Vel/Qnt/Len/Gate) are inert/greyed. */
+        const _conductNfx = S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT;
         drawBankHeading(BANKS[1].name);
         drawAltArrow(98, true, altIndicatorActive(S.activeTrack, S.activeBank));
         for (let k = 0; k < 8; k++) {
@@ -4554,6 +4558,13 @@ function drawUI() {
             const hi   = (S.knobTouched === k);
             const widen = (k === 5);
             const cellW = widen ? 30 : 24;
+            const _inert = _conductNfx && (k === 2 || k === 3 || k === 4 || k === 5);
+            if (_inert) {
+                /* greyed-out inert cell: label/value '-' (no highlight) */
+                print(colX, rowY,      col4('-'), 1);
+                print(colX, rowY + 12, col4('-'), 1);
+                continue;
+            }
             if (hi) fill_rect(colX, rowY, cellW, 24, 1);
             const _nfxAlt = S.altMode && k === 7;
             if (widen) {
@@ -7624,8 +7635,8 @@ function _onCC_jog(d1, d2) {
                     const isConductJog = S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT;
                     let next;
                     if (isConductJog) {
-                        /* Conductor cycles exactly 4 banks: Conduct(0=CLIP) → Responder → Octave → When */
-                        const CONDUCT_BANK_ORDER = [0, BANK_RESPONDER, BANK_OCTAVE, BANK_WHEN];
+                        /* Conductor cycles 5 banks: Conduct(0=CLIP) → NOTE FX(1) → Responder → Octave → When */
+                        const CONDUCT_BANK_ORDER = [0, 1, BANK_RESPONDER, BANK_OCTAVE, BANK_WHEN];
                         const ci = CONDUCT_BANK_ORDER.indexOf(cur);
                         const ni = Math.max(0, Math.min(CONDUCT_BANK_ORDER.length - 1, (ci >= 0 ? ci : 0) + delta));
                         next = CONDUCT_BANK_ORDER[ni];
@@ -9728,6 +9739,15 @@ function _onCC_knobs(d1, d2) {
             }
             return;
         }
+        /* Conductor NOTE FX (bank 1) is slimmed: only K1(Oct)/K2(Ofs)/K8(Rnd)
+         * + alt-K8 random-mode (handled above) apply. K3-K6 (Vel/Qnt/Len/Gate)
+         * are inert — swallow the detent so nothing writes. K1/K2/K8 fall
+         * through to the generic param handler (writes per-clip pfx via the
+         * tN_noteFX_* → active-clip pfx_set path). */
+        if (S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT && bank === 1 &&
+                (knobIdx === 2 || knobIdx === 3 || knobIdx === 4 || knobIdx === 5)) {
+            return;
+        }
         const pm      = BANKS[bank].knobs[knobIdx];
         if (pm && pm.abbrev && pm.scope !== 'stub' && !S.knobLocked[knobIdx]) {
             const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
@@ -10374,9 +10394,9 @@ function _onPadPressTrackView(status, d1, d2) {
                 const DRUM_PAD_MAP = [7, 0, 1, 3, 5, -1, 6, -1];
                 bankIdx = DRUM_PAD_MAP[_padOff];
             } else if (_isConduct) {
-                /* Conductor reaches only its four banks: pads 0-3 select
-                   CONDUCT(0)/RESPONDER/OCTAVE/WHEN; pads 4-7 are no-ops. */
-                const CONDUCT_PAD_MAP = [0, BANK_RESPONDER, BANK_OCTAVE, BANK_WHEN, -1, -1, -1, -1];
+                /* Conductor reaches only its five banks: pads 0-4 select
+                   CONDUCT(0)/NOTE FX(1)/RESPONDER/OCTAVE/WHEN; pads 5-7 are no-ops. */
+                const CONDUCT_PAD_MAP = [0, 1, BANK_RESPONDER, BANK_OCTAVE, BANK_WHEN, -1, -1, -1];
                 bankIdx = CONDUCT_PAD_MAP[_padOff];
             } else {
                 bankIdx = _padOff;
