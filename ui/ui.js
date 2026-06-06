@@ -210,11 +210,40 @@ function buildGlobalMenuItems() {
             format: function(v) { return String(v); }
         }),
         createEnum('Route', {
-            get: function() { return S.trackRoute[S.activeTrack]; },
-            set: function(v) { applyTrackConfig(S.activeTrack, 'route', v); },
-            options: [0, 1, 2],
-            format: function(v) { return fmtRoute(v); }
+            /* Conductor is a 4th route (v===3): sends nowhere, drives
+             * transposition. Derived from pad_mode so it shows "Cond" while
+             * the track is a Conductor; trackRoute keeps its underlying
+             * Move/Schwung/Ext value so routing away restores a real dest. */
+            get: function() {
+                if (S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT) return 3;
+                return S.trackRoute[S.activeTrack];
+            },
+            set: function(v) {
+                const t = S.activeTrack;
+                if (v === 3) {
+                    /* -> Conductor: always confirm. Keeps notes but clears
+                     * FX/ARP/Auto; DSP enforces one Conductor. No-op if already. */
+                    if (S.trackPadMode[t] === PAD_MODE_CONDUCT) return;
+                    S.confirmConvertToConduct    = true;
+                    S.confirmConvertToConductSel = 1;   /* default No */
+                    S.confirmConvertTrack        = t;
+                    S.screenDirty = true;
+                } else {
+                    /* Move/Schwung/Ext. If leaving Conductor, convert back to
+                     * Keys first (deferred, get_param-safe), then set the route. */
+                    if (S.trackPadMode[t] === PAD_MODE_CONDUCT) {
+                        if (S.conductorTrack === t) S.conductorTrack = -1;
+                        S.pendingTrackConvert = { t: t, toDrum: false };
+                    }
+                    applyTrackConfig(t, 'route', v);
+                }
+            },
+            options: [0, 1, 2, 3],
+            format: function(v) { return v === 3 ? 'Cond' : fmtRoute(v); }
         }),
+        /* Mode (Keys/Drums) is hidden while the track is a Conductor — its mode
+         * is implied by the Conductor route. */
+        ...(S.trackPadMode[S.activeTrack] !== PAD_MODE_CONDUCT ? [
         createEnum('Mode', {
             get: function() { return S.trackPadMode[S.activeTrack]; },
             /* Flipping Mode CONVERTS the track's notes (see convertTrackType).
@@ -237,24 +266,15 @@ function buildGlobalMenuItems() {
                     } else {
                         S.pendingTrackConvert = { t: t, toDrum: true };
                     }
-                } else if (v === PAD_MODE_CONDUCT) {
-                    /* Keys/Drums -> Conductor: always confirm. Keeps notes but
-                     * clears FX/ARP/Auto, and the DSP enforces one Conductor. */
-                    S.confirmConvertToConduct    = true;
-                    S.confirmConvertToConductSel = 1;   /* default No */
-                    S.confirmConvertTrack        = t;
-                    S.screenDirty = true;
                 } else {
-                    /* Drums/Conductor -> Keys: no prompt. Defer to tick()
-                     * (get_param-safe). Clear the role mirror if we are
-                     * converting the current Conductor back. */
-                    if (S.conductorTrack === t) S.conductorTrack = -1;
+                    /* Drums -> Keys: no prompt. Defer to tick() (get_param-safe). */
                     S.pendingTrackConvert = { t: t, toDrum: false };
                 }
             },
-            options: [0, 1, 2],
-            format: function(v) { return v === PAD_MODE_CONDUCT ? 'Cond' : (v ? 'Drums' : 'Keys'); }
-        }),
+            options: [0, 1],
+            format: function(v) { return v ? 'Drums' : 'Keys'; }
+        })
+        ] : []),
         createEnum('Layout', {
             get: function() { return S.padLayoutChromatic[S.activeTrack] ? 1 : 0; },
             set: function(v) {

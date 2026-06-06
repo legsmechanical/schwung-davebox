@@ -152,7 +152,7 @@ git commit -m "feat(conduct): DSP convert-to-conduct handler + one-conductor enf
 **Files:**
 - Modify: `ui/ui.js:233-242` (the convert menu/confirm trigger) and `convertTrackType` (`ui.js:3015`)
 
-- [ ] **Step 1: Add a "Conductor" route option** wherever the track route/mode is chosen (the same UI that today sets `S.pendingTrackConvert = {t, toDrum}` near `ui.js:233`). Add a confirm dialog state mirroring `confirmConvertToDrum` (e.g. `S.confirmConvertToConduct`) warning "Clears FX / ARP / Auto. Keeps notes." with Yes/No.
+- [ ] **Step 1: Add a "Conductor" option to the track Route menu** — `createEnum('Route', …)` in `buildGlobalMenuItems` (NOT the Keys/Drums Mode enum). Conductor is a 4th route value (v===3); `get()` returns 3 while `pad_mode===CONDUCT` (else `trackRoute[t]`); selecting it opens the confirm dialog; selecting Move/Schwung/Ext on a Conductor converts back to Keys then applies the route. Hide the Keys/Drums Mode enum while the track is a Conductor. Add a confirm dialog state mirroring `confirmConvertToDrum` (`S.confirmConvertToConduct`) warning "Clears FX/ARP/Auto. Keeps notes." with Yes/No.
 
 - [ ] **Step 2: Add `convertTrackToConduct(t)`** modeled on `convertTrackType` (`ui.js:3015`):
 
