@@ -5864,6 +5864,21 @@ function _tickImpl() {
                 S.trackCurrentPage[_t] = Math.max(0, Math.floor(S.trackCurrentStep[_t] / 16));
             syncClipsFromDsp();
             syncMuteSoloFromDsp();
+            /* Restore the Conductor role from DSP. syncClipsFromDsp ->
+             * readTrackConfig already reads t<idx>_pad_mode (PAD_MODE_CONDUCT=2
+             * preserved, not clamped), but S.conductorTrack is not derived from
+             * any per-track read — pull it from the conductor_track get_param so
+             * a reloaded set isn't desynced (white color, inert Channel/Route).
+             * Runs here (tick context) where get_param is valid. */
+            if (typeof host_module_get_param === 'function') {
+                const _ct = parseInt(host_module_get_param('conductor_track'), 10);
+                if (!isNaN(_ct) && _ct >= 0 && _ct < NUM_TRACKS) {
+                    S.conductorTrack = _ct;
+                    S.trackPadMode[_ct] = PAD_MODE_CONDUCT;
+                } else {
+                    S.conductorTrack = -1;
+                }
+            }
             restoreUiSidecar(true);
             computePadNoteMap();
             S.stateLoading = false;
