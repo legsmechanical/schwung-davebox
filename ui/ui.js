@@ -137,7 +137,7 @@ function drawConductTrackGrid(header, valFn, inertLabel) {
         if (hi) fill_rect(colX, rowY, 24, 24, 1);
         /* activeTrack is the Conductor whenever these banks render */
         const isCond = (i === S.activeTrack);
-        print(colX, rowY,      col4('Tr' + (i + 1)),            hi ? 0 : 1);
+        print(colX, rowY,      col4(isCond ? '-' : 'Tr' + (i + 1)),  hi ? 0 : 1);
         print(colX, rowY + 12, col4(isCond ? inertLabel : valFn(i)), hi ? 0 : 1);
     }
 }
