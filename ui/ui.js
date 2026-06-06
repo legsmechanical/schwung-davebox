@@ -123,18 +123,21 @@ function drawBankHeadingInverted(name, showTrack) {
 
 /* Conductor bank render: standard white bank header + a 2x4 (2 rows x 4 cols)
  * grid of per-track cells labeled Tr1..Tr8, value rendered under each label.
- * Column/row metrics match the standard 8-knob bank overview (colX = 4 + col*30,
- * rowY = 12 | 36, value at rowY+12). valFn(trackIdx) -> short string. The
- * Conductor's own track cell shows inertLabel instead of a value. */
+ * Column/row metrics + col4() fixed-width cells + touched-knob highlight match
+ * the standard 8-knob bank overview (colX = 4 + (i%4)*30, rowY = 12 | 36, value
+ * at rowY+12; cell i is filled and rendered inverted when S.knobTouched === i —
+ * same idiom as the drum-lane / ALL-LANES overviews). valFn(trackIdx) -> short
+ * string. The Conductor's own track cell shows inertLabel instead of a value. */
 function drawConductTrackGrid(header, valFn, inertLabel) {
     drawBankHeading(header, false);
     for (let i = 0; i < 8; i++) {
-        const col = i % 4, row = (i < 4) ? 0 : 1;
-        const x = 4 + col * 30;
-        const y = row === 0 ? 12 : 36;
-        print(x, y, 'Tr' + (i + 1), 1);
+        const colX = 4 + (i % 4) * 30;
+        const rowY = i < 4 ? 12 : 36;
+        const hi   = (S.knobTouched === i);
+        if (hi) fill_rect(colX, rowY, 24, 24, 1);
         const isCond = (i === S.conductorTrack);
-        print(x, y + 12, isCond ? inertLabel : valFn(i), 1);
+        print(colX, rowY,      col4('Tr' + (i + 1)),            hi ? 0 : 1);
+        print(colX, rowY + 12, col4(isCond ? inertLabel : valFn(i)), hi ? 0 : 1);
     }
 }
 
@@ -5924,12 +5927,15 @@ function _tickImpl() {
                     S.conductorTrack = _ct;
                     S.trackPadMode[_ct] = PAD_MODE_CONDUCT;
                     /* Pull the Conductor's per-clip bank values back from DSP.
-                     * get_param is valid here (tick/sync context). Read all the
-                     * Conductor track's clips so every Conductor clip's grid is
-                     * correct, and mirror its active clip into S.condActiveClip
-                     * (the clip whose values the OLED grid renders).
-                     * GET shapes (Task 2.1): _cond_resp / _cond_when = 8-char
-                     * '0'/'1' strings; _cond_oct = 8 space-separated signed ints. */
+                     * get_param is valid here (tick/sync context) but NOT in
+                     * onMidiMessage. Read all 16 clips once on load/resume so the
+                     * full per-clip mirror (condResp/condWhen/condOct) is hot —
+                     * later clip switches just re-point S.condActiveClip and need
+                     * no DSP reads at all. Mirror the active clip into
+                     * S.condActiveClip (the clip whose values the OLED grid
+                     * renders). GET shapes (Task 2.1): _cond_resp / _cond_when =
+                     * 8-char '0'/'1' strings; _cond_oct = 8 space-separated
+                     * signed ints. */
                     S.condActiveClip = S.trackActiveClip[_ct] | 0;
                     for (let _c = 0; _c < NUM_CLIPS; _c++) {
                         const _resp = host_module_get_param('t' + _ct + '_c' + _c + '_cond_resp');
