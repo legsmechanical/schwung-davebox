@@ -839,6 +839,13 @@ typedef struct {
     uint8_t  swing_res;             /* 0=1/16 pairs, 1=1/8 pairs */
     uint64_t swing_step_delay;      /* samples to defer notes in current even step; 0=no defer */
 
+    /* Conductor live transposition offset — transient: NOT serialized. Set from
+     * the Conductor's currently-played note relative to reference pitch R, applied
+     * at responder emit. Phase 3. */
+    uint8_t  conductor_sounding;    /* 1 while a Conductor note is held this step (transient) */
+    int16_t  conductor_off_deg;     /* scale-degree offset (scale-aware path) (transient) */
+    int16_t  conductor_off_semi;    /* semitone offset (chromatic path) (transient) */
+
     /* External MIDI queue: ROUTE_MOVE note events buffered here; JS drains each tick */
     ext_msg_t ext_queue[EXT_QUEUE_SIZE];
     int       ext_head;             /* next write index */
@@ -2355,6 +2362,9 @@ static void arp_add_note     (arp_engine_t *a, uint8_t pitch, uint8_t vel);
 static void arp_remove_note  (arp_engine_t *a, uint8_t pitch);
 static void arp_silence      (seq8_instance_t *inst, seq8_track_t *tr);
 static int  scale_transpose  (seq8_instance_t *inst, int note, int deg_offset);
+static int  note_abs_degree  (seq8_instance_t *inst, int note);
+static void conductor_set_offset_from_note(seq8_instance_t *inst, int played);
+static void conductor_clear_offset(seq8_instance_t *inst);
 
 static void ext_queue_push(seq8_instance_t *inst, uint8_t s, uint8_t d1, uint8_t d2) {
     int next = (inst->ext_head + 1) % EXT_QUEUE_SIZE;
@@ -3411,6 +3421,34 @@ static int scale_transpose(seq8_instance_t *inst, int note, int deg_offset) {
     int t_rem   = abs_deg % n;
     if (t_rem < 0) { t_rem += n; t_oct--; }
     return clamp_i(key + t_oct * 12 + (int)ivals[t_rem], 0, 127);
+}
+
+/* Absolute scale-degree index of a note relative to eff key/scale: oct*n + nearest-degree.
+ * Mirrors the degree-finding logic inside scale_transpose. */
+static int note_abs_degree(seq8_instance_t *inst, int note) {
+    int s = eff_pad_scale(inst); if (s < 0 || s >= 14) s = 0;
+    int n = (int)SCALE_SIZES[s];
+    const uint8_t *ivals = SCALE_IVLS[s];
+    int key = eff_pad_key(inst);
+    int rel = note - key, oct = rel / 12, pc = rel % 12;
+    if (pc < 0) { pc += 12; oct--; }
+    int deg = 0, best = 13;
+    for (int d = 0; d < n; d++) { int dist = (int)ivals[d] - pc; if (dist < 0) dist = -dist; if (dist < best) { best = dist; deg = d; } }
+    return oct * n + deg;
+}
+
+/* Reference R = root pitch-class at MIDI octave 4 (eff key + 60). Set the live
+ * conductor transposition offset from the Conductor's currently-played note. */
+static void conductor_set_offset_from_note(seq8_instance_t *inst, int played) {
+    int R = eff_pad_key(inst) + 60;
+    inst->conductor_off_semi = (int16_t)(played - R);
+    inst->conductor_off_deg  = (int16_t)(note_abs_degree(inst, played) - note_abs_degree(inst, R));
+    inst->conductor_sounding = 1;
+}
+static void conductor_clear_offset(seq8_instance_t *inst) {
+    inst->conductor_sounding = 0;
+    inst->conductor_off_deg = 0;
+    inst->conductor_off_semi = 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -6300,6 +6338,9 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     inst->looper_sync            = 1;
     inst->looper_pending_silence = 0;
     inst->conductor_track        = -1;  /* no Conductor by default */
+    inst->conductor_sounding     = 0;   /* transient live transposition offset */
+    inst->conductor_off_deg      = 0;
+    inst->conductor_off_semi     = 0;
     memset(inst->perf_emitted_pitch, 0xFF, sizeof(inst->perf_emitted_pitch));
     memset(inst->pad_note_map, 0xFF, sizeof(inst->pad_note_map));
     memset(inst->pad_live_pitch, 0xFF, sizeof(inst->pad_live_pitch));
