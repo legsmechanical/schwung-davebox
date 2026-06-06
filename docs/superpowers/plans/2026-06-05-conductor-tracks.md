@@ -152,7 +152,7 @@ git commit -m "feat(conduct): DSP convert-to-conduct handler + one-conductor enf
 **Files:**
 - Modify: `ui/ui.js:233-242` (the convert menu/confirm trigger) and `convertTrackType` (`ui.js:3015`)
 
-- [ ] **Step 1: Add a "Conductor" option to the track Route menu** — `createEnum('Route', …)` in `buildGlobalMenuItems` (NOT the Keys/Drums Mode enum). Conductor is a 4th route value (v===3); `get()` returns 3 while `pad_mode===CONDUCT` (else `trackRoute[t]`); selecting it opens the confirm dialog; selecting Move/Schwung/Ext on a Conductor converts back to Keys then applies the route. Hide the Keys/Drums Mode enum while the track is a Conductor. Add a confirm dialog state mirroring `confirmConvertToDrum` (`S.confirmConvertToConduct`) warning "Clears FX/ARP/Auto. Keeps notes." with Yes/No.
+- [ ] **Step 1: Add "Cond" to the track Type/Mode menu** — `createEnum('Mode', …)` in `buildGlobalMenuItems`, options `[0,1,2]` (Keys/Drums/Cond). The Mode enum is **commit-deferred**: `set()` is a no-op (scrolling only previews); the conversion/confirm fires from a **commit-click interceptor** in the jog-click handler (mirroring the Key/Scale interceptor) — comparing the scrolled-to target type vs current and opening the drum/conduct confirm (or deferring a convert-back to Keys) only on click. Add a confirm dialog state mirroring `confirmConvertToDrum` (`S.confirmConvertToConduct`) warning "Clears FX/ARP/Auto. Keeps notes." with Yes/No.
 
 - [ ] **Step 2: Add `convertTrackToConduct(t)`** modeled on `convertTrackType` (`ui.js:3015`):
 

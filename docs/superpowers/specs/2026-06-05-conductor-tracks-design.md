@@ -42,7 +42,7 @@ only to drive the transposition state.
 | Conductor polyphony | **Monophonic** — Conductor steps hold one note each. |
 | Held-note transition | Per-track, per-Conductor-clip, on a new **"When"** bank: **Next** (latch at next note-on) or **Now** (cut + retrigger sounding note at new pitch, inheriting the cut note's note-off position). |
 | Scale-aware source | **Follows the global Scale-Aware setting.** |
-| Routing / conversion | Conductor is a 4th **Route** option (not the Type/Mode menu). **Destructive-with-confirm, but sequence data preserved.** Converting clears pfx/tarp/automation; note+duration+iteration+probability survive (both directions). Type/Mode item hidden while Conductor. |
+| Routing / conversion | Conductor is the 3rd **Type/Mode** option (Keys/Drums/Cond). Type menu is **commit-deferred** (scroll previews, click commits behind confirm). **Destructive-with-confirm, but sequence data preserved** — clears pfx/tarp/automation; note+duration+iteration+probability survive (both directions). |
 | Empty step / Conductor mute | **Snap to zero** (responders play written pitch). |
 | Reference pitch `R` | **Root pitch-class + 60 (MIDI octave 4 / C4 in C major)**, matching the existing `defaultStepNote` convention. |
 | Octave bank scale-awareness | Octave offset is applied in the **same space** as the Conductor offset: one octave = `scale_size` degrees when scale-aware, ×12 semitones when chromatic. Folded into a single transpose op. |
@@ -70,14 +70,14 @@ emit-time math because the Conductor changes every step.
   `dsp/seq8.c:53`). Pad grid presents like melodic/Keys (scale-aware layout).
 - The Conductor emits **no MIDI** and has **no MIDI channel** — its sequencer
   only drives the transposition state.
-- **Routing in:** the Conductor is a 4th entry in the track **Route** menu
-  (alongside Move/Schwung/External) — not the Keys/Drums Type/Mode menu — since a
-  Conductor sends nowhere and has no channel. While a track is the Conductor the
-  Type/Mode (Keys/Drums) menu item is hidden (its mode is implied). Conversion is
-  destructive-with-confirm: a dialog warns pfx/tarp/automation will be cleared;
-  note+duration+iteration+probability survive into the Conduct clips. Routing the
-  Conductor back to Move/Schwung/External converts it back to Keys (keeping the
-  sequence data) and applies the chosen route.
+- **Routing in:** the Conductor is the third option in the track **Type/Mode**
+  menu (Keys / Drums / **Cond**). The Type menu is **commit-deferred**: scrolling
+  only previews the selected type (no conversion, no dialog); the conversion fires
+  on the commit **click**, behind a confirm. (This also fixes Keys↔Drums, which
+  previously confirmed mid-scroll.) Conversion is destructive-with-confirm: a
+  dialog warns pfx/tarp/automation will be cleared; note+duration+iteration+
+  probability survive into the Conduct clips. Converting back to Keys keeps that
+  sequence data and starts pfx/tarp/auto fresh.
 - **One Conductor per session:** enforced DSP-side. Routing a second track to
   Conductor is refused with an OLED message ("Conductor exists on T*n*"); the
   user converts the existing one back first. Routing goes via a per-track

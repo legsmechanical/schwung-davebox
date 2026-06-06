@@ -210,71 +210,23 @@ function buildGlobalMenuItems() {
             format: function(v) { return String(v); }
         }),
         createEnum('Route', {
-            /* Conductor is a 4th route (v===3): sends nowhere, drives
-             * transposition. Derived from pad_mode so it shows "Cond" while
-             * the track is a Conductor; trackRoute keeps its underlying
-             * Move/Schwung/Ext value so routing away restores a real dest. */
-            get: function() {
-                if (S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT) return 3;
-                return S.trackRoute[S.activeTrack];
-            },
-            set: function(v) {
-                const t = S.activeTrack;
-                if (v === 3) {
-                    /* -> Conductor: always confirm. Keeps notes but clears
-                     * FX/ARP/Auto; DSP enforces one Conductor. No-op if already. */
-                    if (S.trackPadMode[t] === PAD_MODE_CONDUCT) return;
-                    S.confirmConvertToConduct    = true;
-                    S.confirmConvertToConductSel = 1;   /* default No */
-                    S.confirmConvertTrack        = t;
-                    S.screenDirty = true;
-                } else {
-                    /* Move/Schwung/Ext. If leaving Conductor, convert back to
-                     * Keys first (deferred, get_param-safe), then set the route. */
-                    if (S.trackPadMode[t] === PAD_MODE_CONDUCT) {
-                        if (S.conductorTrack === t) S.conductorTrack = -1;
-                        S.pendingTrackConvert = { t: t, toDrum: false };
-                    }
-                    applyTrackConfig(t, 'route', v);
-                }
-            },
-            options: [0, 1, 2, 3],
-            format: function(v) { return v === 3 ? 'Cond' : fmtRoute(v); }
+            get: function() { return S.trackRoute[S.activeTrack]; },
+            set: function(v) { applyTrackConfig(S.activeTrack, 'route', v); },
+            options: [0, 1, 2],
+            format: function(v) { return fmtRoute(v); }
         }),
-        /* Mode (Keys/Drums) is hidden while the track is a Conductor — its mode
-         * is implied by the Conductor route. */
-        ...(S.trackPadMode[S.activeTrack] !== PAD_MODE_CONDUCT ? [
         createEnum('Mode', {
             get: function() { return S.trackPadMode[S.activeTrack]; },
-            /* Flipping Mode CONVERTS the track's notes (see convertTrackType).
-             * set() is called as a live preview while editing AND on commit
-             * via set(get()); the v===cur guard makes those re-fires no-ops. */
-            set: function(v) {
-                const t = S.activeTrack;
-                if (v === S.trackPadMode[t]) return;
-                if (v === PAD_MODE_DRUM) {
-                    /* Keys -> Drums: warn only if there are notes to lose;
-                     * an empty track converts straight through (no dialog). */
-                    let hasData = false;
-                    for (let c = 0; c < NUM_CLIPS; c++)
-                        if (S.clipNonEmpty[t][c]) { hasData = true; break; }
-                    if (hasData) {
-                        S.confirmConvertToDrum    = true;
-                        S.confirmConvertToDrumSel = 1;   /* default No */
-                        S.confirmConvertTrack     = t;
-                        S.screenDirty = true;
-                    } else {
-                        S.pendingTrackConvert = { t: t, toDrum: true };
-                    }
-                } else {
-                    /* Drums -> Keys: no prompt. Defer to tick() (get_param-safe). */
-                    S.pendingTrackConvert = { t: t, toDrum: false };
-                }
-            },
-            options: [0, 1],
-            format: function(v) { return v ? 'Drums' : 'Keys'; }
-        })
-        ] : []),
+            /* DEFERRED COMMIT: scrolling only previews the selected type — set()
+             * is a no-op, so passing over Drums/Cond while scrolling never fires
+             * a conversion or confirm. The conversion (behind its confirm) is
+             * triggered by the commit CLICK, intercepted in the jog-click handler
+             * (search: label === 'Mode'). Mirrors the Key/Scale commit-on-click
+             * pattern. Keys/Drums/Cond = PAD_MODE_MELODIC_SCALE/DRUM/CONDUCT. */
+            set: function() {},
+            options: [0, 1, 2],
+            format: function(v) { return v === PAD_MODE_CONDUCT ? 'Cond' : (v ? 'Drums' : 'Keys'); }
+        }),
         createEnum('Layout', {
             get: function() { return S.padLayoutChromatic[S.activeTrack] ? 1 : 0; },
             set: function(v) {
@@ -7045,6 +6997,45 @@ function _onCC_jog(d1, d2) {
                     xposeCommit(candK, candS);
                     S.globalMenuState.editing = false; S.globalMenuState.editValue = null;
                     S.lastSentMenuEditValue = null; S.bpmWasEditing = false;
+                }
+                S.screenDirty = true;
+                return;
+            }
+        }
+        /* Mode (track type): DEFERRED COMMIT. The click that finalizes the Mode
+         * edit triggers the conversion confirm; scrolling never does (Mode set()
+         * is a no-op). No change → exit. Mirrors the Key/Scale interceptor. */
+        {
+            const _mi = (S.globalMenuState && S.globalMenuItems)
+                        ? S.globalMenuItems[S.globalMenuState.selectedIndex] : null;
+            if (_mi && S.globalMenuState.editing && _mi.label === 'Mode') {
+                const t      = S.activeTrack;
+                const target = S.globalMenuState.editValue !== null ? S.globalMenuState.editValue : _mi.get();
+                const cur    = S.trackPadMode[t];
+                S.globalMenuState.editing = false; S.globalMenuState.editValue = null;
+                S.lastSentMenuEditValue = null; S.bpmWasEditing = false;
+                if (target !== cur) {
+                    if (target === PAD_MODE_DRUM) {
+                        /* Keys/Cond -> Drums: confirm only if notes would be lost. */
+                        let hasData = false;
+                        for (let c = 0; c < NUM_CLIPS; c++)
+                            if (S.clipNonEmpty[t][c]) { hasData = true; break; }
+                        if (hasData) {
+                            S.confirmConvertToDrum = true; S.confirmConvertToDrumSel = 1;
+                            S.confirmConvertTrack = t;
+                        } else {
+                            S.pendingTrackConvert = { t: t, toDrum: true };
+                        }
+                    } else if (target === PAD_MODE_CONDUCT) {
+                        /* Keys/Drums -> Conductor: always confirm (keeps notes,
+                         * clears FX/ARP/Auto; DSP enforces one Conductor). */
+                        S.confirmConvertToConduct = true; S.confirmConvertToConductSel = 1;
+                        S.confirmConvertTrack = t;
+                    } else {
+                        /* Drums/Conductor -> Keys: no prompt; defer to tick(). */
+                        if (S.conductorTrack === t) S.conductorTrack = -1;
+                        S.pendingTrackConvert = { t: t, toDrum: false };
+                    }
                 }
                 S.screenDirty = true;
                 return;
