@@ -10395,6 +10395,54 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 }
             }
 
+            /* Conductor transposition offset (Phase 3, Task 3.2): drive the live
+             * offset from the Conductor track's own step playback. The Conductor
+             * emits no MIDI (suppressed at the pfx_emit/drum_pfx_emit choke point)
+             * — here we only read its currently-playing step note to set the
+             * offset state that Task 3.3 applies to responder emits.
+             *
+             * Per-step set/clear model (matches spec §4 "empty step → snap to
+             * zero"): evaluated once per step boundary (tick_in_step == 0). The
+             * Conductor is monophonic, so the step's primary note (step_notes[s][0])
+             * is the played note. Step with a note → set offset from that pitch;
+             * empty step OR Conductor muted → clear (snap to zero). We use the
+             * step-centric model (step_notes/step_note_count) rather than hooking
+             * the note-centric note-on loop because per-step boundary evaluation
+             * gives a clean "is this step empty?" answer. */
+            if (t == inst->conductor_track && tr->pad_mode == PAD_MODE_CONDUCT) {
+                int16_t _prev_deg  = inst->conductor_off_deg;
+                int16_t _prev_semi = inst->conductor_off_semi;
+                uint8_t _prev_snd  = inst->conductor_sounding;
+                if (effective_mute(inst, t)) {
+                    /* Mute (or solo-elsewhere) → snap to zero every tick. */
+                    conductor_clear_offset(inst);
+                } else if (tr->tick_in_step == 0) {
+                    /* Step boundary: read this step's primary note (monophonic). */
+                    clip_t  *_ccl = &tr->clips[tr->active_clip];
+                    uint16_t _cs  = tr->current_step;
+                    if (_cs < SEQ_STEPS && _ccl->step_note_count[_cs] > 0)
+                        conductor_set_offset_from_note(inst, (int)_ccl->step_notes[_cs][0]);
+                    else
+                        conductor_clear_offset(inst);
+                }
+                /* TEMP (device verification — remove after user confirms, like
+                 * convert_to_conduct): log offset only when it changes so the
+                 * user can confirm different Conductor notes change the offset
+                 * and empty steps / mute zero it. seq8_ilog has no varargs. */
+                if (inst->conductor_off_deg  != _prev_deg  ||
+                    inst->conductor_off_semi != _prev_semi ||
+                    inst->conductor_sounding != _prev_snd) {
+                    char _cmsg[96];
+                    snprintf(_cmsg, sizeof(_cmsg),
+                        "CONDUCT t%d offset deg=%d semi=%d sounding=%d step=%u",
+                        t, (int)inst->conductor_off_deg,
+                        (int)inst->conductor_off_semi,
+                        (int)inst->conductor_sounding,
+                        (unsigned)tr->current_step);
+                    seq8_ilog(inst, _cmsg);
+                }
+            }
+
             /* Drum Repeat: fire held-rate-pad retriggers independent of sequencer. */
             drum_repeat_tick(inst, tr);
             drum_repeat2_tick(inst, tr);
