@@ -3164,6 +3164,36 @@ function altIndicatorActive(t, bank) {
     return S.altMode;
 }
 
+/* Conductor bank knob: knob k edits dAVEBOx track k's per-Conductor-clip value.
+ * The Conductor's own track cell is inert. `delta` is signed knob detents.
+ * RESPONDER/WHEN are single-fire toggles (any nonzero turn flips the value once);
+ * OCTAVE increments/decrements by 1 per detent, clamped -4..+4. The JS mirror is
+ * authoritative; we push the absolute new value per-Conductor-clip (tN_* key,
+ * reaches DSP reliably; last-wins-per-buffer is correct since we push the final
+ * value the mirror tracks). */
+function applyConductGridKnob(bank, k, delta) {
+    if (delta === 0) return;
+    if (k === S.conductorTrack) return;          /* own cell inert */
+    const c = S.condActiveClip, N = S.conductorTrack;
+    if (N < 0) return;
+    if (bank === BANK_RESPONDER) {
+        S.condResp[c][k] = S.condResp[c][k] ? 0 : 1;     /* single-fire toggle */
+        if (typeof host_module_set_param === 'function')
+            host_module_set_param('t' + N + '_c' + c + '_cond_resp', k + ' ' + S.condResp[c][k]);
+    } else if (bank === BANK_OCTAVE) {
+        const nv = Math.max(-4, Math.min(4, (S.condOct[c][k] | 0) + (delta > 0 ? 1 : -1)));
+        S.condOct[c][k] = nv;
+        if (typeof host_module_set_param === 'function')
+            host_module_set_param('t' + N + '_c' + c + '_cond_oct', k + ' ' + nv);
+    } else if (bank === BANK_WHEN) {
+        S.condWhen[c][k] = S.condWhen[c][k] ? 0 : 1;     /* single-fire toggle */
+        if (typeof host_module_set_param === 'function')
+            host_module_set_param('t' + N + '_c' + c + '_cond_when', k + ' ' + S.condWhen[c][k]);
+    }
+    S.screenDirty = true;
+    forceRedraw();
+}
+
 /* Send a single param change to DSP and apply any JS-side side-effects. */
 function applyBankParam(t, bankIdx, knobIdx, val) {
     const pm = BANKS[bankIdx].knobs[knobIdx];
@@ -9057,6 +9087,16 @@ function _onCC_knobs(d1, d2) {
                     }
                 }
             }
+            return;
+        }
+        /* Conductor Responder/Octave/When banks: knob k edits track k's per-clip
+         * value. Gated strictly on the active track being a Conductor AND one of
+         * the three banks, so normal bank editing is untouched. One detent = one
+         * handler call (single-fire toggle for Responder/When; ±1 for Octave). */
+        if (S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT &&
+                (bank === BANK_RESPONDER || bank === BANK_OCTAVE || bank === BANK_WHEN)) {
+            const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
+            applyConductGridKnob(bank, knobIdx, dir);
             return;
         }
         if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 0) {
