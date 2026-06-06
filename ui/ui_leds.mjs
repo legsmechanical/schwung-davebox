@@ -51,9 +51,11 @@ export function invalidateLEDCache() {
     lastSentButtonLED.fill(-1);
 }
 
-/* White / light-gray for the Conductor track; indexed color otherwise. */
-export function trackColor(t)    { return (S.trackPadMode[t] === PAD_MODE_CONDUCT) ? White     : TRACK_COLORS[t]; }
-export function trackDimColor(t) { return (S.trackPadMode[t] === PAD_MODE_CONDUCT) ? LightGrey : TRACK_DIM_COLORS[t]; }
+/* Track color. (Conductor tracks formerly forced white — dropped as confusing;
+ * the Conductor now keeps its pre-assigned per-index track color.) Helpers kept
+ * as the single color-lookup seam in case per-track color overrides return. */
+export function trackColor(t)    { return TRACK_COLORS[t]; }
+export function trackDimColor(t) { return TRACK_DIM_COLORS[t]; }
 
 /* Co-run side clip buttons (CC 40-43): blink the buttons whose bit is set in
  * `litMask` (bit 0 = TOP = CC 43 .. bit 3 = bottom = CC 40) between dark-grey and

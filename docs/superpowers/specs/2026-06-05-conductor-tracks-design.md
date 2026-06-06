@@ -48,7 +48,7 @@ only to drive the transposition state.
 | Octave bank scale-awareness | Octave offset is applied in the **same space** as the Conductor offset: one octave = `scale_size` degrees when scale-aware, ×12 semitones when chromatic. Folded into a single transpose op. |
 | Bake "Apply Conductor?" | Conductor advanced **in lockstep across the N baked loops**; its trig conditions (iteration cycle + probability roll) evaluated exactly like regular bake. |
 | "Cannot be baked" | The Conductor track has **no bake action** of its own (it can be live-merged). |
-| Track color | A proper bright/dim track-color pair: **bright = white, dim = light gray**, presented everywhere the track-color concept is used. |
+| Track color | Conductor keeps its **pre-assigned per-index track color** (the always-white idea was dropped as confusing). |
 
 ## Engine approach (chosen)
 
@@ -82,27 +82,38 @@ emit-time math because the Conductor changes every step.
   Conductor is refused with an OLED message ("Conductor exists on T*n*"); the
   user converts the existing one back first. Routing goes via a per-track
   `tN_conduct` set_param (host drops new *global* keys).
-- **Color:** bright white / dim light gray (see §9).
+- **Color:** keeps its pre-assigned per-index track color (see §9).
 - **Mute:** allowed — temporarily deactivates transposition (responders snap to
   zero).
 - **Solo:** disabled for the Conductor (control inert/hidden on that track).
 - **Bake:** the Conductor track has no bake action.
 
-### 2. The four Conductor banks
+### 2. The five Conductor banks
 
-The Conductor's jog wheel cycles exactly four banks (no pfx/tarp/auto).
+The Conductor's jog wheel cycles exactly five banks (no pfx/tarp/auto), in order
+**Conduct → NoteFX → Responder → Octave → When**.
 
 1. **Conduct** — functionally identical to the CLIP bank
    (`ui/ui_constants.mjs:267`): Res, Stch, Shft, Lgto, InQ, (unassigned), Dir,
    SqFl. Same handlers, header relabeled "Conduct".
-2. **Responder** — 8 knobs, one per dAVEBOx track, single-fire on/off toggles.
+2. **NoteFX** — a slimmed reuse of the melodic NOTE FX bank (index 1), exposing
+   **Octave** (K1), **Offset** (K2), **Random** (K8), and **Random-mode** (Shift+K8,
+   uniform/gaussian/walk); other knobs greyed. **Per Conductor clip** (uses the
+   existing per-clip pfx storage + `tN_cC_pfx_set`/`_snapshot`). These transform
+   the Conductor's own note coming out of its sequencer/pads **before** the
+   transposition offset is computed (and before the per-track Octave bank). I.e.
+   the Conductor's effective note = its played note through NOTE FX
+   octave/offset/random; the offset is derived from that (`gen[0]`). Octave/Offset
+   are master shifts on all responders; Random jitters the whole transposition
+   per Conductor note. Reuses melodic NOTE FX scale-aware behavior.
+3. **Responder** — 8 knobs, one per dAVEBOx track, single-fire on/off toggles.
    On = responds; off = ignores. **Default on** for all tracks. The Conductor's
    own track-index knob shows **"Cndct"** (inert). **Per Conductor clip.**
-3. **Octave** — 8 knobs, one per track. Range **−4…+4**, center shows **"--"**
+4. **Octave** — 8 knobs, one per track. Range **−4…+4**, center shows **"--"**
    (= 0). Added on top of the Conductor transposition, scale-aware (§4). Only
    takes effect when the Conductor is sounding a note AND that track is On in
    Responder. Conductor's own slot inert. **Per Conductor clip.**
-4. **When** — 8 knobs, one per track. **Next** / **Now** (held-note transition,
+5. **When** — 8 knobs, one per track. **Next** / **Now** (held-note transition,
    §4). Conductor's own slot inert. **Per Conductor clip.**
 
 Conductor steps carry **iteration and probability** per step, using the existing
@@ -215,10 +226,11 @@ possible (sidecar bump is low-risk — not the DSP confirm-dialog path).
 
 ### 9. Track color
 
-`TRACK_COLORS[t]` / `TRACK_DIM_COLORS[t]` reads routed through `trackColor(t)` /
-`trackDimColor(t)` helpers that return white / light-gray when `t` is the
-Conductor, else the indexed color. Every existing color site picks it up
-consistently. Bright = white, dim = light gray.
+`TRACK_COLORS[t]` / `TRACK_DIM_COLORS[t]` reads are routed through `trackColor(t)`
+/ `trackDimColor(t)` helpers (a single color-lookup seam). The Conductor keeps its
+pre-assigned per-index color — the always-white treatment was dropped as
+confusing. The helpers currently just return the indexed color; the seam is kept
+in case per-track color overrides return.
 
 ## Key file anchors
 
@@ -250,7 +262,7 @@ consistently. Bright = white, dim = light gray.
 
 ## Testing (hands-on, on device)
 
-1. Route track 2 to Conductor → it turns white; Solo is inert; Mute works.
+1. Route track 2 to Conductor → keeps its track color; Solo is inert; Mute works.
 2. Try to route a second track to Conductor → refused with OLED message.
 3. With a C-major session: Conductor plays C4 → no transposition. Plays D4 →
    melodic clips shift up 1 interval (Scale-Aware on) / 2 semitones (off).
