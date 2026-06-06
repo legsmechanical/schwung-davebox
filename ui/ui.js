@@ -135,7 +135,8 @@ function drawConductTrackGrid(header, valFn, inertLabel) {
         const rowY = i < 4 ? 12 : 36;
         const hi   = (S.knobTouched === i);
         if (hi) fill_rect(colX, rowY, 24, 24, 1);
-        const isCond = (i === S.conductorTrack);
+        /* activeTrack is the Conductor whenever these banks render */
+        const isCond = (i === S.activeTrack);
         print(colX, rowY,      col4('Tr' + (i + 1)),            hi ? 0 : 1);
         print(colX, rowY + 12, col4(isCond ? inertLabel : valFn(i)), hi ? 0 : 1);
     }
@@ -3173,9 +3174,13 @@ function altIndicatorActive(t, bank) {
  * value the mirror tracks). */
 function applyConductGridKnob(bank, k, delta) {
     if (delta === 0) return;
-    if (k === S.conductorTrack) return;          /* own cell inert */
-    const c = S.condActiveClip, N = S.conductorTrack;
-    if (N < 0) return;
+    /* While these banks are active, S.activeTrack IS the Conductor (the bank is
+     * gated on trackPadMode[activeTrack]===CONDUCT). Use it + its live active
+     * clip directly, rather than the S.conductorTrack / S.condActiveClip mirrors
+     * which can be stale or -1 (e.g. a flaky single-tick load readback). */
+    const N = S.activeTrack, c = S.trackActiveClip[N] | 0;
+    if (N < 0 || S.trackPadMode[N] !== PAD_MODE_CONDUCT) return;
+    if (k === N) return;                          /* own cell inert */
     if (bank === BANK_RESPONDER) {
         S.condResp[c][k] = S.condResp[c][k] ? 0 : 1;     /* single-fire toggle */
         if (typeof host_module_set_param === 'function')
@@ -4309,11 +4314,11 @@ function drawUI() {
     if (S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT &&
             (bank === BANK_RESPONDER || bank === BANK_OCTAVE || bank === BANK_WHEN)) {
         if (bank === BANK_RESPONDER) {
-            drawConductTrackGrid('RESPONDER', function(k){ return S.condResp[S.condActiveClip][k] ? 'ON' : 'off'; }, 'Cndct');
+            drawConductTrackGrid('RESPONDER', function(k){ return S.condResp[S.trackActiveClip[S.activeTrack] | 0][k] ? 'ON' : 'off'; }, 'Cndct');
         } else if (bank === BANK_OCTAVE) {
-            drawConductTrackGrid('OCTAVE', function(k){ const o = S.condOct[S.condActiveClip][k]; return o === 0 ? '--' : (o > 0 ? '+' + o : '' + o); }, '--');
+            drawConductTrackGrid('OCTAVE', function(k){ const o = S.condOct[S.trackActiveClip[S.activeTrack] | 0][k]; return o === 0 ? '--' : (o > 0 ? '+' + o : '' + o); }, '--');
         } else { /* BANK_WHEN */
-            drawConductTrackGrid('WHEN', function(k){ return S.condWhen[S.condActiveClip][k] ? 'Now' : 'Next'; }, '--');
+            drawConductTrackGrid('WHEN', function(k){ return S.condWhen[S.trackActiveClip[S.activeTrack] | 0][k] ? 'Now' : 'Next'; }, '--');
         }
         return;
     }
