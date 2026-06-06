@@ -846,6 +846,9 @@ typedef struct {
     int16_t  conductor_off_deg;     /* scale-degree offset (scale-aware path) (transient) */
     int16_t  conductor_off_semi;    /* semitone offset (chromatic path) (transient) */
     int      conductor_held;        /* count of held Conductor notes (legato/sequenced) (transient) */
+    int16_t  conductor_off_deg_prev;   /* prev-tick offset for Now-retrigger change detection (transient) */
+    int16_t  conductor_off_semi_prev;  /* prev-tick offset for Now-retrigger change detection (transient) */
+    uint8_t  conductor_sounding_prev;  /* prev-tick sounding for Now-retrigger change detection (transient) */
 
     /* External MIDI queue: ROUTE_MOVE note events buffered here; JS drains each tick */
     ext_msg_t ext_queue[EXT_QUEUE_SIZE];
@@ -3180,6 +3183,11 @@ static void send_panic(seq8_instance_t *inst) {
      * stale state can't transpose the next note-ons. */
     conductor_clear_offset(inst);
     inst->conductor_held = 0;
+    /* Reset Now-retrigger prev-offset so a stale prev can't suppress a needed
+     * retrigger after panic / clear-session. */
+    inst->conductor_off_deg_prev  = 0;
+    inst->conductor_off_semi_prev = 0;
+    inst->conductor_sounding_prev = 0;
     for (t = 0; t < NUM_TRACKS; t++) {
         play_fx_t *fx = &inst->tracks[t].pfx;
         if (fx->route >= 0 && fx->route < 3 && !route_pfx[fx->route])
@@ -3459,6 +3467,31 @@ static void conductor_clear_offset(seq8_instance_t *inst) {
     inst->conductor_sounding = 0;
     inst->conductor_off_deg = 0;
     inst->conductor_off_semi = 0;
+}
+
+/* Transpose gen[] in place by the conductor offset for responder track t.
+ * No-op if t isn't a responding melodic track or the conductor isn't sounding.
+ * Mirrors the inline transpose currently in pfx_note_on. */
+static void conductor_transpose_gen(seq8_instance_t *inst, int t,
+                                    uint8_t *gen, int gc) {
+    if (inst->conductor_track < 0 || !inst->conductor_sounding) return;
+    if (t == inst->conductor_track) return;
+    if (inst->tracks[t].pad_mode != PAD_MODE_MELODIC_SCALE) return;
+    seq8_track_t *cnd = &inst->tracks[inst->conductor_track];
+    clip_t *cc = &cnd->clips[cnd->active_clip];
+    if (!cc->cond_resp[t]) return;
+    int oct = cc->cond_oct[t];
+    int i;
+    for (i = 0; i < gc; i++) {
+        if (inst->scale_aware) {
+            int n = (int)SCALE_SIZES[eff_pad_scale(inst)];
+            gen[i] = (uint8_t)scale_transpose(inst, gen[i],
+                          inst->conductor_off_deg + oct * n);
+        } else {
+            gen[i] = (uint8_t)clamp_i((int)gen[i] +
+                          inst->conductor_off_semi + oct * 12, 0, 127);
+        }
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -4082,26 +4115,7 @@ static void pfx_note_on(seq8_instance_t *inst, seq8_track_t *tr,
      * Deferred follow-up: SEQ ARP (arp_fire_step → pfx_send with arp_emitting)
      * and the global looper bypass pfx_note_on, so their output does not yet
      * follow the conductor. */
-    if (inst->conductor_track >= 0 && inst->conductor_sounding &&
-            t_idx != inst->conductor_track &&
-            tr->pad_mode == PAD_MODE_MELODIC_SCALE) {
-        seq8_track_t *_cnd = &inst->tracks[inst->conductor_track];
-        clip_t       *_cc  = &_cnd->clips[_cnd->active_clip];
-        if (_cc->cond_resp[t_idx]) {
-            int oct = _cc->cond_oct[t_idx];
-            int gi;
-            for (gi = 0; gi < gc; gi++) {
-                if (inst->scale_aware) {
-                    int n = (int)SCALE_SIZES[eff_pad_scale(inst)];
-                    gen[gi] = (uint8_t)scale_transpose(inst, gen[gi],
-                                  inst->conductor_off_deg + oct * n);
-                } else {
-                    gen[gi] = (uint8_t)clamp_i((int)gen[gi] +
-                                  inst->conductor_off_semi + oct * 12, 0, 127);
-                }
-            }
-        }
-    }
+    conductor_transpose_gen(inst, t_idx, gen, gc);
 
     /* Retrigger guard: if this note is already active, clean up first. */
     if (an->active) {
@@ -4157,6 +4171,59 @@ static void pfx_note_on(seq8_instance_t *inst, seq8_track_t *tr,
         cl->step_notes[tr->current_step][0] = gen[0];
         cl->step_note_count[tr->current_step] = 1;
         cl->step_vel[tr->current_step]  = (uint8_t)v;
+    }
+}
+
+/* When the conductor offset changes, retrigger sounding notes on responder
+ * tracks set to "Now" (cond_when==1) at the new pitch, preserving remaining
+ * gate. "Next" tracks (cond_when==0) are left untouched. Call once per tick
+ * AFTER the conductor offset for this tick is settled.
+ *
+ * Notes: pfx_build_gen_notes is deterministic given fx params EXCEPT for NOTE
+ * FX Random, which RE-ROLLS on rebuild — acceptable for a retrigger. Delay
+ * echoes already in flight are not re-pitched (edge). Non-destructive: only
+ * transient active-note records + MIDI; clip data untouched. */
+static void conductor_apply_now_retrigger(seq8_instance_t *inst) {
+    if (inst->conductor_off_deg  == inst->conductor_off_deg_prev &&
+        inst->conductor_off_semi == inst->conductor_off_semi_prev &&
+        inst->conductor_sounding == inst->conductor_sounding_prev) return;
+    inst->conductor_off_deg_prev  = inst->conductor_off_deg;
+    inst->conductor_off_semi_prev = inst->conductor_off_semi;
+    inst->conductor_sounding_prev = inst->conductor_sounding;
+    if (inst->conductor_track < 0) return;
+    seq8_track_t *cnd = &inst->tracks[inst->conductor_track];
+    clip_t *cc = &cnd->clips[cnd->active_clip];
+    int t;
+    for (t = 0; t < NUM_TRACKS; t++) {
+        if (t == inst->conductor_track) continue;
+        seq8_track_t *tr = &inst->tracks[t];
+        if (tr->pad_mode != PAD_MODE_MELODIC_SCALE) continue;
+        if (cc->cond_when[t] != 1) continue;        /* Now only */
+        play_fx_t *fx = &tr->pfx;
+        int p;
+        for (p = 0; p < 128; p++) {
+            pfx_active_t *an = &fx->active_notes[p];
+            if (!an->active) continue;
+            uint8_t off_s = (uint8_t)(0x80 | an->channel);
+            uint8_t on_s  = (uint8_t)(0x90 | an->channel);
+            int i;
+            /* off the OLD (currently-sounding) transposed gen */
+            for (i = 0; i < an->gen_count; i++)
+                pfx_send(fx, off_s, an->gen_notes[i], 0);
+            /* rebuild this note's gen from its orig pitch p (NOTE FX) +
+             * new conductor offset */
+            int is_sa = inst->scale_aware &&
+                        (tr->pad_mode == PAD_MODE_MELODIC_SCALE);
+            uint8_t gen[MAX_GEN_NOTES];
+            int gc = pfx_build_gen_notes(inst, is_sa, fx, p, gen);
+            conductor_transpose_gen(inst, t, gen, gc);
+            /* on the NEW transposed gen at the note's original velocity */
+            for (i = 0; i < gc; i++)
+                pfx_send(fx, on_s, gen[i], an->orig_velocity);
+            /* update the record so the eventual gate-off matches the new pitch */
+            an->gen_count = gc;
+            memcpy(an->gen_notes, gen, (size_t)gc);
+        }
     }
 }
 
@@ -6422,6 +6489,9 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     inst->conductor_off_deg      = 0;
     inst->conductor_off_semi     = 0;
     inst->conductor_held         = 0;   /* transient held-note count */
+    inst->conductor_off_deg_prev  = 0;  /* transient Now-retrigger change detect */
+    inst->conductor_off_semi_prev = 0;
+    inst->conductor_sounding_prev = 0;
     memset(inst->perf_emitted_pitch, 0xFF, sizeof(inst->perf_emitted_pitch));
     memset(inst->pad_note_map, 0xFF, sizeof(inst->pad_note_map));
     memset(inst->pad_live_pitch, 0xFF, sizeof(inst->pad_live_pitch));
@@ -10603,6 +10673,13 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 }
             }
         }
+
+        /* Conductor "Now": retrigger sounding responder notes at the new pitch
+         * when the offset changed. Runs once here, AFTER the note-processing
+         * loop above has settled the conductor offset for this tick (the
+         * conductor's pfx_note_on sets it, pfx_note_off / per-tick mute-clear
+         * clear it). ~1-tick lag is fine. */
+        conductor_apply_now_retrigger(inst);
 
         /* Per-track tick advance and step advance */
         for (t = 0; t < NUM_TRACKS; t++) {
