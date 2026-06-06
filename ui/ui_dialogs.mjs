@@ -131,16 +131,18 @@ function drawConvertToConductConfirm() {
     }
 }
 
-/* Single-button INFO dialog shown when the user tries to make a SECOND track a
- * Conductor (only one allowed). Mirrors drawConvertToConductConfirm's layout but
- * with a single OK button. S.confirmConductExists holds the existing conductor
- * track index (-1 = closed); displayed 1-based. */
-function drawConductorExistsInfo() {
+/* Generic single-button INFO dialog. Renders up to 4 lines from S.menuInfoLines
+ * (empty = closed). Mirrors drawConvertToConductConfirm's layout with one OK
+ * button. Used for "Conductor exists", "Stop playback to change type", etc. */
+function drawMenuInfo() {
     clear_screen();
-    drawMenuHeader('CONDUCTOR');
-    print(4, 16, 'Conductor exists', 1);
-    print(4, 25, 'on T' + (S.confirmConductExists + 1) + '.', 1);
-    print(4, 34, 'Route it back first.', 1);
+    drawMenuHeader('INFO');
+    const lines = S.menuInfoLines || [];
+    let y = 16;
+    for (let i = 0; i < lines.length && i < 4; i++) {
+        print(4, y, lines[i], 1);
+        y += 9;
+    }
     const okX = 49, btnY = 46, btnW = 30, btnH = 13;
     fill_rect(okX, btnY, btnW, btnH, 1);
     print(okX + 10, btnY + 3, 'OK', 0);
@@ -199,7 +201,7 @@ export function drawGlobalMenu() {
     if (S.confirmClearSession) { drawClearSessionConfirm();  return; }
     if (S.confirmConvertToDrum){ drawConvertToDrumConfirm(); return; }
     if (S.confirmConvertToConduct){ drawConvertToConductConfirm(); return; }
-    if (S.confirmConductExists >= 0){ drawConductorExistsInfo(); return; }
+    if (S.menuInfoLines.length > 0){ drawMenuInfo(); return; }
     if (S.confirmExport)       { drawExportConfirm();        return; }
     clear_screen();
     const _inTrackSection = S.globalMenuState.selectedIndex < 5;

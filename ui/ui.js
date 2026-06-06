@@ -3059,12 +3059,19 @@ function convertTrackToConduct(t) {
     forceRedraw();
 }
 
+/* Open the generic menu INFO dialog with the given text lines (each argument is
+ * one line, up to ~4 shown). Empty = closed. */
+function showMenuInfo() {
+    S.menuInfoLines = Array.prototype.slice.call(arguments);
+    S.screenDirty = true;
+}
+
 /* Tear down the Keys->Drums confirm dialog and the menu's edit state so a
  * lingering enum edit doesn't replay. Call on Yes, No, and Back-cancel. */
 function closeConvertConfirm() {
     S.confirmConvertToDrum = false;
     S.confirmConvertToConduct = false;
-    S.confirmConductExists = -1;
+    S.menuInfoLines = [];
     if (S.globalMenuState) S.globalMenuState.editing = false;
     if (S.globalMenuState) S.globalMenuState.editValue = null;
     S.lastSentMenuEditValue = null;
@@ -5527,7 +5534,7 @@ function _tickImpl() {
             /* Action popups are invisible while the global menu is open (drawUI
              * early-returns into drawGlobalMenu). Use the menu-visible info
              * dialog instead. */
-            S.confirmConductExists = _val;
+            showMenuInfo('Conductor exists', 'on T' + (_val + 1) + '.', 'Route it back first.');
             S.screenDirty = true;
         } else {
             /* Unexpected — DSP reports no conductor right after convert.
@@ -6993,9 +7000,9 @@ function _onCC_jog(d1, d2) {
             S.screenDirty = true;
             return;
         }
-        if (S.confirmConductExists >= 0) {
+        if (S.menuInfoLines.length > 0) {
             /* Single-button INFO dialog — any click dismisses. */
-            S.confirmConductExists = -1;
+            S.menuInfoLines = [];
             S.screenDirty = true;
             return;
         }
@@ -7053,6 +7060,11 @@ function _onCC_jog(d1, d2) {
                 S.globalMenuState.editing = false; S.globalMenuState.editValue = null;
                 S.lastSentMenuEditValue = null; S.bpmWasEditing = false;
                 if (target !== cur) {
+                    if (S.playing) {
+                        showMenuInfo('Stop playback', 'to change the', 'track type.');
+                        S.screenDirty = true;
+                        return;
+                    }
                     if (target === PAD_MODE_DRUM) {
                         /* Keys/Cond -> Drums: confirm only if notes would be lost. */
                         let hasData = false;
@@ -7070,7 +7082,7 @@ function _onCC_jog(d1, d2) {
                          * popup is invisible while the menu is open. Show the
                          * menu-visible info dialog instead of confirming/sending. */
                         if (S.conductorTrack >= 0 && S.conductorTrack !== t) {
-                            S.confirmConductExists = S.conductorTrack;
+                            showMenuInfo('Conductor exists', 'on T' + (S.conductorTrack + 1) + '.', 'Route it back first.');
                         } else {
                             /* Keys/Drums -> Conductor: always confirm (keeps notes,
                              * clears FX/ARP/Auto; DSP enforces one Conductor). */
@@ -7369,7 +7381,7 @@ function _onCC_jog(d1, d2) {
             } else if (S.confirmConvertToConduct) {
                 const delta = decodeDelta(d2);
                 if (delta !== 0) { S.confirmConvertToConductSel = S.confirmConvertToConductSel === 0 ? 1 : 0; S.screenDirty = true; }
-            } else if (S.confirmConductExists >= 0) {
+            } else if (S.menuInfoLines.length > 0) {
                 /* Single-button INFO dialog — no selection to toggle; swallow jog turns. */
             } else if (S.confirmExport) {
                 const delta = decodeDelta(d2);
@@ -7720,8 +7732,8 @@ function _onCC_buttons(d1, d2) {
             } else if (S.globalMenuOpen && S.confirmConvertToConduct) {
                 closeConvertConfirm();
                 forceRedraw();
-            } else if (S.globalMenuOpen && S.confirmConductExists >= 0) {
-                S.confirmConductExists = -1;
+            } else if (S.globalMenuOpen && S.menuInfoLines.length > 0) {
+                S.menuInfoLines = [];
                 forceRedraw();
             } else if (S.globalMenuOpen && S.exportDoneDialog) {
                 S.exportDoneDialog = false;
@@ -8030,8 +8042,8 @@ function _onCC_transport(d1, d2) {
         } else if (S.globalMenuOpen && S.confirmConvertToConduct) {
             closeConvertConfirm();
             forceRedraw();
-        } else if (S.globalMenuOpen && S.confirmConductExists >= 0) {
-            S.confirmConductExists = -1;
+        } else if (S.globalMenuOpen && S.menuInfoLines.length > 0) {
+            S.menuInfoLines = [];
             forceRedraw();
         } else if (S.globalMenuOpen && S.exportDoneDialog) {
             S.exportDoneDialog = false;
@@ -8926,7 +8938,7 @@ function _onCC_knobs(d1, d2) {
     if (d1 >= 71 && d1 <= 78) {
         /* Exclusive overlays — knob turns have no visible effect and should be swallowed. */
         if (S.heldStep >= 0) return;
-        if (S.globalMenuOpen || S.tapTempoOpen || S.confirmBake || S.confirmClearSession || S.confirmConvertToDrum || S.confirmConvertToConduct || S.confirmConductExists >= 0 || S.confirmExport || S.exportDoneDialog || S.recordBlockedDialog || S.confirmStateWipe) return;
+        if (S.globalMenuOpen || S.tapTempoOpen || S.confirmBake || S.confirmClearSession || S.confirmConvertToDrum || S.confirmConvertToConduct || S.menuInfoLines.length > 0 || S.confirmExport || S.exportDoneDialog || S.recordBlockedDialog || S.confirmStateWipe) return;
         const knobIdx = d1 - 71;
         S.knobTouched          = knobIdx;
         S.knobTurnedTick[knobIdx] = S.tickCount;
