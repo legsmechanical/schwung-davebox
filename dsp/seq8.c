@@ -455,6 +455,7 @@ typedef struct {
     uint8_t  cond_resp[NUM_TRACKS];   /* Conductor: responder on/off per track; default 1 */
     int8_t   cond_oct [NUM_TRACKS];   /* Conductor: octave offset per track -4..+4; default 0 */
     uint8_t  cond_when[NUM_TRACKS];   /* Conductor: 0=Next, 1=Now; default 0 */
+    uint8_t  cond_lock;               /* Conductor CdLk: 0=Off (gate-hold), 1=Lock (sample-and-hold); default 0 */
     /* Loop-cycle counter for Iter trig. Increments on each loop wrap during
      * playback. Reset to 0 on transport-start edge (not on un-pause). Not
      * persisted — always starts at 0 after load. */
@@ -1419,6 +1420,9 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
                     for (ci = 0; ci < NUM_TRACKS; ci++) fputc(cl->cond_when[ci] ? '1' : '0', fp);
                     fputc('"', fp);
                 }
+                /* CdLk lock: single 0/1, sparse (omit when Off). */
+                if (cl->cond_lock)
+                    fprintf(fp, ",\"t%dc%d_clk\":1", t, c);
             }
             /* Per-clip play-effect params (sparse — only non-default) */
             {
@@ -2308,6 +2312,9 @@ static void seq8_load_state(seq8_instance_t *inst) {
                         }
                     }
                 }
+                /* CdLk lock: single 0/1, default Off. */
+                snprintf(k, sizeof(k), "t%dc%d_clk", t, c);
+                _cl->cond_lock = json_get_int(buf, k, 0) ? 1 : 0;
             }
         }
     }
@@ -4239,7 +4246,13 @@ static void pfx_note_off(seq8_instance_t *inst, seq8_track_t *tr,
     if ((int)(tr - inst->tracks) == inst->conductor_track &&
             tr->pad_mode == PAD_MODE_CONDUCT) {
         if (inst->conductor_held > 0) inst->conductor_held--;
-        if (inst->conductor_held == 0) conductor_clear_offset(inst);
+        /* CdLk Lock (sample-and-hold): keep the offset held through the gap;
+         * only the next conductor note-on overwrites it. Off = gate-hold:
+         * clear at held==0 (original behavior). Mute still snaps to zero
+         * unconditionally (per-tick safety in render_block). */
+        if (inst->conductor_held == 0 &&
+                !tr->clips[tr->active_clip].cond_lock)
+            conductor_clear_offset(inst);
     }
 
     if (!an->active) return;
@@ -4276,7 +4289,13 @@ static void pfx_note_off_imm(seq8_instance_t *inst, seq8_track_t *tr,
     if ((int)(tr - inst->tracks) == inst->conductor_track &&
             tr->pad_mode == PAD_MODE_CONDUCT) {
         if (inst->conductor_held > 0) inst->conductor_held--;
-        if (inst->conductor_held == 0) conductor_clear_offset(inst);
+        /* CdLk Lock (sample-and-hold): keep the offset held through the gap;
+         * only the next conductor note-on overwrites it. Off = gate-hold:
+         * clear at held==0 (original behavior). Mute still snaps to zero
+         * unconditionally (per-tick safety in render_block). */
+        if (inst->conductor_held == 0 &&
+                !tr->clips[tr->active_clip].cond_lock)
+            conductor_clear_offset(inst);
     }
 
     if (!an->active) return;
@@ -6160,6 +6179,7 @@ static void clip_init(clip_t *cl) {
             cl->cond_oct[ti]  = 0;   /* no octave offset */
             cl->cond_when[ti] = 0;   /* 0 = Next */
         }
+        cl->cond_lock = 0;           /* CdLk Off (gate-hold) by default */
     }
     cl->loop_cycle = 0;
     cl->note_count = 0;
@@ -9373,6 +9393,9 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                 for (ci = 0; ci < NUM_TRACKS; ci++) out[ci] = cl->cond_when[ci] ? '1' : '0';
                 out[NUM_TRACKS] = '\0';
                 return NUM_TRACKS;
+            }
+            if (!strcmp(p, "_cond_lock")) {
+                return snprintf(out, out_len, "%d", cl->cond_lock ? 1 : 0);
             }
             if (!strcmp(p, "_cond_oct")) {
                 int ci, pos = 0;

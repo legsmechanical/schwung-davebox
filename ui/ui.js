@@ -4611,6 +4611,15 @@ function drawUI() {
             const rowY = k < 4 ? 12 : 36;
             const hi   = (S.knobTouched === k);
             if (hi) fill_rect(colX, rowY, 24, 24, 1);
+            /* Conduct bank (CLIP bank 0 on a Conductor) K6 = CdLk lock toggle.
+             * Melodic/drum CLIP K6 stays the generic '-' stub (unchanged). */
+            if (bank === 0 && k === 5 &&
+                    S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT) {
+                const _cdc = S.trackActiveClip[S.activeTrack] | 0;
+                print(colX, rowY,      col4('CdLk'), hi ? 0 : 1);
+                print(colX, rowY + 12, col4(S.condLock[_cdc] ? 'Lock' : 'Off'), hi ? 0 : 1);
+                continue;
+            }
             let _lbl = knobs[k].abbrev || '-';
             /* Shift+K1 on DELAY bank (melodic): label + value flip to
              * delay_clock_fb. Drum: K6 already holds clock_fb directly via
@@ -6002,6 +6011,9 @@ function _tickImpl() {
                                 if (!isNaN(_ov)) S.condOct[_c][_k] = _ov;
                             }
                         }
+                        /* CdLk: single 0/1 per clip. */
+                        const _clk = host_module_get_param('t' + _ct + '_c' + _c + '_cond_lock');
+                        S.condLock[_c] = (_clk === '1' || _clk === 1) ? 1 : 0;
                     }
                 } else {
                     S.conductorTrack = -1;
@@ -9735,6 +9747,28 @@ function _onCC_knobs(d1, d2) {
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + t + '_diq', String(nv));
                 }
+                S.screenDirty = true;
+            }
+            return;
+        }
+        /* Conduct bank (CLIP bank 0 on a Conductor) K6 = CdLk lock toggle.
+         * Single-fire per gesture (knobLocked), matching Responder/When.
+         * Off=gate-hold, Lock=sample-and-hold. Pushes per-clip cond_lock to
+         * DSP (N=conductor track, C=active conductor clip). Melodic/drum CLIP
+         * K6 is unassigned and falls through to the generic stub (no-op). */
+        if (S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT && bank === 0 && knobIdx === 5) {
+            if (S.knobLocked[knobIdx]) return;
+            const t   = S.activeTrack;
+            const ac  = S.trackActiveClip[t] | 0;
+            const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
+            if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
+            S.knobAccum[knobIdx]++;
+            if (S.knobAccum[knobIdx] >= 16) {
+                S.knobAccum[knobIdx] = 0;
+                S.knobLocked[knobIdx] = true;
+                S.condLock[ac] = S.condLock[ac] ? 0 : 1;   /* single-fire toggle */
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + t + '_c' + ac + '_cond_lock', String(S.condLock[ac]));
                 S.screenDirty = true;
             }
             return;

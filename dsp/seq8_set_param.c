@@ -2580,6 +2580,11 @@ static void set_param(void *instance, const char *key, const char *val) {
                 inst->state_dirty = 1;
                 return;
             }
+            if (!strcmp(p, "_cond_lock")) {
+                cl->cond_lock = (uint8_t)(my_atoi(val) ? 1 : 0);
+                inst->state_dirty = 1;
+                return;
+            }
             if (!strcmp(p, "_cond_oct")) {
                 int ti = my_atoi(val);
                 const char *vp = val;

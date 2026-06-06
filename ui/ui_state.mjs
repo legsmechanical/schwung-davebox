@@ -383,6 +383,11 @@ export const S = {
     condResp: Array.from({length: 16}, function() { return new Array(8).fill(1); }),  /* responder on/off, default ON */
     condOct:  Array.from({length: 16}, function() { return new Array(8).fill(0); }),  /* octave offset -4..+4 */
     condWhen: Array.from({length: 16}, function() { return new Array(8).fill(0); }),  /* 0=Next, 1=Now */
+    /* CdLk (Conductor Lock) per-clip, indexed [clip]. 0=Off (gate-hold,
+     * transposition snaps to zero in note gaps), 1=Lock (sample-and-hold,
+     * transposition persists through gaps; only changes on next conductor
+     * note). Lives on the Conduct bank (CLIP bank 0) at K6. */
+    condLock: new Array(16).fill(0),
     /* Mirror of the Conductor track's active clip index (which clip's bank
      * values the OLED grid renders). */
     condActiveClip: 0,
