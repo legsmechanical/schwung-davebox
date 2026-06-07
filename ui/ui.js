@@ -7316,8 +7316,9 @@ function _onCC_jog(d1, d2) {
                          * a DIFFERENT track. DSP would refuse, and the action
                          * popup is invisible while the menu is open. Show the
                          * menu-visible info dialog instead of confirming/sending. */
-                        if (S.conductorTrack >= 0 && S.conductorTrack !== t) {
-                            showMenuInfo('Conductor exists', 'on T' + (S.conductorTrack + 1) + '.', 'Route it back first.');
+                        const existingCond = conductorTrackIdx();
+                        if (existingCond >= 0 && existingCond !== t) {
+                            showMenuInfo('Conductor exists', 'on T' + (existingCond + 1) + '.', 'Route it back first.');
                         } else {
                             /* Keys/Drums -> Conductor: always confirm (keeps notes,
                              * clears FX/ARP/Auto; DSP enforces one Conductor). */
