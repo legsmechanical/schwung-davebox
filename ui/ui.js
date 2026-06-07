@@ -5660,6 +5660,14 @@ function _tickImpl() {
     S.tickCount++;
     if (S.bootSplashTicks > 0) S.bootSplashTicks--;
 
+    /* Lifecycle edge: at suspend/teardown (and transient co-run slot switches)
+     * the host can momentarily unbind its param API while an already-queued tick
+     * still fires. Every meaningful tick action reads or writes DSP, so there is
+     * nothing useful to do without the API — bail rather than throw
+     * 'host_module_get_param is not defined' into seq8-jserr.log. */
+    if (typeof host_module_get_param !== 'function' ||
+        typeof host_module_set_param !== 'function') return;
+
     /* Ableton .ablbundle export runs here (tick context) so get_param('bpm')
      * resolves — it returns null on the on_midi path where the menu action
      * fires. host_system_cmd blocks for the python packager; transport is
