@@ -3252,6 +3252,9 @@ function applyConductGridKnob(bank, k, delta) {
     const N = S.activeTrack, c = S.trackActiveClip[N] | 0;
     if (N < 0 || S.trackPadMode[N] !== PAD_MODE_CONDUCT) return;
     if (k === N) return;                          /* own cell inert */
+    /* Drum tracks never respond to the Conductor — Responder/When are non-editable
+     * ("--") for them. (Octave is left editable.) */
+    if (S.trackPadMode[k] === PAD_MODE_DRUM && (bank === BANK_RESPONDER || bank === BANK_WHEN)) return;
     if (bank === BANK_RESPONDER) {
         S.condResp[c][k] = S.condResp[c][k] ? 0 : 1;     /* single-fire toggle */
         if (typeof host_module_set_param === 'function')
@@ -4387,11 +4390,11 @@ function drawUI() {
             (S.knobTouched >= 0 || inTimeout)) {
         const _ch = bankHeaderName(S.activeTrack, bank);
         if (bank === BANK_RESPONDER) {
-            drawConductTrackGrid(_ch, function(k){ return S.condResp[S.trackActiveClip[S.activeTrack] | 0][k] ? 'ON' : 'off'; }, 'Cndct');
+            drawConductTrackGrid(_ch, function(k){ return S.trackPadMode[k] === PAD_MODE_DRUM ? '--' : (S.condResp[S.trackActiveClip[S.activeTrack] | 0][k] ? 'ON' : 'off'); }, 'Cndct');
         } else if (bank === BANK_OCTAVE) {
             drawConductTrackGrid(_ch, function(k){ const o = S.condOct[S.trackActiveClip[S.activeTrack] | 0][k]; return o === 0 ? '--' : (o > 0 ? '+' + o : '' + o); }, 'Cndct');
         } else { /* BANK_WHEN */
-            drawConductTrackGrid(_ch, function(k){ return S.condWhen[S.trackActiveClip[S.activeTrack] | 0][k] ? 'Now' : 'Next'; }, 'Cndct');
+            drawConductTrackGrid(_ch, function(k){ return S.trackPadMode[k] === PAD_MODE_DRUM ? '--' : (S.condWhen[S.trackActiveClip[S.activeTrack] | 0][k] ? 'Now' : 'Next'); }, 'Cndct');
         }
         return;
     }
