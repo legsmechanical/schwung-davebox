@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 # Cut a release: finalize CHANGELOG [Unreleased] → versioned section,
-# bump release.json, build fresh tarball, commit, tag, and push.
+# finalize notes/tech-changelog.md [Unreleased] the same way (untracked,
+# best-effort), bump release.json, build fresh tarball, commit, tag, and push.
 #
 # Usage:  ./scripts/cut_release.sh <version>     (e.g. 0.2.0)
+#
+# Changelog model: write user-facing entries into CHANGELOG.md [Unreleased]
+# and the matching full-technical detail into notes/tech-changelog.md
+# [Unreleased] as work lands. This script finalizes both. CHANGELOG.md is
+# committed; tech-changelog.md is local-only (gitignored) and never blocks a
+# release if missing/empty.
 #
 # Preconditions:
 #   - clean working tree
@@ -39,27 +46,45 @@ if git rev-parse "$TAG" >/dev/null 2>&1; then
     exit 1
 fi
 
-# --- update CHANGELOG.md + release.json + module.json (atomic via Python) ---
+# --- update CHANGELOG.md + tech-changelog + release.json + module.json (atomic via Python) ---
 python3 - "$VERSION" "$DATE" <<'PYEOF'
 import sys, re, json, pathlib
 
 version, date = sys.argv[1], sys.argv[2]
 
-# CHANGELOG: ensure [Unreleased] has content, then rename to versioned and
-# insert a fresh empty [Unreleased] above.
-cl = pathlib.Path("CHANGELOG.md")
-text = cl.read_text()
-m = re.search(r"^## \[Unreleased\]\s*\n(.*?)(?=^## \[)", text, re.MULTILINE | re.DOTALL)
-if not m:
-    sys.exit("CHANGELOG.md: could not locate [Unreleased] section before the next versioned heading")
-body = m.group(1).strip()
-if not body:
-    sys.exit("CHANGELOG.md: [Unreleased] is empty — add entries before cutting a release")
-
 new_blocks = f"## [Unreleased]\n\n## [{version}] — {date}\n"
-text = re.sub(r"^## \[Unreleased\]\s*\n", new_blocks, text, count=1, flags=re.MULTILINE)
-cl.write_text(text)
-print(f"  CHANGELOG.md: [Unreleased] → [{version}] — {date}")
+
+def finalize_unreleased(path, text):
+    """Rename [Unreleased] → [<version>] and insert a fresh empty [Unreleased]
+    above it. Returns the rewritten text. Raises if no [Unreleased] section."""
+    m = re.search(r"^## \[Unreleased\]\s*\n(.*?)(?=^## \[)", text, re.MULTILINE | re.DOTALL)
+    if not m:
+        raise ValueError(f"{path}: could not locate [Unreleased] section before the next versioned heading")
+    if not m.group(1).strip():
+        raise ValueError(f"{path}: [Unreleased] is empty")
+    return re.sub(r"^## \[Unreleased\]\s*\n", new_blocks, text, count=1, flags=re.MULTILINE)
+
+# CHANGELOG (tracked, user-facing): empty/missing [Unreleased] is fatal — a
+# release must have public notes.
+cl = pathlib.Path("CHANGELOG.md")
+try:
+    cl.write_text(finalize_unreleased("CHANGELOG.md", cl.read_text()))
+    print(f"  CHANGELOG.md: [Unreleased] → [{version}] — {date}")
+except ValueError as e:
+    sys.exit(f"{e} — add entries before cutting a release")
+
+# tech-changelog (untracked, technical): finalize the same way, but NEVER block
+# a release on it. It's a local-only file (gitignored via notes/) that may be
+# absent on a fresh clone or in CI — warn and skip rather than abort.
+tc = pathlib.Path("notes/tech-changelog.md")
+if not tc.exists():
+    print("  notes/tech-changelog.md: not found — skipping (technical log not finalized)")
+else:
+    try:
+        tc.write_text(finalize_unreleased("notes/tech-changelog.md", tc.read_text()))
+        print(f"  notes/tech-changelog.md: [Unreleased] → [{version}] — {date}")
+    except ValueError as e:
+        print(f"  WARNING: {e} — technical log NOT finalized for this release")
 
 # release.json: bump version + rewrite download URL
 rj = pathlib.Path("release.json")
