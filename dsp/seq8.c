@@ -6191,6 +6191,15 @@ static void clip_init(clip_t *cl) {
     cl->pp_dir_state = +1;
 }
 
+/* Copy a clip's per-clip Conductor settings (responder mask / octave / when /
+ * lock). These live on clip_t and must travel with clip/scene copy + cut. */
+static void clip_copy_cond_fields(clip_t *dst, const clip_t *src) {
+    memcpy(dst->cond_resp, src->cond_resp, sizeof(dst->cond_resp));
+    memcpy(dst->cond_oct,  src->cond_oct,  sizeof(dst->cond_oct));
+    memcpy(dst->cond_when, src->cond_when, sizeof(dst->cond_when));
+    dst->cond_lock = src->cond_lock;
+}
+
 static void drum_track_init(seq8_track_t *tr, int track_idx) {
     int c, l;
     for (c = 0; c < NUM_CLIPS; c++)
@@ -7925,16 +7934,6 @@ static int conductor_bake_offset(seq8_instance_t *inst, clip_t *cc,
             *deg  = note_abs_degree(inst, gen0) - note_abs_degree(inst, R);
         }
     }
-    /* TEMP DIAG: window + chosen-note + offset per responder note. */
-    {
-        char _m[170];
-        snprintf(_m, sizeof(_m),
-            "    cbo abs=%u win=%u len=%d ls=%u rel=%u lock=%d chosen=%d pitch=%d gen0=%d R=%d deg=%d semi=%d",
-            abs_tick, cond_win, (int)cc->length, cwin_start, rel, (int)cc->cond_lock,
-            _ap, chosen ? (int)chosen->pitch : -1, gen0, R,
-            _ap ? *deg : 0, _ap ? *semi : 0);
-        seq8_ilog(inst, _m);
-    }
     return _ap;
 }
 
@@ -7975,18 +7974,6 @@ static void bake_clip(seq8_instance_t *inst, int t, int c, int loops, int wrap,
             do_cond = 1;
         }
     }
-    /* TEMP DIAG: per-track fold eligibility during an apply-conductor scene bake. */
-    int _dbg_applies = 0, _dbg_total = 0, _dbg_deg = 0, _dbg_semi = 0;
-    if (apply_conductor) {
-        char _bcm[120];
-        snprintf(_bcm, sizeof(_bcm),
-            "  bakeclip t=%d pm=%d resp=%d do_cond=%d condTrk=%d",
-            t, (int)tr->pad_mode,
-            (cond_cl ? (int)cond_cl->cond_resp[t] : -1), do_cond,
-            (int)inst->conductor_track);
-        seq8_ilog(inst, _bcm);
-    }
-
     play_fx_t fx;
     pfx_init_defaults(&fx);
     pfx_apply_params(&fx, &cl->pfx_params);
@@ -8088,10 +8075,8 @@ static void bake_clip(seq8_instance_t *inst, int t, int c, int loops, int wrap,
             if (do_cond) {
                 int cdeg = 0, csemi = 0;
                 uint32_t resp_abs = loop_offset + rel_tick;
-                _dbg_total++;
                 if (conductor_bake_offset(inst, cond_cl, &cond_fx, resp_abs,
                                           &cond_rng, &cdeg, &csemi)) {
-                    _dbg_applies++; _dbg_deg = cdeg; _dbg_semi = csemi;
                     int coct = cond_cl->cond_oct[t];
                     int gj;
                     for (gj = 0; gj < gc; gj++) {
@@ -8190,14 +8175,6 @@ static void bake_clip(seq8_instance_t *inst, int t, int c, int loops, int wrap,
             "  bakeclip t=%d CAPPED effLoops=%d (loops=%d) newLen=%d out=%d/%d",
             t, effectiveLoops, loops, (int)new_length, total_out, out_cap);
         seq8_ilog(inst, _bcap);
-    }
-    /* TEMP DIAG: fold result summary for an apply-conductor scene bake. */
-    if (apply_conductor && do_cond) {
-        char _bsm[100];
-        snprintf(_bsm, sizeof(_bsm),
-            "  bakeclip t=%d applied=%d/%d deg=%d semi=%d",
-            t, _dbg_applies, _dbg_total, _dbg_deg, _dbg_semi);
-        seq8_ilog(inst, _bsm);
     }
 }
 

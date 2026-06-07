@@ -1269,6 +1269,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             memcpy(dst->step_ratchet, src->step_ratchet, SEQ_STEPS);
             dst->active = src->active;
             clip_migrate_to_notes(dst);
+            clip_copy_cond_fields(dst, src);
             inst->tracks[dstT].clip_cc_auto[dstC] = inst->tracks[srcT].clip_cc_auto[srcC];
             inst->tracks[dstT].clip_at_auto[dstC] = inst->tracks[srcT].clip_at_auto[srcC];
             if ((int)inst->tracks[dstT].active_clip == dstC)
@@ -1309,6 +1310,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             memcpy(dst->step_ratchet, src->step_ratchet, SEQ_STEPS);
             dst->active = src->active;
             clip_migrate_to_notes(dst);
+            clip_copy_cond_fields(dst, src);
             inst->tracks[t].clip_cc_auto[dstRow] = inst->tracks[t].clip_cc_auto[srcRow];
             inst->tracks[t].clip_at_auto[dstRow] = inst->tracks[t].clip_at_auto[srcRow];
             if ((int)inst->tracks[t].active_clip == dstRow)
@@ -1399,6 +1401,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             memcpy(dst->step_ratchet, src->step_ratchet, SEQ_STEPS);
             dst->active = src->active;
             clip_migrate_to_notes(dst);
+            clip_copy_cond_fields(dst, src);
             dstTr->clip_cc_auto[dstC] = srcTr->clip_cc_auto[srcC];
             dstTr->clip_at_auto[dstC] = srcTr->clip_at_auto[srcC];
             if ((int)dstTr->active_clip == dstC) pfx_sync_from_clip(dstTr);
@@ -1446,6 +1449,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             memcpy(dst->step_ratchet, src->step_ratchet, SEQ_STEPS);
             dst->active = src->active;
             clip_migrate_to_notes(dst);
+            clip_copy_cond_fields(dst, src);
             tr->clip_cc_auto[dstRow] = tr->clip_cc_auto[srcRow];
             tr->clip_at_auto[dstRow] = tr->clip_at_auto[srcRow];
             if ((int)tr->active_clip == dstRow) pfx_sync_from_clip(tr);
