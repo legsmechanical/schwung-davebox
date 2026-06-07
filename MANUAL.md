@@ -245,6 +245,50 @@ A track is either **Melodic** or **Drum** (set in Track Config). They share the 
 
 **Switching Mode converts notes.** Changing Mode carries sequenced notes across all 16 clips into the new type. Only notes move — effects reset to defaults. Melodic→Drum shows a confirm dialog when the track has notes (drum-specific settings have no melodic equivalent). Empty tracks switch instantly.
 
+A third type, **Conductor**, doesn't play notes of its own — it transposes the *other* melodic tracks in real time. See [Conductor tracks](#conductor-tracks) below.
+
+## Conductor tracks
+
+A **Conductor** track transposes all *playing melodic clips* up or down in real time, non-destructively, driven by the note the Conductor is currently playing. It emits no MIDI itself — its sequencer (and live pad play) only steers the transposition. The clips' written notes are never changed; the shift is live and reversible. **Only one Conductor can exist at a time.**
+
+This lets one track "conduct" a key change or melodic move across your whole arrangement — sequence a chord progression on the Conductor and every responding track follows it.
+
+### Making a track a Conductor
+
+In **Track Config**, the Type menu now has three options: **Keys / Drums / Cond**. The menu is preview-on-scroll: scrolling only shows the candidate type, and **clicking the jog commits it** behind a confirm dialog.
+
+- Converting to/from Conductor **keeps your sequenced notes** (note, duration, iteration, probability across all 16 clips) but **resets effects, ARP, and automation** to defaults.
+- **Blocked during playback** — stop the transport first (an on-screen note says so).
+- Trying to make a *second* Conductor is refused with **"Conductor exists on T_n_"** — convert the existing one back to Keys first.
+- A Conductor **keeps its track color**. Its **Channel and Route are inert** (shown as "-"). **Mute** works (temporarily stops conducting → responders snap back to written pitch); **Solo** is disabled.
+
+### How the transposition works
+
+Zero transposition = the session **root note at octave 4** (the default pad note). Play that and nothing shifts. Play higher and responders shift up; play lower, they shift down — and the Conductor's pad octave scales the move (an octave up on the Conductor = an octave of transposition).
+
+The shift is **scale-aware or chromatic following the global Scale-Aware setting**: scale-aware moves responders by scale *degrees* (staying in key); chromatic moves them by *semitones*.
+
+- **Empty Conductor step** or **Conductor muted** → responders play their written pitch (zero shift).
+- A drum track never responds.
+
+### The five Conductor banks
+
+A Conductor's jog wheel cycles exactly five banks (no FX/ARP/Auto): **Conduct → NoteFX → Responder → Octave → When**. Headers blink a **"C-"** prefix so you always know you're on the Conductor; when idle the banks fall back to the overview screen.
+
+| Bank | What it does |
+|---|---|
+| **Conduct** | Like the melodic CLIP bank (Res, Stch, Shft, Lgto, InQ, Dir, SqFl) plus **CdLk** (K6). **CdLk Off** = gate-hold: the transpose lasts only the Conductor note's gate and snaps to zero in the gaps. **CdLk Lock** = sample-and-hold: the transpose persists through gaps and only changes when the Conductor plays its next note (play the root@oct4 to return to zero). Mute snaps to zero in both modes. |
+| **NoteFX** | Shapes the Conductor's *own* note before the shift is computed: **Octave** (K1), **Offset** (K2), **Random** (K8), and Random mode via jog-click alt-mode + K8 (uniform/gaussian/walk). Octave/Offset are a master shift on all responders; Random jitters the whole transposition per Conductor note. Per Conductor clip. |
+| **Responder** | One cell per track (Tr1…Tr8), tap-toggle **on/off** — on = follows the Conductor, off = ignores it. **Default on.** The Conductor's own cell reads **"Cndc"** (inert); drum tracks show **"--"** (can't respond). Per Conductor clip. |
+| **Octave** | One cell per track, **−4…+4** (center **"--"** = 0). Added on top of the Conductor's shift (scale-aware), applied only while the Conductor is sounding and that track is On in Responder. Conductor/drum cells inert ("--"). Per Conductor clip. |
+| **When** | One cell per track, **Next / Now**. **Next** = a responder latches the new shift at its next note-on (notes already sounding keep their pitch). **Now** = a sounding responder note is cut and retriggered at the new pitch immediately, keeping its original note-off. Mix Next and Now across tracks freely. Per Conductor clip. |
+
+Conductor steps still carry **Iter / Prob** trig conditions like any melodic step.
+
+### Baking, merging, and export
+
+The Conductor can be folded permanently into responder clips at **scene bake** time, or applied non-destructively at **Ableton export** time — both via an "Apply Conductor?" prompt. See [Bake](#bake) and [Export to Ableton Live](#export-to-ableton-live). The Conductor track itself has no bake action and exports as a silent dummy track.
+
 ## Step entry (melodic)
 
 | Action | Result |
