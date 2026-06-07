@@ -206,11 +206,23 @@ ignores the live Conductor, so a baked-then-exported scene is clean either way.)
 
 ### 6. Ableton export
 
-Export ignores the live Conductor entirely: responder clips export at their
-**written** pitch (commit transposition first via "Apply Conductor? → Yes" if
-desired). The Conductor track exports as a **dummy track** placeholder (existing
-Dummy-Drift mechanism in `ui/ui_export.mjs`), preserving the 8-track layout with
-no notes.
+The Conductor track exports as a **dummy track** placeholder (existing Dummy-Drift
+mechanism in `ui/ui_export.mjs`) — empty clips, preserving the 8-track layout.
+
+**Apply-Conductor on export (non-destructive, opt-in).** When the session has a
+Conductor, the export confirm flow offers **"Apply Conductor?"**:
+- **No** (default): responder clips export at their **written** pitch (the live
+  Conductor is ignored).
+- **Yes**: each exported responder clip has the Conductor's transposition folded
+  in **at export time only — the live session is NOT modified** (the export render
+  `render_melodic_clip` already renders to a scratch buffer; the fold reuses
+  `conductor_bake_offset` + the bake's LCM auto-extend so multi-page conductors are
+  fully captured). Only scenes whose **Conductor clip at that index has notes** are
+  folded (others export written pitch); a responder track that's Off in that
+  Conductor clip's Responder bank also exports written pitch. Exposed via a new
+  per-track-prefixed get_param `tN_cC_export_cond` (avoids the dropped-global-key
+  issue; per-track keys reach DSP reliably). No auto-disable needed — nothing in
+  the session changes, so there's no live double-apply.
 
 ### 7. State & persistence
 
