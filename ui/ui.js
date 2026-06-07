@@ -1717,8 +1717,18 @@ function drawClearAutoMenu() {
 /* True when scene-baking at clipIdx should offer "Apply Conductor?":
  * a Conductor exists and its clip at clipIdx has at least one responder On for a
  * non-conductor melodic track (something there is to fold). */
+/* Conductor track index derived from pad_mode — the reliable source. The
+ * S.conductorTrack mirror can be stale/-1 (flaky single-tick load readback), so
+ * anything that must KNOW the conductor (not just "am I viewing it") derives it
+ * here, the same way the banks key off S.trackPadMode. -1 = no conductor. */
+function conductorTrackIdx() {
+    let t;
+    for (t = 0; t < 8; t++) if (S.trackPadMode[t] === PAD_MODE_CONDUCT) return t;
+    return -1;
+}
+
 function sceneBakeHasConductor(clipIdx) {
-    const ct = S.conductorTrack | 0;
+    const ct = conductorTrackIdx();
     if (ct < 0) return false;
     const mask = S.condResp[clipIdx | 0];
     if (!mask) return false;
@@ -1746,8 +1756,8 @@ function commitSceneBake(clipIdx, loops, wrap, apply) {
     /* DSP cleared the conductor clip's responder flags for the baked tracks.
      * Mirror that locally so the Responder bank UI reflects the auto-disable
      * without waiting for the next full per-clip re-read. */
-    if (apply && S.conductorTrack >= 0) {
-        const ct = S.conductorTrack | 0;
+    const ct = conductorTrackIdx();
+    if (apply && ct >= 0) {
         const mask = S.condResp[clipIdx | 0];
         if (mask) {
             for (let t = 0; t < 8; t++) {
@@ -3770,7 +3780,7 @@ function drawUI() {
         clear_screen();
         print(4, 8,  'BAKE SCENE',         1);
         print(4, 22, 'Tap row or scene step', 1);
-        print(4, 34, 'to pick destination',  1);
+        print(4, 34, 'to pick the scene',    1);
         print(4, 50, 'Any other btn cancels', 1);
         return;
     }
