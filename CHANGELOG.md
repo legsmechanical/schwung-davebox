@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com). Add entries to
 the section into a versioned heading at release time.
 
 ## [Unreleased]
+
+## [1.0b4] — 2026-06-07
 ### Features
 - **Key/Scale changes transpose your clips.** Editing the global Key or Scale now moves all melodic clips with it, with a live preview as you turn the knob and a "Transpose clips?" confirm before it commits. Drum tracks are untouched.
 - **Co-run surface polish.** Cleaner pad and step-button visuals in both co-run modes, with Step 3 as a consistent blinking exit and the routed slot/track highlighted on the side buttons.
