@@ -7910,20 +7910,35 @@ static int conductor_bake_offset(seq8_instance_t *inst, clip_t *cc,
             if (step_trig_pass(cc, sidx, condCycle, cond_rng)) { chosen = nn; break; }
         }
     }
-    if (!chosen) return 0;
-
-    /* Conductor effective note = post-NOTE-FX gen[0]. Conductor is scale-aware
-     * (offset math uses scale degrees) when global Scale-Aware is on. */
-    int sa = (int)inst->scale_aware;
-    uint8_t tmp[MAX_GEN_NOTES];
-    int gc = pfx_build_gen_notes(inst, sa, cond_fx, (int)chosen->pitch, tmp);
-    if (gc < 1) return 0;
-    int gen0 = (int)tmp[0];
     int R = eff_pad_key(inst) + 60;
-    *semi = gen0 - R;
-    *deg  = note_abs_degree(inst, gen0) - note_abs_degree(inst, R);
-    return 1;
+    int gen0 = 0, _ap = chosen ? 1 : 0;
+    if (chosen) {
+        /* Conductor effective note = post-NOTE-FX gen[0]. Conductor is scale-aware
+         * (offset math uses scale degrees) when global Scale-Aware is on. */
+        int sa = (int)inst->scale_aware;
+        uint8_t tmp[MAX_GEN_NOTES];
+        int gc = pfx_build_gen_notes(inst, sa, cond_fx, (int)chosen->pitch, tmp);
+        if (gc < 1) { _ap = 0; }
+        else {
+            gen0  = (int)tmp[0];
+            *semi = gen0 - R;
+            *deg  = note_abs_degree(inst, gen0) - note_abs_degree(inst, R);
+        }
+    }
+    /* TEMP DIAG: window + chosen-note + offset per responder note. */
+    {
+        char _m[170];
+        snprintf(_m, sizeof(_m),
+            "    cbo abs=%u win=%u len=%d ls=%u rel=%u lock=%d chosen=%d pitch=%d gen0=%d R=%d deg=%d semi=%d",
+            abs_tick, cond_win, (int)cc->length, cwin_start, rel, (int)cc->cond_lock,
+            _ap, chosen ? (int)chosen->pitch : -1, gen0, R,
+            _ap ? *deg : 0, _ap ? *semi : 0);
+        seq8_ilog(inst, _m);
+    }
+    return _ap;
 }
+
+static uint32_t u32_gcd(uint32_t a, uint32_t b); /* fwd decl; defined below */
 
 static void bake_clip(seq8_instance_t *inst, int t, int c, int loops, int wrap,
                       int apply_conductor) {
@@ -7960,6 +7975,17 @@ static void bake_clip(seq8_instance_t *inst, int t, int c, int loops, int wrap,
             do_cond = 1;
         }
     }
+    /* TEMP DIAG: per-track fold eligibility during an apply-conductor scene bake. */
+    int _dbg_applies = 0, _dbg_total = 0, _dbg_deg = 0, _dbg_semi = 0;
+    if (apply_conductor) {
+        char _bcm[120];
+        snprintf(_bcm, sizeof(_bcm),
+            "  bakeclip t=%d pm=%d resp=%d do_cond=%d condTrk=%d",
+            t, (int)tr->pad_mode,
+            (cond_cl ? (int)cond_cl->cond_resp[t] : -1), do_cond,
+            (int)inst->conductor_track);
+        seq8_ilog(inst, _bcm);
+    }
 
     play_fx_t fx;
     pfx_init_defaults(&fx);
@@ -7989,17 +8015,46 @@ static void bake_clip(seq8_instance_t *inst, int t, int c, int loops, int wrap,
     uint16_t cycle_steps = playback_cycle_steps(pdir, paud, length);
     uint32_t cycle_ticks = (uint32_t)cycle_steps * tps;
 
-    uint16_t new_length  = (uint16_t)clamp_i((int)cycle_steps * loops, 1, 256);
+    /* Polymeter LCM extension for Apply-Conductor scene bakes:
+     * In live playback a short responder loops repeatedly under a longer
+     * conductor (e.g. 1-page responder, 4-page conductor), each pass
+     * transposed by the conductor offset at that absolute tick. A single
+     * bake pass (cycle_ticks long) only overlaps the conductor's first
+     * stretch, so the later conductor pages never get captured. To freeze
+     * the full polymeter we must extend the baked responder to the LCM of
+     * the two window lengths (in ticks). respWin = the responder's per-loop
+     * window (cycle_ticks); condWin = the conductor clip's window. The
+     * conductor offset path (conductor_bake_offset) already wraps each note
+     * by abs_tick % condWin, so a baked span of LCM length sweeps every
+     * conductor page across the extra repetitions.
+     * Only applies when do_cond (apply_conductor + responder + conductor
+     * present); otherwise effectiveLoops == loops and behavior is unchanged. */
+    int effectiveLoops = loops;
+    if (do_cond && cond_cl) {
+        uint32_t respWinTicks = cycle_ticks;
+        uint16_t cond_tps = cond_cl->ticks_per_step ? cond_cl->ticks_per_step
+                                                     : (uint16_t)TICKS_PER_STEP;
+        uint32_t condWinTicks = (uint32_t)cond_cl->length * cond_tps;
+        if (respWinTicks > 0 && condWinTicks > respWinTicks) {
+            uint32_t g = u32_gcd(respWinTicks, condWinTicks);
+            uint32_t repeats = g ? (condWinTicks / g) : 1; /* lcm/respWin */
+            if (repeats < 1) repeats = 1;
+            effectiveLoops = loops * (int)repeats;
+        }
+    }
+
+    uint16_t new_length  = (uint16_t)clamp_i((int)cycle_steps * effectiveLoops, 1, 256);
     uint32_t total_ticks = (uint32_t)new_length * tps;
 
     static bake_note_t bake_a[BAKE_BUF];
     static bake_note_t bake_b[BAKE_BUF];
     static bake_note_t bake_out[BAKE_BUF * 4]; /* accumulates all cycles */
     int total_out = 0;
-    int out_cap   = BAKE_BUF * loops;
+    int out_cap   = BAKE_BUF * 4; /* bake_out capacity; effectiveLoops may exceed `loops` */
+    int _bake_capped = 0;
 
     int loop;
-    for (loop = 0; loop < loops; loop++) {
+    for (loop = 0; loop < effectiveLoops; loop++) {
         uint32_t loop_offset = (uint32_t)loop * cycle_ticks;
         int a_count = 0;
         fx.note_random_walk = 0; /* fresh walk each cycle so loops produce independent pitch sequences */
@@ -8033,8 +8088,10 @@ static void bake_clip(seq8_instance_t *inst, int t, int c, int loops, int wrap,
             if (do_cond) {
                 int cdeg = 0, csemi = 0;
                 uint32_t resp_abs = loop_offset + rel_tick;
+                _dbg_total++;
                 if (conductor_bake_offset(inst, cond_cl, &cond_fx, resp_abs,
                                           &cond_rng, &cdeg, &csemi)) {
+                    _dbg_applies++; _dbg_deg = cdeg; _dbg_semi = csemi;
                     int coct = cond_cl->cond_oct[t];
                     int gj;
                     for (gj = 0; gj < gc; gj++) {
@@ -8082,8 +8139,8 @@ static void bake_clip(seq8_instance_t *inst, int t, int c, int loops, int wrap,
             int out_count;
             if (BAKE_STAGES[si] == BAKE_STAGE_MIDI_DLY)
                 out_count = bake_stage_midi_dly(inst, scale_aware, &fx, cycle_ticks,
-                                                (wrap && loop == loops - 1) ? UINT32_MAX
-                                                    : (uint32_t)(loops - loop) * cycle_ticks,
+                                                (wrap && loop == effectiveLoops - 1) ? UINT32_MAX
+                                                    : (uint32_t)(effectiveLoops - loop) * cycle_ticks,
                                                 in_buf, in_count, out_buf, BAKE_BUF);
             else
                 out_count = bake_stage_arp_out(inst, &fx, cycle_ticks,
@@ -8093,7 +8150,9 @@ static void bake_clip(seq8_instance_t *inst, int t, int c, int loops, int wrap,
         }
 
         /* Accumulate this cycle with loop_offset; wrap overflow back to start if requested */
+        if (in_count > 0 && total_out >= out_cap) _bake_capped = 1;
         for (ri = 0; ri < in_count && total_out < out_cap; ri++) {
+            if (total_out + 1 >= out_cap) _bake_capped = 1;
             uint32_t tick = in_buf[ri].tick + loop_offset;
             if (tick >= total_ticks) {
                 if (!wrap) continue;
@@ -8121,6 +8180,25 @@ static void bake_clip(seq8_instance_t *inst, int t, int c, int loops, int wrap,
     if (c == tr->active_clip)
         pfx_sync_from_clip(tr);
     inst->state_dirty = 1;
+    /* Conductor-LCM extension may push the baked span past the bake_out
+     * buffer cap (or the 256-step clip length clamp). The existing guards
+     * truncate safely; surface it so the silent cap is visible. */
+    if (do_cond && (_bake_capped ||
+            (int)cycle_steps * effectiveLoops > new_length)) {
+        char _bcap[120];
+        snprintf(_bcap, sizeof(_bcap),
+            "  bakeclip t=%d CAPPED effLoops=%d (loops=%d) newLen=%d out=%d/%d",
+            t, effectiveLoops, loops, (int)new_length, total_out, out_cap);
+        seq8_ilog(inst, _bcap);
+    }
+    /* TEMP DIAG: fold result summary for an apply-conductor scene bake. */
+    if (apply_conductor && do_cond) {
+        char _bsm[100];
+        snprintf(_bsm, sizeof(_bsm),
+            "  bakeclip t=%d applied=%d/%d deg=%d semi=%d",
+            t, _dbg_applies, _dbg_total, _dbg_deg, _dbg_semi);
+        seq8_ilog(inst, _bsm);
+    }
 }
 
 /* Per-lane drum bake: applies vel/gate/timing/arp effects per lane.
