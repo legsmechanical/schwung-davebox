@@ -4119,9 +4119,15 @@ static void pfx_note_on(seq8_instance_t *inst, seq8_track_t *tr,
      * Captured at note-on; the note keeps this pitch for its whole life even if
      * the conductor offset changes later (off matches on → no stuck notes).
      * Non-destructive: clip note data untouched; only transient gen[] shifts.
-     * Deferred follow-up: SEQ ARP (arp_fire_step → pfx_send with arp_emitting)
-     * and the global looper bypass pfx_note_on, so their output does not yet
-     * follow the conductor. */
+     * SEQ ARP and the global looper follow the conductor automatically and
+     * correctly: this transpose runs BEFORE the gen[] notes are handed to
+     * pfx_send, which is exactly where SEQ ARP captures into held_pitch[] and
+     * where the looper records (post-arp emit). So both see already-transposed
+     * pitches. The shift is sampled ONCE here, at the moment the note enters
+     * the chain, and frozen for that note's life — a held arp note or a looped
+     * recording does NOT dynamically re-pitch as the conductor moves later.
+     * That freeze is intentional (matches on/off pairing; a loop is a frozen
+     * recording), not a gap. */
     conductor_transpose_gen(inst, t_idx, gen, gc);
 
     /* Retrigger guard: if this note is already active, clean up first. */
