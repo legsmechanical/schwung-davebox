@@ -98,6 +98,18 @@ function bankHeader(bankIdx) {
 }
 
 function drawBankHeading(name, showTrack) {
+    /* Conductor banks blink: invert the header on the off blink-phase (phase
+     * driven in the tick loop, like the alt-arrow flash) as a persistent
+     * "you're on a Conductor bank" cue. */
+    if (S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT && S._altBlinkPhase === 1) {
+        fill_rect(0, 0, 128, 9, 0);
+        fill_rect(0, 8, 128, 1, 1);
+        print(4, 1, name, 1);
+        if (showTrack !== false) print(106, 1, 'Tr' + (S.activeTrack + 1), 1);
+        if (!S.sessionView && bankHasAltParams(S.activeTrack, S.activeBank))
+            drawAltArrow(98, false, altIndicatorActive(S.activeTrack, S.activeBank));
+        return;
+    }
     fill_rect(0, 0, 128, 9, 1);
     print(4, 1, name, 0);
     /* Right-aligned active-track indicator. Width = "Tr" + 1 digit = 18px @ 6px/char.
@@ -3203,7 +3215,9 @@ function applyExtMidiRemap() {
  * relabels bank 0 (CLIP) to "CONDUCT" — the CLIP bank is reused as the Conduct
  * bank. Does NOT rename BANKS[0] globally (other track types keep "CLIP"). */
 function bankHeaderName(t, bank) {
-    if (bank === 0 && S.trackPadMode[t] === PAD_MODE_CONDUCT) return 'CONDUCT';
+    /* Conductor banks: "C-" prefix on the bank name (bank 0/CLIP shown as CONDUCT). */
+    if (S.trackPadMode[t] === PAD_MODE_CONDUCT)
+        return 'C-' + (bank === 0 ? 'CONDUCT' : BANKS[bank].name);
     return BANKS[bank].name;
 }
 
@@ -4369,17 +4383,19 @@ function drawUI() {
         return;
     }
 
-    /* Conductor banks (Responder/Octave/When): per-track 2x4 grid, always shown
-     * (touched or idle) when the active track is the Conductor. Gated on
-     * PAD_MODE_CONDUCT so it never affects melodic/drum tracks. */
+    /* Conductor banks (Responder/Octave/When): per-track 2x4 grid, shown on knob
+     * touch / bank-select timeout; idle falls through to the resting overview like
+     * the Conduct bank. Gated on PAD_MODE_CONDUCT so it never affects melodic/drum. */
     if (S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT &&
-            (bank === BANK_RESPONDER || bank === BANK_OCTAVE || bank === BANK_WHEN)) {
+            (bank === BANK_RESPONDER || bank === BANK_OCTAVE || bank === BANK_WHEN) &&
+            (S.knobTouched >= 0 || inTimeout)) {
+        const _ch = bankHeaderName(S.activeTrack, bank);
         if (bank === BANK_RESPONDER) {
-            drawConductTrackGrid('RESPONDER', function(k){ return S.condResp[S.trackActiveClip[S.activeTrack] | 0][k] ? 'ON' : 'off'; }, 'Cndct');
+            drawConductTrackGrid(_ch, function(k){ return S.condResp[S.trackActiveClip[S.activeTrack] | 0][k] ? 'ON' : 'off'; }, 'Cndct');
         } else if (bank === BANK_OCTAVE) {
-            drawConductTrackGrid('OCTAVE', function(k){ const o = S.condOct[S.trackActiveClip[S.activeTrack] | 0][k]; return o === 0 ? '--' : (o > 0 ? '+' + o : '' + o); }, 'Cndct');
+            drawConductTrackGrid(_ch, function(k){ const o = S.condOct[S.trackActiveClip[S.activeTrack] | 0][k]; return o === 0 ? '--' : (o > 0 ? '+' + o : '' + o); }, 'Cndct');
         } else { /* BANK_WHEN */
-            drawConductTrackGrid('WHEN', function(k){ return S.condWhen[S.trackActiveClip[S.activeTrack] | 0][k] ? 'Now' : 'Next'; }, 'Cndct');
+            drawConductTrackGrid(_ch, function(k){ return S.condWhen[S.trackActiveClip[S.activeTrack] | 0][k] ? 'Now' : 'Next'; }, 'Cndct');
         }
         return;
     }
@@ -6942,7 +6958,8 @@ function _tickImpl() {
     /* Drive the alt-mode arrow flash: repaint on each blink-phase edge so the
      * down-arrow animates even when the UI is otherwise idle. Covers both altMode
      * (most alt banks) and stepIntervalMode (Arp Steps overlay on melodic 4/5). */
-    if (altIndicatorActive(S.activeTrack, S.activeBank)) {
+    if (altIndicatorActive(S.activeTrack, S.activeBank) ||
+            (!S.sessionView && S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT)) {
         const _ph = Math.floor(S.tickCount / 24) % 2;
         if (_ph !== S._altBlinkPhase) { S._altBlinkPhase = _ph; S.screenDirty = true; }
     }
