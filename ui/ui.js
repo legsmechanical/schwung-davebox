@@ -98,20 +98,16 @@ function bankHeader(bankIdx) {
 }
 
 function drawBankHeading(name, showTrack) {
-    /* Conductor banks blink: invert the header on the off blink-phase (phase
-     * driven in the tick loop, like the alt-arrow flash) as a persistent
-     * "you're on a Conductor bank" cue. */
-    if (S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT && S._altBlinkPhase === 1) {
-        fill_rect(0, 0, 128, 9, 0);
-        fill_rect(0, 8, 128, 1, 1);
-        print(4, 1, name, 1);
-        if (showTrack !== false) print(106, 1, 'Tr' + (S.activeTrack + 1), 1);
-        if (!S.sessionView && bankHasAltParams(S.activeTrack, S.activeBank))
-            drawAltArrow(98, false, altIndicatorActive(S.activeTrack, S.activeBank));
-        return;
-    }
     fill_rect(0, 0, 128, 9, 1);
-    print(4, 1, name, 0);
+    /* Conductor banks: blink ONLY the "C-" prefix (phase driven in the tick loop,
+     * like the alt-arrow flash); the bank name stays steady. */
+    if (S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT &&
+            name.charAt(0) === 'C' && name.charAt(1) === '-') {
+        if (S._altBlinkPhase !== 1) print(4, 1, 'C-', 0);   /* prefix blinks */
+        print(16, 1, name.slice(2), 0);                     /* bank name steady (after "C-") */
+    } else {
+        print(4, 1, name, 0);
+    }
     /* Right-aligned active-track indicator. Width = "Tr" + 1 digit = 18px @ 6px/char.
      * Placed at x=106 leaves a 4px right margin. Suppressed on the Track View
      * resting/overview state (tracks-in-a-row already names the active track via
