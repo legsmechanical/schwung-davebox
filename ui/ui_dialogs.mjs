@@ -222,7 +222,7 @@ export function drawGlobalMenu() {
     if (S.confirmConvertToDrum){ drawConvertToDrumConfirm(); return; }
     if (S.confirmConvertToConduct){ drawConvertToConductConfirm(); return; }
     if (S.menuInfoLines.length > 0){ drawMenuInfo(); return; }
-    if (S.confirmExport)       { drawExportConfirm();        return; }
+    if (S.confirmExport || S.confirmExportCondPhase) { drawExportConfirm(); return; }
     clear_screen();
     const _inTrackSection = S.globalMenuState.selectedIndex < 5;
     const _hTitle = _inTrackSection ? 'Track ' + (S.activeTrack + 1) : 'Global';
