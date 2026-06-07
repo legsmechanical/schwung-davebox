@@ -916,6 +916,8 @@ The bundle lands at `/data/UserData/schwung/davebox-exports/<set name>-<date>.ab
 
 **Notes are baked** — each clip exports "what you hear" with effects rendered. Drum clips flatten per-lane polymeters to their least common multiple. Randomized clips export 8 cycles of variations. Delay echoes wrap for seamless loops.
 
+**Apply Conductor?** — if the session has a Conductor, the export confirm adds an **Apply Conductor? — YES / NO / CANCEL** step. **YES** folds the Conductor's transposition into each exported responder clip (only where that scene's Conductor clip has notes and the track responds), using the same chain as scene bake — gate-hold vs CdLk Lock, the Conductor clip's Iter/Prob trig conditions, NOTE FX, and per-track Octave — plus polymeter auto-extend so multi-page Conductors are fully captured. **NO** (default) exports the written pitches. **CANCEL** aborts the export. This is non-destructive — your live session is never changed. The Conductor track itself exports as a silent dummy track named "Conductor" (empty clips), preserving the 8-track layout.
+
 The bundle is self-contained — samples are included. Requires Live 12.1+ for Move Drum Racks. Export is one-way.
 
 ---

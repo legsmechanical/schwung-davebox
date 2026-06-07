@@ -151,6 +151,26 @@ function drawMenuInfo() {
 function drawExportConfirm() {
     clear_screen();
     drawMenuHeader('EXPORT');
+    if (S.confirmExportCondPhase) {
+        function _ebtn(x, y, w, h, sel, label, labelOff) {
+            if (sel) {
+                fill_rect(x, y, w, h, 1);
+                print(x + labelOff, y + 3, label, 0);
+            } else {
+                fill_rect(x, y, w, 1, 1);
+                fill_rect(x, y + h - 1, w, 1, 1);
+                fill_rect(x, y, 1, h, 1);
+                fill_rect(x + w - 1, y, 1, h, 1);
+                print(x + labelOff, y + 3, label, 1);
+            }
+        }
+        print(4, 22, 'Apply Conductor?', 1);
+        const bY = 47, bW = 36, mH = 11;
+        _ebtn(4,  bY, bW, mH, S.confirmExportCondSel === 0, 'YES',    9);
+        _ebtn(45, bY, bW, mH, S.confirmExportCondSel === 1, 'NO',    14);
+        _ebtn(86, bY, bW, mH, S.confirmExportCondSel === 2, 'CANCEL', 1);
+        return;
+    }
     print(4, 16, 'Export this set as', 1);
     print(4, 25, 'an Ableton bundle?', 1);
     print(4, 34, '(transport stopped)', 1);

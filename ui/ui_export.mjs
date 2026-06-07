@@ -19,7 +19,7 @@
 
 import { S } from '/data/UserData/schwung/modules/tools/davebox/ui_state.mjs';
 import { showActionPopup } from '/data/UserData/schwung/modules/tools/davebox/ui_persistence.mjs';
-import { NUM_TRACKS, NUM_CLIPS, ACTION_POPUP_TICKS } from '/data/UserData/schwung/modules/tools/davebox/ui_constants.mjs';
+import { NUM_TRACKS, NUM_CLIPS, ACTION_POPUP_TICKS, PAD_MODE_CONDUCT } from '/data/UserData/schwung/modules/tools/davebox/ui_constants.mjs';
 
 const EXPORT_MODULE_DIR = '/data/UserData/schwung/modules/tools/davebox';
 const EXPORT_OUT_DIR    = '/data/UserData/schwung/davebox-exports';
@@ -194,6 +194,11 @@ function resolveTrack(t, ctx) {
         };
     }
 
+    /* Conductor track: silent placeholder, named "Conductor". */
+    if (S.trackPadMode && S.trackPadMode[t] === PAD_MODE_CONDUCT) {
+        return dummy('Conductor', defaultColor);
+    }
+
     if (route === ROUTE_MOVE) {
         const mt = ctx.moveMap[ch - 1];
         if (mt && Array.isArray(mt.devices) && mt.devices.length >= 1 && mt.devices[0] && mt.devices[0].kind) {
@@ -287,7 +292,14 @@ function legalizeNotes(notes) {
 function buildClip(t, c, isDrum) {
     if (typeof host_module_get_param !== 'function' || typeof host_read_file !== 'function')
         return null;
-    const key = 't' + t + '_c' + c + (isDrum ? '_export_drum' : '_export');
+    /* Apply-Conductor variant: for melodic responder tracks (not drum, not the
+     * Conductor track itself) when the user opted in. DSP folds per-scene only
+     * where the conductor clip has notes + the responder is on; otherwise it
+     * renders written pitch — so calling _export_cond for every responder clip
+     * is safe. */
+    const useCond = S.exportApplyConductor && !isDrum && t !== conductorTrackIdx();
+    const key = 't' + t + '_c' + c +
+        (isDrum ? '_export_drum' : (useCond ? '_export_cond' : '_export'));
     const hdr = host_module_get_param(key);
     if (!hdr) return null;
     const parts = hdr.split(' ');
@@ -343,11 +355,14 @@ function buildTrack(t, ctx) {
     const r = resolveTrack(t, ctx);
     /* Melodic tracks bake clip notes via _export; drum tracks flatten their
      * polymetric lanes via _export_drum. DSP is authoritative — empty clips
-     * return count 0 → empty slot. */
-    const isDrum = !!(S.trackPadMode && S.trackPadMode[t] !== 0);
+     * return count 0 → empty slot. The Conductor track emits no MIDI of its
+     * own → exported as a dummy with empty clip slots (preserving the 8-track
+     * layout); its own clips are never exported as notes. */
+    const isConductor = (S.trackPadMode && S.trackPadMode[t] === PAD_MODE_CONDUCT);
+    const isDrum = !isConductor && !!(S.trackPadMode && S.trackPadMode[t] !== 0);
     const clipSlots = [];
     for (let i = 0; i < EXPORT_SCENES; i++) {
-        const clip = buildClip(t, i, isDrum);
+        const clip = isConductor ? null : buildClip(t, i, isDrum);
         clipSlots.push({ hasStop: true, clip: clip });
     }
     return {
@@ -432,7 +447,8 @@ function requestExport() {
 }
 
 /* Confirm-dialog "Yes" commit (MIDI-handler context). Re-checks transport in
- * case it started while the dialog was open, then arms the deferred export. */
+ * case it started while the dialog was open. If a Conductor exists, advance to
+ * the "Apply Conductor?" stage instead of arming the export; otherwise arm. */
 function confirmExportStart() {
     S.confirmExport = false;
     if (S.playing) {
@@ -440,9 +456,40 @@ function confirmExportStart() {
         showStopTransportNotice();
         return;
     }
-    S.pendingExport  = true;
-    S.globalMenuOpen = false;
+    if (conductorTrackIdx() >= 0) {
+        S.confirmExportCondPhase = true;
+        S.confirmExportCondSel   = 1;   /* default NO */
+        S.screenDirty            = true;
+        return;
+    }
+    S.exportApplyConductor = false;
+    armExport();
+}
+
+/* Arm the deferred export (drained in tick()). Caller has already resolved
+ * S.exportApplyConductor and confirmed transport is stopped. */
+function armExport() {
+    S.pendingExport          = true;
+    S.confirmExportCondPhase = false;
+    S.globalMenuOpen         = false;
     showActionPopup('EXPORTING', '...');
+}
+
+/* "Apply Conductor?" stage commit (jog click). sel: 0=YES, 1=NO, 2=CANCEL. */
+function confirmExportCondClick() {
+    if (S.confirmExportCondSel === 2) {       /* CANCEL: abort the whole export */
+        S.confirmExportCondPhase = false;
+        S.screenDirty            = true;
+        return;
+    }
+    if (S.playing) {                          /* transport started while dialog open */
+        S.confirmExportCondPhase = false;
+        S.globalMenuOpen         = false;
+        showStopTransportNotice();
+        return;
+    }
+    S.exportApplyConductor = (S.confirmExportCondSel === 0);
+    armExport();
 }
 
 /* tick() drain. Two-phase so the "EXPORTING…" popup renders BEFORE the blocking

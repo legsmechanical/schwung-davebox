@@ -7740,9 +7740,15 @@ static uint32_t bake_apply_quantize(uint32_t tick, uint16_t tps, uint16_t length
  * cycles (so randomized clips give a DISTINCT pass per cycle) while the per-pass
  * walk resets. *out_total_ticks = loops*L (content extent), *out_cycle_ticks = L
  * (one cycle — the default loop brace). */
+static uint32_t u32_gcd(uint32_t a, uint32_t b); /* fwd decl; defined below */
+static int conductor_bake_offset(seq8_instance_t *inst, clip_t *cc,
+                                 play_fx_t *cond_fx, uint32_t abs_tick,
+                                 uint32_t *cond_rng, int *deg, int *semi); /* fwd decl */
+
 static int render_melodic_clip(seq8_instance_t *inst, int t, int c, int loops,
                                int wrap_from, bake_note_t *out, int out_cap,
-                               uint32_t *out_total_ticks, uint32_t *out_cycle_ticks) {
+                               uint32_t *out_total_ticks, uint32_t *out_cycle_ticks,
+                               int apply_conductor) {
     seq8_track_t *tr = &inst->tracks[t];
     clip_t *cl;
     int ni, si, ri;
@@ -7773,15 +7779,56 @@ static int render_melodic_clip(seq8_instance_t *inst, int t, int c, int loops,
     uint16_t cycle_steps = playback_cycle_steps(pdir, paud, length);
     uint32_t cycle_ticks = (uint32_t)cycle_steps * tps;
     if (out_cycle_ticks) *out_cycle_ticks = cycle_ticks;
-    if (out_total_ticks) *out_total_ticks = cycle_ticks * (uint32_t)loops;
     if (cycle_ticks == 0) return 0;
+
+    /* Apply-Conductor on export (non-destructive): fold the Conductor's
+     * transposition into this responder clip against the Conductor's clip at
+     * the SAME scene index. Mirrors bake_clip's SCENE-bake conductor path, but
+     * writes only the scratch out[] buffer (the session clip is never touched).
+     * Gated on: requested, a Conductor exists, this isn't the Conductor track,
+     * this track responds in the Conductor's clip C, and that conductor clip is
+     * non-empty. cond_fx built once (NOTE FX random re-rolls per occurrence). */
+    int do_cond = 0;
+    clip_t *cond_cl = NULL;
+    play_fx_t cond_fx;
+    uint32_t cond_rng = 0xC04D1234u;
+    if (apply_conductor && inst->conductor_track >= 0 &&
+        t != inst->conductor_track) {
+        cond_cl = &inst->tracks[inst->conductor_track].clips[c];
+        if (cond_cl->note_count > 0 && cond_cl->cond_resp[t]) {
+            pfx_init_defaults(&cond_fx);
+            pfx_apply_params(&cond_fx, &cond_cl->pfx_params);
+            cond_fx.track_idx = (uint8_t)inst->conductor_track;
+            cond_fx.route     = ROUTE_SCHWUNG;
+            cond_fx.rng       = 0xC04DBEEFu;
+            do_cond = 1;
+        }
+    }
+
+    /* Polymeter LCM extension (matches bake_clip): a short responder under a
+     * longer conductor must be extended to LCM(respWin, condWin) so every
+     * conductor page is captured. Only when do_cond; otherwise loops unchanged. */
+    int effectiveLoops = loops;
+    if (do_cond && cond_cl) {
+        uint32_t respWinTicks = cycle_ticks;
+        uint16_t cond_tps = cond_cl->ticks_per_step ? cond_cl->ticks_per_step
+                                                     : (uint16_t)TICKS_PER_STEP;
+        uint32_t condWinTicks = (uint32_t)cond_cl->length * cond_tps;
+        if (respWinTicks > 0 && condWinTicks > respWinTicks) {
+            uint32_t g = u32_gcd(respWinTicks, condWinTicks);
+            uint32_t repeats = g ? (condWinTicks / g) : 1; /* lcm/respWin */
+            if (repeats < 1) repeats = 1;
+            effectiveLoops = loops * (int)repeats;
+        }
+    }
+    if (out_total_ticks) *out_total_ticks = cycle_ticks * (uint32_t)effectiveLoops;
 
     static bake_note_t rmc_a[BAKE_BUF];
     static bake_note_t rmc_b[BAKE_BUF];
     int total_out = 0;
 
     int loop;
-    for (loop = 0; loop < loops; loop++) {
+    for (loop = 0; loop < effectiveLoops; loop++) {
         int wrapped = (loop >= wrap_from);
         uint32_t loop_offset = (uint32_t)loop * cycle_ticks;
         int a_count = 0;
@@ -7801,6 +7848,30 @@ static int render_melodic_clip(seq8_instance_t *inst, int t, int c, int loops,
             if (vel < 1) vel = 1; if (vel > 127) vel = 127;
             uint8_t gen[MAX_GEN_NOTES];
             int gc = pfx_build_gen_notes(inst, scale_aware, &fx, (int)nn->pitch, gen);
+
+            /* Apply Conductor (export, Next-style): each rendered responder note
+             * takes the conductor offset at its OWN onset (abs tick across the
+             * effective loops). Mirrors bake_clip's SCENE-bake fold. Scratch
+             * buffer only — never mutates the session clip. */
+            if (do_cond) {
+                int cdeg = 0, csemi = 0;
+                uint32_t resp_abs = loop_offset + rel_tick;
+                if (conductor_bake_offset(inst, cond_cl, &cond_fx, resp_abs,
+                                          &cond_rng, &cdeg, &csemi)) {
+                    int coct = cond_cl->cond_oct[t];
+                    int gj;
+                    for (gj = 0; gj < gc; gj++) {
+                        if (inst->scale_aware) {
+                            int sn = (int)SCALE_SIZES[eff_pad_scale(inst)];
+                            gen[gj] = (uint8_t)scale_transpose(inst, gen[gj],
+                                          cdeg + coct * sn);
+                        } else {
+                            gen[gj] = (uint8_t)clamp_i((int)gen[gj] +
+                                          csemi + coct * 12, 0, 127);
+                        }
+                    }
+                }
+            }
 
             uint32_t emit_ticks[2];
             int emit_count = compute_bake_emit_positions(pdir, paud, length, tps,
@@ -9614,7 +9685,7 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                 static bake_note_t rmc_export[BAKE_BUF * 8];
                 uint32_t span = 0, cyc = 0;
                 int n = render_melodic_clip(inst, t_idx, cidx, loops, wrap_from,
-                                            rmc_export, BAKE_BUF * 8, &span, &cyc);
+                                            rmc_export, BAKE_BUF * 8, &span, &cyc, 0);
                 (void)cyc;
                 if (n > 0) {
                     FILE *ef = fopen(EXPORT_RENDER_PATH, "w");
@@ -9629,6 +9700,46 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                         fclose(ef);
                     } else {
                         n = -1;   /* JS treats <0 as no-clip */
+                    }
+                }
+                return snprintf(out, out_len, "%u %d %u", (unsigned)span, n, (unsigned)span);
+            }
+            if (!strcmp(p, "_export_cond")) {
+                /* Apply-Conductor export variant: identical to _export but folds
+                 * the Conductor's transposition (non-destructively) against the
+                 * Conductor's clip at the SAME scene index. render_melodic_clip
+                 * gates the fold internally (no conductor / empty conductor clip /
+                 * responder-off / conductor-track-itself → renders written pitch),
+                 * so JS may call this for any responder clip safely. Same file +
+                 * header format as _export. The conductor's LCM auto-extend may
+                 * grow span (effectiveLoops) — captured in the returned header. */
+                int t_idx = (int)(tr - inst->tracks);
+                clip_pfx_params_t *cp = &cl->pfx_params;
+                int hasDelay  = (cp->delay_level > 0);
+                int hasRandom = (cp->note_random > 0)
+                             || (cp->seq_arp_style == 8) || (cp->seq_arp_style == 9)
+                             || (cp->fb_note_random > 0 && hasDelay);
+                int loops     = hasRandom ? 8 : 1;
+                int wrap_from = hasDelay  ? 0 : loops;
+
+                static bake_note_t rmc_export_c[BAKE_BUF * 8];
+                uint32_t span = 0, cyc = 0;
+                int n = render_melodic_clip(inst, t_idx, cidx, loops, wrap_from,
+                                            rmc_export_c, BAKE_BUF * 8, &span, &cyc, 1);
+                (void)cyc;
+                if (n > 0) {
+                    FILE *ef = fopen(EXPORT_RENDER_PATH, "w");
+                    if (ef) {
+                        int k;
+                        for (k = 0; k < n; k++)
+                            fprintf(ef, "%u:%d:%d:%u;",
+                                    (unsigned)rmc_export_c[k].tick,
+                                    (int)rmc_export_c[k].pitch,
+                                    (int)rmc_export_c[k].vel,
+                                    (unsigned)rmc_export_c[k].gate);
+                        fclose(ef);
+                    } else {
+                        n = -1;
                     }
                 }
                 return snprintf(out, out_len, "%u %d %u", (unsigned)span, n, (unsigned)span);

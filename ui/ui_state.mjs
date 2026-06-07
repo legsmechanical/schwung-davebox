@@ -429,6 +429,9 @@ export const S = {
     confirmClearSel: 1,
     confirmExport: false,          /* Ableton export Yes/No dialog open */
     confirmExportSel: 1,           /* 0 = Yes, 1 = No (default) */
+    confirmExportCondPhase: false, /* export "Apply Conductor?" stage (after the export Yes) */
+    confirmExportCondSel: 1,       /* 0 = YES, 1 = NO (default), 2 = CANCEL */
+    exportApplyConductor: false,   /* fold the Conductor into responder clips at export time (non-destructive) */
     exportDoneDialog: false,       /* persistent "Exported to <path>" dialog (OK to dismiss) */
     exportDonePath: '',            /* full device path shown in the export-done dialog */
     exportDoneMissing: 0,          /* count of samples that couldn't be bundled */

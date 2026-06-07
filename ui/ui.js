@@ -7237,8 +7237,13 @@ function _onCC_jog(d1, d2) {
             S.screenDirty = true;
             return;
         }
+        if (S.confirmExportCondPhase) {
+            confirmExportCondClick();   /* 0=YES,1=NO commit; 2=CANCEL aborts export */
+            S.screenDirty = true;
+            return;
+        }
         if (S.confirmExport) {
-            if (S.confirmExportSel === 0) confirmExportStart();   /* arms pendingExport, drained in tick() */
+            if (S.confirmExportSel === 0) confirmExportStart();   /* Yes → cond stage or arm export */
             else S.confirmExport = false;
             S.screenDirty = true;
             return;
@@ -7616,6 +7621,9 @@ function _onCC_jog(d1, d2) {
                 if (delta !== 0) { S.confirmConvertToConductSel = S.confirmConvertToConductSel === 0 ? 1 : 0; S.screenDirty = true; }
             } else if (S.menuInfoLines.length > 0) {
                 /* Single-button INFO dialog — no selection to toggle; swallow jog turns. */
+            } else if (S.confirmExportCondPhase) {
+                const delta = decodeDelta(d2);
+                if (delta !== 0) { S.confirmExportCondSel = (S.confirmExportCondSel + (delta > 0 ? 1 : 2)) % 3; S.screenDirty = true; }
             } else if (S.confirmExport) {
                 const delta = decodeDelta(d2);
                 if (delta !== 0) { S.confirmExportSel = S.confirmExportSel === 0 ? 1 : 0; S.screenDirty = true; }
@@ -7979,6 +7987,9 @@ function _onCC_buttons(d1, d2) {
                 S.exportDoneDialog = false;
                 S.globalMenuOpen   = false;
                 forceRedraw();
+            } else if (S.globalMenuOpen && S.confirmExportCondPhase) {
+                S.confirmExportCondPhase = false;   /* Back from cond stage aborts export */
+                forceRedraw();
             } else if (S.globalMenuOpen && S.confirmExport) {
                 S.confirmExport = false;
                 forceRedraw();
@@ -8288,6 +8299,9 @@ function _onCC_transport(d1, d2) {
         } else if (S.globalMenuOpen && S.exportDoneDialog) {
             S.exportDoneDialog = false;
             S.globalMenuOpen   = false;
+            forceRedraw();
+        } else if (S.globalMenuOpen && S.confirmExportCondPhase) {
+            S.confirmExportCondPhase = false;   /* Back from cond stage aborts export */
             forceRedraw();
         } else if (S.globalMenuOpen && S.confirmExport) {
             S.confirmExport = false;
