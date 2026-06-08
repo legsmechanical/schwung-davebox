@@ -19,6 +19,9 @@ the section into a versioned heading at release time.
 - **Copying a drum lane carries its repeat cycle length.** Copy or cut a drum lane and its Note Repeat gate cycle length now comes along (and a cut source resets to the default 8) — previously the destination kept its own old cycle length against the copied gate pattern.
 - **Drum pads play once in Move co-run.** While editing Move's drum sounds in co-run, tapping a drum pad now plays a single hit at the velocity you played — it was double-triggering and ignoring velocity before — and still selects that drum on Move for editing.
 
+### Documentation
+- **Manual corrections.** Fixed several spots where the manual didn't match the device: Performance-Mode capture length is set with the R0 pads (1/32–1/2 bar; there is no 1-bar or triplet capture), drum lane bank A/B switches with Up/Down (modes cycle with Shift+Step 8), the AUTO playhead step shows white, Shift+jog switches tracks in both views, and the step-edit K2 label reads "Note".
+
 ## [1.0b4] — 2026-06-07
 ### Features
 - **Key/Scale changes transpose your clips.** Editing the global Key or Scale now moves all melodic clips with it, with a live preview as you turn the knob and a "Transpose clips?" confirm before it commits. Drum tracks are untouched.

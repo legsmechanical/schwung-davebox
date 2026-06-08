@@ -119,7 +119,7 @@ There are no dedicated track buttons. To change the active track:
 
 | Method | Where it works |
 |---|---|
-| Shift + jog rotate | Track View |
+| Shift + jog rotate | Both views |
 | Shift + bottom-row pad (1–8) | Track View |
 | Tap any pad in a column | Session View |
 
@@ -321,7 +321,7 @@ Hold any step button to open the edit overlay. Edits apply to all notes in the s
 | Knob | Label | Function |
 |---|---|---|
 | K1 | Oct | Shift by octave |
-| K2 | Pit | Shift by scale degree (or semitone if Scale Aware is off) |
+| K2 | Note | Shift by scale degree (or semitone if Scale Aware is off) |
 | K3 | Leng | Gate length |
 | K4 | Vel | Velocity |
 | K5 | Nudg | Nudge timing (±1 step minus 1 tick). Step blinks when on-grid. Notes that cross into an adjacent step reassign on release. |
@@ -589,7 +589,7 @@ Each of the 8 knobs controls its own automation lane — a recordable stream of 
 
 **Loop reset:** when a resting value is set, the lane smoothly returns to it each time the clip loops. If the resting value is "—", the lane holds whatever value it ended on into the next loop.
 
-**Step button display:** the last knob you touched shows its automation values across the step buttons as a brightness gradient (brighter = higher value, off = no value). The playhead step shows the track color.
+**Step button display:** the last knob you touched shows its automation values across the step buttons as a brightness gradient (brighter = higher value, off = no value). The playhead step shows white.
 
 **Knob LED states (this bank):**
 
@@ -673,7 +673,7 @@ The pad grid is split into two halves:
 | Left 4×4 | 16 drum lane pads. Tap one to hear its sound and select it — the step buttons then show that lane's pattern. The other 16 lanes are on bank B (see below). |
 | Right 4×4 | Function area: Velocity zones (default), Rpt1, or Rpt2 |
 
-The left pads show 16 lanes at a time. There are two banks — **A** and **B** — giving you 32 lanes total. The OLED shows which bank is active. Cycle right-pad modes (and banks) with jog click or **Shift + Step 8**.
+The left pads show 16 lanes at a time. There are two banks — **A** and **B** — giving you 32 lanes total. The OLED shows which bank is active. **Up / Down** switches lane bank A ↔ B. Cycle right-pad modes (Velocity → Rpt1 → Rpt2) with **Shift + Step 8**.
 
 **Velocity mode:** 16 zones from velocity 8 (bottom-left) to 127 (top-right). Pressing a zone sets the velocity for subsequent step taps. Drum velocity zones override VelIn.
 
@@ -799,18 +799,7 @@ Performance Mode captures a short loop of what's currently playing and lets you 
 | Loop (hold) | Temporary — exits on release |
 | Shift + Loop or Latch pad (R0-8) | Toggle latch mode |
 
-While holding Loop to enter, press a **step button** to set capture length:
-
-| Step | Length |
-|---|---|
-| 1 | 1/32 |
-| 2 | 1/16 |
-| 3 | 1/8 |
-| 4 | 1/4 |
-| 5 | 1/2 bar |
-| 6 | 1 bar |
-
-Hold Step 16 + a length pad for the triplet variant of that length.
+Set the capture length with the **R0 length pads** (bottom pad row): pads 1–5 = 1/32, 1/16, 1/8, 1/4, 1/2 bar. (See the **R0 — controls** table below.)
 
 ### Per-track inclusion
 
@@ -1265,8 +1254,6 @@ When you delete a Move set, dAVEBOx automatically removes its own saved data for
 | Control | Action |
 |---|---|
 | R0 pads 1–5 | Set capture length (1/32–1/2 bar) |
-| Step 6 (while entering) | 1-bar capture |
-| Step 16 + length pad | Triplet variant |
 | R0-6 Hold | Persistent hold |
 | R0-7 Sync | Clock-aligned capture |
 | R0-8 Latch | Latch mode |
@@ -1294,7 +1281,7 @@ When you delete a Move set, dAVEBOx automatically removes its own saved data for
 
 | Control | Action |
 |---|---|
-| K1–K5 | Oct / Pit / Leng / Vel / Nudg (melodic) |
+| K1–K5 | Oct / Note / Leng / Vel / Nudg (melodic) |
 | K6–K8 | Iter / Prob / Ratch (melodic) |
 | K1–K3, K5–K7 | Leng / Vel / Nudg / Iter / Prob / Ratch (drum) |
 | Up / Down | Shift octave range |
@@ -1420,7 +1407,7 @@ Per-lane. Delete + jog click resets.
 | K | Label | Range |
 |---|---|---|
 | 1 | Oct | ±octaves |
-| 2 | Pit | ±scale degrees (scale-aware) |
+| 2 | Note | ±scale degrees (scale-aware) |
 | 3 | Leng | Gate length |
 | 4 | Vel | 0–127 |
 | 5 | Nudg | ±1 step minus 1 tick |
