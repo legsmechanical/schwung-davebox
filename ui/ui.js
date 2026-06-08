@@ -2701,7 +2701,8 @@ function pollDSP() {
             const _at = S.activeTrack;
             if (!S.trackClipPlaying[_at]
                     && !S.trackWillRelaunch[_at]
-                    && S.trackQueuedClip[_at] === -1) {
+                    && S.trackQueuedClip[_at] === -1
+                    && _focusedClipIsEmpty(_at)) {
                 const _tac = S.trackActiveClip[_at];
                 S.pendingDefaultSetParams.push({ key: 't' + _at + '_launch_clip', val: String(_tac) });
                 S.trackQueuedClip[_at] = _tac;
