@@ -1932,9 +1932,16 @@ function computePadNoteMap() {
          * for velocity-zone slots so DSP on_midi skips dispatch (JS still
          * handles vel-zone arming as state, independent of note routing). */
         const page = S.drumLanePage[t] | 0;
+        /* Move co-run: the left-column lane pads are sounded + cell-selected by the
+         * plain pad-on injected to Move (in _onPadPress). Map them to 0xFF too so the
+         * DSP on_midi handler skips its own sound — otherwise we'd get a double hit
+         * (DSP-routed Move drum + the injected pad). Right-column vel-zone pads stay
+         * 0xFF as always (JS handles them; no inject, so no double). */
+        const coRunSilentLeft = (S.moveCoRunTrack >= 0);
         for (let i = 0; i < 32; i++) {
             const col = i % 8;
             if (col >= 4) { S.padNoteMap[i] = 0xFF; continue; }
+            if (coRunSilentLeft) { S.padNoteMap[i] = 0xFF; continue; }
             const row = Math.floor(i / 8);
             const lane = page * 16 + row * 4 + col;
             const note = (lane >= 0 && lane < DRUM_LANES)
@@ -5131,6 +5138,11 @@ function enterMoveNativeCoRun(t) {
     if (typeof shadow_corun_begin !== 'function') return;
     if (typeof move_midi_inject_to_move !== 'function') return;
     S.moveCoRunTrack = t;
+    /* Re-push the padmap so the left-column lane pads become 0xFF (DSP on_midi
+     * skips sounding them; Move handles sound+select via the injected pad).
+     * Also queue a tick recompute in case this set_param push coalesces away. */
+    computePadNoteMap();
+    S.pendingPadNoteMapRecompute = true;
     shadow_corun_begin(CORUN_TARGET_MOVE_NATIVE, t, DAVEBOX_CORUN_KEEP_MASK);
     /* Let Move firmware's own LED writes (track buttons, knob rings, transport)
      * reach hardware while it drives the device-edit UI. skip_led_clear makes the
@@ -5162,6 +5174,10 @@ function exitMoveNativeCoRun() {
     S.moveCoRunTrack = -1;
     S.pendingMoveCoRunInject = 0;  /* cancel any pending entry inject */
     S.moveCoRunPressQueue = null;  /* cancel any in-flight track-row press sequence */
+    /* Restore the real drum padmap (left-column lane pads sound via DSP again);
+     * also queue a tick recompute in case this set_param push coalesces away. */
+    computePadNoteMap();
+    S.pendingPadNoteMapRecompute = true;
     if (typeof shadow_corun_end === 'function')
         shadow_corun_end();
     /* Resume the shim's overtake LED-strip loop so dAVEBOx owns the LEDs again
@@ -5170,8 +5186,7 @@ function exitMoveNativeCoRun() {
     /* If a drum pad hold inject was in flight, send the note-off before the
      * co-run session ends so Move doesn't get a stuck note. */
     if (S.moveCoRunDrumHeld >= 0 && typeof move_midi_inject_to_move === 'function') {
-        move_midi_inject_to_move([0x08, 0x80, S.moveCoRunDrumHeld, 0]);  /* pad off */
-        move_midi_inject_to_move([0x0B, 0xB0, 49, 0]);                   /* Shift off */
+        move_midi_inject_to_move([0x08, 0x80, S.moveCoRunDrumHeld, 0]);  /* plain pad off (no Shift was sent) */
     }
     S.moveCoRunDrumHeld = -1;
     /* Modifier-key release CCs the user pressed inside Move firmware never
@@ -10490,6 +10505,17 @@ function _onPadPressTrackView(status, d1, d2) {
                     setActiveDrumLane(t, lane);
                     syncDrumLaneSteps(t, lane);
                     refreshDrumLaneBankParams(t, lane);
+                    if (S.moveCoRunTrack >= 0) {
+                        /* Move co-run: the plain pad-on injected to Move (in _onPadPress)
+                         * both sounds and selects this drum cell for editing. Suppress
+                         * dAVEBOx's own monitor note + record so the tap is one Move-native
+                         * hit, not a double. padPitch=0xFF makes _onPadRelease skip the
+                         * dAVEBOx note-off too (same sentinel the Capture+pad select uses).
+                         * Lane selection/sync above still runs so dAVEBOx state stays in
+                         * sync; the held pad-off to Move is sent from _onPadRelease. */
+                        padPitch[padIdx] = 0xFF;
+                        forceRedraw();
+                    } else {
                     /* Preview lane note at actual pad velocity */
                     const vel = effectiveVelocity(d2);
                     const laneNote = S.drumLaneNote[t][lane];
@@ -10526,6 +10552,7 @@ function _onPadPressTrackView(status, d1, d2) {
                             host_module_set_param('t' + t + '_drum_repeat_lane', String(lane));
                     }
                     forceRedraw();
+                    }
                 }
             }
         } else if (S.heldStep >= 0 && !S.shiftHeld) {
@@ -10641,29 +10668,25 @@ function _onPadPressTrackView(status, d1, d2) {
 }
 
 function _onPadPress(status, d1, d2) {
-        /* Move-native co-run + drum-mode active track: synthesize the
-         * native Move "Shift + drum pad" gesture on cable-0 so Move
-         * firmware silently selects the cell for editing. dAVEBOx keeps
-         * its normal pad handling below (the sequencer still fires the
-         * drum from this track), so the pad tap = audible dAVEBOx drum
-         * + silent Move-side cell change. Mask: left 4 columns of each
-         * pad row, where notes 68-99 are laid out bottom-to-top as
-         * 68-75 / 76-83 / 84-91 / 92-99 — left-4x4 is (d1 - 68) % 8 < 4.
-         * Note-on (status 0x9_) with d2 > 0 only; note-off doesn't need
-         * a re-select. Velocity 100 is arbitrary — Move's cell-select
-         * is gesture-driven, not velocity-driven. */
+        /* Move-native co-run + drum-mode active track: inject a PLAIN pad-on
+         * (cable-0, no Shift) so Move firmware both plays the drum AND focuses
+         * that cell for editing — a plain tap selects on Move. dAVEBOx then
+         * SUPPRESSES its own monitor note for this pad (see the moveCoRunTrack
+         * branch in _onPadPressTrackView), so the tap is a single Move-native
+         * hit, not a double. No Shift injection anywhere → nothing for Move to
+         * latch (an earlier Shift-based scheme double-tap-latched Move's Shift).
+         * Mask: left 4 columns of each pad row, where notes 68-99 are laid out
+         * bottom-to-top as 68-75 / 76-83 / 84-91 / 92-99 — left-4x4 is
+         * (d1 - 68) % 8 < 4. Note-on (status 0x9_) with d2 > 0 only. Pass the
+         * actual pad velocity (d2) through so Move plays at the hit velocity,
+         * just like a real physical pad press. The pad stays open until physical
+         * release (_onPadRelease sends the matching pad-off). */
         if (S.moveCoRunTrack >= 0 &&
                 S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM &&
                 d1 >= 68 && d1 <= 99 && ((d1 - 68) % 8) < 4 &&
                 (status & 0xF0) === 0x90 && d2 > 0 &&
                 typeof move_midi_inject_to_move === 'function') {
-            /* Shift + noteOn, no immediate noteOff. Note stays open until the pad is
-             * physically released (_onPadRelease sends noteOff + ShiftOff). Move sees a
-             * genuine held Shift+pad: selects the drum cell for editing AND detects a hold
-             * naturally for its per-drum volume/tuning editor. No deferred threshold needed.
-             * Still causes one dAVEBOx drum hit (double-hit fix TBD). */
-            move_midi_inject_to_move([0x0B, 0xB0, 49, 127]);  /* Shift on */
-            move_midi_inject_to_move([0x09, 0x90, d1, 100]);  /* pad on — held until release */
+            move_midi_inject_to_move([0x09, 0x90, d1, d2 & 0x7F]);  /* plain pad on at hit velocity — held until release */
             S.moveCoRunDrumHeld = d1;
         }
         if (S.tapTempoOpen && d1 >= 68 && d1 <= 99) {
@@ -11540,8 +11563,7 @@ function _onPadRelease(status, d1, d2) {
      * release of the tracked pad, even if the threshold hadn't fired yet. */
     if (S.moveCoRunTrack >= 0 && S.moveCoRunDrumHeld === d1 &&
             typeof move_midi_inject_to_move === 'function') {
-        move_midi_inject_to_move([0x08, 0x80, d1, 0]);    /* pad off */
-        move_midi_inject_to_move([0x0B, 0xB0, 49, 0]);    /* Shift off */
+        move_midi_inject_to_move([0x08, 0x80, d1, 0]);    /* plain pad off (no Shift was sent) */
         S.moveCoRunDrumHeld = -1;
     }
     /* Step buttons (notes 16-31): if a Loop+step gesture is in flight and

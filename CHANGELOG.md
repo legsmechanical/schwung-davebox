@@ -10,6 +10,9 @@ the section into a versioned heading at release time.
 ### Features
 - **Save state asks first.** Choosing Save state from the Global Menu now shows a confirmation (with your current snapshot count) before it saves, so an accidental click can't overwrite your work.
 
+### Fixes
+- **Drum pads play once in Move co-run.** While editing Move's drum sounds in co-run, tapping a drum pad now plays a single hit at the velocity you played — it was double-triggering and ignoring velocity before — and still selects that drum on Move for editing.
+
 ## [1.0b4] — 2026-06-07
 ### Features
 - **Key/Scale changes transpose your clips.** Editing the global Key or Scale now moves all melodic clips with it, with a live preview as you turn the knob and a "Transpose clips?" confirm before it commits. Drum tracks are untouched.
