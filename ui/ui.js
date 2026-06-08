@@ -5315,6 +5315,13 @@ function restoreUiSidecar(applyDefaultsNow) {
                 S.trackAtMode[_t] = (typeof _m === 'number' && _m >= 0 && _m <= 2) ? (_m | 0) : 0;
             }
         }
+        /* Per-track Chromatic pad layout (Shift+Step 8). Additive field on v:9;
+         * absent in older v:9 sidecars → defaults to In-Key (false). Restored
+         * like to/tab — the post-restore computePadNoteMap picks it up. */
+        if (Array.isArray(us.pchr)) {
+            for (let _t = 0; _t < NUM_TRACKS; _t++)
+                S.padLayoutChromatic[_t] = !!us.pchr[_t];
+        }
     } else {
         S.scaleAware   = 1;
         S.metronomeVol = 100;
