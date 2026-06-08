@@ -1355,11 +1355,13 @@ function _switchActiveTrack(newT) {
      * launches its focused clip so it's live. While stopped we do NOT arm (passive
      * track-scrolling must not queue clips for the next transport start); the
      * displayed clip is instead armed at transport start (see _onCC_transport).
-     * Skip if already live or in Session View. */
+     * Skip if already live, in Session View, or if the focused clip has note
+     * data (a clip intentionally left off must not be re-launched by scroll). */
     if (S.playing && !S.sessionView
             && !S.trackClipPlaying[S.activeTrack]
             && !S.trackWillRelaunch[S.activeTrack]
-            && S.trackQueuedClip[S.activeTrack] === -1) {
+            && S.trackQueuedClip[S.activeTrack] === -1
+            && _focusedClipIsEmpty(S.activeTrack)) {
         const _ac = S.trackActiveClip[S.activeTrack];
         if (typeof host_module_set_param === 'function')
             host_module_set_param('t' + S.activeTrack + '_launch_clip', String(_ac));
