@@ -3844,7 +3844,8 @@ static void set_param(void *instance, const char *key, const char *val) {
                     clip_migrate_to_notes(&dst->clip);
                     drum_pfx_apply_params(&tr->drum_lane_pfx[dstLane], &dst->pfx_params);
                     /* Copy repeat groove params */
-                    tr->drum_repeat_gate[dstLane] = tr->drum_repeat_gate[lane_idx];
+                    tr->drum_repeat_gate[dstLane]     = tr->drum_repeat_gate[lane_idx];
+                    tr->drum_repeat_gate_len[dstLane] = tr->drum_repeat_gate_len[lane_idx];
                     memcpy(tr->drum_repeat_vel_scale[dstLane], tr->drum_repeat_vel_scale[lane_idx], 8);
                     memcpy(tr->drum_repeat_nudge[dstLane],     tr->drum_repeat_nudge[lane_idx],     8);
                     inst->state_dirty = 1;
@@ -3880,10 +3881,12 @@ static void set_param(void *instance, const char *key, const char *val) {
                     dst->midi_note          = dst_midi_note;
                     clip_migrate_to_notes(&dst->clip);
                     /* Move repeat groove params */
-                    tr->drum_repeat_gate[dstLane] = tr->drum_repeat_gate[lane_idx];
+                    tr->drum_repeat_gate[dstLane]     = tr->drum_repeat_gate[lane_idx];
+                    tr->drum_repeat_gate_len[dstLane] = tr->drum_repeat_gate_len[lane_idx];
                     memcpy(tr->drum_repeat_vel_scale[dstLane], tr->drum_repeat_vel_scale[lane_idx], 8);
                     memcpy(tr->drum_repeat_nudge[dstLane],     tr->drum_repeat_nudge[lane_idx],     8);
-                    tr->drum_repeat_gate[lane_idx] = 0xFF;
+                    tr->drum_repeat_gate[lane_idx]     = 0xFF;
+                    tr->drum_repeat_gate_len[lane_idx] = 8;
                     memset(tr->drum_repeat_vel_scale[lane_idx], 100, 8);
                     memset(tr->drum_repeat_nudge[lane_idx],     0,   8);
                     drum_lane_note_off_imm(inst, tr, src_midi_note);
