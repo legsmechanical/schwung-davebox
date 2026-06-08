@@ -807,21 +807,10 @@ export function updateTrackLEDs() {
         else cachedSetButtonLED(71 + k, ledVal);
     }
     if (S._forceKnobReemit) S._forceKnobReemit = false;  /* one-shot: consumed on the post-co-run-exit repaint */
-    /* Shift-flash: knobs with a Shift-modified function blink DarkGrey/OFF while Shift is held. */
-    if (S.shiftHeld && !S.sessionView && !S.perfViewLocked) {
-        const _sf = (Math.floor(S.tickCount / 24) % 2) ? 16 : LED_OFF;
-        const _isDrum = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
-        for (let k = 0; k < 8; k++) {
-            let hasShift = false;
-            if      (S.activeBank === 0 && (k === 1 || k === 2)) hasShift = true; // K2 Nudg, K3 Zoom
-            else if (S.activeBank === 7 && k === 1)              hasShift = true; // ALL LANES K2 Nudg
-            else if (S.activeBank === 1 && k === 7 && !_isDrum)  hasShift = true; // K8 Rnd algo
-            else if (S.activeBank === 3 && k === 7 && !_isDrum)  hasShift = true; // K8 Rnd algo
-            else if (S.activeBank === 5 && _isDrum)              hasShift = true; // K1-8 nudge
-            else if (S.activeBank === 6)                         hasShift = true; // K1-8 CC assign
-            if (hasShift) cachedSetButtonLED(71 + k, _sf);
-        }
-    }
+    /* (Removed: a Shift-held knob-flash that advertised Shift-modified knob
+     * functions. Those moved to jog-click alt-mode — _onCC_knobs no longer reads
+     * S.shiftHeld at all — so the flash promised a gesture that does nothing. The
+     * down-arrow header indicator already signals alt-param availability.) */
 
     /* Shift overlay: bottom row shows track-switch color hints (all track types).
      * The active track's pad is solid bright track color; every other pad blinks
