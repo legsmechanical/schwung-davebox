@@ -197,7 +197,9 @@ const STEP_ITER_LIST = (function() {
 
 
 function drawMetroIndicator() {
-    const METRO_LABELS = [null, 'Count', 'Rec', 'Rec/Ply'];
+    /* Match the Global Menu / Shift+Step6 popup wording exactly (one source of
+     * truth): Off / Cnt-In / Play / Always. */
+    const METRO_LABELS = [null, 'Cnt-In', 'Play', 'Always'];
     const label = METRO_LABELS[S.metronomeOn];
     if (label) {
         const tx = 8;
