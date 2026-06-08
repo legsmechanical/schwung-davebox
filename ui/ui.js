@@ -1335,11 +1335,13 @@ function registerTapTempo(padNote) {
  * "empty" here). Used to gate implicit focused-clip auto-launch so a clip the
  * user intentionally left off is not re-activated by scrolling / transport
  * start. */
-function _focusedClipIsEmpty(t) {
-    const c = S.trackActiveClip[t];
+function _clipIsEmpty(t, c) {
     return (S.trackPadMode[t] === PAD_MODE_DRUM)
         ? !S.drumClipNonEmpty[t][c]
         : !S.clipNonEmpty[t][c];
+}
+function _focusedClipIsEmpty(t) {
+    return _clipIsEmpty(t, S.trackActiveClip[t]);
 }
 
 /* Save the current S.activeBank into the outgoing track's per-track slot,
@@ -10944,7 +10946,13 @@ function _onPadPress(status, d1, d2) {
                         const clipIdx      = S.sceneRow + row;
                         const isActiveClip = S.trackActiveClip[t] === clipIdx;
                         if (S.shiftHeld) {
-                            /* Shift+pad: focus clip in Track View; launch only if not already active */
+                            /* Shift+pad: open clip for editing (focus + jump to
+                             * Track View). It must NOT turn on a stopped clip
+                             * that has notes — "off until I turn it on". So the
+                             * actual launch fires only when playing (the engine
+                             * can only show/edit the DSP's active clip while
+                             * running — pollDSP re-syncs trackActiveClip each
+                             * tick) or when the clip is empty (harmless). */
                             const isPlaying = S.trackClipPlaying[t] && isActiveClip;
                             const isWR      = S.trackWillRelaunch[t] && isActiveClip;
                             const isQueued  = S.trackQueuedClip[t] === clipIdx;
@@ -10964,7 +10972,8 @@ function _onPadPress(status, d1, d2) {
                                         S.pendingDrumResyncTrack = t;
                                     }
                                 }
-                                if (typeof host_module_set_param === 'function')
+                                if ((S.playing || _clipIsEmpty(t, clipIdx))
+                                        && typeof host_module_set_param === 'function')
                                     host_module_set_param('t' + t + '_launch_clip', String(clipIdx));
                             }
                             handoffRecordingToTrack(t);

@@ -42,34 +42,61 @@ auto-launch) — this is intended.
 
 ## Implementation
 
-Add a shared local helper:
+Add shared local helpers (clip-index form + focused-clip convenience form):
 
 ```js
-function _focusedClipIsEmpty(t) {
-    const c = S.trackActiveClip[t];
+function _clipIsEmpty(t, c) {
     return (S.trackPadMode[t] === PAD_MODE_DRUM)
         ? !S.drumClipNonEmpty[t][c]
         : !S.clipNonEmpty[t][c];
 }
+function _focusedClipIsEmpty(t) {
+    return _clipIsEmpty(t, S.trackActiveClip[t]);
+}
 ```
 
-Two call sites, each gaining one extra guard (`&& _focusedClipIsEmpty(...)`):
+Three gated launch sites:
 
 1. **`_switchActiveTrack`** (ui/ui.js ~1347) — the running-transport auto-launch
-   block. Centralized here, so the gate covers all track-switch entry points
-   (jogwheel, Shift+pad, co-run track switches).
+   block. Add `&& _focusedClipIsEmpty(...)`. Centralized here, so the gate covers
+   all track-switch entry points (jogwheel, Shift+pad, co-run track switches).
 2. **Transport-start block** (ui/ui.js ~2686) — the focused-clip-by-default
-   block.
+   block. Add `&& _focusedClipIsEmpty(...)`.
+3. **Session-View Shift+pad clip launch** (ui/ui.js ~10967) — wrap the
+   `launch_clip` call so it fires only when `S.playing || _clipIsEmpty(t, clipIdx)`.
+
+## Session-View Shift+pad behavior (extension)
+
+Shift+pad means "open this clip for editing" (focus + jump to Track View). It
+should no longer *turn on* a stopped clip that has notes.
+
+- **Stopped + clip has notes** → focus the clip (set `trackActiveClip`, page,
+  bank params, drum resync) and switch to Track View, but **skip `launch_clip`**.
+  The clip stays off; since it has notes it also won't auto-start on the next
+  Play (gate #2 above).
+- **Playing** → still launch (unchanged). While playing, `pollDSP` overwrites
+  `trackActiveClip` from the DSP's playing clip every tick (ui.js:2524), so a
+  clip can only be shown/edited by making it the DSP's active clip — i.e.
+  launching it. Editing an off-clip silently while others play would require a
+  separate focus/play split (deferred, see plan note).
+- **Empty clip** (stopped or playing) → still launch (unchanged).
+
+This makes the gestures consistent: plain clip pad (Session) and clip side
+button (Track View) = "turn it on"; Shift+pad = "open to edit, leave off when
+stopped".
 
 ## Explicitly unchanged
 
-- Session View **Shift+Clip** launch — still activates the clip.
-- Tapping a clip pad in Track View — explicit manual launch, unaffected.
-- The **record-armed** auto-launch path (already gates on `clipNonEmpty` in its
-  own direction).
+- Session-View **plain clip pad** launch — still turns the clip on.
+- Track-View **clip side button** launch — explicit manual launch.
+- Session-View **scene side-button** (whole-row scene launch) — still launches
+  notes-clips.
+- The **record-armed + Play** auto-launch path — focused notes-clip still
+  auto-starts for overdub.
 - Per-track `trackClipPlaying` / `trackWillRelaunch` / `trackQueuedClip` guards.
 
 ## Net behavior
 
-Scroll into a track, or press play → empty focused clip still goes live (silent,
+Scroll into a track, or press Play → empty focused clip still goes live (silent,
 harmless); focused clip with note content is left exactly as the user set it.
+Shift+pad a stopped notes-clip → opens it for editing without turning it on.
