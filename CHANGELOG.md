@@ -22,7 +22,7 @@ the section into a versioned heading at release time.
 
 ## [1.0b3] — 2026-05-30
 ### Features
-- **Schwung chain knob automation (Sch lanes).** AUTO bank lanes can now target Schwung chain knob assignments (CC 102-109 absolute knob control). In ASSIGN mode, scroll left past AT to reach Sch1–Sch8 — each maps to a chain slot knob mapping. Recording, playback, resting values, step-edit, and delete all work identically to CC lanes. Routed via DSP `pfx_send` on the internal MIDI path — same-buffer delivery, no JS overhead. Requires patched Schwung with CC 102-109 chain handler; capability-gated (Sch lanes hidden on stock Schwung).
+- **Schwung chain knob automation (Sch lanes).** AUTO bank lanes can now target Schwung chain knob assignments (CC 102-109 absolute knob control). In ASSIGN mode, scroll left past AT to reach Sch1–Sch8 — each maps to a chain slot knob mapping. Recording, playback, resting values, step-edit, and delete all work identically to CC lanes. Routed via DSP `pfx_send` on the internal MIDI path — same-buffer delivery, no JS overhead. Requires Schwung 0.9.17.
 
 ### Fixes
 - **Pads silent on Schwung v0.9.16.** The DSP inbound pad capability sentinel (merged upstream in v0.9.16) caused dAVEBOx to disable the JS live-note path, but the DSP on_midi path could fail to produce sound on stock Schwung. Fixed by moving the dispatch gate from JS to DSP — the JS path now always queues live notes as a fallback, and the DSP suppresses duplicates only when confirmed active.
