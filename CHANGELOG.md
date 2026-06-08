@@ -12,6 +12,7 @@ the section into a versioned heading at release time.
 
 ### Fixes
 - **Metronome mode reads the same everywhere.** The Track-View status indicator now shows the same names as the menu and the Shift+Step 6 popup — Cnt-In / Play / Always — instead of the older Count / Rec / Rec/Ply.
+- **Knob lights no longer flash a dead Shift gesture.** Holding Shift in Track View used to blink certain knob lights, implying a Shift+turn function — but those moved to jog-click long ago, so the flash promised something that did nothing. Removed. (Alt-params are still reachable via jog-click, shown by the down-arrow in the header.)
 - **Automation now records after a count-in.** Arming Record from a stopped transport (which plays a 1-bar count-in first) and then turning an automation knob now captures the move. Previously the first knob turn right after the count-in was dropped on lanes that had no automation yet.
 - **Drum tracks show the right pattern after switching with Shift + jog.** Switching to a drum track by holding Shift and turning the jog wheel now refreshes that track's lane steps, drum note names, and clip dots — matching Shift + bottom-row-pad. Previously they could show stale data if the track had changed while it wasn't selected.
 - **Chromatic pad layout is remembered.** A track set to Chromatic (Shift + Step 8) now stays Chromatic after you suspend, exit, or reload the set — it was silently reverting to In-Key before.
