@@ -11,6 +11,7 @@ the section into a versioned heading at release time.
 - **Save state asks first.** Choosing Save state from the Global Menu now shows a confirmation (with your current snapshot count) before it saves, so an accidental click can't overwrite your work.
 
 ### Fixes
+- **Drum tracks show the right pattern after switching with Shift + jog.** Switching to a drum track by holding Shift and turning the jog wheel now refreshes that track's lane steps, drum note names, and clip dots — matching Shift + bottom-row-pad. Previously they could show stale data if the track had changed while it wasn't selected.
 - **Drum pads play once in Move co-run.** While editing Move's drum sounds in co-run, tapping a drum pad now plays a single hit at the velocity you played — it was double-triggering and ignoring velocity before — and still selects that drum on Move for editing.
 
 ## [1.0b4] — 2026-06-07
