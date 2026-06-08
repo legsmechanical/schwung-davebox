@@ -11,7 +11,7 @@ the section into a versioned heading at release time.
 - **Save state asks first.** Choosing Save state from the Global Menu now shows a confirmation (with your current snapshot count) before it saves, so an accidental click can't overwrite your work.
 
 ### Fixes
-- **Chromatic pad layout is remembered.** A track set to Chromatic (Shift + Step 8) now stays Chromatic after you suspend, exit, or reload the set — it was silently reverting to In-Key before.
+- **Copying a drum lane carries its repeat cycle length.** Copy or cut a drum lane and its Note Repeat gate cycle length now comes along (and a cut source resets to the default 8) — previously the destination kept its own old cycle length against the copied gate pattern.
 - **Drum pads play once in Move co-run.** While editing Move's drum sounds in co-run, tapping a drum pad now plays a single hit at the velocity you played — it was double-triggering and ignoring velocity before — and still selects that drum on Move for editing.
 
 ## [1.0b4] — 2026-06-07

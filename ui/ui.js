@@ -1076,7 +1076,8 @@ function copyDrumLane(t, srcLane, dstLane) {
     S.drumLaneHasNotes[t][dstLane] = S.drumLaneHasNotes[t][srcLane];
     if (S.drumLaneHasNotes[t][srcLane]) S.drumClipNonEmpty[t][S.trackActiveClip[t]] = true;
     /* Copy repeat groove JS state */
-    S.drumRepeatGate[t][dstLane] = S.drumRepeatGate[t][srcLane];
+    S.drumRepeatGate[t][dstLane]    = S.drumRepeatGate[t][srcLane];
+    S.drumRepeatGateLen[t][dstLane] = S.drumRepeatGateLen[t][srcLane];
     for (let s = 0; s < 8; s++) {
         S.drumRepeatVelScale[t][dstLane][s] = S.drumRepeatVelScale[t][srcLane][s];
         S.drumRepeatNudge[t][dstLane][s]    = S.drumRepeatNudge[t][srcLane][s];
@@ -1098,12 +1099,14 @@ function cutDrumLane(t, srcLane, dstLane) {
     for (let l = 0; l < DRUM_LANES; l++) if (S.drumLaneHasNotes[t][l]) { anyHits = true; break; }
     S.drumClipNonEmpty[t][S.trackActiveClip[t]] = anyHits;
     /* Move repeat groove JS state */
-    S.drumRepeatGate[t][dstLane] = S.drumRepeatGate[t][srcLane];
+    S.drumRepeatGate[t][dstLane]    = S.drumRepeatGate[t][srcLane];
+    S.drumRepeatGateLen[t][dstLane] = S.drumRepeatGateLen[t][srcLane];
     for (let s = 0; s < 8; s++) {
         S.drumRepeatVelScale[t][dstLane][s] = S.drumRepeatVelScale[t][srcLane][s];
         S.drumRepeatNudge[t][dstLane][s]    = S.drumRepeatNudge[t][srcLane][s];
     }
-    S.drumRepeatGate[t][srcLane] = 0xFF;
+    S.drumRepeatGate[t][srcLane]    = 0xFF;
+    S.drumRepeatGateLen[t][srcLane] = 8;
     for (let s = 0; s < 8; s++) { S.drumRepeatVelScale[t][srcLane][s] = 100; S.drumRepeatNudge[t][srcLane][s] = 0; }
     S.pendingDrumLaneResync = 2; S.pendingDrumLaneResyncTrack = t; S.pendingDrumLaneResyncLane = dstLane;
 }
