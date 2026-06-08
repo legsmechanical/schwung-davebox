@@ -176,7 +176,7 @@ The OLED shows all 8 knob parameters and values. Touching a knob highlights its 
 
 ## Switching tracks while playing
 
-Switching to a track that has nothing playing or queued auto-launches that track's focused clip, so you get sound immediately.
+Switching to a track that has nothing playing or queued auto-launches that track's focused clip **only if that clip is empty**. A clip that already has notes is left as you set it — switching to it won't start it. The same rule applies when you press Play: an empty focused clip goes live, but a focused clip with notes that you've left off stays off until you launch it yourself. (To turn a clip on, tap its clip pad in Session View or its clip side button in Track View.)
 
 ## Shift + step shortcuts
 
@@ -210,7 +210,7 @@ The 8×16 clip grid. 8 rows visible at a time; jog scrolls to all 16.
 |---|---|
 | Tap clip pad | Launch/queue that clip |
 | Tap empty clip pad | Focus it for recording |
-| Shift + clip pad | Launch and jump to Track View |
+| Shift + clip pad | Open the clip in Track View for editing. While stopped, a clip that has notes is left off (not launched); an empty clip — or any clip while the transport is playing — is launched. |
 | Scene launcher (side) or steps 1–16 | Launch all clips in that row |
 | Shift + scene launcher | Launch row at next bar boundary (ignores Launch Quant setting) |
 | Jog rotate | Scroll scene rows |
