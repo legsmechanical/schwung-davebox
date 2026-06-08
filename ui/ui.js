@@ -1330,6 +1330,18 @@ function registerTapTempo(padNote) {
 }
 
 
+/* True when the track's currently-focused clip has NO note/hit data.
+ * Note data only — CC-lane automation does not count (a CC-only clip is
+ * "empty" here). Used to gate implicit focused-clip auto-launch so a clip the
+ * user intentionally left off is not re-activated by scrolling / transport
+ * start. */
+function _focusedClipIsEmpty(t) {
+    const c = S.trackActiveClip[t];
+    return (S.trackPadMode[t] === PAD_MODE_DRUM)
+        ? !S.drumClipNonEmpty[t][c]
+        : !S.clipNonEmpty[t][c];
+}
+
 /* Save the current S.activeBank into the outgoing track's per-track slot,
  * switch to newT, then restore the new track's stored bank into S.activeBank.
  * Existing post-switch validity checks (e.g. drum-track hidden banks → 0)
