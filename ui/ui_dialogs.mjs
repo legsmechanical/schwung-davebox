@@ -4,6 +4,7 @@ import {
     drawMenuHeader, drawMenuList, menuLayoutDefaults
 } from '/data/UserData/schwung/shared/menu_layout.mjs';
 import { formatItemValue } from '/data/UserData/schwung/shared/menu_items.mjs';
+import { SNAPSHOT_CAP } from '/data/UserData/schwung/modules/tools/davebox/ui_persistence.mjs';
 
 function pixelPrintMcu(x, y, text, scale, color) {
     const charW = 5 * scale + scale;
@@ -62,6 +63,34 @@ function drawClearSessionConfirm() {
         print(noX + 17, btnY + 3, 'No', 1);
     }
     if (S.confirmClearSel === 0) {
+        fill_rect(yesX, btnY, btnW, btnH, 1);
+        print(yesX + 14, btnY + 3, 'Yes', 0);
+    } else {
+        fill_rect(yesX, btnY, btnW, 1, 1);
+        fill_rect(yesX, btnY + btnH - 1, btnW, 1, 1);
+        fill_rect(yesX, btnY, 1, btnH, 1);
+        fill_rect(yesX + btnW - 1, btnY, 1, btnH, 1);
+        print(yesX + 14, btnY + 3, 'Yes', 1);
+    }
+}
+
+function drawSaveStateConfirm() {
+    clear_screen();
+    drawMenuHeader('SAVE STATE');
+    print(4, 20, 'Save current session?', 1);
+    print(4, 32, S.confirmSaveCount + ' of ' + SNAPSHOT_CAP + ' saved', 1);
+    const noX = 6, yesX = 74, btnY = 46, btnW = 46, btnH = 13;
+    if (S.confirmSaveSel === 1) {
+        fill_rect(noX, btnY, btnW, btnH, 1);
+        print(noX + 17, btnY + 3, 'No', 0);
+    } else {
+        fill_rect(noX, btnY, btnW, 1, 1);
+        fill_rect(noX, btnY + btnH - 1, btnW, 1, 1);
+        fill_rect(noX, btnY, 1, btnH, 1);
+        fill_rect(noX + btnW - 1, btnY, 1, btnH, 1);
+        print(noX + 17, btnY + 3, 'No', 1);
+    }
+    if (S.confirmSaveSel === 0) {
         fill_rect(yesX, btnY, btnW, btnH, 1);
         print(yesX + 14, btnY + 3, 'Yes', 0);
     } else {
@@ -219,6 +248,7 @@ export function drawGlobalMenu() {
     if (S.tapTempoOpen)        { drawTapTempoScreen();       return; }
     if (S.exportDoneDialog)    { drawExportDoneDialog();     return; }
     if (S.confirmClearSession) { drawClearSessionConfirm();  return; }
+    if (S.confirmSaveState)    { drawSaveStateConfirm();     return; }
     if (S.confirmConvertToDrum){ drawConvertToDrumConfirm(); return; }
     if (S.confirmConvertToConduct){ drawConvertToConductConfirm(); return; }
     if (S.menuInfoLines.length > 0){ drawMenuInfo(); return; }

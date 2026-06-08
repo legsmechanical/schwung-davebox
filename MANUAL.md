@@ -1108,7 +1108,7 @@ These features allow editing the active track's sound source from within dAVEBOx
 
 Up to **16 snapshots** per set — full state backups stamped with date/time.
 
-- **Save state** (Global Menu) writes a new snapshot. When 16 exist, a picker opens to choose which to overwrite.
+- **Save state** (Global Menu) asks you to confirm first (showing how many snapshots you have), then writes a new snapshot. When 16 exist, a picker opens to choose which to overwrite.
 - **Load state** opens a list (newest first). Jog to select, click to confirm. Loading discards unsaved changes.
 - Snapshots belong to the set. **Clear Session does not delete snapshots.**
 - After a format-changing update, old snapshots are marked `(old)` and can be removed.

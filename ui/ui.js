@@ -435,7 +435,9 @@ function buildGlobalMenuItems() {
             requestExport();
         }),
         createAction('Save state', function() {
-            openSaveSnapshot();
+            S.confirmSaveCount = loadSnapshotManifest(S.currentSetUuid).length;
+            S.confirmSaveState = true;
+            S.confirmSaveSel   = 1;   /* default No */
         }),
         createAction('Load state', function() {
             openLoadSnapshot();
@@ -7218,6 +7220,13 @@ function _onCC_jog(d1, d2) {
             S.screenDirty = true;
             return;
         }
+        if (S.confirmSaveState) {
+            const yes = S.confirmSaveSel === 0;
+            S.confirmSaveState = false;
+            if (yes) openSaveSnapshot();
+            S.screenDirty = true;
+            return;
+        }
         if (S.confirmConvertToDrum) {
             const _ct = S.confirmConvertTrack;
             const _yes = S.confirmConvertToDrumSel === 0;
@@ -7621,6 +7630,9 @@ function _onCC_jog(d1, d2) {
             } else if (S.confirmClearSession) {
                 const delta = decodeDelta(d2);
                 if (delta !== 0) { S.confirmClearSel = S.confirmClearSel === 0 ? 1 : 0; S.screenDirty = true; }
+            } else if (S.confirmSaveState) {
+                const delta = decodeDelta(d2);
+                if (delta !== 0) { S.confirmSaveSel = S.confirmSaveSel === 0 ? 1 : 0; S.screenDirty = true; }
             } else if (S.confirmConvertToDrum) {
                 const delta = decodeDelta(d2);
                 if (delta !== 0) { S.confirmConvertToDrumSel = S.confirmConvertToDrumSel === 0 ? 1 : 0; S.screenDirty = true; }
@@ -7982,6 +7994,9 @@ function _onCC_buttons(d1, d2) {
             } else if (S.globalMenuOpen && S.confirmClearSession) {
                 S.confirmClearSession = false;
                 forceRedraw();
+            } else if (S.globalMenuOpen && S.confirmSaveState) {
+                S.confirmSaveState = false;
+                forceRedraw();
             } else if (S.globalMenuOpen && S.confirmConvertToDrum) {
                 closeConvertConfirm();
                 forceRedraw();
@@ -8294,6 +8309,9 @@ function _onCC_transport(d1, d2) {
             forceRedraw();
         } else if (S.globalMenuOpen && S.confirmClearSession) {
             S.confirmClearSession = false;
+            forceRedraw();
+        } else if (S.globalMenuOpen && S.confirmSaveState) {
+            S.confirmSaveState = false;
             forceRedraw();
         } else if (S.globalMenuOpen && S.confirmConvertToDrum) {
             closeConvertConfirm();

@@ -352,6 +352,7 @@ export const S = {
     bpmWasEditing: false,
     lastSentMenuEditValue: null,
     confirmClearSession: false,
+    confirmSaveState: false,       /* Save state Yes/No confirm dialog open */
     /* State version mismatch confirm dialog — shown when DSP detects an
      * old-format state file. Yes = wipe + clean start; No = exit module. */
     confirmStateWipe: false,
@@ -427,6 +428,8 @@ export const S = {
     tapTempoFlashTick: -1,
     tapTempoFlashPad: -1,
     confirmClearSel: 1,
+    confirmSaveSel: 1,             /* Save state confirm: 0 = Yes, 1 = No (default) */
+    confirmSaveCount: 0,           /* snapshot count captured when Save confirm opens */
     confirmExport: false,          /* Ableton export Yes/No dialog open */
     confirmExportSel: 1,           /* 0 = Yes, 1 = No (default) */
     confirmExportCondPhase: false, /* export "Apply Conductor?" stage (after the export Yes) */
