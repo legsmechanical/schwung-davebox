@@ -11,6 +11,7 @@ the section into a versioned heading at release time.
 - **Save state asks first.** Choosing Save state from the Global Menu now shows a confirmation (with your current snapshot count) before it saves, so an accidental click can't overwrite your work.
 
 ### Fixes
+- **Automation now records after a count-in.** Arming Record from a stopped transport (which plays a 1-bar count-in first) and then turning an automation knob now captures the move. Previously the first knob turn right after the count-in was dropped on lanes that had no automation yet.
 - **Drum pads play once in Move co-run.** While editing Move's drum sounds in co-run, tapping a drum pad now plays a single hit at the velocity you played — it was double-triggering and ignoring velocity before — and still selects that drum on Move for editing.
 
 ## [1.0b4] — 2026-06-07

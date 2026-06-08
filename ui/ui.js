@@ -9804,7 +9804,13 @@ function _onCC_knobs(d1, d2) {
             /* Normal turn: run-length acceleration (first few clicks ±1, sustained turning ramps up). */
             const accel = ccKnobDelta(d2, knobIdx);
             if (accel === 0) return;
-            const armed   = S.recordArmed && !S.recordCountingIn && S.recordArmedTrack === t;
+            /* Gate the record path on S.playing rather than !S.recordCountingIn:
+             * recordCountingIn only clears when pollDSP catches the count-in 1->0
+             * edge (~every POLL_INTERVAL), so for up to ~43ms after the count-in
+             * downbeat a knob turn would be misrouted to cc_rest and never engage
+             * the DSP latch. S.playing is 0 for the whole count-in and flips to 1
+             * atomically with tr->recording at fire, so it tracks the real arm. */
+            const armed   = S.recordArmed && S.recordArmedTrack === t && S.playing;
             const hasAuto = (S.trackCCAutoBits[t][ac] >> knobIdx) & 1;
 
             if (armed) {
