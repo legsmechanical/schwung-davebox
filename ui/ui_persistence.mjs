@@ -142,7 +142,8 @@ export function writeSidecar() {
             dleu: S.drumLaneEuclidN.map(function(lane) { return lane.slice(); }),
             to: S.trackOctave.slice(),
             tab: S.trackActiveBank.slice(),
-            am: S.trackAtMode.slice()
+            am: S.trackAtMode.slice(),
+            pchr: S.padLayoutChromatic.map(function(b) { return b ? 1 : 0; })
         }));
 }
 

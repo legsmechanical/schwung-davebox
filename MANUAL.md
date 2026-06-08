@@ -1128,7 +1128,7 @@ Auto-saves on suspend (Back) and exit (Shift+Back / Quit).
 
 - All note data, per-clip effects, CLIP/DRUM LANE params, CC automation
 - Track settings: channel, route, mode, octave, VelIn, Looper, AftTch
-- Per-track active bank
+- Per-track active bank and pad layout (In-Key / Chromatic)
 - Global settings (BPM, key, scale, swing, launch quant, metro, etc.)
 - Mute/solo state and all 16 snapshots
 - ARP IN state (latch clears on Stop/Delete+Play/Session entry but persists across track switches)
