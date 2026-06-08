@@ -2333,6 +2333,18 @@ function syncDrumRepeatState(t, lane) {
     if (v.length >= 19) S.drumRepeatGateLen[t][lane] = parseInt(v[18], 10) || 8;
 }
 
+/* Full drum-track resync after a track switch: lane metadata (MIDI notes,
+ * mute/solo), the active lane's step pattern, clip non-empty dots, and bank
+ * params. The two track-switch entry points (Shift+pad, Shift+jog) must both
+ * call this so a drum track that changed while inactive (e.g. a clip launched
+ * from Session View) doesn't show stale steps/notes/dots. */
+function resyncDrumTrack(t) {
+    syncDrumLanesMeta(t);
+    syncDrumLaneSteps(t, S.activeDrumLane[t]);
+    syncDrumClipContent(t);
+    refreshDrumLaneBankParams(t, S.activeDrumLane[t]);
+}
+
 function refreshPerClipBankParams(t) {
     if (typeof host_module_get_param !== 'function') return;
     if (S.trackPadMode[t] === PAD_MODE_DRUM) {
@@ -7701,10 +7713,11 @@ function _onCC_jog(d1, d2) {
                         _switchActiveTrack(next);
                         if (S.trackPadMode[next] === PAD_MODE_DRUM) {
                             if (S.activeBank === 2 || S.activeBank === 4) S.activeBank = 0;
+                            resyncDrumTrack(next);
                         } else {
                             if (S.activeBank === 7) S.activeBank = 0;
+                            refreshPerClipBankParams(next);
                         }
-                        refreshPerClipBankParams(next);
                         computePadNoteMap();
                         S.seqActiveNotes.clear();
                         S.seqLastStep = -1;
@@ -10638,10 +10651,7 @@ function _onPadPressTrackView(status, d1, d2) {
             if (S.trackPadMode[padIdx] === PAD_MODE_DRUM) {
                 /* Fall back from banks hidden on drum tracks */
                 if (S.activeBank === 2 || S.activeBank === 4) S.activeBank = 0;
-                syncDrumLanesMeta(padIdx);
-                syncDrumLaneSteps(padIdx, S.activeDrumLane[padIdx]);
-                syncDrumClipContent(padIdx);
-                refreshDrumLaneBankParams(padIdx, S.activeDrumLane[padIdx]);
+                resyncDrumTrack(padIdx);
             } else {
                 if (S.activeBank === 7) S.activeBank = 0;
             }
