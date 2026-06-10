@@ -21,6 +21,7 @@ the section into a versioned heading at release time.
 - **Drum pads play once in Move co-run.** While editing Move's drum sounds in co-run, tapping a drum pad now plays a single hit at the velocity you played — it was double-triggering and ignoring velocity before — and still selects that drum on Move for editing.
 
 ### Documentation
+- **New Quick Start guide + reorganized manual.** Added a separate `QUICKSTART.md` that walks new users from setup to a looping pattern with effects, scenes, and Performance Mode in six short lessons. The manual is reorganized into six clearly-signposted parts (Foundations · The Two Views · Building Patterns · Parameter Banks · Performance & Output · Reference) so each topic lives in one place — Conductor tracks now have their own chapter, and all the parameter banks are grouped together. Also corrected against the device: Track Config's Type is Keys/Drums/Cond (with a Layout entry), the Global Menu is listed in on-device order, and the obsolete "Save" menu action is replaced with the actual auto-save / Quit / Save-state behavior.
 - **Manual corrections.** Fixed several spots where the manual didn't match the device: Performance-Mode capture length is set with the R0 pads (1/32–1/2 bar; there is no 1-bar or triplet capture), drum lane bank A/B switches with Up/Down (modes cycle with Shift+Step 8), the AUTO playhead step shows white, Shift+jog switches tracks in both views, and the step-edit K2 label reads "Note".
 
 ## [1.0b4] — 2026-06-07
