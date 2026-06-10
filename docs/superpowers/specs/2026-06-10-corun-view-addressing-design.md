@@ -87,18 +87,25 @@ A JS table in `shadow_ui.js`:
 ```js
 // id -> { enter: fn(args), keepDefault: <mask>, overlay: bool }
 const CORUN_ENTRIES = {
-  chain_editor:    { enter: (a) => enterChainEditForSlot(a.slot), ... },
-  slots:           { enter: () => enterSlots(), ... },
+  slots:           { enter: () => { view = VIEWS.SLOTS; }, ... }, // chain UI home (root list)
+  chain_editor:    { enter: (a) => enterChainEdit(a.slot), ... }, // tool supplies the slot
+  master_fx:       { enter: () => enterMasterFxSettings(), ... },
   global_settings: { enter: () => enterGlobalSettings(), ... },
-  tools:           { enter: () => enterTools(), ... },
   // fork-only (registered in a fork-guarded block):
   fx_picker:       { enter: () => enterFxBusPicker(), overlay: true, ... },
 };
 ```
 
-The enter-functions **already exist**; registration is wiring, not new UI. Entries are
-curated and added deliberately — the registry is **never** auto-derived from `VIEWS`.
-Each enter-function is responsible for establishing its own prerequisite state.
+The enter-functions **already exist** (verified: `enterChainEdit` `shadow_ui.js:7061`,
+`enterMasterFxSettings` `:15006`, `enterGlobalSettings` `:6117`, `enterFxBusPicker`
+`:15022`; the `slots` root is the default `view`, set directly). Registration is wiring,
+not new UI. Entries are curated and added deliberately — the registry is **never**
+auto-derived from `VIEWS`. Each enter-function establishes its own prerequisite state.
+
+**Deliberately excluded** (available but not registered): `tools` / `overtake_menu` are
+*launchers* (audio-utility jobs and module switching), not config/browse screens —
+awkward to overlay mid-session; `store` likewise. All other `VIEWS` entries are
+context-dependent sub-views or wizard steps that require preloaded state.
 
 ### The three verbs (new exported globals)
 
@@ -175,7 +182,7 @@ FX bus editors (existing code, unchanged).
 | | Upstream Schwung | dAVEBOx fork |
 |---|---|---|
 | Mechanism (`open`/`close`/`entries`, overlay, registry table) | ✅ ships it | same code |
-| Registered screens | `chain_editor`, `slots`, `global_settings`, `tools` | same **+ `fx_picker`** (+ send-bus / Move-FX screens) |
+| Registered screens | `slots`, `chain_editor`, `master_fx`, `global_settings` | same **+ `fx_picker`** (+ send-bus / Move-FX screens) |
 | Consumer | any co-run tool | dAVEBOx Note/Session button |
 
 Tools discover the catalog at runtime, so a build lacking `fx_picker` simply doesn't show
