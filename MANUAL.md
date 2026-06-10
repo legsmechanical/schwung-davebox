@@ -228,6 +228,7 @@ The primary editing environment. Shows the active track's clip.
 | K1–K8 | Adjust parameters in the active bank |
 | Jog rotate | Cycle parameter banks |
 | Jog click | Toggle alt-param mode on banks that support it (label flips to alternate; a down-arrow blinks in the header). Switching banks or tracks reverts to primary params. |
+| Jog touch | Reveal the active bank's display (hold to keep it up) |
 | Up / Down | Shift pad octave range (−4 to +4) |
 | Left / Right | Navigate clip pages (clips longer than 16 steps) |
 | Loop (hold) | Enter loop view |
@@ -235,6 +236,12 @@ The primary editing environment. Shows the active track's clip.
 
 The OLED shows all 8 knob parameters and values. Touching a knob highlights its
 row. The LED below each knob lights when that parameter differs from default.
+
+The bank display returns to the track overview after about a second of inactivity.
+**Touch the jog wheel** at any time to bring the active bank's display back —
+it stays up while you hold the touch — wherever a bank display applies (melodic,
+drum, and Conductor banks alike). The reveal is disabled while the Global Menu is
+open.
 
 ## Switching tracks while playing
 
@@ -646,7 +653,7 @@ Conductor steps still carry **Iter / Prob** trig conditions like any melodic ste
 A Conductor's jog wheel cycles exactly five banks (no FX/ARP/Auto): **Conduct →
 NoteFX → Responder → Octave → When**. Headers blink a **"C-"** prefix so you
 always know you're on the Conductor; when idle the banks fall back to the
-overview screen.
+overview screen (touch the jog to bring the active bank's display back).
 
 | Bank | What it does |
 |---|---|
@@ -682,6 +689,10 @@ This part covers them all:
 - **Chapter 10 — Effects Banks** (NOTE FX, HARMONY, DELAY, SEQ ARP, ARP IN):
   non-destructive transformations applied at playback time.
 - **Chapter 11 — Automation** (AUTO): recordable CC / aftertouch lanes.
+
+Each bank's display returns to the track overview after about a second of
+inactivity; **touch the jog wheel** to bring the current bank's display back
+(it stays up while held). See [Track View](#3-track-view).
 
 **Alt-params:** some knobs have a secondary function (marked **Alt** in the tables
 below). **Jog click** toggles between primary and alt — the label on screen flips
