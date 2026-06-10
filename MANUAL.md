@@ -52,7 +52,7 @@ Before dAVEBOx can make sound, Move and Schwung need to receive on matching MIDI
 
 ## Your first pattern
 
-1. Load a Schwung set and open dAVEBOx.
+1. Load a Move set and open dAVEBOx from the Schwung tool menu (shift+step button 13 (the star)).
 2. You start in **Session View** — an 8-column clip grid. Tap **Note/Session** to switch to **Track View**.
 3. Open the Global Menu (**Shift + Note/Session**), navigate to **Mode**, and set it to **Drum**.
 4. Close the menu (Note/Session). The left 4×4 pads are now drum lanes.
