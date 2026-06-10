@@ -9,6 +9,7 @@ the section into a versioned heading at release time.
 ## [Unreleased]
 ### Features
 - **Save state asks first.** Choosing Save state from the Global Menu now shows a confirmation (with your current snapshot count) before it saves, so an accidental click can't overwrite your work.
+- In Move co-run, the Note/Session button now opens the FX bus picker (Master FX, send buses, and per-track Move insert FX) over the synth; Back returns you to the synth.
 
 ### Fixes
 - **Clips you've left off stay off.** A clip that has notes but isn't playing no longer springs to life on its own — scrolling between tracks, or pressing Play, only auto-starts a track's focused clip if that clip is empty. And Shift + clip pad in Session View now *opens* a notes-clip in Track View for editing without turning it on (while stopped); empty clips, or any clip while the transport is running, still launch. To turn a clip on, tap its clip pad in Session View or its clip side button in Track View.

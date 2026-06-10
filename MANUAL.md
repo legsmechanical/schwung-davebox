@@ -1409,6 +1409,14 @@ type or route.)
 > when running a Schwung build that exposes the co-run shim; that build is not yet
 > in the public Schwung release, so on a stock setup the entries are hidden.
 
+> **FX bus picker in Move co-run.** While editing a Move-routed track's synth in
+> co-run, press **Note/Session** to open the FX bus picker over the synth screen:
+> Master FX, Send A, Send B, and the track's Move insert FX 1–4. Turn the jog to
+> move between buses and click the jog to open one for editing. **Back** returns
+> you to the Move synth screen you came from — the synth context is kept the whole
+> time. This is capability-gated like Edit Synth/Slot and appears only on a
+> Schwung build that exposes the co-run view-addressing shim.
+
 ## 16.2 Global settings
 
 Below the Track Config separator, in on-device menu order. (Several on-screen
