@@ -487,6 +487,13 @@ const DAVEBOX_CORUN_KEEP_DEFAULT = CORUN_GRP_PADS | CORUN_GRP_STEPS | CORUN_GRP_
  * (chain editor pop-up, Move firmware preset/synth navigation). */
 const CORUN_KEEP_BACK_BIT      = 1 << 15;
 const DAVEBOX_CORUN_KEEP_MASK  = DAVEBOX_CORUN_KEEP_DEFAULT | CORUN_KEEP_BACK_BIT;
+/* Jog group (turn + click) — bit 4, matching CORUN_GRP_JOG in Schwung's
+ * shadow_constants.h (OLED=0, PADS=1, STEPS=2, TRANSPORT=3, JOG=4, ...). */
+const CORUN_GRP_JOG = 1 << 4;
+/* Mask used while the FX-picker overlay is open: the normal Move-co-run mask
+ * PLUS jog, so the picker's jog turn/click reach shadow_ui's dispatcher instead
+ * of being ceded to Move firmware. (MENU + BACK are already kept.) */
+const DAVEBOX_PICKER_KEEP_MASK = DAVEBOX_CORUN_KEEP_MASK | CORUN_GRP_JOG;
 
 const LOOPER_RATES_STRAIGHT = [12, 24, 48, 96, 192];   /* 1/32, 1/16, 1/8, 1/4, 1/2 */
 const PERF_LATCH_LONG_PRESS = 100;     /* ~510ms → clear all toggled mods + exit Latch mode */
@@ -2506,6 +2513,10 @@ function pollDSP() {
         }
         if (_track < 0 && S.moveCoRunTrack >= 0) {
             exitMoveNativeCoRun();
+        }
+        if (S.fxPickerAvailable === undefined) {
+            S.fxPickerAvailable = (typeof shadow_corun_entries === 'function') &&
+                shadow_corun_entries().indexOf('fx_picker') >= 0;
         }
     }
     if (typeof host_module_get_param !== 'function') return;
@@ -8012,7 +8023,17 @@ function _onCC_buttons(d1, d2) {
     if (d1 === MoveNoteSession) {
         /* Move co-run: Menu button is disabled — swallow press and release so it
          * neither exits co-run nor toggles the view. Step 3 / Back are the exits. */
-        if (S.moveCoRunTrack >= 0) return;
+        if (S.moveCoRunTrack >= 0) {
+            /* Move co-run: Note/Session opens the FX bus picker (when this Schwung
+             * build registered it) as an overlay over the Move synth screen. corun
+             * target stays MOVE_NATIVE, so pollDSP does NOT tear down — Back from
+             * the picker returns to the synth. Builds without fx_picker: swallow as
+             * before (the button still has no other use here). */
+            if (d2 === 127 && S.fxPickerAvailable && typeof shadow_corun_open === 'function') {
+                shadow_corun_open('fx_picker', DAVEBOX_PICKER_KEEP_MASK);
+            }
+            return;
+        }
         if (d2 === 127) {
             /* Co-run exit is the framework's job now — the shim catches Back
              * during corun_active() and calls shadow_corun_end() itself, and
