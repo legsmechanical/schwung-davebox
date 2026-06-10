@@ -107,7 +107,19 @@ auto-derived from `VIEWS`. Each enter-function establishes its own prerequisite 
 awkward to overlay mid-session; `store` likewise. All other `VIEWS` entries are
 context-dependent sub-views or wizard steps that require preloaded state.
 
-### The three verbs (new exported globals)
+### Implementation note — dispatch (verified)
+
+The overtake tool module and `shadow_ui.js` run in **one shared QuickJS context /
+`globalThis`** (`shadow_ui.c:169` creates a single context; the tool's `ui.js` is
+`eval_buf`'d into it). Therefore the three verbs are implemented as **JS functions
+defined on `globalThis` by `shadow_ui.js`** — the registry table and the enter-functions
+stay pure JS, and the tool calls them directly (same global object). The only C needed is
+**one** small SHM helper (`shadow_corun_overlay(active, keep_mask)`) because JS cannot
+write `shadow_control` fields (display owner / keep_mask / the overlay flag) directly.
+`shadow_corun_open` calls that helper, then invokes the registered enter-function
+synchronously. This is leaner than separate C bindings per verb.
+
+### The three verbs (defined on `globalThis` by shadow_ui.js)
 
 1. **`shadow_corun_entries()` → array of ids** — discovery. A tool calls this to learn
    which screens this Schwung build can open, then capability-gates per-entry. This is
@@ -210,9 +222,10 @@ the button. No breakage across the gap.
 
 ## Scope estimate
 
-- **Upstream mechanism (fork):** ~150–250 lines, mostly JS (registry table + open/close
-  logic reusing existing enter-functions), plus ~40–60 lines C for three thin bindings
-  (mirroring `corun_begin`), optionally +1 SHM byte and ~10 shim lines for Back gating.
+- **Upstream mechanism (fork):** ~150–250 lines, mostly JS (registry table + open/close/
+  entries on `globalThis` reusing existing enter-functions), plus ~30–40 lines C for the
+  single `shadow_corun_overlay` SHM helper + 1 SHM byte (the overlay flag), and ~10 shim
+  lines for Back gating.
 - **Fork-only catalog:** ~10–30 lines to register `fx_picker` (+ siblings).
 - **dAVEBOx:** ~30–60 lines (`ui.js` button handling + capability gate) + docs
   (MANUAL, SCHWUNG_PATCHES, CHANGELOG ×2).
