@@ -2524,9 +2524,19 @@ function pollDSP() {
         if (_track < 0 && S.moveCoRunTrack >= 0) {
             exitMoveNativeCoRun();
         }
-        if (S.fxPickerAvailable === undefined) {
-            S.fxPickerAvailable = (typeof shadow_corun_entries === 'function') &&
-                shadow_corun_entries().indexOf('fx_picker') >= 0;
+        if (S.coRunOverlayScreen === undefined) {
+            /* Which Schwung screen Note/Session opens as an overlay in Move co-run.
+             * Prefer this fork's FX-bus picker; fall back to an upstream-registered
+             * FX screen (master_fx) so the overlay also works on STOCK Schwung that
+             * has the co-run view-addressing API (shadow_corun_*) but not the fork's
+             * fork-only fx_picker entry. null = no addressable screen available. */
+            let _scr = null;
+            if (typeof shadow_corun_entries === 'function') {
+                const _ents = shadow_corun_entries();
+                if (_ents.indexOf('fx_picker') >= 0) _scr = 'fx_picker';
+                else if (_ents.indexOf('master_fx') >= 0) _scr = 'master_fx';
+            }
+            S.coRunOverlayScreen = _scr;
         }
     }
     if (typeof host_module_get_param !== 'function') return;
@@ -8034,13 +8044,13 @@ function _onCC_buttons(d1, d2) {
         /* Move co-run: Menu button is disabled — swallow press and release so it
          * neither exits co-run nor toggles the view. Step 3 / Back are the exits. */
         if (S.moveCoRunTrack >= 0) {
-            /* Move co-run: Note/Session opens the FX bus picker (when this Schwung
-             * build registered it) as an overlay over the Move synth screen. corun
-             * target stays MOVE_NATIVE, so pollDSP does NOT tear down — Back from
-             * the picker returns to the synth. Builds without fx_picker: swallow as
-             * before (the button still has no other use here). */
-            if (d2 === 127 && S.fxPickerAvailable && typeof shadow_corun_open === 'function') {
-                shadow_corun_open('fx_picker', DAVEBOX_PICKER_KEEP_MASK);
+            /* Move co-run: Note/Session opens an FX screen as an overlay over the
+             * Move synth — this fork's fx_picker where available, else the stock
+             * master_fx (see the coRunOverlayScreen probe in pollDSP). corun target
+             * stays MOVE_NATIVE, so pollDSP does NOT tear down — Back returns to the
+             * synth. No addressable screen (older Schwung): swallow as before. */
+            if (d2 === 127 && S.coRunOverlayScreen && typeof shadow_corun_open === 'function') {
+                shadow_corun_open(S.coRunOverlayScreen, DAVEBOX_PICKER_KEEP_MASK);
             }
             return;
         }
