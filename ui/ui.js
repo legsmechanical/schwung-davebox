@@ -487,18 +487,23 @@ const DAVEBOX_CORUN_KEEP_DEFAULT = CORUN_GRP_PADS | CORUN_GRP_STEPS | CORUN_GRP_
  * (chain editor pop-up, Move firmware preset/synth navigation). */
 const CORUN_KEEP_BACK_BIT      = 1 << 15;
 const DAVEBOX_CORUN_KEEP_MASK  = DAVEBOX_CORUN_KEEP_DEFAULT | CORUN_KEEP_BACK_BIT;
-/* Jog group (turn + click) — bit 4; Back routing group — bit 9. Both match
- * Schwung's shadow_constants.h (OLED=0, PADS=1, STEPS=2, TRANSPORT=3, JOG=4,
- * TRACK=5, KNOBS=6, MASTER=7, SHIFT=8, BACK=9, MENU=10, ...). */
-const CORUN_GRP_JOG  = 1 << 4;
-const CORUN_GRP_BACK = 1 << 9;
-/* Mask used while the FX-picker overlay is open: the normal Move-co-run mask
- * PLUS jog AND the Back *routing* group, so the picker's jog turn/click AND Back
- * reach shadow_ui's dispatcher (which pops the picker / closes the overlay)
- * instead of being ceded to Move firmware. NOTE: the normal mask keeps only
- * CORUN_KEEP_BACK (1<<15, the framework-exit opt-out) — NOT CORUN_GRP_BACK — so
- * without this, Back never reaches shadow_ui and the overlay is inescapable. */
-const DAVEBOX_PICKER_KEEP_MASK = DAVEBOX_CORUN_KEEP_MASK | CORUN_GRP_JOG | CORUN_GRP_BACK;
+/* Control-group bits matching Schwung's shadow_constants.h (OLED=0, PADS=1,
+ * STEPS=2, TRANSPORT=3, JOG=4, TRACK=5, KNOBS=6, MASTER=7, SHIFT=8, BACK=9,
+ * MENU=10, TOUCH=11). */
+const CORUN_GRP_JOG   = 1 << 4;
+const CORUN_GRP_KNOBS = 1 << 6;
+const CORUN_GRP_BACK  = 1 << 9;
+const CORUN_GRP_TOUCH = 1 << 11;
+/* Mask while the FX-picker overlay is open: the normal Move-co-run mask PLUS the
+ * UI elements the overlay should own — jog (turn/click), the Back *routing* group,
+ * the param knobs (turn → FX value), and knob touch (param pop-up). Keeping a
+ * group routes it to shadow_ui's intercept instead of ceding it to Move firmware;
+ * shadow_ui's uniform coRunWants() rule then handles exactly what we keep. NOTE:
+ * the normal mask keeps only CORUN_KEEP_BACK (1<<15, the framework-exit opt-out),
+ * NOT CORUN_GRP_BACK (the routing group) — so the Back/jog/knob groups must be
+ * added explicitly here or those elements never reach shadow_ui. */
+const DAVEBOX_PICKER_KEEP_MASK =
+    DAVEBOX_CORUN_KEEP_MASK | CORUN_GRP_JOG | CORUN_GRP_BACK | CORUN_GRP_KNOBS | CORUN_GRP_TOUCH;
 
 const LOOPER_RATES_STRAIGHT = [12, 24, 48, 96, 192];   /* 1/32, 1/16, 1/8, 1/4, 1/2 */
 const PERF_LATCH_LONG_PRESS = 100;     /* ~510ms → clear all toggled mods + exit Latch mode */
