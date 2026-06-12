@@ -492,18 +492,23 @@ const DAVEBOX_CORUN_KEEP_MASK  = DAVEBOX_CORUN_KEEP_DEFAULT | CORUN_KEEP_BACK_BI
  * MENU=10, TOUCH=11). */
 const CORUN_GRP_JOG   = 1 << 4;
 const CORUN_GRP_KNOBS = 1 << 6;
+const CORUN_GRP_SHIFT = 1 << 8;
 const CORUN_GRP_BACK  = 1 << 9;
 const CORUN_GRP_TOUCH = 1 << 11;
 /* Mask while the FX-picker overlay is open: the normal Move-co-run mask PLUS the
  * UI elements the overlay should own — jog (turn/click), the Back *routing* group,
- * the param knobs (turn → FX value), and knob touch (param pop-up). Keeping a
- * group routes it to shadow_ui's intercept instead of ceding it to Move firmware;
- * shadow_ui's uniform coRunWants() rule then handles exactly what we keep. NOTE:
- * the normal mask keeps only CORUN_KEEP_BACK (1<<15, the framework-exit opt-out),
- * NOT CORUN_GRP_BACK (the routing group) — so the Back/jog/knob groups must be
- * added explicitly here or those elements never reach shadow_ui. */
+ * the param knobs (turn → FX value), knob touch (param pop-up), and Shift (CC 49).
+ * Keeping a group routes it to shadow_ui's intercept instead of ceding it to Move
+ * firmware; shadow_ui's uniform coRunWants() rule then handles exactly what we keep.
+ * Shift specifically: the overlay/chain editor's Shift-modified nav (FX-bus zoom,
+ * fx_picker entry) is gated on coRunWants(CORUN_GRP_SHIFT) in shadow_ui — so unless
+ * we KEEP Shift here, CC 49 cedes to Move firmware and isShiftHeld() never updates,
+ * making Shift dead in every fx-picker-accessed chain. NOTE: the normal mask keeps
+ * only CORUN_KEEP_BACK (1<<15, the framework-exit opt-out), NOT CORUN_GRP_BACK (the
+ * routing group) — so the Back/jog/knob/shift groups must be added explicitly here
+ * or those elements never reach shadow_ui. */
 const DAVEBOX_PICKER_KEEP_MASK =
-    DAVEBOX_CORUN_KEEP_MASK | CORUN_GRP_JOG | CORUN_GRP_BACK | CORUN_GRP_KNOBS | CORUN_GRP_TOUCH;
+    DAVEBOX_CORUN_KEEP_MASK | CORUN_GRP_JOG | CORUN_GRP_BACK | CORUN_GRP_KNOBS | CORUN_GRP_TOUCH | CORUN_GRP_SHIFT;
 
 const LOOPER_RATES_STRAIGHT = [12, 24, 48, 96, 192];   /* 1/32, 1/16, 1/8, 1/4, 1/2 */
 const PERF_LATCH_LONG_PRESS = 100;     /* ~510ms → clear all toggled mods + exit Latch mode */
