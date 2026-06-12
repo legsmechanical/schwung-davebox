@@ -920,7 +920,9 @@ static void set_param(void *instance, const char *key, const char *val) {
                  * Session if not reset here. JS doClearSession resets the JS
                  * mirrors but never pushes them to DSP; for v=0 (cleared) state
                  * files seq8_load_state leaves in-memory values untouched. */
-                tr2->channel             = (uint8_t)t2;
+                /* tracks 1-4 → ch 1-4, tracks 5-8 → ch 1-4 (idx-4) so the
+                 * Schwung-routed 5-8 layer onto Schwung slots 1-4. */
+                tr2->channel             = (uint8_t)(t2 < 4 ? t2 : t2 - 4);
                 tr2->pad_octave          = 3;
                 tr2->pfx.looper_on       = 1;
                 tr2->pfx.route           = (t2 < 4) ? ROUTE_MOVE : ROUTE_SCHWUNG;

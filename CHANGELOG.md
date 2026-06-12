@@ -8,6 +8,7 @@ the section into a versioned heading at release time.
 
 ## [Unreleased]
 ### Features
+- **Tracks 5–8 default to Schwung on channels 1–4.** New (or cleared) sets now route tracks 5–8 to Schwung slots 1–4 on MIDI channels 1–4 — matching Schwung's factory slot channels, so it works out of the box without re-channeling Schwung. Tracks 1–4 still go to Move on channels 1–4. Existing sets keep their saved routing.
 - **Save state asks first.** Choosing Save state from the Global Menu now shows a confirmation (with your current snapshot count) before it saves, so an accidental click can't overwrite your work.
 - In Move co-run, the Note/Session button now opens the FX bus picker (Master FX, send buses, and per-track Move insert FX) over the synth; Back returns you to the synth.
 

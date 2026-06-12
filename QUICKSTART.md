@@ -29,15 +29,15 @@ MIDI **Out** off (this prevents echo loops):
 | 3 | Ch 3 | Off |
 | 4 | Ch 4 | Off |
 
-**In Schwung** — set slots 1–4 to receive on channels 5–8, with each slot's
-Forward Channel set to **Auto** (not Thru):
+**In Schwung** — slots 1–4 receive on channels 1–4 (Schwung's factory default, so
+usually nothing to change), with each slot's Forward Channel set to **Auto** (not Thru):
 
 | Schwung slot | Receive channel |
 |---|---|
-| 1 | Ch 5 |
-| 2 | Ch 6 |
-| 3 | Ch 7 |
-| 4 | Ch 8 |
+| 1 | Ch 1 |
+| 2 | Ch 2 |
+| 3 | Ch 3 |
+| 4 | Ch 4 |
 
 With that done, dAVEBOx tracks 1–4 play Move's instruments and tracks 5–8 play
 Schwung's chains. (You can change any track's channel and routing later — see the

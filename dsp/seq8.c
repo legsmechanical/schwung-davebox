@@ -1769,8 +1769,10 @@ static void seq8_load_state(seq8_instance_t *inst) {
             json_get_int(buf, key, 0), 0, 1);
 
         snprintf(key, sizeof(key), "t%d_ch", t);
+        /* Fallback when the key is absent (older v=36 sets): tracks 5-8 default
+         * to ch 1-4 (idx-4) so Schwung-routed 5-8 layer onto Schwung slots 1-4. */
         inst->tracks[t].channel = (uint8_t)clamp_i(
-            json_get_int(buf, key, t), 0, 15);
+            json_get_int(buf, key, t < 4 ? t : t - 4), 0, 15);
 
         snprintf(key, sizeof(key), "t%d_rt", t);
         inst->tracks[t].pfx.route = (uint8_t)clamp_i(
@@ -6557,7 +6559,9 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
 
     int t, c;
     for (t = 0; t < NUM_TRACKS; t++) {
-        inst->tracks[t].channel     = (uint8_t)t;
+        /* Default channels: tracks 1-4 → MIDI ch 1-4, tracks 5-8 → ch 1-4 too
+         * (idx-4), so the Schwung-routed 5-8 layer onto Schwung slots 1-4. */
+        inst->tracks[t].channel     = (uint8_t)(t < 4 ? t : t - 4);
         inst->tracks[t].queued_clip = -1;
         inst->tracks[t].pad_octave  = 3;
         inst->tracks[t].pad_mode    = PAD_MODE_MELODIC_SCALE;
@@ -6586,7 +6590,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
         inst->tracks[t].at_last_clip = 0xFF;
         inst->tracks[t].pfx.looper_on = 1;
         inst->tracks[t].pfx.track_idx = (uint8_t)t;
-        /* Default routing: tracks 1-4 → Move (ch 1-4), tracks 5-8 → Schwung (ch 5-8) */
+        /* Default routing: tracks 1-4 → Move (ch 1-4), tracks 5-8 → Schwung (ch 1-4) */
         if (t < 4) {
             inst->tracks[t].pfx.route = ROUTE_MOVE;
             { int _rl; for (_rl = 0; _rl < DRUM_LANES; _rl++) inst->tracks[t].drum_lane_pfx[_rl].route = ROUTE_MOVE; }
