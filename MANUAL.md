@@ -1400,22 +1400,24 @@ type or route.)
 | VelIn | Live, 1–127 | Live = raw velocity. A fixed value overrides all input velocity. |
 | Looper | On, Off | Whether the track feeds Performance Mode. |
 | AftTch | Off, Poly, Channel | Pad-pressure aftertouch (melodic tracks only). Poly sends individual pressure per note; Channel sends one pressure value for the whole track. Move-routed tracks only offer Off/Poly. Default Off. |
-| Edit Slot... | Action | Open Schwung chain editor (Schwung-routed only). *Forthcoming — requires a future Schwung update.* |
-| Edit Synth... | Action | Open Move preset browser (Move-routed only). *Forthcoming — requires a future Schwung update.* |
+| Edit Slot... | Action | Open Schwung chain editor (Schwung-routed only). Requires Schwung 0.9.18 or later. |
+| Edit Synth... | Action | Open Move preset browser (Move-routed only). Requires Schwung 0.9.18 or later. |
 
-> **Edit Slot / Edit Synth (forthcoming).** These let you edit the active track's
-> sound source from within dAVEBOx — the Schwung chain editor (Edit Slot) or
-> Move's preset browser (Edit Synth). They are capability-gated and appear only
-> when running a Schwung build that exposes the co-run shim; that build is not yet
-> in the public Schwung release, so on a stock setup the entries are hidden.
+> **Edit Slot / Edit Synth.** These let you edit the active track's sound source
+> from within dAVEBOx — the Schwung chain editor (Edit Slot, on a Schwung-routed
+> track) or Move's preset browser (Edit Synth, on a Move-routed track). They run
+> on the **co-run framework that shipped in Schwung 0.9.18**, so the entries appear
+> automatically on 0.9.18 or later and stay hidden on older builds.
 
 > **FX bus picker in Move co-run.** While editing a Move-routed track's synth in
 > co-run, press **Note/Session** to open the FX bus picker over the synth screen:
 > Master FX, Send A, Send B, and the track's Move insert FX 1–4. Turn the jog to
 > move between buses and click the jog to open one for editing. **Back** returns
 > you to the Move synth screen you came from — the synth context is kept the whole
-> time. This is capability-gated like Edit Synth/Slot and appears only on a
-> Schwung build that exposes the co-run view-addressing shim.
+> time. This is a newer co-run capability (the *view-addressing* shim) that is not
+> yet in a public Schwung release — 0.9.18 has the base co-run framework but not
+> this — so on 0.9.18 the picker is unavailable and Note/Session does nothing in
+> co-run.
 
 ## 16.2 Global settings
 

@@ -310,12 +310,12 @@ function buildGlobalMenuItems() {
                 format: function(v) { return v === 2 ? 'Chan' : v === 1 ? 'Poly' : 'Off'; }
             })
         ] : []),
-        /* Co-run capability gate. The chain-editor co-run feature requires the
-         * patched Schwung shim (adds shadow_corun_begin + co-run draw paths
-         * in shadow_ui.js). On stock Schwung the API is undefined and the
-         * menu entry isn't built, so the feature is invisible. All other
-         * co-run code is dormant unless this entry triggers it. Also hidden on
-         * non-Schwung-routed tracks (symmetric with Edit Synth below). */
+        /* Co-run capability gate. The chain-editor co-run feature gates on
+         * shadow_corun_begin — the co-run framework merged upstream as #94,
+         * shipped in Schwung 0.9.18. On Schwung older than 0.9.18 the API is
+         * undefined and the menu entry isn't built, so the feature is invisible.
+         * All other co-run code is dormant unless this entry triggers it. Also
+         * hidden on non-Schwung-routed tracks (symmetric with Edit Synth below). */
         ...((S.trackRoute[S.activeTrack] === 0 &&
              typeof shadow_corun_begin === 'function') ? [
             createAction('Edit Slot...', function() {
@@ -323,9 +323,9 @@ function buildGlobalMenuItems() {
             })
         ] : []),
         /* Move-native co-run entry — visible only when (a) active track is
-         * ROUTE_MOVE, (b) the patched Schwung shim exposes the corun API, and
-         * (c) the cable-0 MIDI inject API is present (Schwung >= v0.7.0).
-         * On stock Schwung or non-Move-routed tracks the entry isn't built. */
+         * ROUTE_MOVE, (b) the co-run API (shadow_corun_begin, Schwung >= 0.9.18)
+         * is present, and (c) the cable-0 MIDI inject API is present (Schwung
+         * >= v0.7.0). On older Schwung or non-Move-routed tracks the entry isn't built. */
         ...((S.trackRoute[S.activeTrack] === 1 &&
              typeof shadow_corun_begin === 'function' &&
              typeof move_midi_inject_to_move === 'function') ? [

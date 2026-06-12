@@ -8,6 +8,7 @@ the section into a versioned heading at release time.
 
 ## [Unreleased]
 ### Features
+- **Co-run editing now works on stock Schwung.** Edit Slot (the Schwung chain editor) and Edit Synth (Move's preset browser) — reached from a track's Track Config or via Shift + Step 3 — now appear automatically on **Schwung 0.9.18 or later**, which ships the co-run framework; previously they needed a patched Schwung build. (The in-co-run FX bus picker is a newer capability that still needs a Schwung beyond 0.9.18.)
 - **Tracks 5–8 default to Schwung on channels 1–4.** New (or cleared) sets now route tracks 5–8 to Schwung slots 1–4 on MIDI channels 1–4 — matching Schwung's factory slot channels, so it works out of the box without re-channeling Schwung. Tracks 1–4 still go to Move on channels 1–4. Existing sets keep their saved routing.
 - **Save state asks first.** Choosing Save state from the Global Menu now shows a confirmation (with your current snapshot count) before it saves, so an accidental click can't overwrite your work.
 - In Move co-run, the Note/Session button now opens the FX bus picker (Master FX, send buses, and per-track Move insert FX) over the synth; Back returns you to the synth.
