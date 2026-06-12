@@ -12,6 +12,7 @@ the section into a versioned heading at release time.
 - In Move co-run, the Note/Session button now opens the FX bus picker (Master FX, send buses, and per-track Move insert FX) over the synth; Back returns you to the synth.
 
 ### Fixes
+- **Switching tracks with Shift + jog stays on the track overview.** Holding Shift and turning the jog to change tracks no longer flips the screen to the active parameter bank — the OLED keeps showing the track overview as you move. (Holding Shift on the NOTE FX bank also no longer pops a preview; that was a leftover from a removed feature.)
 - **Shift works in FX-picker chains (Move co-run).** Holding Shift now reaches the chain editor opened from the FX bus picker — it was being swallowed before, so Shift-modified navigation did nothing in those chains.
 - **Clips you've left off stay off.** A clip that has notes but isn't playing no longer springs to life on its own — scrolling between tracks, or pressing Play, only auto-starts a track's focused clip if that clip is empty. And Shift + clip pad in Session View now *opens* a notes-clip in Track View for editing without turning it on (while stopped); empty clips, or any clip while the transport is running, still launch. To turn a clip on, tap its clip pad in Session View or its clip side button in Track View.
 - **Metronome mode reads the same everywhere.** The Track-View status indicator now shows the same names as the menu and the Shift+Step 6 popup — Cnt-In / Play / Always — instead of the older Count / Rec / Rec/Ply.

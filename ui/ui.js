@@ -4479,8 +4479,7 @@ function drawUI() {
     }
 
     if (bank >= 0 && (S.knobTouched >= 0 || inTimeout ||
-            (S.altMode && bankHasAltParams(S.activeTrack, bank)) ||
-            (S.shiftHeld && bank === 1 && S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM))) {
+            (S.altMode && bankHasAltParams(S.activeTrack, bank)))) {
         const isDrumLaneBank = (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 0);
         if (isDrumLaneBank) {
             /* DRUM LANE bank overview: mirrors CLIP bank at lane level */
@@ -7908,7 +7907,13 @@ function _onCC_buttons(d1, d2) {
          * all-0xFF while Shift is held (suppress pad-shortcut notes) and
          * the real map again on release. See computePadNoteMap mute logic. */
         computePadNoteMap();
-        if (!S.shiftHeld && S.jogTouched) S.jogTouched = false;
+        /* Shift in Track View is a track-switch modifier (Shift+jog / Shift+pad),
+         * not a param gesture. Cancel any transient param-bank display on BOTH
+         * Shift edges so the OLED stays on the track overview while switching —
+         * the usual gesture touches the jog (jogTouched→bank view) before pressing
+         * Shift, and Shift-press never cleared it before. Mirrors the jog-release
+         * clear in the MoveMainTouch handler. */
+        if (!S.sessionView) { S.jogTouched = false; S.bankSelectTick = -1; }
         /* Deferred Shift+Step3 dispatch: fire on Shift release so the Shift
          * held state doesn't leak into Move firmware / Schwung chain editor. */
         if (!S.shiftHeld && S.pendingEditEntryTrack >= 0) {
