@@ -31,6 +31,8 @@ dAVEBOx is a Schwung **tool module** (`component_type: "tool"`) for Ableton Move
 
 ## Build / deploy / debug
 
+**Connect to Move over ethernet, not Wi-Fi.** The USB-C ethernet gadget is at a fixed `172.16.254.1` (`ssh root@172.16.254.1`, ~1 ms) vs Wi-Fi `move.local` (~1 s, which times out large tarball scp). It needs a *data* USB-C cable directly Mac↔Move (the Mac then gets a `172.16.254.x` DHCP address). On this Mac, `~/.ssh/config` forwards `move.local` → `172.16.254.1` (with Wi-Fi fallback if the cable's out), so the `move.local` commands below transparently use ethernet when connected. Fork/large tarball deploys still take an explicit `--host=172.16.254.1`. Never raw-`scp` binaries over it (strips setuid → NO_SHIM); use `install.sh`. (See move-usb-ethernet-gadget memory.)
+
 ```sh
 ./scripts/build.sh && ./scripts/install.sh      # DSP change (also copies all JS)
 python3 scripts/bundle_ui.py && ./scripts/install.sh  # JS-only
