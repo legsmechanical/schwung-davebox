@@ -334,16 +334,33 @@ function buildGlobalMenuItems() {
             })
         ] : []),
         createDivider('Global'),
+        /* Clock Follow: follow Move's MIDI clock + transport. Default off =
+         * unchanged internal free-run. When on, BPM is read-only (EXT) and Play
+         * drives Move (single source of truth). */
+        createToggle('Clock Follow', {
+            get: function() { return S.clockFollowOn === true; },
+            set: function(v) {
+                S.clockFollowOn = v ? true : false;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('clock_follow_on', S.clockFollowOn ? '1' : '0');
+            },
+            onLabel: 'Move', offLabel: 'Off'
+        }),
         createValue('BPM', {
             get: function() {
                 const v = parseFloat(host_module_get_param('bpm'));
                 return (v > 0 && isFinite(v)) ? Math.round(v) : 120;
             },
-            set: function(v) { host_module_set_param('bpm', String(Math.round(v))); },
+            /* Read-only while following — Move owns tempo (DSP also ignores writes). */
+            set: function(v) {
+                if (S.clockFollowOn) return;
+                host_module_set_param('bpm', String(Math.round(v)));
+            },
             min: 40, max: 250, step: 1,
-            format: function(v) { return String(Math.round(v)); }
+            format: function(v) { return S.clockFollowOn ? 'Move' : String(Math.round(v)); }
         }),
         createAction('Tap Tempo', function() {
+            if (S.clockFollowOn) { showActionPopup('TEMPO: MOVE'); return; }
             openTapTempo();
         }),
         /* Key/Scale: turning the knob previews a transpose of all melodic clips
@@ -1542,6 +1559,18 @@ function drawRecordBlockedDialog() {
     _btn(58, 46, 64, 13, S.recordBlockedDialogSel === 1, 'BAKE NOW', 6);
 }
 
+/* Shown when Tap Tempo is invoked while Clock Follow = Move (tempo is Move's, so
+ * there's nothing to tap). Single OK button; dismissed by jog click or Back. */
+function drawBpmMoveInfo() {
+    clear_screen();
+    drawMenuHeader('Tempo');
+    print(4, 20, 'BPM controlled', 1);
+    print(4, 30, 'by Move', 1);
+    /* OK button (filled, bottom center) — matches the generic INFO dialog. */
+    fill_rect(49, 52, 30, 11, 1);
+    print(59, 54, 'OK', 0);
+}
+
 /* Destructive Lgto confirm dialog. Right-turn of CLIP K8 / DRUM LANE K8
  * opens this. OK applies; CANCEL aborts. Undoable. */
 function drawLgtoConfirm() {
@@ -2550,6 +2579,12 @@ function pollDSP() {
         const _at = S.activeTrack, _ac = effectiveClip(_at);
         const _ah = host_module_get_param('t' + _at + '_c' + _ac + '_at_has');
         if (_ah !== null) S.clipAtHas[_at][_ac] = (parseInt(_ah, 10) === 1);
+    }
+    /* Clock-follow: keep the UI's view of follow mode + Move's transport live so
+     * BPM shows EXT and Tap Tempo is gated. Cheap single get_param per poll. */
+    {
+        const _cs = host_module_get_param('clock_follow_on');
+        if (_cs !== null) S.clockFollowOn = (_cs === '1');
     }
     const snap = host_module_get_param('state_snapshot');
     if (!snap) return;
@@ -3885,6 +3920,7 @@ function drawUI() {
         return;
     }
     if (S.confirmStateWipe) { drawStateWipeConfirm(); return; }
+    if (S.bpmMoveInfo) { drawBpmMoveInfo(); return; }
     if (S.recordBlockedDialog) { drawRecordBlockedDialog(); return; }
     if (S.confirmLgto)         { drawLgtoConfirm();         return; }
     if (S.confirmXpose) { drawXposeConfirm(); return; }
@@ -7183,6 +7219,13 @@ function _onCC_jog(d1, d2) {
         return;
     }
 
+    /* BPM-controlled-by-Move info: jog click = OK (dismiss). */
+    if (d1 === 3 && d2 === 127 && S.bpmMoveInfo) {
+        S.bpmMoveInfo = false;
+        forceRedraw();
+        return;
+    }
+
     /* REC Unavailable dialog: jog click commits selection (OK = dismiss,
      * BAKE NOW = open standard bake confirm pre-targeted at active clip). */
     if (d1 === 3 && d2 === 127 && S.recordBlockedDialog) {
@@ -8088,6 +8131,9 @@ function _onCC_buttons(d1, d2) {
                 removeFlagsWrap();
                 clearAllLEDs();
                 if (typeof host_exit_module === 'function') host_exit_module();
+                forceRedraw();
+            } else if (S.bpmMoveInfo) {
+                S.bpmMoveInfo = false;
                 forceRedraw();
             } else if (S.recordBlockedDialog) {
                 S.recordBlockedDialog = false;
@@ -9327,7 +9373,7 @@ function _onCC_knobs(d1, d2) {
     if (d1 >= 71 && d1 <= 78) {
         /* Exclusive overlays — knob turns have no visible effect and should be swallowed. */
         if (S.heldStep >= 0) return;
-        if (S.globalMenuOpen || S.tapTempoOpen || S.confirmBake || S.confirmClearSession || S.confirmConvertToDrum || S.confirmConvertToConduct || S.menuInfoLines.length > 0 || S.confirmExport || S.exportDoneDialog || S.recordBlockedDialog || S.confirmStateWipe) return;
+        if (S.globalMenuOpen || S.tapTempoOpen || S.confirmBake || S.confirmClearSession || S.confirmConvertToDrum || S.confirmConvertToConduct || S.menuInfoLines.length > 0 || S.confirmExport || S.exportDoneDialog || S.recordBlockedDialog || S.confirmStateWipe || S.bpmMoveInfo) return;
         const knobIdx = d1 - 71;
         S.knobTouched          = knobIdx;
         S.knobTurnedTick[knobIdx] = S.tickCount;
@@ -11109,7 +11155,10 @@ function _doShiftStepCommon(idx) {
          * Dispatch happens in _onCC_buttons Shift-release branch. */
         S.pendingEditEntryTrack = S.activeTrack;
     }
-    else if (idx === 4) openTapTempo();
+    else if (idx === 4) {
+        if (S.clockFollowOn) { S.bpmMoveInfo = true; forceRedraw(); }
+        else openTapTempo();
+    }
     else if (idx === 5) {
         S.metronomeOn = (S.metronomeOn === 1) ? 3 : 1;
         if (typeof host_module_set_param === 'function')

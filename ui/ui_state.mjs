@@ -99,6 +99,9 @@ export const S = {
      * selection; jog click commits. */
     recordBlockedDialog: false,
     recordBlockedDialogSel: 0,
+    /* Single-OK info modal shown when Tap Tempo is invoked while Clock Slave is
+     * on (tempo is Move's; there's nothing to tap). Dismissed by jog click or Back. */
+    bpmMoveInfo: false,
     clipSeqFollow: Array.from({length: 8}, () => new Array(16).fill(true)),
     trackCurrentStep: new Array(8).fill(-1),
     trackCurrentPage: new Array(8).fill(0),

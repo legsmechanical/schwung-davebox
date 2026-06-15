@@ -280,6 +280,141 @@ static void silence_active_notes_move(seq8_instance_t *inst, seq8_track_t *tr) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Transport edges (shared by set_param "play"/"stop" and clock-follow   */
+/* on_midi 0xFA/0xFC). Factored out so the playhead reset / note-silence */
+/* logic has one source of truth. Allocation- and file-IO-free, so they  */
+/* are safe to call from on_midi (RT SPI thread).                        */
+/* ------------------------------------------------------------------ */
+
+/* Reset every track to its window start, re-assert automation, relaunch
+ * armed clips, and set playing=1. Unconditional (no !playing guard) so an
+ * incoming 0xFA re-anchors a running davebox to bar 1 (decision #1). */
+static void ext_transport_start(seq8_instance_t *inst) {
+    int t;
+    inst->global_tick         = 0;
+    inst->tick_accum          = 0;
+    inst->master_tick_in_step = 0;
+    inst->arp_master_tick     = 0;
+    inst->ext_tick_pending    = 0;
+    reset_all_loop_cycles(inst);
+    for (t = 0; t < NUM_TRACKS; t++) {
+        seq8_track_t *_tr = &inst->tracks[t];
+        {
+            clip_t *_mcl = &_tr->clips[_tr->active_clip];
+            _tr->current_step = initial_clip_step(_mcl->loop_start, _mcl->length, _mcl->playback_dir);
+            _mcl->pp_dir_state = initial_pp_dir(_mcl->playback_dir);
+        }
+        _tr->tick_in_step       = 0;
+        _tr->note_active        = 0;
+        _tr->pfx.sample_counter = 0;
+        if (_tr->drum_clips[_tr->active_clip]) {
+            int _dl;
+            for (_dl = 0; _dl < DRUM_LANES; _dl++) {
+                clip_t *_dlc = &_tr->drum_clips[_tr->active_clip]->lanes[_dl].clip;
+                _tr->drum_current_step[_dl] = initial_clip_step(_dlc->loop_start, _dlc->length, _dlc->playback_dir);
+                _dlc->pp_dir_state = initial_pp_dir(_dlc->playback_dir);
+            }
+        }
+        memset(_tr->drum_tick_in_step, 0, sizeof(_tr->drum_tick_in_step));
+        /* Re-assert CC + aftertouch automation at the playhead on (re)start. */
+        memset(_tr->cc_auto_last_sent, 0xFF, 8);
+        memset(_tr->at_last_sent, 0xFF, AT_MAX_LANES);
+        if (_tr->will_relaunch) {
+            _tr->clip_playing      = 1;
+            _tr->will_relaunch     = 0;
+            _tr->pending_page_stop = 0;
+        }
+    }
+    inst->playing = 1;
+}
+
+/* Silence/finalize all tracks, panic, and set playing=0. Mirrors the
+ * set_param "stop" body (note-offs rescheduled to render_block for ROUTE_MOVE,
+ * since a set_param-context inject doesn't release Move voices; from on_midi
+ * they fire on the next render pass). */
+static void ext_transport_stop(seq8_instance_t *inst) {
+    int t;
+    for (t = 0; t < NUM_TRACKS; t++) {
+        play_fx_t *fx = &inst->tracks[t].pfx;
+        silence_track_notes_v2(inst, &inst->tracks[t]);
+        if (fx->route == ROUTE_MOVE) {
+            int ei;
+            for (ei = 0; ei < fx->event_count; ei++)
+                fx->events[ei].fire_at = fx->sample_counter;
+            memset(fx->active_notes, 0, sizeof(fx->active_notes));
+        } else {
+            fx->event_count = 0;
+            memset(fx->active_notes, 0, sizeof(fx->active_notes));
+        }
+        inst->tracks[t].clips[inst->tracks[t].active_clip].clock_shift_pos = 0;
+        if (inst->tracks[t].clip_playing) {
+            inst->tracks[t].will_relaunch = 1;
+            inst->tracks[t].clip_playing  = 0;
+        }
+        inst->tracks[t].pending_page_stop = 0;
+        inst->tracks[t].record_armed      = 0;
+        if (inst->tracks[t].recording) {
+            finalize_pending_notes(&inst->tracks[t].clips[inst->tracks[t].active_clip],
+                                   &inst->tracks[t]);
+            clip_clear_suppress(&inst->tracks[t].clips[inst->tracks[t].active_clip]);
+        }
+        inst->tracks[t].recording         = 0;
+        inst->tracks[t].queued_clip       = -1;
+    }
+    merge_finalize(inst);
+    inst->playing          = 0;
+    inst->count_in_ticks   = 0;
+    inst->ext_tick_pending = 0;
+    send_panic(inst);
+    for (t = 0; t < NUM_TRACKS; t++) {
+        seq8_track_t *_tr = &inst->tracks[t];
+        if (_tr->pad_mode != PAD_MODE_MELODIC_SCALE) continue;
+        cc_auto_t *_ca = &_tr->clip_cc_auto[_tr->active_clip];
+        int _k;
+        for (_k = 0; _k < 8; _k++) {
+            if (_ca->rest_val[_k] != 0xFF) {
+                cc_emit(_tr, _k, _ca->rest_val[_k]);
+                _tr->cc_auto_cur_val[_k] = _ca->rest_val[_k];
+            }
+            _tr->cc_auto_last_sent[_k] = 0xFF;
+        }
+    }
+}
+
+/* Clock-follow: route a transport-start gesture. When Move is already running,
+ * start davebox now locked to the live clock (no Move restart). When Move is
+ * stopped, arm a MovePlay inject (drained from render_block) and wait for the
+ * returning 0xFA to start davebox phase-locked. kind: 1 = plain play, 2 =
+ * record count-in (count_in_ticks already armed by the caller). */
+static void follow_request_start(seq8_instance_t *inst, uint8_t kind) {
+    inst->follow_play_request = 1;
+    if (inst->ext_transport_running) {
+        if (kind != 2 && !inst->playing) ext_transport_start(inst);
+        /* count-in: leave count_in_ticks running off the live clock. */
+        return;
+    }
+    if (inst->move_play_inject_phase == 0) {
+        inst->move_play_inject_phase = 1;                 /* arm press→release */
+        inst->follow_start_timeout    = FOLLOW_START_TIMEOUT_SAMPLES;
+        inst->follow_start_kind       = kind;
+    }
+}
+
+/* Clock-follow: route a transport-stop gesture. Toggle Move off if it's running
+ * (davebox stops on the returning 0xFC / staleness); otherwise stop locally. */
+static void follow_request_stop(seq8_instance_t *inst) {
+    inst->follow_play_request = 0;
+    inst->follow_start_timeout = 0;
+    inst->follow_start_kind    = 0;
+    if (inst->ext_transport_running) {
+        if (inst->move_play_inject_phase == 0)
+            inst->move_play_inject_phase = 1;             /* toggle Move off */
+    } else {
+        if (inst->playing || inst->count_in_ticks > 0) ext_transport_stop(inst);
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /* set_param                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -316,98 +451,31 @@ static void set_param(void *instance, const char *key, const char *val) {
             val = "play";
         }
         if (!strcmp(val, "play")) {
-            if (!inst->playing) {
-                int t;
-                inst->global_tick         = 0;
-                inst->tick_accum          = 0;
-                inst->master_tick_in_step = 0;
-                inst->arp_master_tick     = 0;
-                reset_all_loop_cycles(inst);
-                for (t = 0; t < NUM_TRACKS; t++) {
-                    seq8_track_t *_tr = &inst->tracks[t];
-                    {
-                        clip_t *_mcl = &_tr->clips[_tr->active_clip];
-                        _tr->current_step = initial_clip_step(_mcl->loop_start, _mcl->length, _mcl->playback_dir);
-                        _mcl->pp_dir_state = initial_pp_dir(_mcl->playback_dir);
-                    }
-                    _tr->tick_in_step       = 0;
-                    _tr->note_active        = 0;
-                    _tr->pfx.sample_counter = 0;
-                    if (_tr->drum_clips[_tr->active_clip]) {
-                        int _dl;
-                        for (_dl = 0; _dl < DRUM_LANES; _dl++) {
-                            clip_t *_dlc = &_tr->drum_clips[_tr->active_clip]->lanes[_dl].clip;
-                            _tr->drum_current_step[_dl] = initial_clip_step(_dlc->loop_start, _dlc->length, _dlc->playback_dir);
-                            _dlc->pp_dir_state = initial_pp_dir(_dlc->playback_dir);
-                        }
-                    }
-                    memset(_tr->drum_tick_in_step, 0, sizeof(_tr->drum_tick_in_step));
-                    /* Re-assert CC automation at the playhead on play: force the
-                     * next tick to resend every knob's value (emit-on-change). */
-                    memset(_tr->cc_auto_last_sent, 0xFF, 8);
-                    /* Same for pad-pressure aftertouch automation. */
-                    memset(_tr->at_last_sent, 0xFF, AT_MAX_LANES);
-                    if (_tr->will_relaunch) {
-                        _tr->clip_playing      = 1;
-                        _tr->will_relaunch     = 0;
-                        _tr->pending_page_stop = 0;
-                    }
-                }
-                inst->playing = 1;
+            /* Clock-follow: single source of truth is Move's transport — request
+             * a Move start (inject MovePlay / start-on-returning-0xFA) instead
+             * of starting davebox independently. */
+            if (inst->clock_follow_on) {
+                follow_request_start(inst, 1);
+            } else if (!inst->playing) {
+                ext_transport_start(inst);
             }
         } else if (!strcmp(val, "stop")) {
-            if (inst->playing) {
-                int t;
-                for (t = 0; t < NUM_TRACKS; t++) {
-                    play_fx_t *fx = &inst->tracks[t].pfx;
-                    silence_track_notes_v2(inst, &inst->tracks[t]);
-                    if (fx->route == ROUTE_MOVE) {
-                        /* Reschedule queued note-offs to fire immediately in render_block.
-                         * pfx_send from set_param context doesn't release Move synth voices;
-                         * only inject from render_block (pfx_q_fire) does. */
-                        int ei;
-                        for (ei = 0; ei < fx->event_count; ei++)
-                            fx->events[ei].fire_at = fx->sample_counter;
-                        memset(fx->active_notes, 0, sizeof(fx->active_notes));
-                    } else {
-                        fx->event_count = 0;
-                        memset(fx->active_notes, 0, sizeof(fx->active_notes));
-                    }
-                    inst->tracks[t].clips[inst->tracks[t].active_clip].clock_shift_pos = 0;
-                    if (inst->tracks[t].clip_playing) {
-                        inst->tracks[t].will_relaunch = 1;
-                        inst->tracks[t].clip_playing  = 0;
-                    }
-                    inst->tracks[t].pending_page_stop = 0;
-                    inst->tracks[t].record_armed      = 0;
-                    if (inst->tracks[t].recording) {
-                        finalize_pending_notes(&inst->tracks[t].clips[inst->tracks[t].active_clip],
-                                               &inst->tracks[t]);
-                        clip_clear_suppress(&inst->tracks[t].clips[inst->tracks[t].active_clip]);
-                    }
-                    inst->tracks[t].recording         = 0;
-                    inst->tracks[t].queued_clip       = -1;
-                }
-                merge_finalize(inst);
-                inst->playing        = 0;
-                inst->count_in_ticks = 0;
-                send_panic(inst);
-                for (t = 0; t < NUM_TRACKS; t++) {
-                    seq8_track_t *_tr = &inst->tracks[t];
-                    if (_tr->pad_mode != PAD_MODE_MELODIC_SCALE) continue;
-                    cc_auto_t *_ca = &_tr->clip_cc_auto[_tr->active_clip];
-                    int _k;
-                    for (_k = 0; _k < 8; _k++) {
-                        if (_ca->rest_val[_k] != 0xFF) {
-                            cc_emit(_tr, _k, _ca->rest_val[_k]);
-                            _tr->cc_auto_cur_val[_k] = _ca->rest_val[_k];
-                        }
-                        _tr->cc_auto_last_sent[_k] = 0xFF;
-                    }
-                }
+            if (inst->clock_follow_on) {
+                follow_request_stop(inst);
+            } else if (inst->playing) {
+                ext_transport_stop(inst);
                 seq8_ilog(inst, "SEQ8 transport: stop");
             }
         } else if (!strcmp(val, "restart")) {
+            /* Clock-follow: a free restart-while-playing can't reposition Move
+             * via a single Play (decision #4). Tier-1: re-anchor davebox locally
+             * to bar 1 (tempo stays locked to Move); if Move is stopped, request
+             * a start. Move's own playhead is left untouched. */
+            if (inst->clock_follow_on) {
+                if (inst->ext_transport_running) ext_transport_start(inst);
+                else follow_request_start(inst, 1);
+                return;
+            }
             /* Atomic stop+play: silence + finalize as in stop, then reset positions
              * + replay as in play. Single set_param avoids coalescing flakiness. */
             int t;
@@ -473,6 +541,14 @@ static void set_param(void *instance, const char *key, const char *val) {
             /* Loop+Play: restart with active track's clip starting at page*16.
              * Format: "restart_at:<at>:<page>:<drumLane>" — drumLane -1 for melodic.
              * Other tracks land at musically-equivalent position (master_off % own_clip_ticks). */
+            /* Clock-follow: arbitrary repositioning can't be mirrored to Move via a
+             * single Play (decision #4). Tier-1: re-anchor to bar 1 locally rather
+             * than silently drifting davebox away from Move. */
+            if (inst->clock_follow_on) {
+                if (inst->ext_transport_running) ext_transport_start(inst);
+                else follow_request_start(inst, 1);
+                return;
+            }
             int at = 0, page = 0, lane = -1;
             int parsed = sscanf(val + 11, "%d:%d:%d", &at, &page, &lane);
             if (parsed < 2) { return; }
@@ -683,6 +759,12 @@ static void set_param(void *instance, const char *key, const char *val) {
                sizeof(inst->on_midi_drum_press_active[track]));
         memset(inst->on_midi_drum_release_active[track], 0,
                sizeof(inst->on_midi_drum_release_active[track]));
+        /* Clock-follow: start Move so the count-in lead-in bar is clocked by its
+         * 0xF8 (decision #4 count-in-from-stopped). count_in_ticks counts down
+         * on the incoming clock; at the downbeat the existing fire path arms +
+         * launches. If Move never responds, the start-timeout falls back to an
+         * internal start so the arm can't hang. */
+        if (inst->clock_follow_on) follow_request_start(inst, 2);
         return;
     }
     if (!strcmp(key, "record_count_in_cancel")) {
@@ -708,7 +790,30 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
 
+    if (!strcmp(key, "clock_follow_on")) {
+        uint8_t on = (uint8_t)(my_atoi(val) ? 1 : 0);
+        if (on == inst->clock_follow_on) { inst->state_dirty = 1; return; }
+        inst->clock_follow_on = on;
+        /* Reset follow bookkeeping on every toggle so a stale view of Move's
+         * transport / a half-finished inject can't leak across mode changes. */
+        inst->ext_tick_pending      = 0;
+        inst->ext_transport_running = 0;
+        inst->ext_clock_seen        = 0;
+        inst->follow_play_request    = 0;
+        inst->move_play_inject_phase = 0;
+        inst->move_play_inject_wait = 0;
+        inst->follow_start_timeout   = 0;
+        inst->follow_start_kind      = 0;
+        /* Flush anything ringing so toggling mid-transport never hangs a note. */
+        if (inst->playing || inst->count_in_ticks > 0) ext_transport_stop(inst);
+        inst->state_dirty = 1;
+        return;
+    }
+
     if (!strcmp(key, "bpm")) {
+        /* Tempo is read-only (EXT) while following — Move owns it. Ignore writes
+         * (UI also hides the control), but never error. */
+        if (inst->clock_follow_on) return;
         double bpm = (double)my_atoi(val);
         if (bpm < 40.0 || bpm > 250.0) return;
         inst->tick_delta = (uint32_t)((double)MOVE_FRAMES_PER_BLOCK * bpm * (double)PPQN);

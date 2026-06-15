@@ -262,7 +262,7 @@ buttons:
 |---|---|
 | 2 | Open Global Menu at Global section |
 | 3 | Edit the active track's sound source (forthcoming — requires a future Schwung update) |
-| 5 | Tap Tempo screen |
+| 5 | Tap Tempo screen (shows "BPM controlled by Move" when Clock Follow is on) |
 | 6 | Metro toggle (Cnt-In ↔ Always) |
 | 7 | Open Global Menu at Swing |
 | 8 | Drum: cycle right-pad mode (Vel/Rpt1/Rpt2). Melodic: toggle chromatic layout |
@@ -1426,8 +1426,9 @@ labels are abbreviated — shown in parentheses.)
 
 | Item | Values | Default | Notes |
 |---|---|---|---|
-| BPM | 40–250 | 120 | Tempo |
-| Tap Tempo | — | — | Full-screen tap interface. Pad taps calculate BPM. Jog ±1 BPM. |
+| Clock Follow | Off, Move | Off | Follow Move's transport + tempo — see [Clock Follow](#167-clock-follow-syncing-to-move) |
+| BPM | 40–250 | 120 | Tempo. Shows **Move** (read-only) when Clock Follow = Move |
+| Tap Tempo | — | — | Full-screen tap interface. Pad taps calculate BPM. Jog ±1 BPM. Disabled while Clock Follow = Move |
 | Key | C through B | C | Session root note |
 | Scale | (see list below) | Major | Active scale |
 | Scale Aware | On, Off | On | Scale-aware params step in scale degrees instead of semitones |
@@ -1483,7 +1484,7 @@ Auto-saves on suspend (Back) and exit (Shift+Back / Quit).
 - All note data, per-clip effects, CLIP/DRUM LANE params, CC automation
 - Track settings: channel, route, mode, octave, VelIn, Looper, AftTch
 - Per-track active bank and pad layout (Scale / Chrom)
-- Global settings (BPM, key, scale, swing, launch quant, metro, etc.)
+- Global settings (BPM, key, scale, swing, launch quant, metro, clock follow, etc.)
 - Mute/solo state and all 16 snapshots
 - ARP IN state (latch clears on Stop/Delete+Play/Session entry but persists across
   track switches)
@@ -1497,7 +1498,37 @@ Duplicating a Move set via the native set page inherits dAVEBOx state:
 - **0 parents:** blank start
 - **2+ candidates:** picker dialog
 
-## 16.7 Cleanup
+## 16.7 Clock Follow (syncing to Move)
+
+By default dAVEBOx runs on its own internal clock. Set **Global Menu → Clock
+Follow → Move** to instead lock dAVEBOx to Move's transport:
+
+- **Tempo follows Move.** dAVEBOx advances from Move's MIDI clock, so it plays at
+  Move's tempo and stays phase-locked. BPM shows **Move** and is read-only; Tap
+  Tempo is disabled (the menu item and the Shift + Step 5 shortcut show a "BPM
+  controlled by Move" notice instead). Turn Move's tempo and dAVEBOx tracks it.
+- **Play drives Move.** Pressing dAVEBOx's **Play** starts (or stops) *Move's*
+  transport; dAVEBOx then follows Move's start/stop so both launch from the same
+  downbeat. Pressing Move's own Play works too — dAVEBOx follows either way.
+- **Bar 1 re-anchors on start.** dAVEBOx resets to the start of its pattern each
+  time Move starts, so the two share a downbeat. (Restart gestures re-anchor
+  dAVEBOx locally; they don't reposition Move.)
+- **Record count-in.** Arming Record while stopped starts Move and counts a
+  one-bar lead-in on Move's clock, then begins recording on the downbeat (your
+  bar 1 lands on Move's bar 2 — a constant, inaudible offset).
+- **Stops with Move.** If Move's clock stops (Stop, or the clock simply stops
+  arriving), dAVEBOx stops too.
+
+This assumes Move's own sequencer is empty on the tracks dAVEBOx feeds —
+dAVEBOx *replaces* the sequencer while Move provides clock, transport, and
+voices. Leave Clock Follow **Off** for the normal free-running behavior; the
+setting is saved per set but never auto-starts Move on load.
+
+> **Known limitation:** with Move's sequencer running underneath, some of Move's
+> native clip/step/row-button LEDs can flicker against dAVEBOx's own LEDs. A fix
+> is planned; it doesn't affect timing or playback.
+
+## 16.8 Cleanup
 
 When you delete a Move set, dAVEBOx automatically removes its own saved data for
 that set the next time it launches.
