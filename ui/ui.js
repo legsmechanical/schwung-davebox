@@ -5656,6 +5656,14 @@ globalThis.init = function () {
     S.schwungCoRunSlot = -1;
     S.moveCoRunTrack = -1;
     if (typeof shadow_corun_end === 'function') shadow_corun_end();
+    /* Own all LEDs in our full-overtake views. Clock Follow keeps Move's
+     * sequencer running underneath, whose RGB pad/clip/grid LEDs ride cable-0
+     * sysex that the shim otherwise passes through — they'd fight our LEDs.
+     * Opt into sysex suppression (patched Schwung only; no-op on older hosts).
+     * Only acts in pure full overtake; co-run paths are unaffected. Cleared by
+     * the framework on overtake exit. */
+    if (typeof shadow_set_overtake_suppress_sysex === 'function')
+        shadow_set_overtake_suppress_sysex(1);
     if (S.bankParams === null)
         S.bankParams = Array.from({length: NUM_TRACKS}, function() {
             return BANKS.map(function(bank) { return bank.knobs.map(function(k) { return k.def; }); });
