@@ -508,10 +508,18 @@ const DAVEBOX_CORUN_KEEP_MASK  = DAVEBOX_CORUN_KEEP_DEFAULT | CORUN_KEEP_BACK_BI
  * STEPS=2, TRANSPORT=3, JOG=4, TRACK=5, KNOBS=6, MASTER=7, SHIFT=8, BACK=9,
  * MENU=10, TOUCH=11). */
 const CORUN_GRP_JOG   = 1 << 4;
+const CORUN_GRP_TRACK  = 1 << 5;  /* CC 40-43 — the side clip buttons */
 const CORUN_GRP_KNOBS = 1 << 6;
 const CORUN_GRP_SHIFT = 1 << 8;
 const CORUN_GRP_BACK  = 1 << 9;
 const CORUN_GRP_TOUCH = 1 << 11;
+/* LED-keep mask (lights/input split): dAVEBOx paints the side clip buttons
+ * (CC 40-43, paintCoRunSideButtons) as a paired-track indicator, but must let
+ * Move/Schwung handle the *presses* (switching the active Move track / Schwung
+ * slot). So we own the TRACK group for LEDs only — input keep_mask is unchanged,
+ * so the presses still cede to the peer. Without this, Move's playback repaints
+ * fight our indicator. */
+const DAVEBOX_CORUN_LED_KEEP_MASK = DAVEBOX_CORUN_KEEP_MASK | CORUN_GRP_TRACK;
 /* Mask while the FX-picker overlay is open: the normal Move-co-run mask PLUS the
  * UI elements the overlay should own — jog (turn/click), the Back *routing* group,
  * the param knobs (turn → FX value), knob touch (param pop-up), and Shift (CC 49).
@@ -5201,6 +5209,9 @@ function enterSchwungCoRun(t, slot) {
     S.schwungCoRunSlot = slot;
     if (typeof shadow_corun_begin === 'function')
         shadow_corun_begin(CORUN_TARGET_CHAIN_EDIT, slot, DAVEBOX_CORUN_KEEP_MASK);
+    /* Own the side-clip-button LEDs (CC 40-43) without grabbing their input. */
+    if (typeof shadow_corun_set_led_keep_mask === 'function')
+        shadow_corun_set_led_keep_mask(DAVEBOX_CORUN_LED_KEEP_MASK);
     S.screenDirty = true;
 }
 
@@ -5249,6 +5260,11 @@ function enterMoveNativeCoRun(t) {
     computePadNoteMap();
     S.pendingPadNoteMapRecompute = true;
     shadow_corun_begin(CORUN_TARGET_MOVE_NATIVE, t, DAVEBOX_CORUN_KEEP_MASK);
+    /* Own the side-clip-button LEDs (CC 40-43) without grabbing their input — so
+     * Move's playback repaints stop fighting our paired-track indicator while
+     * track-button presses still switch Move's track. */
+    if (typeof shadow_corun_set_led_keep_mask === 'function')
+        shadow_corun_set_led_keep_mask(DAVEBOX_CORUN_LED_KEEP_MASK);
     /* Let Move firmware's own LED writes (track buttons, knob rings, transport)
      * reach hardware while it drives the device-edit UI. skip_led_clear makes the
      * shim's overtake LED-strip loop early-return, so Move's LEDs pass through live.
