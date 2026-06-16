@@ -346,6 +346,22 @@ function buildGlobalMenuItems() {
             },
             onLabel: 'Move', offLabel: 'Off'
         }),
+        /* Clock Out: db emits MIDI clock (start/stop + 24-PPQN) to external gear
+         * over USB-A when free-running (db is master at its own tempo). Suppressed
+         * while Clock Follow = Move (Move's own MIDI Clock Out owns external sync,
+         * so db relaying would double the clock on the shared port). The toggle
+         * stays a stored preference even while following; the value shows "—"
+         * then. Uses createEnum (not createToggle) so the "—" format applies. */
+        createEnum('Clock Out', {
+            get: function() { return S.clockSendOn ? 1 : 0; },
+            set: function(v) {
+                S.clockSendOn = v ? true : false;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('clock_send_on', S.clockSendOn ? '1' : '0');
+            },
+            options: [0, 1],
+            format: function(v) { return S.clockFollowOn ? '—' : (v ? 'On' : 'Off'); }
+        }),
         createValue('BPM', {
             get: function() {
                 const v = parseFloat(host_module_get_param('bpm'));
@@ -2593,6 +2609,10 @@ function pollDSP() {
     {
         const _cs = host_module_get_param('clock_follow_on');
         if (_cs !== null) S.clockFollowOn = (_cs === '1');
+        /* Clock Out: stored preference; sync UI from DSP (reflects saved _cs on
+         * state load). Emission itself is gated DSP-side on free-running. */
+        const _co = host_module_get_param('clock_send_on');
+        if (_co !== null) S.clockSendOn = (_co === '1');
     }
     const snap = host_module_get_param('state_snapshot');
     if (!snap) return;

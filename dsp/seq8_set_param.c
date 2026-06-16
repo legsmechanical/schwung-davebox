@@ -804,8 +804,20 @@ static void set_param(void *instance, const char *key, const char *val) {
         inst->move_play_inject_wait = 0;
         inst->follow_start_timeout   = 0;
         inst->follow_start_kind      = 0;
+        /* Restart tempo capture so a stale estimate can't leak across toggles. */
+        inst->ext_clock_period_ema    = 0.0f;
+        inst->clock_follow_bpm_applied = 0.0;
         /* Flush anything ringing so toggling mid-transport never hangs a note. */
         if (inst->playing || inst->count_in_ticks > 0) ext_transport_stop(inst);
+        inst->state_dirty = 1;
+        return;
+    }
+
+    /* Clock OUT: db emits realtime to external gear when free-running (master).
+     * Suppressed while following (Move owns external sync). New global key —
+     * verified reaching DSP the same way clock_follow_on does. */
+    if (!strcmp(key, "clock_send_on")) {
+        inst->clock_send_on = (uint8_t)(my_atoi(val) ? 1 : 0);
         inst->state_dirty = 1;
         return;
     }

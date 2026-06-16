@@ -803,6 +803,20 @@ typedef struct {
     uint32_t ext_sample_clock;        /* monotonic sample counter advanced each render_block (staleness time base) */
     uint32_t ext_clock_last_sample;   /* ext_sample_clock value at the most recent 0xF8 (for staleness check) */
     uint8_t  ext_clock_seen;          /* 1 once any 0xF8 has been observed since follow-mode armed (gates staleness) */
+    /* Tempo capture: EMA of the inter-0xF8 sample period while following, used to
+     * track Move's tempo into db's internal tick_delta + cached_bpm so the
+     * stopped-state fallback runs at Move's tempo and the BPM readout stays
+     * honest without manual matching. 0 = no estimate yet. */
+    float    ext_clock_period_ema;    /* smoothed samples per Move 0xF8 (24 PPQN) */
+    double   clock_follow_bpm_applied; /* last BPM pushed to tick_delta/cached_bpm from the estimate (change-gate) */
+    /* Clock OUT: db emits realtime (0xF8/FA/FC) to external gear (cable 2 / USB-A)
+     * when free-running (db is master). Suppressed while clock_follow_on (Move's
+     * own MIDI Clock Out owns external sync — db relaying would double the clock
+     * on the shared port). Toggle persists as "_cs"; default off. */
+    uint8_t  clock_send_on;           /* 0 = no clock out (default), 1 = emit when free-running */
+    uint8_t  clock_send_phase;        /* 0xF8 divider: emit every 4th 96-PPQN master tick (24 PPQN) */
+    uint8_t  clock_send_was_playing;  /* db transport edge tracker for 0xFA/0xFC emission */
+    uint8_t  clock_send_was_active;   /* clock-out enabled edge tracker (handles enable/disable mid-play) */
     /* MovePlay (CC 85) inject state machine — fired from render_block (NOT
      * set_param: a set_param-context inject is unreliable). follow_play_request
      * is the desired Move transport; the drain compares it against
@@ -1749,6 +1763,7 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
     if (inst->swing_amt != 0)  fprintf(fp, ",\"_swa\":%d", (int)inst->swing_amt);
     if (inst->swing_res != 0)  fprintf(fp, ",\"_swr\":%d", (int)inst->swing_res);
     if (inst->clock_follow_on)  fprintf(fp, ",\"_cf\":%d", (int)inst->clock_follow_on);
+    if (inst->clock_send_on)    fprintf(fp, ",\"_cs\":%d", (int)inst->clock_send_on);
     fprintf(fp, "}");
 }
 
@@ -2392,6 +2407,9 @@ static void seq8_load_state(seq8_instance_t *inst) {
      * Fall back to the legacy "_csl" key for sets saved during early dev. */
     inst->clock_follow_on = (uint8_t)(
         (json_get_int(buf, "_cf", 0) || json_get_int(buf, "_csl", 0)) ? 1 : 0);
+    /* Clock OUT toggle persists; emission is suppressed while following and never
+     * auto-starts on load (gated on transport actually running in render). */
+    inst->clock_send_on = (uint8_t)(json_get_int(buf, "_cs", 0) ? 1 : 0);
     free(buf);
     /* Build step arrays from loaded notes[] for display/edit compat */
     for (t = 0; t < NUM_TRACKS; t++)
@@ -6953,6 +6971,24 @@ static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
         case 0xF8: /* clock tick (24 PPQN) */
             inst->dbg_f8_count++;
             if (inst->clock_follow_on) {
+                /* Tempo capture: EMA the inter-clock sample period so render's
+                 * seq8_clock_follow_tick can track Move's tempo into tick_delta
+                 * + cached_bpm. Only between consecutive clocks of a running
+                 * transport; reject outliers (transport edges, dropped clocks)
+                 * outside the 30..300 BPM band. ext_sample_clock is advanced on
+                 * the audio thread — a one-block-stale read here is harmless. */
+                if (inst->ext_clock_seen && inst->ext_transport_running) {
+                    uint32_t dt = inst->ext_sample_clock - inst->ext_clock_last_sample;
+                    double pmin = (double)inst->sample_rate * 60.0 / (300.0 * 24.0);
+                    double pmax = (double)inst->sample_rate * 60.0 / (30.0 * 24.0);
+                    if ((double)dt >= pmin && (double)dt <= pmax) {
+                        if (inst->ext_clock_period_ema <= 0.0f)
+                            inst->ext_clock_period_ema = (float)dt;
+                        else
+                            inst->ext_clock_period_ema +=
+                                0.125f * ((float)dt - inst->ext_clock_period_ema);
+                    }
+                }
                 inst->ext_clock_seen        = 1;
                 inst->ext_clock_last_sample = inst->ext_sample_clock;
                 /* Queue master ticks whenever Move's transport is running
@@ -9346,6 +9382,8 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
 
     if (!strcmp(key, "clock_follow_on"))
         return snprintf(out, out_len, "%d", inst ? (int)inst->clock_follow_on : 0);
+    if (!strcmp(key, "clock_send_on"))
+        return snprintf(out, out_len, "%d", inst ? (int)inst->clock_send_on : 0);
     /* Following-and-running indicator for the UI (EXT vs idle). */
     if (!strcmp(key, "clock_follow_running"))
         return snprintf(out, out_len, "%d",
@@ -10353,6 +10391,53 @@ static inline int seq8_tick_due(seq8_instance_t *inst) {
     return 0;
 }
 
+/* Stopped-state clock for the free-running arp/delay/repeat tick site (live
+ * input arpeggiates / echoes while db transport is stopped). Distinct from the
+ * main sequencer seam above: in follow mode while Move is STOPPED (no incoming
+ * clock), this falls back to db's internal tick_delta so live noodling keeps a
+ * tempo (Move's captured tempo, via the tempo-capture estimate) instead of
+ * freezing. When Move IS running, it locks to Move's queued ext ticks. In
+ * internal mode it always free-runs. The main transport (playing path) never
+ * uses this — it stays a hard follow (Move stops → db stops). */
+static inline void seq8_stopped_advance(seq8_instance_t *inst) {
+    if (!inst->clock_follow_on || !inst->ext_transport_running)
+        inst->tick_accum += inst->tick_delta;   /* internal free-run / follow-fallback */
+    /* else: follow + Move running → ticks arrive via ext_tick_pending (no-op here) */
+}
+static inline int seq8_stopped_tick_due(seq8_instance_t *inst) {
+    if (inst->clock_follow_on && inst->ext_transport_running) {
+        if (inst->ext_tick_pending > 0) { inst->ext_tick_pending--; return 1; }
+        return 0;
+    }
+    if (inst->tick_accum >= inst->tick_threshold) {
+        inst->tick_accum -= inst->tick_threshold;
+        return 1;
+    }
+    return 0;
+}
+
+/* Clock OUT: emit a single realtime status byte (0xF8/0xFA/0xFB/0xFC) to
+ * external gear on cable 2 (USB-A) via the shim's audio-thread SPSC ring. MUST
+ * be called only from the render/audio thread (single producer for the ring).
+ * Byte 0 = USB-MIDI header (cable<<4 | CIN); for single-byte realtime, CIN =
+ * 0x0F, so 0x20 | (rt>>4) = 0x2F. Async path only — clock requires the patched
+ * shim (ext_send_async_active); the JS ext_queue drain is too jittery for clock. */
+static void clock_send_raw(seq8_instance_t *inst, uint8_t rt) {
+    if (g_host && inst->ext_send_async_active && g_host->midi_send_external) {
+        const uint8_t pkt[4] = { (uint8_t)(0x20 | ((rt >> 4) & 0x0F)), rt, 0, 0 };
+        g_host->midi_send_external(pkt, 4);
+    }
+}
+/* Per-master-tick 0xF8 emit: 96 PPQN / 4 = 24 PPQN. Self-gates: only emits when
+ * clock-out is on and db is free-running (Move owns external sync when following). */
+static inline void clock_send_f8_tick(seq8_instance_t *inst) {
+    if (!inst->clock_send_on || inst->clock_follow_on) return;
+    if (++inst->clock_send_phase >= 4) {
+        inst->clock_send_phase = 0;
+        clock_send_raw(inst, 0xF8);
+    }
+}
+
 /* Clock-follow housekeeping run once per block from render_block: advance the
  * staleness time base, drain the MovePlay inject toward the desired Move
  * transport, and apply the start-timeout fallback. RT-safe (no alloc / IO). */
@@ -10367,6 +10452,31 @@ static void seq8_clock_follow_tick(seq8_instance_t *inst, int frames) {
             inst->ext_transport_running = 0;
             inst->ext_tick_pending      = 0;
             if (inst->playing || inst->count_in_ticks > 0) ext_transport_stop(inst);
+        }
+    }
+
+    /* Tempo capture: track Move's tempo (measured from the inter-0xF8 sample
+     * period EMA, accumulated in on_midi) into db's internal tick_delta +
+     * per-pfx cached_bpm. Keeps the stopped-state fallback running at Move's
+     * tempo and the BPM readout (get_param "bpm" reads cached_bpm) honest with
+     * no manual matching. The estimate persists when Move stops (last value
+     * holds), so the fallback inherits Move's last tempo. Change-gated to avoid
+     * per-block churn across all tracks/lanes. */
+    if (inst->ext_clock_period_ema > 0.0f) {
+        double bpm = (double)inst->sample_rate * 60.0
+                     / ((double)inst->ext_clock_period_ema * 24.0);
+        if (bpm >= 30.0 && bpm <= 300.0
+                && (inst->clock_follow_bpm_applied <= 0.0
+                    || bpm > inst->clock_follow_bpm_applied + 0.1
+                    || bpm < inst->clock_follow_bpm_applied - 0.1)) {
+            inst->clock_follow_bpm_applied = bpm;
+            inst->tick_delta = (uint32_t)((double)MOVE_FRAMES_PER_BLOCK * bpm * (double)PPQN);
+            int tb, tbl;
+            for (tb = 0; tb < NUM_TRACKS; tb++) {
+                inst->tracks[tb].pfx.cached_bpm = bpm;
+                for (tbl = 0; tbl < DRUM_LANES; tbl++)
+                    inst->tracks[tb].drum_lane_pfx[tbl].cached_bpm = bpm;
+            }
         }
     }
 
@@ -10447,6 +10557,30 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
     /* Clock-follow housekeeping: staleness, MovePlay inject drain, start timeout. */
     seq8_clock_follow_tick(inst, frames);
 
+    /* Clock OUT transport edges (0xFA/0xFC). Emitted once per block from the
+     * audio thread (single producer for the shim ext ring) on the db transport
+     * edge — and on enable/disable of clock-out mid-play so external gear starts
+     * /stops cleanly. Active only when free-running (clock_send_on && !follow);
+     * while following, Move's own MIDI Clock Out owns external sync. The 0xF8
+     * stream itself is emitted per-tick inside the loops below. */
+    if (inst->clock_send_on && !inst->clock_follow_on) {
+        uint8_t pl = inst->playing ? 1 : 0;
+        if (!inst->clock_send_was_active) {
+            if (pl) { clock_send_raw(inst, 0xFA); inst->clock_send_phase = 0; }
+            inst->clock_send_was_playing = pl;
+            inst->clock_send_was_active  = 1;
+        } else if (pl != inst->clock_send_was_playing) {
+            clock_send_raw(inst, pl ? 0xFA : 0xFC);
+            if (pl) inst->clock_send_phase = 0;  /* align 0xF8 phase to the downbeat */
+            inst->clock_send_was_playing = pl;
+        }
+    } else if (inst->clock_send_was_active) {
+        /* Clock-out just disabled (or follow turned on): stop external gear. */
+        if (inst->clock_send_was_playing) clock_send_raw(inst, 0xFC);
+        inst->clock_send_was_active  = 0;
+        inst->clock_send_was_playing = 0;
+    }
+
     /* DSP-side count-in: tick down using same accumulator; fire transport+rec when done */
     if (inst->count_in_ticks > 0) {
         if (inst->tick_threshold > 0 || inst->clock_follow_on) {
@@ -10477,6 +10611,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                   }
                 }
                 inst->arp_master_tick++;
+                clock_send_f8_tick(inst);  /* keep external clock running through the count-in */
             }
             if (inst->count_in_ticks == 0) {
                 inst->tick_accum          = 0;
@@ -10605,12 +10740,13 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
 
     /* When stopped: free-running clock for SEQ ARP only, so live input
      * arpeggiates even with transport off. arp_master_tick advances; no
-     * sequencer work runs. When following, this advances only while Move's
-     * transport is running (ext_tick_pending fed by 0xF8), so a stopped Move
-     * leaves the ARP idle — matching transport-off. */
+     * sequencer work runs. Uses the stopped-state seam: in follow mode it locks
+     * to Move's queued ext ticks while Move is running, but falls back to db's
+     * internal tick_delta (Move's captured tempo) when Move is stopped, so live
+     * arp/delay/repeat keep running instead of freezing. */
     if (!inst->playing) {
-        seq8_clock_advance(inst);
-        while (seq8_tick_due(inst)) {
+        seq8_stopped_advance(inst);
+        while (seq8_stopped_tick_due(inst)) {
             /* Free-running swing parity: derive step parity from arp_master_tick
              * so ARP IN, SEQ ARP, and drum Rpt1/Rpt2 pick up swing even with
              * transport off. Mirrors the playing-block computation below. */
@@ -10656,6 +10792,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                 arp_tick(inst, tr_s);
             }
             inst->arp_master_tick++;
+            clock_send_f8_tick(inst);  /* continuous 24-PPQN clock out while stopped (free-run master) */
         }
         return;
     }
@@ -11297,6 +11434,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
             inst->global_tick++;
         }
         inst->arp_master_tick++;
+        clock_send_f8_tick(inst);  /* continuous 24-PPQN clock out while playing (free-run master) */
     }
 
 mix_click:
