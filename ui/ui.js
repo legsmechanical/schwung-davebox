@@ -2141,6 +2141,12 @@ function computePadNoteMap() {
          * shortcut leaking into Rpt1/Rpt2 latch on the prior active track. */
         payload += ' ' + (padDispatchMuted ? 1 : 0);
         payload += ' ' + (S.deleteHeld ? 1 : 0);
+        /* 36th token = corun_left_silent. When this (drum) track's left-column
+         * lane pads are intentionally mapped to 0xFF for Move-native co-run
+         * (so DSP on_midi skips them — Move plays the injected pad), tell DSP
+         * so it excludes these benign 0xFF presses from the pad-drop
+         * diagnostic. Mirrors coRunSilentLeft in computePadNoteMap. */
+        payload += ' ' + ((isDrum && S.moveCoRunTrack >= 0) ? 1 : 0);
         host_module_set_param('t' + t + '_padmap', payload);
         S.lastPushedMuted = padDispatchMuted;
     }

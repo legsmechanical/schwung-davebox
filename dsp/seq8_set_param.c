@@ -5719,6 +5719,16 @@ static void set_param(void *instance, const char *key, const char *val) {
                 while (*sp >= '0' && *sp <= '9') { dh = dh * 10 + (*sp++ - '0'); }
                 inst->delete_held = (dh != 0) ? 1 : 0;
             }
+            /* 36th token = corun_left_silent. Set when computePadNoteMap
+             * intentionally maps the left-column drum pads to 0xFF for
+             * Move-native co-run (double-hit suppression). on_midi uses it to
+             * exclude these benign 0xFF presses from the pad-drop diagnostic. */
+            while (*sp == ' ') sp++;
+            if (*sp) {
+                int cls = 0;
+                while (*sp >= '0' && *sp <= '9') { cls = cls * 10 + (*sp++ - '0'); }
+                inst->corun_left_silent = (cls != 0) ? 1 : 0;
+            }
             return;
         }
 

@@ -1097,6 +1097,13 @@ typedef struct {
      * the prior active track. */
     uint8_t  pad_dispatch_muted;
 
+    /* JS-driven co-run left-pad-silence flag. Set via the 36th tN_padmap
+     * token whenever computePadNoteMap intentionally maps the left-column
+     * drum lane pads to 0xFF for Move-native co-run (so DSP on_midi doesn't
+     * double-hit Move's injected pad). Distinct from the real pad-drop bug:
+     * a 0xFF here is deliberate, so the DROP diagnostic skips it. */
+    uint8_t  corun_left_silent;
+
     /* Phase 1 / Bundle 2: pad-source intent scratch. Set by on_midi just
      * before calling live_note_on / drum_record_note_on / etc., reset at
      * end of dispatch. Holds a pad_source_t value (declared above on_midi).
@@ -7095,11 +7102,23 @@ static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
     }
 
     if (pitch == 0xFF) {
+        /* Pad-drop diagnostic. Modal mutes (pad_dispatch_muted) deliberately
+         * push 0xFF and are excluded outright. Move co-run left-pad silence
+         * (corun_left_silent) ALSO pushes 0xFF deliberately — but the flag and
+         * the map travel in the same tN_padmap payload, so a coalesced co-run-
+         * EXIT repush leaves BOTH stale together (left pads silent = the real
+         * bug, flag still 1). Tag those as DROP_CORUN rather than suppressing,
+         * so the post-exit stale window stays visible: benign in-co-run presses
+         * read as DROP_CORUN with no perceived silence; a DROP_CORUN cluster
+         * right after exiting co-run, correlating with silence, IS the bug. A
+         * plain DROP is an UNexpected 0xFF outside co-run/mute. */
         if (is_on && !inst->pad_dispatch_muted) {
             FILE *_df = fopen(SEQ8_PAD_DROP_LOG_PATH, "a");
             if (_df) {
-                fprintf(_df, "DROP pad=%d t=%d map=0xFF enabled=%d\n",
-                        padIdx, (int)t, (int)inst->dsp_inbound_enabled);
+                fprintf(_df, "%s pad=%d t=%d map=0xFF enabled=%d active=%d\n",
+                        inst->corun_left_silent ? "DROP_CORUN" : "DROP",
+                        padIdx, (int)t, (int)inst->dsp_inbound_enabled,
+                        (int)inst->active_track);
                 fflush(_df);
                 fclose(_df);
             }
