@@ -4,7 +4,7 @@
 
 ## Session workflow
 
-- **Start of session**: run `~/schwung-docs/update.sh` and report the result. Then read `graphify-out/GRAPH_REPORT.md` to orient on god nodes and community structure. If unsure about a platform API, grep `~/schwung-docs/` rather than assuming. Check for pad-drop diagnostic: `ssh ableton@move.local "cat /data/UserData/schwung/seq8-pad-drop.log 2>/dev/null"` — if non-empty, report to user immediately (see **Pad drop diagnostic** below).
+- **Start of session**: run `~/schwung-docs/update.sh` and report the result. Then read `graphify-out/GRAPH_REPORT.md` to orient on god nodes and community structure. If unsure about a platform API, grep `~/schwung-docs/` rather than assuming. Check for pad-drop diagnostic: `ssh ableton@move.local "grep -c '^DROP ' /data/UserData/schwung/seq8-pad-drop.log 2>/dev/null"` — only **plain `DROP`** lines are genuine (non-zero count → report to user immediately); `DROP_CORUN` lines are benign co-run double-hit suppression and are expected (see **Pad drop diagnostic** below).
 - **Validate before acting** — read or grep actual code first. Never act on assumptions.
 - **Branching** — create a new branch for each refactor / major feature addition / major revision (`git checkout -b <descriptive-name>` off `main` before any code changes). Small, isolated fixes can land directly on main. When in doubt, branch. One commit per logical change. Merge to main with fast-forward when the work is verified and approved.
 - **Deploy and verify on device before reporting done** — always build+install and confirm on Move.
@@ -69,7 +69,9 @@ Set-duplicate inheritance: when init detects a Copy-suffixed name + missing stat
 
 ## Pad drop diagnostic
 
-Intermittent: drum pads go silent while sequencer plays. Self-heal in `tick()` re-pushes padmap on mismatch. DSP logs drops to `seq8-pad-drop.log`. Session start check: `ssh ableton@move.local "cat /data/UserData/schwung/seq8-pad-drop.log 2>/dev/null"` — if non-empty, report to user.
+Reported as intermittent: drum pads go silent while sequencer plays. Self-heal in `tick()` re-pushes padmap on mismatch. DSP logs unmapped-pad note-ons to `seq8-pad-drop.log`, tagged (`092c34d`): **`DROP_CORUN`** = note-on on a pad the JS *intentionally* mapped to 0xFF for Move-native co-run left-pad silence (`corun_left_silent`, 36th `tN_padmap` token) — benign double-hit suppression, expected, ignore. **plain `DROP`** = an *unexpected* 0xFF outside co-run/mute (the real bug: active_track skew, first-press-after-load, melodic OOB, or a stale post-co-run-exit map). Session start check greps for `^DROP ` only.
+
+**Status (2026-06-16): no genuine `DROP` ever observed.** Two captures — the historical 397-line log (`notes/pad-drop-capture/`, all co-run) and a fresh post-fix 167-line capture (`seq8-pad-drop-postfix-20260616.log`, heavy co-run drumming, user confirmed no audible drops) — are **100% `DROP_CORUN`, zero plain `DROP`**. Current read: the long-standing "pad drop" was the diagnostic firing on intentional co-run 0xFF, not a real bug. Keep the tagged diagnostic deployed; if plain `DROP` stays empty through normal use, retire it. (Note: a coalesced co-run-*exit* repush leaves map+flag stale together → would still tag `DROP_CORUN`; cross-reference any post-exit `DROP_CORUN` cluster against perceived silence before concluding.)
 
 ## QuickJS compatibility
 
