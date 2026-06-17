@@ -9,7 +9,7 @@
 - **Branching** — create a new branch for each refactor / major feature addition / major revision (`git checkout -b <descriptive-name>` off `main` before any code changes). Small, isolated fixes can land directly on main. When in doubt, branch. One commit per logical change. Merge to main with fast-forward when the work is verified and approved.
 - **Deploy and verify on device before reporting done** — always build+install and confirm on Move.
 - **Reboot after every deploy** — Back suspends (JS stays in memory); Shift+Back fully exits but does NOT reload JS from disk. Full reboot required for JS changes.
-- **JS-only deploy**: `python3 scripts/bundle_ui.py && ./scripts/install.sh` then restart. `build.sh` required for DSP changes (also copies all JS).
+- **JS-only deploy**: `bash scripts/bundle_ui.sh && ./scripts/install.sh` then restart. `build.sh` required for DSP changes (also copies all JS).
 - **Restart Move** (Armbian/systemd): `./scripts/install.sh` now does this automatically after deploy. Manual reload: `ssh root@move.local "systemctl stop move-launcher.service; for name in MoveOriginal Move MoveMessageDisplay shadow_ui schwung link-subscriber display-server schwung-manager; do pkill -9 -x \"\$name\" 2>/dev/null; done; sleep 1; systemctl start move-launcher.service"`. A bare `systemctl restart move-launcher.service` is NOT enough — the unit is `KillMode=process`, so it only bounces MoveLauncher/MoveOriginal while the Schwung stack (shadow_ui, schwung-manager, display-server) double-forks to PID 1 and survives stale → Move-native/Schwung desync (blank OLED). This is a service restart, not an OS `reboot` (reboot has caused a "move terminated" freeze).
 - **CLAUDE.md**: update at session end or after a major phase — not after routine task work.
 - **README.md is maintained on GitHub directly** — do not edit or commit it locally. If asked to update README, refuse and point the user to edit on GitHub. A pre-commit hook blocks accidental commits.
@@ -40,7 +40,7 @@ nm -D dist/davebox/dsp.so | grep GLIBC             # verify ≤ 2.35
 ssh ableton@move.local "tail -f /data/UserData/schwung/seq8.log"
 ```
 
-**JS modules** live under `ui/` (`ui.js` + 6 `ui_*.mjs`) — bundled into `dist/davebox/ui.js` by `scripts/bundle_ui.py`. Always run the bundler before deploying JS changes. **DSP**: see `dsp/CLAUDE.md`.
+**JS modules** live under `ui/` (`ui.js` + 6 `ui_*.mjs`) — bundled into `dist/davebox/ui.js` by `scripts/bundle_ui.sh` (esbuild). Always run the bundler before deploying JS changes. **DSP**: see `dsp/CLAUDE.md`.
 
 ## State persistence
 
