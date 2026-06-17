@@ -37,13 +37,14 @@ USB-A.
 12. [Scenes & Performance Mode](#12-scenes--performance-mode)
 13. [Bake, Live Merge & Export](#13-bake-live-merge--export)
 14. [Editing & Mixing](#14-editing--mixing)
-15. [MIDI Routing](#15-midi-routing)
+15. [Sound Sources & Co-Run Editing](#15-sound-sources--co-run-editing)
+16. [MIDI Routing](#16-midi-routing)
 
 **Part VI — Reference**
-16. [Global Settings & Persistence](#16-global-settings--persistence)
-17. [Cheat Sheet](#17-cheat-sheet)
-18. [Parameter Reference](#18-parameter-reference)
-19. [LED & OLED Reference](#19-led--oled-reference)
+17. [Global Settings & Persistence](#17-global-settings--persistence)
+18. [Cheat Sheet](#18-cheat-sheet)
+19. [Parameter Reference](#19-parameter-reference)
+20. [LED & OLED Reference](#20-led--oled-reference)
 
 ---
 
@@ -90,7 +91,7 @@ usually nothing to change). Set each slot's Forward Channel to **Auto** (not Thr
 
 With that done, the default routing is: dAVEBOx **tracks 1–4 → Move** instruments
 and **tracks 5–8 → Schwung** chains. Any track's channel and routing can be
-changed later in [Track Config](#161-track-config); see [MIDI Routing](#15-midi-routing).
+changed later in [Track Config](#171-track-config); see [MIDI Routing](#16-midi-routing).
 
 For a guided first session, see the [Quick Start guide](QUICKSTART.md).
 
@@ -185,7 +186,7 @@ the menu.
 The menu starts with the active track's settings (**Track Config**), followed by
 global settings below a separator. Pads, steps, and transport keep working while
 the menu is open. The full item list is in
-[Global Settings & Persistence](#16-global-settings--persistence).
+[Global Settings & Persistence](#17-global-settings--persistence).
 
 ## 2.7 Changing Key or Scale
 
@@ -261,8 +262,8 @@ buttons:
 | Step | Action |
 |---|---|
 | 2 | Open Global Menu at Global section |
-| 3 | Edit the active track's sound source (forthcoming — requires a future Schwung update) |
-| 5 | Tap Tempo screen (shows "BPM controlled by Move" when Clock Follow is on) |
+| 3 | Open sound source editor (Edit Synth / Edit Slot) — see [Ch. 15](#15-sound-sources--co-run-editing). Requires Schwung 0.9.18+ |
+| 5 | Tap Tempo screen |
 | 6 | Metro toggle (Cnt-In ↔ Always) |
 | 7 | Open Global Menu at Swing |
 | 8 | Drum: cycle right-pad mode (Vel/Rpt1/Rpt2). Melodic: toggle chromatic layout |
@@ -314,7 +315,7 @@ playing on that track only. Launching a scene swaps every track at once.
 
 ## 5.1 Track types
 
-A track is one of three types, set by **Mode** in [Track Config](#161-track-config):
+A track is one of three types, set by **Mode** in [Track Config](#171-track-config):
 
 | Type | Menu label | What it does |
 |---|---|---|
@@ -616,7 +617,7 @@ track follows it.
 
 ## 8.1 Making a track a Conductor
 
-In [Track Config](#161-track-config), set **Mode** to **Cond** (the Mode entry
+In [Track Config](#171-track-config), set **Mode** to **Cond** (the Mode entry
 offers Keys / Drums / Cond). The menu is preview-on-scroll: scrolling only shows
 the candidate type, and **clicking the jog commits it** behind a confirm dialog.
 
@@ -906,11 +907,13 @@ Quick toggle: **Shift + Step 11** flips ARP IN on/off using the last-used style.
 Each of the 8 knobs controls its own automation lane — a recordable stream of CC
 or aftertouch data that plays back with the clip. Each lane can hold up to 1024
 recorded points (at 1/32 resolution, smoothly interpolated between points) plus an
-optional resting value that the lane returns to at each loop.
+optional resting value that the lane returns to at each loop. **The AUTO bank works
+identically on melodic and drum tracks** — record, play back, step-edit, set resting
+values, and per-lane loops all work the same way on both.
 
 **Assigning what a knob controls:** jog click to enter alt mode on this bank, then
 turn a knob to step through the target options: aftertouch (AT), any CC number
-(CC0–CC127), or — on Schwung-routed tracks with patched Schwung — Schwung chain
+(CC0–CC127), or — on Schwung-routed tracks with Schwung 0.9.17 or later — Schwung chain
 knob assignments (Sch1–Sch8). Sch lanes automate the knob assignments configured
 on the track's chain slot. The assignment applies to the whole track — all clips
 on that track share it.
@@ -1068,7 +1071,7 @@ Set the capture length with the **R0 length pads** (bottom pad row): pads 1–5 
 
 ### Per-track inclusion
 
-Each track's **Looper** flag ([Track Config](#161-track-config)) controls whether
+Each track's **Looper** flag ([Track Config](#171-track-config)) controls whether
 it feeds Performance Mode. While locked, touch K1–K8 to toggle each track's Looper
 (knob LED = track color when on, off when off).
 
@@ -1331,21 +1334,64 @@ mixer or Schwung chain).
 
 ---
 
-# 15. MIDI Routing
+# 15. Sound Sources & Co-Run Editing
 
-## 15.1 Default setup
+**Co-run** lets you edit a track's sound source — Move's native synth or a Schwung effect chain — from within dAVEBOx without suspending. The OLED, jog wheel, and knobs hand off to the editor while dAVEBOx's transport and sequencer keep running.
+
+**Requires Schwung 0.9.18 or later.** Edit Slot and Edit Synth appear automatically on qualifying builds and stay hidden on older versions.
+
+## 15.1 Entering co-run
+
+| Method | Where |
+|---|---|
+| **Shift + Step 3** | Track View |
+| **Track Config → Edit Slot...** | Schwung-routed tracks only |
+| **Track Config → Edit Synth...** | Move-routed tracks only |
+
+**Edit Slot** opens Schwung's chain editor for the slot receiving the active track's MIDI channel. **Edit Synth** opens Move's native preset browser and instrument editor, landing on the track's current instrument.
+
+## 15.2 Controls in the editor
+
+Once in co-run, the OLED and jog transfer to the external editor. dAVEBOx playback continues normally.
+
+| Control | Action |
+|---|---|
+| Jog rotate | Navigate the editor |
+| Jog click | Select / enter |
+| K1–K8 | Drive chain parameter assignments (Edit Slot) |
+| Back | Navigate within the editor |
+| **Step 3** | **Exit co-run** |
+| Shift | Works normally — Shift navigation is fully supported inside co-run |
+
+**Step 3 blinks** during co-run as the exit affordance. Every other step is darkened while in the editor.
+
+### Edit Synth details (Move-routed tracks)
+
+- **Drum pads:** tapping a drum pad plays a single hit at the velocity you pressed and selects that drum sound in Move's per-drum editor.
+- **Lane display:** pads invert into track colors — selected lane = track color, unselected = white.
+- **Side clip buttons:** lit solid white in Edit Synth.
+
+## 15.3 Exiting co-run
+
+Press **Step 3** to exit. dAVEBOx reclaims the OLED, pads, knobs, and LEDs and clears any held modifier state. You can also exit Schwung co-run via the **Menu** button.
+
+---
+
+# 16. MIDI Routing
+
+## 16.1 Default setup
 
 - **Tracks 1–4** → channels 1–4 → Move's native instruments
 - **Tracks 5–8** → channels 1–4 → Schwung slots 1–4
 
 Requires Move and Schwung configured per [Overview & Setup](#1-overview--setup).
 
-## 15.2 Per-track settings (Track Config)
+## 16.2 Per-track settings (Track Config)
 
 - **Channel** — MIDI channel 1–16 (default: tracks 1–4 → ch 1–4, tracks 5–8 → ch 1–4)
 - **Route** — Move, Schwung, or External (USB-A output)
 
-## 15.3 External MIDI input
+## 16.3 External MIDI input
 
 External MIDI from a USB-A controller routes to the active track. Filter by
 channel in Global Menu (MIDI In: All or 1–16). dAVEBOx rechannelizes incoming MIDI
@@ -1359,7 +1405,7 @@ to the active track's channel.
 | Move | Chain bypassed (would cause feedback loop) |
 | External | Full chain applies; output goes via USB-A |
 
-## 15.4 External MIDI output
+## 16.4 External MIDI output
 
 When Route = External, all MIDI goes out via USB-A: sequencer, live pads, external
 echo, effects, ARP IN, Performance Mode. Multiple tracks can route External for
@@ -1370,22 +1416,22 @@ multi-timbral setups.
 Rpt2, and ARP IN latches. **Delete + Play (running)** deactivates all clips and
 clears latches.
 
-## 15.5 CC and aftertouch output
+## 16.5 CC and aftertouch output
 
 The AUTO bank lanes output CC, aftertouch, or Schwung chain knob (Sch) data at
 1/32 resolution with smooth interpolation. On External-routed tracks, CC/AT output
 goes via USB-A. Sch lanes send CC 102-109 on the internal Schwung MIDI path to
-control chain knob assignments (requires patched Schwung). Aftertouch can also be
+control chain knob assignments (requires Schwung 0.9.17 or later). Aftertouch can also be
 recorded live via pad pressure when the track's AftTch setting is enabled (see
-[Track Config](#161-track-config)).
+[Track Config](#171-track-config)).
 
 ---
 
 # Part VI — Reference
 
-# 16. Global Settings & Persistence
+# 17. Global Settings & Persistence
 
-## 16.1 Track Config
+## 17.1 Track Config
 
 Shown at the top of the Global Menu for the active track. Updates live if you
 switch tracks. (Some entries are hidden when they don't apply to the current track
@@ -1403,33 +1449,17 @@ type or route.)
 | Edit Slot... | Action | Open Schwung chain editor (Schwung-routed only). Requires Schwung 0.9.18 or later. |
 | Edit Synth... | Action | Open Move preset browser (Move-routed only). Requires Schwung 0.9.18 or later. |
 
-> **Edit Slot / Edit Synth.** These let you edit the active track's sound source
-> from within dAVEBOx — the Schwung chain editor (Edit Slot, on a Schwung-routed
-> track) or Move's preset browser (Edit Synth, on a Move-routed track). They run
-> on the **co-run framework that shipped in Schwung 0.9.18**, so the entries appear
-> automatically on 0.9.18 or later and stay hidden on older builds.
+> See [Chapter 15 — Sound Sources & Co-Run Editing](#15-sound-sources--co-run-editing) for full controls and Schwung version requirements.
 
-> **FX bus picker in Move co-run.** While editing a Move-routed track's synth in
-> co-run, press **Note/Session** to open the FX bus picker over the synth screen:
-> Master FX, Send A, Send B, and the track's Move insert FX 1–4. Turn the jog to
-> move between buses and click the jog to open one for editing. **Back** returns
-> you to the Move synth screen you came from — the synth context is kept the whole
-> time. This is a newer co-run capability (the *view-addressing* shim) that is not
-> yet in a public Schwung release — 0.9.18 has the base co-run framework but not
-> this — so on 0.9.18 the picker is unavailable and Note/Session does nothing in
-> co-run.
-
-## 16.2 Global settings
+## 17.2 Global settings
 
 Below the Track Config separator, in on-device menu order. (Several on-screen
 labels are abbreviated — shown in parentheses.)
 
 | Item | Values | Default | Notes |
 |---|---|---|---|
-| Clock Follow | Off, Move | Off | Follow Move's transport + tempo — see [Clock Follow](#167-clock-follow-syncing-to-move) |
-| Clock Out | Off, On | Off | Send MIDI clock + start/stop out USB-A (dAVEBOx as clock master). Shows **—** and is suppressed while Clock Follow = Move — see [Clock Follow](#167-clock-follow-syncing-to-move) |
-| BPM | 40–250 | 120 | Tempo. Shows **Move** (read-only) when Clock Follow = Move |
-| Tap Tempo | — | — | Full-screen tap interface. Pad taps calculate BPM. Jog ±1 BPM. Disabled while Clock Follow = Move |
+| BPM | 40–250 | 120 | Tempo |
+| Tap Tempo | — | — | Full-screen tap interface. Pad taps calculate BPM. Jog ±1 BPM. |
 | Key | C through B | C | Session root note |
 | Scale | (see list below) | Major | Active scale |
 | Scale Aware | On, Off | On | Scale-aware params step in scale degrees instead of semitones |
@@ -1441,7 +1471,7 @@ labels are abbreviated — shown in parentheses.)
 | Metro Vol | 0–150% | 100% | Metronome level |
 | Beat Markers (*Beat Marks*) | On, Off | On | Dim markers on steps 1, 5, 9, 13 |
 | Export to Ableton | Action | — | Write an `.ablbundle` (transport stopped) — see [Export](#133-export-to-ableton-live) |
-| Save state | Action | — | Write a timestamped snapshot (confirms first) — see [Save states](#163-save-states-snapshots) |
+| Save state | Action | — | Write a timestamped snapshot (confirms first) — see [Save states](#173-save-states-snapshots) |
 | Load state | Action | — | Restore a snapshot |
 | Clear Session (*Clear Sess*) | Action | — | Resets the entire instance (confirm dialog) |
 | Quit | Action | — | Save and exit |
@@ -1454,7 +1484,7 @@ Tone, Diminished.
 > when you suspend (**Back**), fully exit (**Shift + Back**), or choose **Quit**.
 > For named backups you can return to, use **Save state** (snapshots, below).
 
-## 16.3 Save states (snapshots)
+## 17.3 Save states (snapshots)
 
 Up to **16 snapshots** per set — full state backups stamped with date/time.
 
@@ -1467,7 +1497,7 @@ Up to **16 snapshots** per set — full state backups stamped with date/time.
 - After a format-changing update, old snapshots are marked `(old)` and can be
   removed.
 
-## 16.4 Version compatibility
+## 17.4 Version compatibility
 
 If you load a set that was saved by an older dAVEBOx version, a dialog appears:
 
@@ -1478,89 +1508,35 @@ If you load a set that was saved by an older dAVEBOx version, a dialog appears:
 - **No** (default) / **Back** — exits the module. The old state file is preserved
   so you can back it up or downgrade.
 
-## 16.5 What persists per set
+## 17.5 What persists per set
 
 Auto-saves on suspend (Back) and exit (Shift+Back / Quit).
 
 - All note data, per-clip effects, CLIP/DRUM LANE params, CC automation
 - Track settings: channel, route, mode, octave, VelIn, Looper, AftTch
 - Per-track active bank and pad layout (Scale / Chrom)
-- Global settings (BPM, key, scale, swing, launch quant, metro, clock follow, etc.)
+- Global settings (BPM, key, scale, swing, launch quant, metro, etc.)
 - Mute/solo state and all 16 snapshots
 - ARP IN state (latch clears on Stop/Delete+Play/Session entry but persists across
   track switches)
 - Performance Mode presets, latched mods
 - Note Repeat gate masks, grooves, per-lane rates
 
-## 16.6 Set duplication
+## 17.6 Set duplication
 
 Duplicating a Move set via the native set page inherits dAVEBOx state:
 - **1 parent found:** silent auto-inherit
 - **0 parents:** blank start
 - **2+ candidates:** picker dialog
 
-## 16.7 Clock Follow (syncing to Move)
-
-By default dAVEBOx runs on its own internal clock. Set **Global Menu → Clock
-Follow → Move** to instead lock dAVEBOx to Move's transport:
-
-- **Tempo follows Move.** dAVEBOx advances from Move's MIDI clock, so it plays at
-  Move's tempo and stays phase-locked. BPM shows **Move** and is read-only; Tap
-  Tempo is disabled (the menu item and the Shift + Step 5 shortcut show a "BPM
-  controlled by Move" notice instead). Turn Move's tempo and dAVEBOx tracks it.
-- **Play drives Move.** Pressing dAVEBOx's **Play** starts (or stops) *Move's*
-  transport; dAVEBOx then follows Move's start/stop so both launch from the same
-  downbeat. Pressing Move's own Play works too — dAVEBOx follows either way.
-- **Bar 1 re-anchors on start.** dAVEBOx resets to the start of its pattern each
-  time Move starts, so the two share a downbeat. (Restart gestures re-anchor
-  dAVEBOx locally; they don't reposition Move.)
-- **Record count-in.** Arming Record while stopped starts Move and counts a
-  one-bar lead-in on Move's clock, then begins recording on the downbeat (your
-  bar 1 lands on Move's bar 2 — a constant, inaudible offset).
-- **Stops with Move.** If Move's clock stops (Stop, or the clock simply stops
-  arriving), dAVEBOx's sequencer stops too.
-- **Tempo is captured automatically.** dAVEBOx reads its internal tempo from
-  Move's clock while following, so the BPM stays matched without setting it by
-  hand — including after Move stops (it keeps Move's last tempo).
-- **Live arp & delay keep running while stopped.** Holding pads to arpeggiate, or
-  using tempo-synced delay, keeps grooving at Move's tempo even when the transport
-  is stopped — it no longer freezes when Move isn't running. (The main sequencer
-  still stays stopped until Move starts again.)
-
-This assumes Move's own sequencer is empty on the tracks dAVEBOx feeds —
-dAVEBOx *replaces* the sequencer while Move provides clock, transport, and
-voices. Leave Clock Follow **Off** for the normal free-running behavior; the
-setting is saved per set but never auto-starts Move on load.
-
-### Clock Out (dAVEBOx as clock master)
-
-**Global Menu → Clock Out → On** makes dAVEBOx send MIDI clock and start/stop
-messages out the USB-A port, so external synths and drum machines lock to
-dAVEBOx's tempo and transport. This is for the **free-running** case (Clock
-Follow = Off): dAVEBOx is the master and external gear chases it.
-
-- **On only when free-running.** When **Clock Follow = Move**, Clock Out is
-  automatically suppressed and the row shows **—** (your On/Off preference is
-  remembered). While following, let Move's own *MIDI Clock Out* setting drive
-  external gear — having dAVEBOx send clock too would put two clocks on the same
-  USB-A port.
-- **Requires a patched Schwung** for the tight, audio-rate clock path; on stock
-  Schwung the toggle has no effect.
-- Saved per set; defaults **Off** and never sends clock on load until the
-  transport actually runs.
-
-> **Known limitation:** with Move's sequencer running underneath, some of Move's
-> native clip/step/row-button LEDs can flicker against dAVEBOx's own LEDs. A fix
-> is planned; it doesn't affect timing or playback.
-
-## 16.8 Cleanup
+## 17.7 Cleanup
 
 When you delete a Move set, dAVEBOx automatically removes its own saved data for
 that set the next time it launches.
 
 ---
 
-# 17. Cheat Sheet
+# 18. Cheat Sheet
 
 ## Track View — Melodic
 
@@ -1610,7 +1586,7 @@ that set the next time it launches.
 | Step | Action | Views |
 |---|---|---|
 | 2 | Global Menu (global section) | Both |
-| 3 | Edit Synth/Slot (forthcoming) | Track |
+| 3 | Open sound source editor (Edit Synth / Edit Slot) | Track |
 | 5 | Tap Tempo | Both |
 | 6 | Metro (Cnt-In ↔ Always) | Both |
 | 7 | Swing | Both |
@@ -1716,7 +1692,7 @@ that set the next time it launches.
 
 ---
 
-# 18. Parameter Reference
+# 19. Parameter Reference
 
 ## CLIP bank (melodic)
 
@@ -1854,7 +1830,7 @@ Per-lane. Delete + jog click resets.
 
 ---
 
-# 19. LED & OLED Reference
+# 20. LED & OLED Reference
 
 ## Clip pads (Session View)
 
