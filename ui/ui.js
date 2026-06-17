@@ -269,7 +269,7 @@ function buildGlobalMenuItems() {
              * pattern. Keys/Drums/Cond = PAD_MODE_MELODIC_SCALE/DRUM/CONDUCT. */
             set: function() {},
             options: [0, 1, 2],
-            format: function(v) { return v === PAD_MODE_CONDUCT ? 'Cond' : (v ? 'Drums' : 'Keys'); }
+            format: function(v) { return v === PAD_MODE_CONDUCT ? 'Conduct' : (v ? 'Drums' : 'Keys'); }
         }),
         createEnum('Layout', {
             get: function() { return S.padLayoutChromatic[S.activeTrack] ? 1 : 0; },
