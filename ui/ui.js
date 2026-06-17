@@ -2605,7 +2605,7 @@ function pollDSP() {
     }
     if (typeof host_module_get_param !== 'function') return;
     /* Keep the AUTOMATION-bank AT indicator live (it appears as you record). */
-    if (S.activeBank === 6 && S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM) {
+    if (S.activeBank === 6) {
         const _at = S.activeTrack, _ac = effectiveClip(_at);
         const _ah = host_module_get_param('t' + _at + '_c' + _ac + '_at_has');
         if (_ah !== null) S.clipAtHas[_at][_ac] = (parseInt(_ah, 10) === 1);
@@ -2759,7 +2759,7 @@ function pollDSP() {
         const _sfac = effectiveClip(_sft);
         if (S.clipSeqFollow[_sft][_sfac] && S.trackClipPlaying[_sft]) {
             var newPage;
-            if (S.activeBank === 6 && S.trackPadMode[_sft] !== PAD_MODE_DRUM) {
+            if (S.activeBank === 6) {
                 var _ccLsf = S.ccActiveLane[_sft];
                 var _dispTpsSf = S.ccLaneTps[_sft][_sfac][_ccLsf] || (S.clipTPS[_sft][_sfac] || 24);
                 var _lTpsSf = S.ccLaneResTps[_sft][_sfac][_ccLsf] || _dispTpsSf;
@@ -3352,9 +3352,8 @@ function applyExtMidiRemap() {
 
 /* True when (track-type, bank) exposes alt params reachable via S.altMode.
  * Melodic: CLIP(0), DELAY(3), AUTO/CC(6 — CC-assign). Drum: DRUM LANE(0),
- * REPEAT GROOVE(5), ALL LANES(7). The CC bank is melodic-only (its knob handler
- * returns early for drum), so bank 6 is NOT an alt bank on drum tracks. Keep in
- * sync with the shiftHeld→altMode migration sites. */
+ * REPEAT GROOVE(5), AUTO(6), ALL LANES(7). Keep in sync with the
+ * shiftHeld→altMode migration sites. */
 /* Bank header label. Identical to BANKS[bank].name except a Conductor track
  * relabels bank 0 (CLIP) to "CONDUCT" — the CLIP bank is reused as the Conduct
  * bank. Does NOT rename BANKS[0] globally (other track types keep "CLIP"). */
@@ -3366,7 +3365,7 @@ function bankHeaderName(t, bank) {
 }
 
 function bankHasAltParams(t, bank) {
-    if (S.trackPadMode[t] === PAD_MODE_DRUM) return bank === 0 || bank === 5 || bank === 7;
+    if (S.trackPadMode[t] === PAD_MODE_DRUM) return bank === 0 || bank === 5 || bank === 6 || bank === 7;
     /* Melodic CLIP(0), NOTE FX(1), DELAY(3), SEQ ARP(4), ARP IN(5), AUTO/CC(6).
      * Banks 4/5 use stepIntervalMode (Arp Steps overlay) rather than altMode —
      * the arrow still shows their toggle-availability, and altIndicatorActive()
@@ -4097,7 +4096,7 @@ function drawUI() {
 
     /* Step edit: show assigned notes and step identity */
     if (S.heldStep >= 0) {
-        if (S.activeBank === 6 && S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM) {
+        if (S.activeBank === 6) {
             /* CC bank step-hold: compact graph + knob values */
             var _t6s = S.activeTrack, _ac6s = effectiveClip(_t6s);
             var _gLane6 = S.ccActiveLane[_t6s];
@@ -4393,8 +4392,7 @@ function drawUI() {
     }
 
     /* Auto bank idle display: lane info + automation graph + progress bar */
-    if (bank === 6 && S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM &&
-            !S.loopHeld && S.knobTouched < 0 && !inTimeout) {
+    if (bank === 6 && !S.loopHeld && S.knobTouched < 0 && !inTimeout) {
         var _gt = S.activeTrack;
         var _gac = effectiveClip(_gt);
         var _gLane = S.ccActiveLane[_gt];
@@ -6160,7 +6158,7 @@ function _tickImpl() {
     /* CC-bank step-LED gradient palette: 6 white brightness levels (the playhead
      * uses the track color instead). Written on bank-6 entry / track switch
      * (not per frame); the step LEDs themselves are driven in updateStepLEDs. */
-    if (S.activeBank === 6 && !S.sessionView && S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM &&
+    if (S.activeBank === 6 && !S.sessionView &&
             S.ccGradPaletteTrack !== S.activeTrack) {
         S.ccGradPaletteTrack = S.activeTrack;
         for (let _l = 0; _l < CC_GRADIENT_LEVELS; _l++) {
@@ -6639,7 +6637,7 @@ function _tickImpl() {
                 (S.tickCount - S.stepBtnPressedTick[S.heldStepBtn]) >= STEP_HOLD_TICKS) {
             S.stepBtnPressedTick[S.heldStepBtn] = -1;
             S.stepWasHeld = true;
-            if (S.activeBank === 6 && S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM) {
+            if (S.activeBank === 6) {
                 /* CC step-edit: seed from the recorded point at this step (or "—"),
                  * plus the computed output value the lane produces there. The
                  * first knob-turn writes from the recorded point if set, else the
@@ -8354,7 +8352,7 @@ function _onCC_buttons(d1, d2) {
                 S.loopTapUnlatchTrack = _lrt;
             }
             /* Delete+Loop on auto bank: reset active lane's loop/res/zoom to clip defaults */
-            if (S.deleteHeld && S.activeBank === 6 && S.trackPadMode[_lrt] !== PAD_MODE_DRUM) {
+            if (S.deleteHeld && S.activeBank === 6) {
                 var _rac = effectiveClip(_lrt);
                 var _rl = S.ccActiveLane[_lrt];
                 S.ccLaneLoopStart[_lrt][_rac][_rl] = 0;
@@ -8830,7 +8828,7 @@ function _onCC_transport(d1, d2) {
      * step-edit nav never lands on a page that won't play. */
     if ((d1 === MoveLeft || d1 === MoveRight) && d2 === 127 && !S.sessionView) {
         var _t_lr = S.activeTrack;
-        if (S.loopHeld && S.activeBank === 6 && S.trackPadMode[_t_lr] !== PAD_MODE_DRUM) {
+        if (S.loopHeld && S.activeBank === 6) {
             var RES_TPS = [12, 24, 48, 96, 384];
             var _ac_lr = effectiveClip(_t_lr);
             var _ccL_lr = S.ccActiveLane[_t_lr];
@@ -8890,7 +8888,7 @@ function _onCC_transport(d1, d2) {
     if (d1 === MoveDown && d2 === 127 && (S.sessionView || S.sessionOverlayHeld) && S.sceneRow < NUM_CLIPS - 4) { S.sceneRow = Math.min(NUM_CLIPS - 4, S.sceneRow + 4); forceRedraw(); }
     if (d1 === MoveUp   && d2 === 127 && (S.sessionView || S.sessionOverlayHeld) && S.sceneRow > 0)              { S.sceneRow = Math.max(0, S.sceneRow - 4);              forceRedraw(); }
     if ((d1 === MoveUp || d1 === MoveDown) && d2 > 0 && !S.sessionView && !S.sessionOverlayHeld &&
-            S.loopHeld && S.activeBank === 6 && S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM) {
+            S.loopHeld && S.activeBank === 6) {
         var RES_TPS = [12, 24, 48, 96, 384];
         var _zt = S.activeTrack, _zac = effectiveClip(_zt), _zL = S.ccActiveLane[_zt];
         var _zOldTps = S.ccLaneTps[_zt][_zac][_zL] || (S.clipTPS[_zt][_zac] || 24);
@@ -11461,7 +11459,7 @@ function _onStepButtons(d1, d2) {
     } else if (S.deleteHeld) {
         /* Delete + step button (Track View): clear all notes from that step.
          * On the CC bank (melodic), instead clear all knobs' points in the step. */
-        if (S.activeBank === 6 && S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM) {
+        if (S.activeBank === 6) {
             var t = S.activeTrack, ac = effectiveClip(t);
             var absIdx = S.trackCurrentPage[t] * 16 + idx;
             var _ccL_d = S.ccActiveLane[t];
