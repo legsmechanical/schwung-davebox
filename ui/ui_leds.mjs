@@ -1,12 +1,12 @@
-import { S } from '/data/UserData/schwung/modules/tools/davebox/ui_state.mjs';
+import { S } from './ui_state.mjs';
 import {
     NUM_STEPS, NUM_TRACKS, LED_OFF,
     TRACK_COLORS, TRACK_DIM_COLORS, TRACK_PAD_BASE, SCENE_BTN_FLASH_TICKS,
     PAD_MODE_DRUM, PAD_MODE_CONDUCT, BANKS,
     POLL_INTERVAL, TAP_TEMPO_FLASH_TICKS, PARAM_LED_BANKS,
     CC_GRADIENT_BASE, CC_GRADIENT_LEVELS
-} from '/data/UserData/schwung/modules/tools/davebox/ui_constants.mjs';
-import { trackClipHasContent } from '/data/UserData/schwung/modules/tools/davebox/ui_scene.mjs';
+} from './ui_constants.mjs';
+import { trackClipHasContent } from './ui_scene.mjs';
 import {
     White, Red, Green, Blue, DarkBlue, LightGrey, DarkGrey, Cyan, PurpleBlue, VividYellow
 } from '/data/UserData/schwung/shared/constants.mjs';

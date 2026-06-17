@@ -1,0 +1,7 @@
+{
+  "name": "schwung-davebox",
+  "private": true,
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

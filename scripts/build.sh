@@ -8,12 +8,17 @@ cd "$PROJECT_DIR"
 MODULE_ID="davebox"
 CROSS_PREFIX="${CROSS_PREFIX:-aarch64-linux-gnu-}"
 
+# Bundle UI on the host (requires Node/esbuild; skipped inside Docker which has no Node).
+if [ -z "$SKIP_BUNDLE" ]; then
+    bash scripts/bundle_ui.sh
+fi
+
 # Re-enter inside Docker if we don't have a cross compiler.
 if ! command -v "${CROSS_PREFIX}gcc" >/dev/null 2>&1; then
     echo "Cross compiler not found, building via Docker..."
     docker build -t davebox-builder -f Dockerfile .
     docker run --rm -v "$PROJECT_DIR:/build" -w /build davebox-builder \
-        bash -c "CROSS_PREFIX=aarch64-linux-gnu- ./scripts/build.sh"
+        bash -c "SKIP_BUNDLE=1 CROSS_PREFIX=aarch64-linux-gnu- ./scripts/build.sh"
     exit $?
 fi
 
@@ -30,11 +35,7 @@ echo "Compiling DSP..."
     -lm
 
 cp module.json           "dist/${MODULE_ID}/"
-# Bundle the JS module tree (ui.js + ui_*.mjs) into a single QuickJS-loadable
-# dist/${MODULE_ID}/ui.js. Earlier versions copied the raw dev ui.js, which
-# clobbers the bundled output and ships ES-module imports that QuickJS can't
-# resolve — manifests on device as "failed to load tool".
-python3 scripts/bundle_ui.py
+# UI bundle already produced by scripts/bundle_ui.sh (runs before Docker).
 # Ship the Ableton-export packager + JSON templates alongside the module (read at
 # export time; pack.py is invoked on-device via host_system_cmd). These are plain
 # files in the module dir, so install.sh's `scp dist/davebox/*` carries them too.

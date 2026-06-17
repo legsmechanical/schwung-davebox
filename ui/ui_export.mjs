@@ -17,9 +17,9 @@
  * from tick() (get_param-safe), matching the codebase's defer-to-tick idiom.
  */
 
-import { S } from '/data/UserData/schwung/modules/tools/davebox/ui_state.mjs';
-import { showActionPopup } from '/data/UserData/schwung/modules/tools/davebox/ui_persistence.mjs';
-import { NUM_TRACKS, NUM_CLIPS, ACTION_POPUP_TICKS, PAD_MODE_CONDUCT } from '/data/UserData/schwung/modules/tools/davebox/ui_constants.mjs';
+import { S } from './ui_state.mjs';
+import { showActionPopup } from './ui_persistence.mjs';
+import { NUM_TRACKS, NUM_CLIPS, ACTION_POPUP_TICKS, PAD_MODE_CONDUCT } from './ui_constants.mjs';
 
 const EXPORT_MODULE_DIR = '/data/UserData/schwung/modules/tools/davebox';
 const EXPORT_OUT_DIR    = '/data/UserData/schwung/davebox-exports';

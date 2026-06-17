@@ -1,10 +1,10 @@
-import { S } from '/data/UserData/schwung/modules/tools/davebox/ui_state.mjs';
-import { MCUFONT } from '/data/UserData/schwung/modules/tools/davebox/ui_constants.mjs';
+import { S } from './ui_state.mjs';
+import { MCUFONT } from './ui_constants.mjs';
 import {
     drawMenuHeader, drawMenuList, menuLayoutDefaults
 } from '/data/UserData/schwung/shared/menu_layout.mjs';
 import { formatItemValue } from '/data/UserData/schwung/shared/menu_items.mjs';
-import { SNAPSHOT_CAP } from '/data/UserData/schwung/modules/tools/davebox/ui_persistence.mjs';
+import { SNAPSHOT_CAP } from './ui_persistence.mjs';
 
 function pixelPrintMcu(x, y, text, scale, color) {
     const charW = 5 * scale + scale;
