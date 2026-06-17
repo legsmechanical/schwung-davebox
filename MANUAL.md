@@ -79,15 +79,15 @@ each (prevents echo loops):
 | 3 | Ch 3 | Off |
 | 4 | Ch 4 | Off |
 
-**Schwung** — slots 1–4 receive on channels 1–4 (Schwung's factory default, so
-usually nothing to change). Set each slot's Forward Channel to **Auto** (not Thru):
+**Schwung** — set slots 1–4 to receive on channels 5–8. Set each slot's Forward
+Channel to **Auto** (not Thru):
 
 | Schwung slot | Rcv Channel |
 |---|---|
-| 1 | Ch 1 |
-| 2 | Ch 2 |
-| 3 | Ch 3 |
-| 4 | Ch 4 |
+| 1 | Ch 5 |
+| 2 | Ch 6 |
+| 3 | Ch 7 |
+| 4 | Ch 8 |
 
 With that done, the default routing is: dAVEBOx **tracks 1–4 → Move** instruments
 and **tracks 5–8 → Schwung** chains. Any track's channel and routing can be
@@ -1382,13 +1382,13 @@ Press **Step 3** to exit. dAVEBOx reclaims the OLED, pads, knobs, and LEDs and c
 ## 16.1 Default setup
 
 - **Tracks 1–4** → channels 1–4 → Move's native instruments
-- **Tracks 5–8** → channels 1–4 → Schwung slots 1–4
+- **Tracks 5–8** → channels 5–8 → Schwung slots 1–4
 
 Requires Move and Schwung configured per [Overview & Setup](#1-overview--setup).
 
 ## 16.2 Per-track settings (Track Config)
 
-- **Channel** — MIDI channel 1–16 (default: tracks 1–4 → ch 1–4, tracks 5–8 → ch 1–4)
+- **Channel** — MIDI channel 1–16 (default: track N = channel N)
 - **Route** — Move, Schwung, or External (USB-A output)
 
 ## 16.3 External MIDI input

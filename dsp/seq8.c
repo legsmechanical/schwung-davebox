@@ -1819,10 +1819,10 @@ static void seq8_load_state(seq8_instance_t *inst) {
             json_get_int(buf, key, 0), 0, 1);
 
         snprintf(key, sizeof(key), "t%d_ch", t);
-        /* Fallback when the key is absent (older v=36 sets): tracks 5-8 default
-         * to ch 1-4 (idx-4) so Schwung-routed 5-8 layer onto Schwung slots 1-4. */
+        /* Fallback when the key is absent (older v=36 sets): track N → ch N
+         * (tracks 1-4 → ch 1-4 for Move, tracks 5-8 → ch 5-8 for Schwung). */
         inst->tracks[t].channel = (uint8_t)clamp_i(
-            json_get_int(buf, key, t < 4 ? t : t - 4), 0, 15);
+            json_get_int(buf, key, t), 0, 15);
 
         snprintf(key, sizeof(key), "t%d_rt", t);
         inst->tracks[t].pfx.route = (uint8_t)clamp_i(
@@ -6604,9 +6604,9 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
 
     int t, c;
     for (t = 0; t < NUM_TRACKS; t++) {
-        /* Default channels: tracks 1-4 → MIDI ch 1-4, tracks 5-8 → ch 1-4 too
-         * (idx-4), so the Schwung-routed 5-8 layer onto Schwung slots 1-4. */
-        inst->tracks[t].channel     = (uint8_t)(t < 4 ? t : t - 4);
+        /* Default channels: track N → MIDI ch N (tracks 1-4 → ch 1-4 for Move,
+         * tracks 5-8 → ch 5-8 for Schwung). */
+        inst->tracks[t].channel     = (uint8_t)t;
         inst->tracks[t].queued_clip = -1;
         inst->tracks[t].pad_octave  = 3;
         inst->tracks[t].pad_mode    = PAD_MODE_MELODIC_SCALE;
