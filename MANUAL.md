@@ -263,7 +263,7 @@ buttons:
 |---|---|
 | 2 | Open Global Menu at Global section |
 | 3 | Open sound source editor (Edit Synth / Edit Slot) — see [Ch. 15](#15-sound-sources--co-run-editing). Requires Schwung 0.9.18+ |
-| 5 | Tap Tempo screen |
+| 5 | Tap Tempo screen (shows "BPM controlled by Move" when Clock Follow is on) |
 | 6 | Metro toggle (Cnt-In ↔ Always) |
 | 7 | Open Global Menu at Swing |
 | 8 | Drum: cycle right-pad mode (Vel/Rpt1/Rpt2). Melodic: toggle chromatic layout |
@@ -1425,6 +1425,60 @@ control chain knob assignments (requires Schwung 0.9.17 or later). Aftertouch ca
 recorded live via pad pressure when the track's AftTch setting is enabled (see
 [Track Config](#171-track-config)).
 
+## 16.6 Clock Follow (syncing to Move)
+
+By default dAVEBOx runs on its own internal clock. Set **Global Menu → Clock
+Follow → Move** to instead lock dAVEBOx to Move's transport:
+
+- **Tempo follows Move.** dAVEBOx advances from Move's MIDI clock, so it plays at
+  Move's tempo and stays phase-locked. BPM shows **Move** and is read-only; Tap
+  Tempo is disabled (the menu item and the Shift + Step 5 shortcut show a "BPM
+  controlled by Move" notice instead). Turn Move's tempo and dAVEBOx tracks it.
+- **Play drives Move.** Pressing dAVEBOx's **Play** starts (or stops) *Move's*
+  transport; dAVEBOx then follows Move's start/stop so both launch from the same
+  downbeat. Pressing Move's own Play works too — dAVEBOx follows either way.
+- **Bar 1 re-anchors on start.** dAVEBOx resets to the start of its pattern each
+  time Move starts, so the two share a downbeat. (Restart gestures re-anchor
+  dAVEBOx locally; they don't reposition Move.)
+- **Record count-in.** Arming Record while stopped starts Move and counts a
+  one-bar lead-in on Move's clock, then begins recording on the downbeat (your
+  bar 1 lands on Move's bar 2 — a constant, inaudible offset).
+- **Stops with Move.** If Move's clock stops (Stop, or the clock simply stops
+  arriving), dAVEBOx's sequencer stops too.
+- **Tempo is captured automatically.** dAVEBOx reads its internal tempo from
+  Move's clock while following, so the BPM stays matched without setting it by
+  hand — including after Move stops (it keeps Move's last tempo).
+- **Live arp & delay keep running while stopped.** Holding pads to arpeggiate, or
+  using tempo-synced delay, keeps grooving at Move's tempo even when the transport
+  is stopped — it no longer freezes when Move isn't running. (The main sequencer
+  still stays stopped until Move starts again.)
+
+This assumes Move's own sequencer is empty on the tracks dAVEBOx feeds —
+dAVEBOx *replaces* the sequencer while Move provides clock, transport, and
+voices. Leave Clock Follow **Off** for the normal free-running behavior; the
+setting is saved per set but never auto-starts Move on load.
+
+### Clock Out (dAVEBOx as clock master)
+
+**Global Menu → Clock Out → On** makes dAVEBOx send MIDI clock and start/stop
+messages out the USB-A port, so external synths and drum machines lock to
+dAVEBOx's tempo and transport. This is for the **free-running** case (Clock
+Follow = Off): dAVEBOx is the master and external gear chases it.
+
+- **On only when free-running.** When **Clock Follow = Move**, Clock Out is
+  automatically suppressed and the row shows **—** (your On/Off preference is
+  remembered). While following, let Move's own *MIDI Clock Out* setting drive
+  external gear — having dAVEBOx send clock too would put two clocks on the same
+  USB-A port.
+- **Requires Schwung 0.9.16 or later** for the tight, audio-rate clock path; on
+  older Schwung the toggle has no effect.
+- Saved per set; defaults **Off** and never sends clock on load until the
+  transport actually runs.
+
+> **Known limitation:** with Move's sequencer running underneath, some of Move's
+> native clip/step/row-button LEDs can flicker against dAVEBOx's own LEDs. A fix
+> is planned; it doesn't affect timing or playback.
+
 ---
 
 # Part VI — Reference
@@ -1458,8 +1512,10 @@ labels are abbreviated — shown in parentheses.)
 
 | Item | Values | Default | Notes |
 |---|---|---|---|
-| BPM | 40–250 | 120 | Tempo |
-| Tap Tempo | — | — | Full-screen tap interface. Pad taps calculate BPM. Jog ±1 BPM. |
+| Clock Follow | Off, Move | Off | Follow Move's transport + tempo — see [Clock Follow](#166-clock-follow-syncing-to-move) |
+| Clock Out | Off, On | Off | Send MIDI clock + start/stop out USB-A (dAVEBOx as clock master). Shows **—** and is suppressed while Clock Follow = Move — see [Clock Follow](#166-clock-follow-syncing-to-move) |
+| BPM | 40–250 | 120 | Tempo. Shows **Move** (read-only) when Clock Follow = Move |
+| Tap Tempo | — | — | Full-screen tap interface. Pad taps calculate BPM. Jog ±1 BPM. Disabled while Clock Follow = Move |
 | Key | C through B | C | Session root note |
 | Scale | (see list below) | Major | Active scale |
 | Scale Aware | On, Off | On | Scale-aware params step in scale degrees instead of semitones |
