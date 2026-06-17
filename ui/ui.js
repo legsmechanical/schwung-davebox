@@ -2128,20 +2128,13 @@ function computePadNoteMap() {
          * from it. (Schwung host silently drops module-defined global keys,
          * so we piggyback signals onto the per-track padmap push.)
          *
-         * PHASE-2: trailing 33rd token = ext_send_async capability flag.
-         * Tells DSP to call g_host->midi_send_external directly for
-         * ROUTE_EXTERNAL instead of pushing to ext_queue. Survives DSP
-         * recreate because computePadNoteMap re-runs after pendingDspSync.
-         * Stock Schwung: extSendAsyncEnabled=false, token is "0", DSP keeps
-         * the ext_queue path. Remove when patches upstreamed. */
-        payload += ' ' + (S.extSendAsyncEnabled ? 1 : 0);
-        /* 34th token = pad-dispatch-muted flag. While set, DSP on_midi skips
+        /* 33rd token = pad-dispatch-muted flag. While set, DSP on_midi skips
          * drum_pad_event (Rpt1/Rpt2 rate-pad + vel-zone handling) on top of
          * the existing pad_note_map=0xFF mute. Fixes Shift+bottom-row track
          * shortcut leaking into Rpt1/Rpt2 latch on the prior active track. */
         payload += ' ' + (padDispatchMuted ? 1 : 0);
         payload += ' ' + (S.deleteHeld ? 1 : 0);
-        /* 36th token = corun_left_silent. When this (drum) track's left-column
+        /* 35th token = corun_left_silent. When this (drum) track's left-column
          * lane pads are intentionally mapped to 0xFF for Move-native co-run
          * (so DSP on_midi skips them — Move plays the injected pad), tell DSP
          * so it excludes these benign 0xFF presses from the pad-drop
@@ -5798,19 +5791,6 @@ globalThis.init = function () {
      * existing JS path keeps working. Remove the gate when patches upstreamed. */
     S.dspInboundEnabled = (typeof shadow_inbound_pad_midi_active === 'function');
 
-    /* PHASE-2: capability gate for shim-side async ROUTE_EXTERNAL send.
-     * On patched Schwung (legsmechanical/schwung phase-2-ext-worker) the
-     * shim runs a low-priority worker thread that drains a 64-packet SPSC
-     * ring fed by g_host->midi_send_external — pulls the SPI ioctl off the
-     * audio thread, removing the JS-tick floor on ROUTE_EXTERNAL latency.
-     * When the sentinel is present we (a) skip the JS ext_queue drain in
-     * tick(), and (b) tell DSP to call midi_send_external directly via the
-     * 33rd token in the tN_padmap payload (see computePadNoteMap).
-     * Stock Schwung: function undefined, flag stays false, DSP keeps
-     * pushing to ext_queue and JS drains it as before.
-     * Remove when patches upstreamed. */
-    S.extSendAsyncEnabled = (typeof shadow_overtake_send_external_async_active === 'function');
-
     computePadNoteMap();
 
     /* Apply cable-2 channel remap for the current active track immediately
@@ -6077,26 +6057,6 @@ function _tickImpl() {
         if (pendingDrumNoteOffs[_t].length === 0) continue;
         const offs = pendingDrumNoteOffs[_t].splice(0);
         for (const pitch of offs) liveSendNote(_t, 0x80, pitch, 0);
-    }
-
-    /* Drain ROUTE_EXTERNAL queue: DSP enqueues sequenced notes; JS sends via USB-A.
-     * PHASE-2: skipped on patched Schwung — DSP calls g_host->midi_send_external
-     * directly and the shim's ovext_worker thread drains its own ring off the
-     * audio thread, so ext_queue stays empty. Remove the gate (and the whole
-     * block) when patches upstreamed. */
-    if (!S.extSendAsyncEnabled && typeof host_module_get_param === 'function') {
-        const eq = host_module_get_param('ext_queue');
-        if (eq && eq.length > 0) {
-            const msgs = eq.split(';');
-            for (let mi = 0; mi < msgs.length; mi++) {
-                const p = msgs[mi].split(' ');
-                if (p.length < 3) continue;
-                const s = parseInt(p[0], 10), d1 = parseInt(p[1], 10), d2 = parseInt(p[2], 10);
-                const cin = (s >> 4) & 0x0F;
-                if (typeof move_midi_external_send === 'function')
-                    move_midi_external_send([cin, s, d1, d2]);
-            }
-        }
     }
 
     /* Clear CC step-edit active flag once the step is released */
@@ -8055,7 +8015,7 @@ function _onCC_buttons(d1, d2) {
             S.deleteTapArmed = false;
             openClearAutoMenu();
         }
-        /* delete_held now rides as the 35th token in the tN_padmap payload
+        /* delete_held now rides as the 34th token in the tN_padmap payload
          * (computePadNoteMap), so it shares the tick-based self-heal and
          * avoids the onMidiMessage coalescing risk the old separate
          * t0_delete_held push had. */

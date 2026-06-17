@@ -5689,18 +5689,7 @@ static void set_param(void *instance, const char *key, const char *val) {
              * PHASE-1: remove the enable line when patches upstreamed. */
             inst->active_track = (uint8_t)tidx;
             inst->dsp_inbound_enabled = 1;
-            /* PHASE-2: optional 33rd token = ext_send_async capability flag.
-             * Present when JS sees shadow_overtake_send_external_async_active.
-             * Absent token leaves the prior value alone (stock Schwung never
-             * sets it; flag stays at 0 → DSP keeps using ext_queue + JS
-             * drain). Remove when patches upstreamed. */
-            while (*sp == ' ') sp++;
-            if (*sp) {
-                int ea = 0;
-                while (*sp >= '0' && *sp <= '9') { ea = ea * 10 + (*sp++ - '0'); }
-                inst->ext_send_async_active = (ea != 0) ? 1 : 0;
-            }
-            /* 34th token = pad_dispatch_muted. When set, on_midi skips
+            /* 33rd token = pad_dispatch_muted. When set, on_midi skips
              * drum_pad_event so modal gestures (Shift+bottom-row track
              * shortcut, Delete/Loop/Mute/Copy/Capture holds, etc.) don't
              * trigger Rpt1/Rpt2 latch on the prior active track. */
@@ -5710,7 +5699,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 while (*sp >= '0' && *sp <= '9') { pdm = pdm * 10 + (*sp++ - '0'); }
                 inst->pad_dispatch_muted = (pdm != 0) ? 1 : 0;
             }
-            /* 35th token = delete_held. Moved here from the separate
+            /* 34th token = delete_held. Moved here from the separate
              * t0_delete_held set_param to share the padmap's tick-based
              * self-heal and avoid onMidiMessage coalescing. */
             while (*sp == ' ') sp++;
@@ -5719,7 +5708,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 while (*sp >= '0' && *sp <= '9') { dh = dh * 10 + (*sp++ - '0'); }
                 inst->delete_held = (dh != 0) ? 1 : 0;
             }
-            /* 36th token = corun_left_silent. Set when computePadNoteMap
+            /* 35th token = corun_left_silent. Set when computePadNoteMap
              * intentionally maps the left-column drum pads to 0xFF for
              * Move-native co-run (double-hit suppression). on_midi uses it to
              * exclude these benign 0xFF presses from the pad-drop diagnostic. */

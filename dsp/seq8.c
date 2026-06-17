@@ -43,11 +43,7 @@
 /* MIDI routing: where track output is delivered */
 #define ROUTE_SCHWUNG  0   /* host->midi_send_internal → Schwung active chain */
 #define ROUTE_MOVE     1   /* host->midi_inject_to_move → Move native tracks */
-#define ROUTE_EXTERNAL 2   /* USB-A out: DSP enqueues → JS drains via get_param("ext_queue") */
-
-/* External MIDI queue: DSP buffers ROUTE_EXTERNAL events; JS drains and sends via move_midi_external_send */
-#define EXT_QUEUE_SIZE 64
-typedef struct { uint8_t s; uint8_t d1; uint8_t d2; } ext_msg_t;
+#define ROUTE_EXTERNAL 2   /* USB-A out: host->midi_send_external → shim audio-thread SPSC ring */
 
 /* Pad input modes */
 #define PAD_MODE_MELODIC_SCALE  0   /* isomorphic 4ths diatonic layout */
@@ -904,10 +900,6 @@ typedef struct {
     int16_t  conductor_off_semi_prev;  /* prev-tick offset for Now-retrigger change detection (transient) */
     uint8_t  conductor_sounding_prev;  /* prev-tick sounding for Now-retrigger change detection (transient) */
 
-    /* External MIDI queue: ROUTE_MOVE note events buffered here; JS drains each tick */
-    ext_msg_t ext_queue[EXT_QUEUE_SIZE];
-    int       ext_head;             /* next write index */
-    int       ext_tail;             /* next read index */
 
     /* State file path — set by JS via set_param("state_path") before first load/save */
     char state_path[256];
@@ -1081,23 +1073,14 @@ typedef struct {
      * preview re-layout). 0xFF = no note held on that pad. */
     uint8_t  pad_live_pitch[NUM_TRACKS][32];
 
-    /* Phase 2: capability mirror for shim-side async ROUTE_EXTERNAL send.
-     * When 1, pfx_emit / drum_pfx_emit call g_host->midi_send_external
-     * directly (shim drains via ovext_worker thread, off the audio thread).
-     * When 0 (stock Schwung), they push to ext_queue and JS drains via
-     * get_param("ext_queue"). Set by the tN_padmap handler from an optional
-     * 33rd token in the payload — JS appends it whenever
-     * shadow_overtake_send_external_async_active is present.
-     * PHASE-2: remove when patches upstreamed. */
-    uint8_t  ext_send_async_active;
-    /* JS-driven modal pad-dispatch mute. Set via the 34th tN_padmap token
+    /* JS-driven modal pad-dispatch mute. Set via the 33rd tN_padmap token
      * whenever JS's _padDispatchMutedNow() is true (Shift/Delete/Loop/Mute/
      * Copy/Capture/TapTempo holds, session view, etc.). When set, on_midi
      * skips drum_pad_event so modal gestures don't trigger Rpt1/Rpt2 on
      * the prior active track. */
     uint8_t  pad_dispatch_muted;
 
-    /* JS-driven co-run left-pad-silence flag. Set via the 36th tN_padmap
+    /* JS-driven co-run left-pad-silence flag. Set via the 35th tN_padmap
      * token whenever computePadNoteMap intentionally maps the left-column
      * drum lane pads to 0xFF for Move-native co-run (so DSP on_midi doesn't
      * double-hit Move's injected pad). Distinct from the real pad-drop bug:
@@ -2444,7 +2427,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
 /* Send 3-byte MIDI message. Routes on fx->route:
  *   ROUTE_SCHWUNG  → midi_send_internal (Schwung chain, immediate)
  *   ROUTE_MOVE     → midi_inject_to_move (cable 2, CIN from status; NULL-safe)
- *   ROUTE_EXTERNAL → ext_queue ring buffer (JS drains via get_param) */
+ *   ROUTE_EXTERNAL → host->midi_send_external (shim audio-thread SPSC ring) */
 /* Forward decls — arp engine and scale_transpose defined further down. */
 static void arp_add_note     (arp_engine_t *a, uint8_t pitch, uint8_t vel);
 static void arp_remove_note  (arp_engine_t *a, uint8_t pitch);
@@ -2454,13 +2437,6 @@ static int  note_abs_degree  (seq8_instance_t *inst, int note);
 static inline int eff_pad_scale(seq8_instance_t *inst);
 static void conductor_set_offset_from_note(seq8_instance_t *inst, int played);
 static void conductor_clear_offset(seq8_instance_t *inst);
-
-static void ext_queue_push(seq8_instance_t *inst, uint8_t s, uint8_t d1, uint8_t d2) {
-    int next = (inst->ext_head + 1) % EXT_QUEUE_SIZE;
-    if (next == inst->ext_tail) return;   /* full — drop newest */
-    inst->ext_queue[inst->ext_head] = (ext_msg_t){ s, d1, d2 };
-    inst->ext_head = next;
-}
 
 /* Forward decls used by merge_place (defined later in the file). */
 static void clip_init(clip_t *cl);
@@ -2753,18 +2729,14 @@ static void pfx_emit(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
         return;
     }
     if (fx->route == ROUTE_EXTERNAL) {
-        /* PHASE-2: when patched-Schwung shim is present, push directly to
-         * the shim's SPSC ring (audio-thread drain into MIDI_OUT mailbox).
-         * Stock Schwung keeps the JS-drain path through ext_queue.
-         * Capability flag arrives via tN_padmap 33rd token. Packet byte 0
-         * is the USB-MIDI header: cable<<4 | CIN. USB-A out lives on
-         * cable-2 (per SPI_PROTOCOL.md), so the cable nibble is 0x20.
-         * Remove when patches upstreamed. */
-        if (g_inst && g_inst->ext_send_async_active && g_host->midi_send_external) {
+        /* Push directly to the host's audio-thread-safe SPSC ring (the shim
+         * drains it into the MIDI_OUT mailbox on its own per-block SPI
+         * cadence). Packet byte 0 is the USB-MIDI header: cable<<4 | CIN.
+         * USB-A out lives on cable-2 (per SPI_PROTOCOL.md), so the cable
+         * nibble is 0x20. Requires Schwung 0.9.16+. */
+        if (g_host->midi_send_external) {
             const uint8_t pkt[4] = { (uint8_t)(0x20 | ((status >> 4) & 0x0F)), status, d1, d2 };
             g_host->midi_send_external(pkt, 4);
-        } else if (g_inst) {
-            ext_queue_push(g_inst, status, d1, d2);
         }
         return;
     }
@@ -3284,7 +3256,7 @@ static void send_panic(seq8_instance_t *inst) {
                 pfx_send(fx, (uint8_t)(0x80 | ch), (uint8_t)n, 0);
     }
     if (route_pfx[ROUTE_EXTERNAL]) {
-        /* 128 note-offs/channel would overflow the 64-slot ext_queue;
+        /* 128 note-offs/channel would overflow the shim's 64-packet send ring;
          * CC 120 + 123 per channel silences everything in 32 messages. */
         play_fx_t *fx = route_pfx[ROUTE_EXTERNAL];
         for (ch = 0; ch < 16; ch++) {
@@ -4416,12 +4388,10 @@ static void drum_pfx_emit(drum_pfx_t *px, uint8_t status, uint8_t d1, uint8_t d2
         return;
     }
     if (px->route == ROUTE_EXTERNAL) {
-        /* PHASE-2: see pfx_emit ROUTE_EXTERNAL branch. Cable-2 nibble for USB-A out. */
-        if (g_inst && g_inst->ext_send_async_active && g_host->midi_send_external) {
+        /* See pfx_emit ROUTE_EXTERNAL branch. Cable-2 nibble for USB-A out. */
+        if (g_host->midi_send_external) {
             const uint8_t pkt[4] = { (uint8_t)(0x20 | ((status >> 4) & 0x0F)), status, d1, d2 };
             g_host->midi_send_external(pkt, 4);
-        } else if (g_inst) {
-            ext_queue_push(g_inst, status, d1, d2);
         }
         return;
     }
@@ -9474,27 +9444,6 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         return snprintf(out, out_len, "%.0f", b);
     }
 
-    /* ext_queue: drain ROUTE_EXTERNAL events buffered by DSP render path.
-     * Returns "S D1 D2;S D1 D2;..." or "" if empty. Clears queue on read. */
-    if (!strcmp(key, "ext_queue")) {
-        if (!inst || inst->ext_head == inst->ext_tail)
-            return snprintf(out, out_len, "");
-        int pos = 0;
-        while (inst->ext_tail != inst->ext_head) {
-            ext_msg_t *m = &inst->ext_queue[inst->ext_tail];
-            if (pos > 0) {
-                if (pos < out_len - 1) out[pos++] = ';';
-                else break;
-            }
-            int n = snprintf(out + pos, (size_t)(out_len - pos),
-                             "%d %d %d", (int)m->s, (int)m->d1, (int)m->d2);
-            if (n < 0 || pos + n >= out_len) break;
-            pos += n;
-            inst->ext_tail = (inst->ext_tail + 1) % EXT_QUEUE_SIZE;
-        }
-        return pos;
-    }
-
     /* state_snapshot: single call returning all poll-loop values.
      * Format: "playing cs0..cs7 ac0..ac7 qc0..qc7 count_in cp0..cp7 wr0..wr7 ps0..ps7 flash_eighth flash_sixteenth metro_beat_count master_pos looper_state merge_state"
      * 57 values total. Replaces individual get_param calls in pollDSP(). */
@@ -10439,10 +10388,11 @@ static inline int seq8_stopped_tick_due(seq8_instance_t *inst) {
  * external gear on cable 2 (USB-A) via the shim's audio-thread SPSC ring. MUST
  * be called only from the render/audio thread (single producer for the ring).
  * Byte 0 = USB-MIDI header (cable<<4 | CIN); for single-byte realtime, CIN =
- * 0x0F, so 0x20 | (rt>>4) = 0x2F. Async path only — clock requires the patched
- * shim (ext_send_async_active); the JS ext_queue drain is too jittery for clock. */
+ * 0x0F, so 0x20 | (rt>>4) = 0x2F. Requires Schwung 0.9.16+ (the audio-thread-safe
+ * midi_send_external SPSC ring). */
 static void clock_send_raw(seq8_instance_t *inst, uint8_t rt) {
-    if (g_host && inst->ext_send_async_active && g_host->midi_send_external) {
+    (void)inst;
+    if (g_host && g_host->midi_send_external) {
         const uint8_t pkt[4] = { (uint8_t)(0x20 | ((rt >> 4) & 0x0F)), rt, 0, 0 };
         g_host->midi_send_external(pkt, 4);
     }
