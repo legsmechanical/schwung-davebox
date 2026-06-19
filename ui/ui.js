@@ -5286,6 +5286,9 @@ function exitSchwungCoRun() {
     S.shiftHeld = false; S.deleteHeld = false; S.muteHeld = false;
     S.copyHeld  = false; S.loopHeld  = false; S.loopJogActive = false;
     S.captureHeld = false; S.shiftTrackLEDActive = false;
+    /* Returning to full overtake: re-assert sysex suppression (the host cleared
+     * it when we ceded to co-run) so Move's clip/grid LEDs don't leak back. */
+    assertOvertakeSysexSuppress();
     /* Schwung's chain editor may have rewritten palette scratch entries while
      * we were ceded. Reapply our palette before invalidating the LED cache
      * so forceRedraw below repaints with the right colors. */
@@ -5370,6 +5373,9 @@ function exitMoveNativeCoRun() {
     S.shiftHeld = false; S.deleteHeld = false; S.muteHeld = false;
     S.copyHeld  = false; S.loopHeld  = false; S.loopJogActive = false;
     S.captureHeld = false; S.shiftTrackLEDActive = false;
+    /* Returning to full overtake: re-assert sysex suppression (the host cleared
+     * it when we ceded to co-run) so Move's clip/grid LEDs don't leak back. */
+    assertOvertakeSysexSuppress();
     /* Move firmware may have rewritten palette scratch entries (knob rings,
      * Shift/Back, etc.) while we were ceded. Reapply our palette before
      * invalidating the LED cache so forceRedraw below repaints with the
@@ -5718,6 +5724,19 @@ function captureError(where, e) {
     } catch (_e) { /* the logger must never throw */ }
 }
 
+/* Own all LEDs in our full-overtake views. Clock Follow keeps Move's sequencer
+ * running underneath, whose RGB pad/clip/grid LEDs ride cable-0 sysex that the
+ * shim otherwise passes through — they'd fight our LEDs. Opt into sysex
+ * suppression (patched Schwung only; no-op on older hosts). The host CLEARS this
+ * flag whenever our module is parked (suspendOvertakeMode → suspend/resume, and
+ * on overtake exit / co-run), so init() alone isn't enough — we must re-assert it
+ * every time we return to full overtake (resume, co-run end), or Move's clip-side
+ * LEDs leak back. Idempotent + typeof-guarded, so it's safe to call repeatedly. */
+function assertOvertakeSysexSuppress() {
+    if (typeof shadow_set_overtake_suppress_sysex === 'function')
+        shadow_set_overtake_suppress_sysex(1);
+}
+
 globalThis.init = function () {
     installConsoleOverride('SEQ8');
     /* Clear any lingering co-run flag from a prior session — shim's SHM
@@ -5726,14 +5745,7 @@ globalThis.init = function () {
     S.schwungCoRunSlot = -1;
     S.moveCoRunTrack = -1;
     if (typeof shadow_corun_end === 'function') shadow_corun_end();
-    /* Own all LEDs in our full-overtake views. Clock Follow keeps Move's
-     * sequencer running underneath, whose RGB pad/clip/grid LEDs ride cable-0
-     * sysex that the shim otherwise passes through — they'd fight our LEDs.
-     * Opt into sysex suppression (patched Schwung only; no-op on older hosts).
-     * Only acts in pure full overtake; co-run paths are unaffected. Cleared by
-     * the framework on overtake exit. */
-    if (typeof shadow_set_overtake_suppress_sysex === 'function')
-        shadow_set_overtake_suppress_sysex(1);
+    assertOvertakeSysexSuppress();
     if (S.bankParams === null)
         S.bankParams = Array.from({length: NUM_TRACKS}, function() {
             return BANKS.map(function(bank) { return bank.knobs.map(function(k) { return k.def; }); });
@@ -6026,6 +6038,10 @@ function _tickImpl() {
         S.captureHeld = false; S.shiftTrackLEDActive = false;
         S.heldStep  = -1;    S.heldStepBtn = -1; S.heldStepNotes = [];
         S.stepWasEmpty = false; S.stepWasHeld = false;
+        /* Resuming to full overtake: re-assert sysex suppression (the host clears
+         * it in suspendOvertakeMode while we're parked) so Move's clip/grid LEDs
+         * don't leak back over ours. */
+        assertOvertakeSysexSuppress();
         /* Check if the active set changed while we were parked. */
         const _as = readActiveSet();
         const _dspUuid = (typeof host_module_get_param === 'function')
