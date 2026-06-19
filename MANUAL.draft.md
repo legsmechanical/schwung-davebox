@@ -461,6 +461,12 @@ Press **Record** to capture pad input into the active clip.
 | Playing, fixed-length clip | Records immediately at current position |
 | Playing, empty clip (no length set) | Arms recording, defers to next bar boundary. Record blinks red while pending. |
 
+> When **Clock Follow = Move**, arming Record from stopped first starts Move's
+> transport, then runs the one-bar count-in. Move quantizes its start to its
+> Ableton Link grid, so there can be a brief wait (up to ~1 bar) before the
+> count-in begins — dAVEBOx waits through it, and falls back to its own clock if
+> Move never starts. See [§16.6 Clock Follow](#166-clock-follow-syncing-to-move).
+
 Stop recording: press **Record** again (transport continues) or **Play** (stops
 transport).
 
@@ -1446,7 +1452,14 @@ Follow → Move** to instead lock dAVEBOx to Move's transport:
   dAVEBOx locally; they don't reposition Move.)
 - **Record count-in.** Arming Record while stopped starts Move and counts a
   one-bar lead-in on Move's clock, then begins recording on the downbeat (your
-  bar 1 lands on Move's bar 2 — a constant, inaudible offset).
+  bar 1 lands on Move's bar 2 — a constant, inaudible offset). Because Move
+  quantizes its *own* transport start to its Ableton Link grid, there can be a
+  short wait — up to about a bar — between pressing Record and Move actually
+  starting. dAVEBOx waits through that Link sync so the count-in always lands on
+  Move's downbeat at the current tempo, instead of starting early with no lead-in.
+  If Move never starts at all (for example if it isn't the Link transport leader),
+  dAVEBOx falls back to its own clock at the last-known tempo and shows a brief
+  on-screen notice, so you still get a count-in and a take.
 - **Stops with Move.** If Move's clock stops (Stop, or the clock simply stops
   arriving), dAVEBOx's sequencer stops too.
 - **Tempo is captured automatically.** dAVEBOx reads its internal tempo from
