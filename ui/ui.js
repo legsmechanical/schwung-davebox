@@ -566,6 +566,7 @@ const CORUN_GRP_KNOBS = 1 << 6;
 const CORUN_GRP_SHIFT = 1 << 8;
 const CORUN_GRP_BACK  = 1 << 9;
 const CORUN_GRP_TOUCH = 1 << 11;
+const CORUN_GRP_MUTE  = 1 << 12;  /* CC 88 — the Mute button */
 /* LED-keep mask (lights/input split): dAVEBOx paints the side clip buttons
  * (CC 40-43, paintCoRunSideButtons) as a paired-track indicator, but must let
  * Move/Schwung handle the *presses* (switching the active Move track / Schwung
@@ -573,6 +574,18 @@ const CORUN_GRP_TOUCH = 1 << 11;
  * so the presses still cede to the peer. Without this, Move's playback repaints
  * fight our indicator. */
 const DAVEBOX_CORUN_LED_KEEP_MASK = DAVEBOX_CORUN_KEEP_MASK | CORUN_GRP_TRACK;
+/* Mute (CC 88) split for co-run (schwung-davebox #8): during MOVE_NATIVE co-run
+ * dAVEBOx CEDES Mute to Move so the user can mute Move's instruments and drum pads
+ * — the base masks above already omit CORUN_GRP_MUTE, so the move-native begin
+ * (which uses them) cedes Mute automatically. The FX picker ALSO cedes Mute to Move
+ * (its mask omits CORUN_GRP_MUTE), so the user can mute Move while the picker overlay
+ * is up. Only chain-edit KEEPS Mute (dAVEBOx's own track mute/solo + Delete+Mute
+ * clear), matching pre-#8 behavior where Mute always stayed with the tool. Requires a
+ * host that classifies CC 88 as CORUN_GRP_MUTE (schwung feat/corun-mute-cede-group);
+ * on an older host CC 88 is unclassified and stays with the tool in every mode, so
+ * this is a no-op there (graceful). */
+const DAVEBOX_CHAIN_KEEP_MASK     = DAVEBOX_CORUN_KEEP_MASK | CORUN_GRP_MUTE;
+const DAVEBOX_CHAIN_LED_KEEP_MASK = DAVEBOX_CORUN_LED_KEEP_MASK | CORUN_GRP_MUTE;
 /* Mask while the FX-picker overlay is open: the normal Move-co-run mask PLUS the
  * UI elements the overlay should own — jog (turn/click), the Back *routing* group,
  * the param knobs (turn → FX value), knob touch (param pop-up), and Shift (CC 49).
@@ -5266,10 +5279,11 @@ function openSchwungSlotEditor(t) {
 function enterSchwungCoRun(t, slot) {
     S.schwungCoRunSlot = slot;
     if (typeof shadow_corun_begin === 'function')
-        shadow_corun_begin(CORUN_TARGET_CHAIN_EDIT, slot, DAVEBOX_CORUN_KEEP_MASK);
-    /* Own the side-clip-button LEDs (CC 40-43) without grabbing their input. */
+        shadow_corun_begin(CORUN_TARGET_CHAIN_EDIT, slot, DAVEBOX_CHAIN_KEEP_MASK);
+    /* Own the side-clip-button LEDs (CC 40-43) without grabbing their input.
+     * Chain-edit keeps Mute (input + LED) — see the #8 note by the mask defs. */
     if (typeof shadow_corun_set_led_keep_mask === 'function')
-        shadow_corun_set_led_keep_mask(DAVEBOX_CORUN_LED_KEEP_MASK);
+        shadow_corun_set_led_keep_mask(DAVEBOX_CHAIN_LED_KEEP_MASK);
     S.screenDirty = true;
 }
 
