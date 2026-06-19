@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # Cut a release: finalize CHANGELOG [Unreleased] → versioned section,
 # finalize notes/tech-changelog.md [Unreleased] the same way (untracked,
-# best-effort), bump release.json, build fresh tarball, commit, tag, and push.
+# best-effort), promote MANUAL.draft.md → MANUAL.md (banner stripped), bump
+# release.json, build fresh tarball, commit, tag, and push.
+#
+# Manual model: edit MANUAL.draft.md (tracked working copy) for user-facing
+# changes as they land; the public MANUAL.md is only updated here at release
+# time, so it stays pinned to releases and never documents unreleased features.
 #
 # Usage:  ./scripts/cut_release.sh <version>     (e.g. 0.2.0)
 #
@@ -106,6 +111,20 @@ mdata = json.loads(mj.read_text())
 mdata["version"] = version
 mj.write_text(json.dumps(mdata, indent=4) + "\n")
 print(f"  module.json: version → {version}")
+
+# MANUAL: promote the tracked working draft (MANUAL.draft.md) into the public
+# MANUAL.md, stripping the WORKING-DRAFT banner. We edit MANUAL.draft.md as
+# user-facing changes land so the public manual stays pinned to releases (it
+# doesn't document unreleased features). Best-effort: if the draft is missing,
+# leave the public manual untouched and warn.
+md = pathlib.Path("MANUAL.draft.md")
+if not md.exists():
+    print("  MANUAL.draft.md: not found — skipping (public MANUAL.md left as-is)")
+else:
+    promoted = re.sub(r"<!-- DRAFT-BANNER-START -->.*?<!-- DRAFT-BANNER-END -->\n*",
+                      "", md.read_text(), flags=re.DOTALL)
+    pathlib.Path("MANUAL.md").write_text(promoted)
+    print("  MANUAL.md: promoted from MANUAL.draft.md (banner stripped)")
 PYEOF
 
 # --- build fresh tarball ----------------------------------------------------
@@ -114,7 +133,7 @@ echo "Building release tarball..."
 ./scripts/build.sh
 
 # --- commit, tag, push ------------------------------------------------------
-git add CHANGELOG.md release.json module.json
+git add CHANGELOG.md release.json module.json MANUAL.md MANUAL.draft.md
 git commit -m "release: $TAG"
 git tag -a "$TAG" -m "Release $TAG"
 
