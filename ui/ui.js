@@ -2649,6 +2649,10 @@ function pollDSP() {
          * state load). Emission itself is gated DSP-side on free-running. */
         const _co = host_module_get_param('clock_send_on');
         if (_co !== null) S.clockSendOn = (_co === '1');
+        /* Clock-Follow start fell back to the solo clock (Move never started after
+         * the Link-sync wait) — DSP raises a one-shot; warn the user briefly. */
+        if (host_module_get_param('clock_follow_fallback') === '1')
+            showActionPopup('CLOCK FOLLOW', "Move didn't start", 'Last-known tempo');
     }
     const snap = host_module_get_param('state_snapshot');
     if (!snap) return;

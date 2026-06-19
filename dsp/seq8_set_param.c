@@ -365,6 +365,8 @@ static void ext_transport_stop(seq8_instance_t *inst) {
     inst->playing          = 0;
     inst->count_in_ticks   = 0;
     inst->ext_tick_pending = 0;
+    inst->follow_solo      = 0;   /* solo-clock fallback evaporates when the take stops */
+    inst->solo_tick_accum  = 0;
     send_panic(inst);
     for (t = 0; t < NUM_TRACKS; t++) {
         seq8_track_t *_tr = &inst->tracks[t];
@@ -395,7 +397,19 @@ static void follow_request_start(seq8_instance_t *inst, uint8_t kind) {
     }
     if (inst->move_play_inject_phase == 0) {
         inst->move_play_inject_phase = 1;                 /* arm press→release */
-        inst->follow_start_timeout    = FOLLOW_START_TIMEOUT_SAMPLES;
+        /* Wait long enough for Move's Ableton Link transport-sync to land (up to
+         * ~1 bar) before giving up. Sized to ~1.5 bars at the last-known tempo and
+         * clamped — the old fixed 1.5 s gave up mid-Link-sync and dropped the
+         * count-in. We only READ cached_bpm here (don't write db's tempo). */
+        double _bpm = (double)inst->tracks[0].pfx.cached_bpm;
+        if (_bpm < 20.0 || _bpm > 400.0) _bpm = 120.0;
+        double _bar = (double)inst->sample_rate * 60.0 / _bpm * 4.0;  /* samples per bar */
+        int32_t _to = (int32_t)(_bar * 1.5);                         /* ~1.5 bars */
+        int32_t _lo = (int32_t)(inst->sample_rate * 2);              /* >= 2 s */
+        int32_t _hi = (int32_t)(inst->sample_rate * 9);              /* <= 9 s */
+        if (_to < _lo) _to = _lo;
+        if (_to > _hi) _to = _hi;
+        inst->follow_start_timeout    = _to;
         inst->follow_start_kind       = kind;
     }
 }
@@ -804,6 +818,8 @@ static void set_param(void *instance, const char *key, const char *val) {
         inst->move_play_inject_wait = 0;
         inst->follow_start_timeout   = 0;
         inst->follow_start_kind      = 0;
+        inst->follow_solo            = 0;   /* drop any solo-clock fallback on mode toggle */
+        inst->solo_tick_accum        = 0;
         /* Restart tempo capture so a stale estimate can't leak across toggles. */
         inst->ext_clock_period_ema    = 0.0f;
         inst->clock_follow_bpm_applied = 0.0;

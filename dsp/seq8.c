@@ -823,6 +823,15 @@ typedef struct {
     int32_t  move_play_inject_wait;   /* samples to wait between press and release */
     int32_t  follow_start_timeout;     /* samples remaining to wait for Move's clock after a start inject; <=0 = inactive */
     uint8_t  follow_start_kind;        /* what to do on timeout: 0 = none, 1 = plain play, 2 = count-in */
+    /* Solo-clock fallback: if Move never starts (Link sync didn't land in the
+     * window), run THIS take on a scratch internal clock at the last-known tempo.
+     * Ephemeral — db's real tempo state (tick_delta/cached_bpm) is never written,
+     * only read to size solo_tick_delta. Cleared on stop / real Move start.
+     * Compares against the shared constant tick_threshold (= sample_rate*60). */
+    uint8_t  follow_solo;             /* 1 = take is running on the scratch solo clock (clock-follow only) */
+    uint32_t solo_tick_accum;         /* scratch accumulator (mirrors tick_accum) */
+    uint32_t solo_tick_delta;         /* scratch per-block delta from last-known tempo */
+    uint8_t  solo_fallback_pending;   /* one-shot for the JS popup; cleared on get_param("clock_follow_fallback") */
     /* Confirm-build instrumentation (Tier-1 bring-up; harmless to keep). */
     uint32_t dbg_f8_count;            /* total 0xF8 observed */
     uint16_t dbg_fa_count, dbg_fb_count, dbg_fc_count; /* transport msg counts */
@@ -6982,6 +6991,10 @@ static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
         case 0xFA: /* start */
             inst->dbg_fa_count++;
             if (inst->clock_follow_on) {
+                /* Move finally started — drop any solo-clock fallback and let the
+                 * real clock drive (ext_transport_start below re-anchors). */
+                inst->follow_solo     = 0;
+                inst->solo_tick_accum = 0;
                 inst->ext_transport_running = 1;
                 inst->ext_clock_seen        = 1;
                 inst->ext_clock_last_sample = inst->ext_sample_clock;
@@ -9330,6 +9343,14 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
     seq8_instance_t *inst = (seq8_instance_t *)instance;
     if (!key || !out || out_len <= 0) return -1;
 
+    /* One-shot: Clock-Follow start fell back to the solo clock (Move never
+     * started). JS polls this and pops a brief warning; reading clears it. */
+    if (!strcmp(key, "clock_follow_fallback")) {
+        int v = inst->solo_fallback_pending ? 1 : 0;
+        inst->solo_fallback_pending = 0;
+        return snprintf(out, out_len, "%d", v);
+    }
+
     if (!strcmp(key, "state_full")) {
         /* Only return a payload when state is dirty. Returning the cached
          * state_buf when clean made JS pollDSP unconditionally overwrite the
@@ -10341,13 +10362,22 @@ static void begin_step_note(seq8_instance_t *inst, seq8_track_t *tr,
  * mode discriminator here — a future 3-way Internal/Sync/Auto enum drops in by
  * widening it without touching the call sites. */
 static inline void seq8_clock_advance(seq8_instance_t *inst) {
-    if (!inst->clock_follow_on)
+    if (inst->follow_solo)                 /* clock-follow + Move never started: scratch internal clock */
+        inst->solo_tick_accum += inst->solo_tick_delta;
+    else if (!inst->clock_follow_on)
         inst->tick_accum += inst->tick_delta;
-    /* follow mode: ticks were queued into ext_tick_pending by on_midi */
+    /* follow mode (non-solo): ticks were queued into ext_tick_pending by on_midi */
 }
 
 /* Returns 1 and consumes one master tick when one is due, else 0. */
 static inline int seq8_tick_due(seq8_instance_t *inst) {
+    if (inst->follow_solo) {               /* scratch solo clock — never touches db's tempo fields */
+        if (inst->solo_tick_accum >= inst->tick_threshold) {
+            inst->solo_tick_accum -= inst->tick_threshold;
+            return 1;
+        }
+        return 0;
+    }
     if (inst->clock_follow_on) {
         if (inst->ext_tick_pending > 0) { inst->ext_tick_pending--; return 1; }
         return 0;
@@ -10469,9 +10499,14 @@ static void seq8_clock_follow_tick(seq8_instance_t *inst, int frames) {
         }
     }
 
-    /* Start-timeout fallback: we injected a start but Move's clock never came.
-     * Don't hang — start davebox internally (count-in collapses to an immediate
-     * start) so the gesture always resolves. */
+    /* Start-timeout fallback: we injected a start but Move's clock never came in
+     * time (the window is sized to cover Move's Link transport-sync, ~1 bar). If
+     * Move genuinely never starts, DON'T drop the count-in — run this take on a
+     * scratch internal clock at the last-known tempo (follow_solo) so the user
+     * still gets their count-in. db's real tempo state is NOT written (we only
+     * read cached_bpm to size solo_tick_delta); follow_solo is cleared on stop /
+     * real Move start, so it evaporates after this take. A one-shot flag raises a
+     * JS popup. RT-safe: no logging, no get_bpm (cached_bpm only). */
     if (inst->follow_start_timeout > 0) {
         inst->follow_start_timeout -= frames;
         if (inst->follow_start_timeout <= 0) {
@@ -10479,8 +10514,16 @@ static void seq8_clock_follow_tick(seq8_instance_t *inst, int frames) {
             inst->follow_start_timeout = 0;
             inst->follow_start_kind    = 0;
             if (!inst->ext_transport_running) {
-                if (kind == 2) inst->count_in_ticks = 0;  /* drop the lead-in */
-                if (!inst->playing) ext_transport_start(inst);
+                double _bpm = (double)inst->tracks[0].pfx.cached_bpm;
+                if (_bpm < 20.0 || _bpm > 400.0) _bpm = 120.0;
+                inst->solo_tick_delta       = (uint32_t)((double)MOVE_FRAMES_PER_BLOCK * _bpm * (double)PPQN);
+                inst->solo_tick_accum       = 0;
+                inst->follow_solo           = 1;
+                inst->solo_fallback_pending = 1;   /* JS popup one-shot */
+                /* kind==2: keep count_in_ticks — the count-in now drains on the
+                 * solo clock, then fires transport+recording as normal. kind==1
+                 * (plain play): start immediately on the solo clock. */
+                if (kind != 2 && !inst->playing) ext_transport_start(inst);
             }
         }
     }
