@@ -18,6 +18,7 @@ the section into a versioned heading at release time.
 - In Move co-run, the Note/Session button now opens the FX bus picker (Master FX, send buses, and per-track Move insert FX) over the synth; Back returns you to the synth.
 
 ### Fixes
+- **Fixed a crash when clearing a clip with a drum track in the set.** With a drum track present, clearing a clip (or making almost any edit afterward) could crash the Move. Empty drum clip slots are now skipped when saving the set's state instead of being read as if they held data.
 - **Record count-in is reliable in Clock Follow.** Arming Record while stopped now consistently plays the one-bar count-in before recording. Move's transport start is quantized to its Ableton Link grid (it can take up to a bar to actually start), and dAVEBOx used to give up too early and start recording with no count-in. It now waits for Move to start, so the count-in always lands on Move's downbeat at the current tempo. If Move ever fails to start at all, dAVEBOx falls back to its own clock at the last-known tempo (with a brief on-screen notice) so you still get a count-in.
 - **Clock Follow no longer leaks Move's LEDs after suspend or co-run.** Move's clip/pad/grid LEDs stayed owned by dAVEBOx on first load, but could leak back over dAVEBOx's after suspending and resuming the tool, or after a co-run round-trip. dAVEBOx now reclaims the display every time it returns to full screen, so the LEDs stay clean.
 - **Track mode menu shows Conduct, not Cond.** The abbreviated label in Track Config → Mode has been expanded to the full word.

@@ -1563,6 +1563,11 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
         if (inst->tracks[t].pad_mode != PAD_MODE_DRUM) continue;
         for (c = 0; c < NUM_CLIPS; c++) {
             int l;
+            /* drum_clips[c] is legitimately NULL for empty slots even on a
+             * drum-mode track (cleared/freed at runtime). Serializing such a
+             * slot must skip it — dereferencing NULL here crashed the host
+             * (SIGSEGV) on the next state_full poll after a clip clear. */
+            if (!inst->tracks[t].drum_clips[c]) continue;
             for (l = 0; l < DRUM_LANES; l++) {
                 drum_lane_t *dl = &inst->tracks[t].drum_clips[c]->lanes[l];
                 clip_t *dlc = &dl->clip;
@@ -2221,6 +2226,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
         if (inst->tracks[t].pad_mode != PAD_MODE_DRUM) continue;
         for (c = 0; c < NUM_CLIPS; c++) {
             int l;
+            if (!inst->tracks[t].drum_clips[c]) continue;  /* empty slot — nullable */
             for (l = 0; l < DRUM_LANES; l++) {
                 drum_lane_t *dl = &inst->tracks[t].drum_clips[c]->lanes[l];
                 clip_t *dlc = &dl->clip;
@@ -2418,6 +2424,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
         if (inst->tracks[t].pad_mode != PAD_MODE_DRUM) continue;
         for (c = 0; c < NUM_CLIPS; c++) {
             int l;
+            if (!inst->tracks[t].drum_clips[c]) continue;  /* empty slot — nullable */
             for (l = 0; l < DRUM_LANES; l++)
                 clip_build_steps_from_notes(
                     &inst->tracks[t].drum_clips[c]->lanes[l].clip);
