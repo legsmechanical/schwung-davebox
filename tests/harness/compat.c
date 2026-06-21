@@ -2,9 +2,16 @@
 #include "compat.h"
 
 #ifdef __APPLE__
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
+/* Minimal fmemopen() for macOS (which lacks the POSIX call) built on the BSD
+ * funopen() extension. Scoped to the test harness: supports the davebox usage
+ * (open "w" -> fprintf -> fclose, plus read mode). The write callback silently
+ * drops bytes past `size` rather than setting the stream error indicator, and
+ * does not implement the buf==NULL auto-allocation variant — neither is needed
+ * here. */
 struct hx_fmem { char *buf; size_t size; size_t pos; };
 
 static int hx_fmem_write(void *c, const char *data, int n) {
@@ -26,9 +33,12 @@ static int hx_fmem_read(void *c, char *data, int n) {
 }
 static fpos_t hx_fmem_seek(void *c, fpos_t off, int whence) {
     struct hx_fmem *m = (struct hx_fmem *)c;
-    size_t base = (whence == SEEK_CUR) ? m->pos
-                : (whence == SEEK_END) ? m->size : 0;
-    m->pos = base + (size_t)off;
+    int64_t base = (whence == SEEK_CUR) ? (int64_t)m->pos
+                 : (whence == SEEK_END) ? (int64_t)m->size : 0;
+    int64_t newpos = base + (int64_t)off;
+    if (newpos < 0) newpos = 0;
+    if ((size_t)newpos > m->size) newpos = (int64_t)m->size;
+    m->pos = (size_t)newpos;
     return (fpos_t)m->pos;
 }
 static int hx_fmem_close(void *c) { free(c); return 0; }
