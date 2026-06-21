@@ -28,6 +28,7 @@ static inline hx_t *hx_create(const char *json_defaults) {
     h.api = move_plugin_init_v2(host);
     if (!h.api) return NULL;
     hx_stub_reset_capture();
+    hx_stub_set_bpm(120.0f);   /* fresh instance => default tempo (capture clears are independent) */
     h.inst = h.api->create_instance(".", json_defaults);
     return h.inst ? &h : NULL;
 }
