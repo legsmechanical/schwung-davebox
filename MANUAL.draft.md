@@ -1375,6 +1375,12 @@ Once in co-run, the OLED and jog transfer to the external editor. dAVEBOx playba
 
 **Step 3 blinks** during co-run as the exit affordance. Every other step is darkened while in the editor.
 
+### Mute goes to Move during co-run
+
+While co-running Move's native instruments and drum pads (Edit Synth, or Shift + Step 3 on a Move-routed track), the **Mute** button mutes the *Move* instrument or drum pad you're working with, instead of toggling dAVEBOx's own track mute. The FX picker overlay behaves the same way. Only the Schwung **chain editor** (Edit Slot) keeps Mute as dAVEBOx's own track mute/solo (plus Delete + Mute to clear). Outside co-run, Mute is unchanged.
+
+*Requires Schwung with the Mute co-run group; on older Schwung builds Mute stays with dAVEBOx in every mode, exactly as before.*
+
 ### Edit Synth details (Move-routed tracks)
 
 - **Drum pads:** tapping a drum pad plays a single hit at the velocity you pressed and selects that drum sound in Move's per-drum editor.
