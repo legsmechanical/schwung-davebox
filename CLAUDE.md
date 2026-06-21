@@ -42,6 +42,18 @@ ssh ableton@move.local "tail -f /data/UserData/schwung/seq8.log"
 
 **JS modules** live under `ui/` (`ui.js` + 6 `ui_*.mjs`) — bundled into `dist/davebox/ui.js` by `scripts/bundle_ui.sh` (esbuild). Always run the bundler before deploying JS changes. **DSP**: see `dsp/CLAUDE.md`.
 
+## Local DSP testing (run before deploying)
+
+Before the build→deploy→reboot cycle for any DSP **logic** change (`dsp/seq8.c` / `dsp/seq8_set_param.c`), exercise it off-device first with the native harness:
+
+```sh
+tests/run.sh    # compiles seq8.c on the host (no Docker, no Move), runs tests/test_*.c
+```
+
+- **TDD for DSP logic / bugfixes**: add or update a `tests/test_*.c` scenario that *fails* for the bug (or specifies the new behavior), then implement until `tests/run.sh` is green. API + davebox gotchas are in `tests/README.md`; design in `docs/superpowers/specs/2026-06-20-local-dsp-harness-design.md`.
+- **First-line check, NOT a substitute for on-device verification.** The harness uses a **stub host**, so it cannot catch host/shim-integration bugs: MIDI inject-drain, SPI/MIDI_IN occupancy, co-run, timing under RT load, LEDs/display. (The #11 knob-desync was host-side — it would not reproduce here.) Still build + verify on Move for anything touching those (and the repo's "verify on device before reporting done" rule stands).
+- davebox is MIDI-only — assert on emitted MIDI / param round-trips / state, not audio.
+
 ## State persistence
 
 DSP state v=36. On version mismatch (v>0 && v≠36), a confirm dialog asks the user before erasing; "No" exits module with the file preserved. **Backward compatibility matters** — prefer migrating old fields over bumping the version. Full key list in `dsp/CLAUDE.md`.
