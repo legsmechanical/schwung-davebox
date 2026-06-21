@@ -79,7 +79,7 @@ int main(void) {
      * that arms all of this: it fills pad_note_map[t], sets active_track=t,
      * and flips dsp_inbound_enabled=1 (seq8.c:5706-5707). A bare external
      * note-on (the naive path) never emits — hence we drive the real live
-     * path here. Track 0 defaults to melodic + ROUTE_MOVE (seq8.c:1061), so
+     * path here. Track 0 defaults to melodic + ROUTE_MOVE (seq8.c:6655-6657), so
      * pfx_note_on injects via midi_inject_to_move (seq8.c:2741-2744), which
      * the stub captures as HX_MIDI_INJECT. */
     hx_clear_capture(h);
