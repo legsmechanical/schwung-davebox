@@ -8103,10 +8103,19 @@ function _onCC_buttons(d1, d2) {
     }
 
     if (d1 === MoveMute) {
-        S.muteHeld = d2 === 127;
-        if (d2 === 127) S.muteUsedAsModifier = false;
-        if (S.sessionView) invalidateLEDCache();
-        computePadNoteMap();
+        /* Schwung chain-edit co-run: Mute is the host-side slot-bypass modifier
+         * (Mute + jog-click bypasses the focused chain component, handled in
+         * shadow_ui). Cede it entirely — dAVEBOx ignores Mute as its own
+         * track-mute modifier while chain-edit co-running, so it never holds a
+         * muteHeld state that would re-fire its own mute gestures. */
+        if (S.schwungCoRunSlot >= 0) {
+            S.muteHeld = false;
+        } else {
+            S.muteHeld = d2 === 127;
+            if (d2 === 127) S.muteUsedAsModifier = false;
+            if (S.sessionView) invalidateLEDCache();
+            computePadNoteMap();
+        }
     }
 
     if (d1 === MoveCapture) {
@@ -8832,8 +8841,10 @@ function _onCC_transport(d1, d2) {
 
     /* Mute button: Delete+Mute = clear all (both views); toggle mute/solo on active track (Track View only).
      * Press: handle Delete+Mute immediately. Release: toggle mute/solo, but only if Mute was not used as
-     * a modifier key (e.g. Mute+Play = metro toggle). */
-    if (d1 === MoveMute && d2 === 127) {
+     * a modifier key (e.g. Mute+Play = metro toggle).
+     * Skipped entirely during Schwung chain-edit co-run — Mute is ceded to the host as the slot-bypass
+     * modifier there (see the MoveMute press tracker above). */
+    if (d1 === MoveMute && d2 === 127 && S.schwungCoRunSlot < 0) {
         if (S.deleteHeld) {
             if (!S.sessionView && S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
                 /* Delete+Mute in drum track view: clear all drum lane mute/solo */
@@ -8848,7 +8859,7 @@ function _onCC_transport(d1, d2) {
             }
         }
     }
-    if (d1 === MoveMute && d2 === 0) {
+    if (d1 === MoveMute && d2 === 0 && S.schwungCoRunSlot < 0) {
         if (!S.muteUsedAsModifier && !S.deleteHeld && !S.sessionView) {
             if (S.shiftHeld) setTrackSolo(S.activeTrack, !S.trackSoloed[S.activeTrack]);
             else           setTrackMute(S.activeTrack, !S.trackMuted[S.activeTrack]);
