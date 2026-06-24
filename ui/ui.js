@@ -126,17 +126,15 @@ function drawBankStrip(rightX, hdrBgWhite) {
     return startX;
 }
 
-/* Right side of the bank header. Resting overview (showTrack===false): the
- * position strip, with the alt-arrow tucked to its left. Deeper param banks:
- * alt-arrow alone at its legacy x=98 (the Tr indicator already sits at x=106). */
+/* Right side of the bank header: the bank-position strip on every screen —
+ * resting overview AND deeper param banks — with the alt-arrow tucked to its
+ * left. The strip replaces the old per-bank Tr[n] indicator. showTrack is now
+ * vestigial here (kept for caller-signature stability). */
 function drawBankHeaderRight(showTrack, hdrBgWhite) {
     if (S.sessionView) return;
-    const hasAlt = bankHasAltParams(S.activeTrack, S.activeBank);
-    if (showTrack === false) {
-        const sx = drawBankStrip(124, hdrBgWhite);
-        if (hasAlt) drawAltArrow(sx - 8, hdrBgWhite, altIndicatorActive(S.activeTrack, S.activeBank));
-    } else if (hasAlt) {
-        drawAltArrow(98, hdrBgWhite, altIndicatorActive(S.activeTrack, S.activeBank));
+    const sx = drawBankStrip(124, hdrBgWhite);
+    if (bankHasAltParams(S.activeTrack, S.activeBank)) {
+        drawAltArrow(sx - 8, hdrBgWhite, altIndicatorActive(S.activeTrack, S.activeBank));
     }
 }
 
@@ -151,9 +149,6 @@ function drawBankHeading(name, showTrack) {
     } else {
         print(4, 1, name, 0);
     }
-    /* Tr indicator: shown on deeper parameter banks, suppressed on the resting
-     * overview (the track row already names the active track). */
-    if (showTrack !== false) print(106, 1, 'Tr' + (S.activeTrack + 1), 0);
     drawBankHeaderRight(showTrack, true);
 }
 
@@ -162,7 +157,6 @@ function drawBankHeadingInverted(name, showTrack) {
     fill_rect(0, 0, 128, 1, 1);
     fill_rect(0, 8, 128, 1, 1);
     print(4, 1, name, 1);
-    if (showTrack !== false) print(106, 1, 'Tr' + (S.activeTrack + 1), 1);
     drawBankHeaderRight(showTrack, false);
 }
 
@@ -1484,9 +1478,23 @@ function _switchActiveTrack(newT) {
     }
 }
 
+/* ALL LANES safety gate. Every gesture that writes all 32 drum lanes at once
+ * funnels through this: while the drum ALL LANES bank is unconfirmed it surfaces
+ * the "Edits will affect all lanes" OK screen (jog-click confirms) and tells the
+ * caller to abort. Returns false (proceed) on any other bank/track. */
+function allLanesGate() {
+    if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.activeBank === 7 && !S.allLanesConfirmed) {
+        S.screenDirty = true;
+        forceRedraw();
+        return true;
+    }
+    return false;
+}
+
 function doDoubleFill() {
     const _t = S.activeTrack;
     if (S.trackPadMode[_t] === PAD_MODE_DRUM && S.activeBank === 7) {
+        if (allLanesGate()) return;
         S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
         host_module_set_param('t' + _t + '_all_lanes_double_fill', '1');
         S.pendingDrumResync = 2; S.pendingDrumResyncTrack = _t;
@@ -4340,8 +4348,10 @@ function drawUI() {
     } /* end else (non-bank-6 step edit) */
     }
 
-    /* Loop view: own priority state so screen is fully cleared first */
-    if (S.loopHeld) {
+    /* Loop view: own priority state so screen is fully cleared first. Suppressed
+     * on the unconfirmed drum ALL LANES bank so holding Loop surfaces the confirm
+     * screen (below) instead of the clip-length view for a gated gesture. */
+    if (S.loopHeld && !(S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.activeBank === 7 && !S.allLanesConfirmed)) {
         const _loopL2 = 'STEP BTN=by page';
         const _loopL3 = 'JOG TURN=by step';
         const _loopX2 = Math.floor((128 - _loopL2.length * 6) / 2);
@@ -4594,7 +4604,8 @@ function drawUI() {
     }
 
     if (bank >= 0 && (S.knobTouched >= 0 || inTimeout ||
-            (S.altMode && bankHasAltParams(S.activeTrack, bank)))) {
+            (S.altMode && bankHasAltParams(S.activeTrack, bank)) ||
+            (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 7 && !S.allLanesConfirmed))) {
         const isDrumLaneBank = (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 0);
         if (isDrumLaneBank) {
             /* DRUM LANE bank overview: mirrors CLIP bank at lane level */
@@ -4630,10 +4641,10 @@ function drawUI() {
         } else if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 7 && !S.allLanesConfirmed) {
             /* ALL LANES confirmation screen */
             fill_rect(0, 0, 128, 9, 1);
-            print(4, 1, 'ALL LANES', 0);
-            print(106, 1, 'Tr' + (S.activeTrack + 1), 0);
+            print(4, 1, (Math.floor(S.tickCount / 24) % 2 === 0 ? 'ALL' : '   ') + ' LANES', 0);
+            drawBankStrip(124, true);
             print(10, 18, 'Edits will affect', 1);
-            print(10, 28, 'all lanes.', 1);
+            print(10, 28, 'all lanes. Proceed?', 1);
             fill_rect(40, 44, 48, 16, 1);
             print(52, 48, 'OK', 0);
         } else if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 7) {
@@ -4656,8 +4667,8 @@ function drawUI() {
             ];
             fill_rect(0, 0, 128, 9, 1);
             print(4, 1, (Math.floor(S.tickCount / 24) % 2 === 0 ? 'ALL' : '   ') + ' LANES', 0);
-            print(106, 1, 'Tr' + (S.activeTrack + 1), 0);
-            drawAltArrow(98, true, altIndicatorActive(S.activeTrack, S.activeBank));
+            const _alSx = drawBankStrip(124, true);
+            drawAltArrow(_alSx - 8, true, altIndicatorActive(S.activeTrack, S.activeBank));
             for (let k = 0; k < 8; k++) {
                 if (!allLabels[k]) continue;
                 const colX = 4 + (k % 4) * 30;
@@ -4725,8 +4736,11 @@ function drawUI() {
         fill_rect(0, 0, 128, 1, 1);
         fill_rect(0, 8, 128, 1, 1);
         print(4, 1, 'REPEAT GROOVE', 1);
-        if (!S.sessionView && bankHasAltParams(S.activeTrack, S.activeBank)) {
-            drawAltArrow(98, false, altIndicatorActive(S.activeTrack, S.activeBank));
+        if (!S.sessionView) {
+            const _rgSx = drawBankStrip(124, false);
+            if (bankHasAltParams(S.activeTrack, S.activeBank)) {
+                drawAltArrow(_rgSx - 8, false, altIndicatorActive(S.activeTrack, S.activeBank));
+            }
         }
         const _gLen = S.drumRepeatGateLen[t][lane];
         for (let k = 0; k < 8; k++) {
@@ -4925,10 +4939,10 @@ function drawUI() {
         const note      = S.drumLaneNote[t][lane];
         const oct       = Math.floor(note / 12) - 2;
         const name      = NOTE_KEYS[note % 12];
-        const bankGroup = pg === 0 ? 'Bank: A' : 'Bank: B';
-        const bankName  = S.activeBank === 0 ? 'DRUM LANE' : S.activeBank === 1 ? 'NOTE FX' : S.activeBank === 5 ? 'REPEAT GROOVE' : S.activeBank === 6 ? BANKS[6].name : S.activeBank === 7 ? 'ALL LANES' : BANKS[S.activeBank] ? BANKS[S.activeBank].name : '?';
+        const bankGroup = pg === 0 ? 'Bank:A' : 'Bank:B';
+        const bankName  = S.activeBank === 0 ? 'DRUM LANE' : S.activeBank === 1 ? 'NOTE FX' : S.activeBank === 5 ? 'REPEAT GROOVE' : S.activeBank === 6 ? BANKS[6].name : S.activeBank === 7 ? (Math.floor(S.tickCount / 24) % 2 === 0 ? 'ALL' : '   ') + ' LANES' : BANKS[S.activeBank] ? BANKS[S.activeBank].name : '?';
         (S.activeBank === 5 || S.activeBank === 6 ? drawBankHeadingInverted : drawBankHeading)(bankName, false);
-        pixelPrint(4, 10, bankGroup + '  Pad: ' + name + oct + ' (' + note + ')', 1);
+        pixelPrint(4, 10, bankGroup + '  Pad:' + name + oct + ' (' + note + ')', 1);
         const laneBit = 1 << lane;
         if (S.drumLaneSolo[t] & laneBit) {
             pixelPrint(128 - 4 - 6 * 6, 21, 'SOLOED', 1);
@@ -7919,6 +7933,7 @@ function _onCC_jog(d1, d2) {
                     if (S.recordArmed && !S.recordCountingIn) {
                         /* Block length changes during active recording */
                     } else if (S.trackPadMode[_t] === PAD_MODE_DRUM) {
+                        if (allLanesGate()) return;
                         /* Drum: adjust length. In ALL LANES bank, length applies to all 32
                          * lanes atomically; in per-lane DRUM bank, just the active lane. */
                         const _lane = S.activeDrumLane[_t];
@@ -11290,6 +11305,7 @@ function _fireLoopWindowSet(track, ctx, startStep, lenSteps) {
         else if (S.drumStepPage[track] > lastPage) S.drumStepPage[track] = lastPage;
         host_module_set_param('t' + track + '_l' + lane + '_loop_set', String(packed));
     } else {
+        if (allLanesGate()) return;
         /* ALL LANES: all 32 drum lanes of the active drum clip get the same window */
         S.drumLaneLength[track]    = lenSteps;
         S.drumLaneLoopStart[track] = startStep;
@@ -11585,6 +11601,7 @@ function _onStepButtons(d1, d2) {
             if (isDrum) {
                 if (S.activeBank === 7) {
                     /* ALL LANES: quantize all drum lanes */
+                    if (allLanesGate()) return;
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + t + '_drum_lanes_qnt', '100');
                     S.bankParams[t][7][3] = 100;

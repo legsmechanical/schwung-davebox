@@ -104,7 +104,8 @@ export function updateStepLEDs() {
      * Pages with notes within the window → pulse; empty in-window pages → solid track color;
      * out-of-window pages → off. Held start page during the range gesture lights bright
      * white as a "waiting for end tap" affordance. */
-    if (S.loopHeld && !S.loopJogActive) {
+    if (S.loopHeld && !S.loopJogActive &&
+            !(S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.activeBank === 7 && !S.allLanesConfirmed)) {
         const t = S.activeTrack;
         const tCol = trackColor(t);
         const pulsOn = S.playing ? S.flashSixteenth : (Math.floor(S.tickCount / 24) % 2);
@@ -182,10 +183,14 @@ export function updateStepLEDs() {
             (S.activeBank === 7 && _kt === 1);
         if (!_knobShiftMode) {
             const isDrum = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
+            const _allLanesLocked = isDrum && S.activeBank === 7 && !S.allLanesConfirmed;
             for (let i = 0; i < 16; i++) {
                 let on = i === 1 || i === 2 || (i >= 4 && i <= 6) || i === 8;
                 if (i === 7 || i === 9 || (i === 10 && !isDrum) || i === 14
                     || (i === 15 && S.activeBank !== 6)) on = true;
+                /* ALL LANES unconfirmed: gated double-fill (15) / quantize (16)
+                 * shortcuts stay dark — don't advertise a blocked action. */
+                if (_allLanesLocked && (i === 14 || i === 15)) on = false;
                 setLED(16 + i, on ? LightGrey : LED_OFF);
             }
             return;
@@ -500,6 +505,8 @@ export function updateTrackLEDs() {
                         else if (i === 14 || i === 15)          on = true;
                     }
                 }
+                /* ALL LANES unconfirmed: gated double-fill/quantize shortcuts dark */
+                if (isDrum && S.activeBank === 7 && !S.allLanesConfirmed && (i === 14 || i === 15)) on = false;
                 color = on ? LightGrey : LED_OFF;
             }
             if (force) {

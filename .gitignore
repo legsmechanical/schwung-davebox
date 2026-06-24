@@ -56,9 +56,14 @@ Thumbs.db
 
 # Claude local settings
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
 
 # Graphify knowledge graph
 graphify-out/
+.graphify_ast.json
 
 # Internal notes (not published)
 notes/
+
+# Local planning scratch (canonical plans live in docs/superpowers/plans/)
+docs/plans/
