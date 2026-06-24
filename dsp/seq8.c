@@ -11274,17 +11274,25 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
             /* CC automation playback + latch recording (melodic clips only). A
              * knob latched (turned during recording) overwrites its lane along
              * the playhead; untouched knobs keep playing their automation. */
-            if (tr->pad_mode == PAD_MODE_MELODIC_SCALE && tr->clip_playing) {
+            if (tr->clip_playing &&
+                (tr->pad_mode != PAD_MODE_DRUM || tr->drum_clips[tr->active_clip])) {
                 clip_t    *_acl = &tr->clips[tr->active_clip];
                 cc_auto_t *_ca  = &tr->clip_cc_auto[tr->active_clip];
                 uint32_t   _tps = _acl->ticks_per_step;
-                uint32_t   _ct  = (uint32_t)tr->current_step * _tps
-                                  + tr->tick_in_step;
+                uint32_t   _abs_tick = (uint32_t)inst->global_tick * (uint32_t)TICKS_PER_STEP
+                                   + (uint32_t)inst->master_tick_in_step;
+                /* Playhead: melodic uses the track step counter; on drum that is
+                 * frozen (only per-lane counters advance), so derive it from the
+                 * master clock wrapped to the clip window — CC/AT automation is one
+                 * shared track-level timeline, not drum-lane-aware. */
+                uint32_t   _winlen = (uint32_t)_acl->length * _tps;
+                uint32_t   _ct  = (tr->pad_mode == PAD_MODE_DRUM)
+                                  ? ((uint32_t)_acl->loop_start * _tps
+                                     + (_winlen ? (_abs_tick % _winlen) : 0))
+                                  : ((uint32_t)tr->current_step * _tps + tr->tick_in_step);
                 uint32_t   _ws  = (uint32_t)_acl->loop_start * _tps;
                 uint32_t   _we  = (uint32_t)(_acl->loop_start + _acl->length) * _tps;
                 int _kp;
-                uint32_t _abs_tick = (uint32_t)inst->global_tick * (uint32_t)TICKS_PER_STEP
-                                   + (uint32_t)inst->master_tick_in_step;
                 for (_kp = 0; _kp < 8; _kp++) {
                     int _def;
                     uint32_t _lws = _ws, _lwe = _we, _lct = _ct;

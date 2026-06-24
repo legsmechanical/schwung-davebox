@@ -370,7 +370,6 @@ static void ext_transport_stop(seq8_instance_t *inst) {
     send_panic(inst);
     for (t = 0; t < NUM_TRACKS; t++) {
         seq8_track_t *_tr = &inst->tracks[t];
-        if (_tr->pad_mode != PAD_MODE_MELODIC_SCALE) continue;
         cc_auto_t *_ca = &_tr->clip_cc_auto[_tr->active_clip];
         int _k;
         for (_k = 0; _k < 8; _k++) {
@@ -3207,10 +3206,11 @@ static void set_param(void *instance, const char *key, const char *val) {
             cc_emit(tr, _k, (uint8_t)_v);
             tr->cc_live_val[_k] = (uint8_t)_v;
             /* Latch this knob into overwrite recording on the first turn while
-             * record-armed on a melodic clip. The render path then writes the
-             * lane along the playhead from cc_live_val (no point written here).
+             * record-armed. The render path then writes the lane along the
+             * playhead from cc_live_val (no point written here). Track-level —
+             * works on drum and melodic alike (automation is not lane-aware).
              * Reset the latch snap on the 0->1 edge so the first 1/32 cell writes. */
-            if (tr->recording && tr->pad_mode == PAD_MODE_MELODIC_SCALE) {
+            if (tr->recording) {
                 if (!((tr->cc_latched >> _k) & 1)) {
                     if (tr->cc_latched == 0)
                         undo_begin_single(inst, tidx, (int)tr->active_clip);
@@ -5656,9 +5656,21 @@ static void set_param(void *instance, const char *key, const char *val) {
              * The live send above runs regardless, so AT is monitored during the
              * count-in (recording=0 then); capture starts at recording proper.
              * Snap to 1/32 (matches CC); lane keyed by pitch (poly) / 255 (chan). */
-            if (tr->recording && tr->pad_mode == PAD_MODE_MELODIC_SCALE) {
+            if (tr->recording) {
                 uint8_t  key  = (mode == 2) ? AT_LANE_CHAN : (uint8_t)clamp_i(pitch, 0, 127);
-                uint32_t snap = (tr->current_clip_tick / 12) * 12;
+                /* Drum tracks freeze tr->current_clip_tick (only per-lane playheads
+                 * advance), so derive the record tick from the master clock wrapped
+                 * to the clip window — AT automation is track-level, not lane-aware. */
+                uint32_t _at_rec = tr->current_clip_tick;
+                if (tr->pad_mode == PAD_MODE_DRUM) {
+                    clip_t *_atacl = &tr->clips[tr->active_clip];
+                    uint32_t _atwl = (uint32_t)_atacl->length * _atacl->ticks_per_step;
+                    uint32_t _atabs = (uint32_t)inst->global_tick * (uint32_t)TICKS_PER_STEP
+                                    + (uint32_t)inst->master_tick_in_step;
+                    _at_rec = (uint32_t)_atacl->loop_start * _atacl->ticks_per_step
+                            + (_atwl ? (_atabs % _atwl) : 0);
+                }
+                uint32_t snap = (_at_rec / 12) * 12;
                 int lane = at_auto_alloc_lane(&tr->clip_at_auto[tr->active_clip], key);
                 if (lane >= 0) {
                     at_auto_set_point(&tr->clip_at_auto[tr->active_clip], lane,
