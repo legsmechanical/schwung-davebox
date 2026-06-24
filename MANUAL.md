@@ -1380,21 +1380,13 @@ Once in co-run, the OLED and jog transfer to the external editor. dAVEBOx playba
 | K1–K8 | Drive chain parameter assignments (Edit Slot) |
 | Back | Navigate within the editor |
 | **Step 3** | **Exit co-run** |
-| Note/Session | Open FX bus picker — Master FX, send buses, and the track's insert FX. Back returns to the synth editor. (Falls back to Master FX on Schwung builds without the FX picker.) |
 | Shift | Works normally — Shift navigation is fully supported inside co-run |
 
 **Step 3 blinks** during co-run as the exit affordance. Every other step is darkened while in the editor.
 
-**FX picker:** While in Move co-run (Edit Synth), pressing **Note/Session** opens
-an overlay listing available FX buses — send buses, Master FX, and the current
-track's insert FX slots — so you can navigate to a Schwung chain without leaving
-co-run. Press **Back** to return to the synth editor. On standard Schwung builds
-without the FX picker screen, Note/Session falls back to opening the Master FX
-view.
-
 ### Mute is handed to Move/Schwung during co-run
 
-While co-running Move's native instruments and drum pads (Edit Synth, or Shift + Step 3 on a Move-routed track), the **Mute** button mutes the *Move* instrument or drum pad you're working with, instead of toggling dAVEBOx's own track mute. The FX picker overlay behaves the same way.
+While co-running Move's native instruments and drum pads (Edit Synth, or Shift + Step 3 on a Move-routed track), the **Mute** button mutes the *Move* instrument or drum pad you're working with, instead of toggling dAVEBOx's own track mute.
 
 In the Schwung **chain editor** (Edit Slot), Mute is the chain's **bypass** modifier — hold **Mute** and **jog-click** a slot to bypass that component — so dAVEBOx no longer captures Mute for its own track mute/solo while editing a chain. Outside co-run, Mute is unchanged (dAVEBOx track mute/solo, plus Delete + Mute to clear).
 
