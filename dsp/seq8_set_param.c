@@ -4420,6 +4420,13 @@ static void set_param(void *instance, const char *key, const char *val) {
                 tr->recording_pending_page = 0;
                 tr->recording_adaptive_arm = 0;
                 tr->cc_touch_held = 0;
+                /* Cancel any pending count-in for this track. Arming from stopped
+                 * schedules a 1-bar count-in that fires recording from the render
+                 * thread when it completes (seq8.c). A disarm that lands while the
+                 * count-in is still counting must cancel it too — otherwise the
+                 * count-in completes and re-arms recording AFTER the user disarmed
+                 * (the "keeps recording after disarm" bug). */
+                if ((int)inst->count_in_track == tidx) inst->count_in_ticks = 0;
             }
             return;
         }

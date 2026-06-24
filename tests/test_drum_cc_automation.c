@@ -54,9 +54,19 @@ int main(void) {
     HX_ASSERT(cc_lane_has_points(ca, 0),
               "knob-0 CC lane should record points on a drum track");
 
-    /* Stop recording; recorded automation should play back the CC on the track channel. */
-    tr->recording  = 0;
-    tr->cc_latched = 0;
+    /* --- Disarm via the REAL set_param path: the latch must finalize + STOP.
+     * (Regression guard for "keeps recording after disarm" — the latch flooding
+     * the whole loop because recording never cleared.) --- */
+    hx_set_param(h, "t0_recording", "0");
+    hx_render(h, 2);                       /* the recording 1->0 finalize edge runs */
+    HX_ASSERT(tr->recording == 0, "DSP recording flag should clear on t0_recording=0");
+    HX_ASSERT(tr->cc_latched == 0, "CC latch should finalize/clear after disarm");
+    uint16_t _after_disarm = ca->count[0];
+    hx_render(h, 96);                      /* a full extra loop with record off */
+    HX_ASSERT(ca->count[0] == _after_disarm,
+              "no automation may be written after disarm (latch must stop)");
+
+    /* Recorded automation should still play back on the track channel. */
     for (int k = 0; k < 8; k++) tr->cc_auto_last_sent[k] = 0xFF;  /* force first emit */
     hx_clear_capture(h);
     hx_render(h, 64);
@@ -64,6 +74,38 @@ int main(void) {
               "recorded CC 74 should play back on a drum track");
 
     hx_destroy(h);
-    printf("PASS: drum CC automation records + plays back\n");
+
+    /* === Scenario 2: disarm must cancel a PENDING count-in. ===
+     * Arming from stopped schedules a 1-bar count-in (count_in_ticks); the render
+     * thread fires recording=1 on the count_in_track when it completes
+     * (seq8.c:10749). A plain `tN_recording 0` disarm that arrives while the
+     * count-in is still pending must ALSO cancel it — otherwise the count-in
+     * completes and re-arms recording AFTER the user disarmed (the "keeps
+     * recording after disarm" bug; reproduced with a brief arm→disarm). */
+    {
+        hx_t *h2 = hx_create(NULL);
+        HX_ASSERT(h2 != NULL, "hx_create (scenario 2) returned NULL");
+        seq8_instance_t *in2 = (seq8_instance_t *)h2->inst;
+        seq8_track_t *tr2 = &in2->tracks[0];
+
+        hx_set_param(h2, "t0_l0_clip_length", "16");   /* track 0 -> drum */
+        hx_set_param(h2, "bpm", "120");
+        /* Arm from stopped: schedules the count-in that will fire recording. */
+        hx_set_param(h2, "record_count_in", "0");
+        HX_ASSERT(in2->count_in_ticks > 0, "count-in should be pending after record_count_in");
+
+        /* Disarm before the count-in completes. */
+        hx_set_param(h2, "t0_recording", "0");
+        HX_ASSERT(in2->count_in_ticks == 0,
+                  "disarm must cancel the pending count-in (else recording re-fires)");
+
+        /* Render well past where the count-in would have completed; recording must stay off. */
+        hx_render(h2, 800);
+        HX_ASSERT(tr2->recording == 0,
+                  "recording must stay off after disarm — count-in must not re-fire it");
+        hx_destroy(h2);
+    }
+
+    printf("PASS: drum CC automation records + plays back; disarm cancels pending count-in\n");
     return 0;
 }
