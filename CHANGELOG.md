@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com). Add entries to
 the section into a versioned heading at release time.
 
 ## [Unreleased]
+
+## [1.0-beta.5] — 2026-06-24
 ### Features
 - **Mute is handed to Move/Schwung during co-run.** While co-running Move's native instruments and drum pads (Shift+Step 3 / Track Config), pressing **Mute** now mutes the *Move* instrument or drum pad you're working with, instead of being captured by dAVEBOx. While editing a Schwung chain, **Mute is the chain's bypass modifier** — Mute + jog-click bypasses the focused slot component — so dAVEBOx no longer steals it for its own track mute/solo there (in the FX picker it cedes to Move, like normal co-run). Outside co-run, Mute keeps its dAVEBOx track mute/solo behavior. (Requires Schwung with the Mute co-run group; older Schwung simply leaves Mute with dAVEBOx as before.)
 - **Bank position strip in the Track View header.** The header now shows a compact "you are here in the bank chain" strip on the right — the active bank is a tall block, the others short stubs — so you can see how many banks exist and where you are as you turn the jog (like Move's Device View). It appears on both the resting track overview and every parameter-bank overview, where it replaces the old `Tr#` track-number indicator, and supersedes the old inconsistent `>>` hints. Ported from [Overture](https://github.com/m-dwyer/overture).

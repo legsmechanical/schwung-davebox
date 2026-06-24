@@ -244,6 +244,14 @@ it stays up while you hold the touch — wherever a bank display applies (melodi
 drum, and Conductor banks alike). The reveal is disabled while the Global Menu is
 open.
 
+The header shows a compact **bank position strip** at the right edge — on both
+the resting track overview and every parameter-bank overview (where it takes the
+place of the old `Tr#` track-number readout). A tall block marks the active bank;
+short stubs show the others — a glanceable reminder of where you are in the bank
+cycle. It follows jog navigation order (melodic: CLIP → NOTE FX → HARMONY → DELAY
+→ SEQ ARP → ARP IN → AUTO; drum: DRUM LANE → NOTE FX → DELAY → ALL LANES → REPEAT
+GROOVE → AUTO). Conductor headers blink a "C-" prefix instead.
+
 ## Switching tracks while playing
 
 Switching to a track that has nothing playing or queued auto-launches that
@@ -321,7 +329,7 @@ A track is one of three types, set by **Mode** in [Track Config](#171-track-conf
 |---|---|---|
 | Melodic | **Keys** | Plays scale-snapped pitched notes |
 | Drum | **Drums** | 32 drum lanes, each its own mini-sequencer — see [Drum Tracks](#7-drum-tracks) |
-| Conductor | **Cond** | Transposes the *other* melodic tracks in real time — see [Conductor Tracks](#8-conductor-tracks) |
+| Conductor | **Conduct** | Transposes the *other* melodic tracks in real time — see [Conductor Tracks](#8-conductor-tracks) |
 
 ### Melodic vs Drum
 
@@ -456,6 +464,12 @@ Press **Record** to capture pad input into the active clip.
 | Stopped | 1-bar count-in, then recording + transport start together |
 | Playing, fixed-length clip | Records immediately at current position |
 | Playing, empty clip (no length set) | Arms recording, defers to next bar boundary. Record blinks red while pending. |
+
+> When **Clock Follow = Move**, arming Record from stopped first starts Move's
+> transport, then runs the one-bar count-in. Move quantizes its start to its
+> Ableton Link grid, so there can be a brief wait (up to ~1 bar) before the
+> count-in begins — dAVEBOx waits through it, and falls back to its own clock if
+> Move never starts. See [§16.6 Clock Follow](#166-clock-follow-syncing-to-move).
 
 Stop recording: press **Record** again (transport continues) or **Play** (stops
 transport).
@@ -617,8 +631,8 @@ track follows it.
 
 ## 8.1 Making a track a Conductor
 
-In [Track Config](#171-track-config), set **Mode** to **Cond** (the Mode entry
-offers Keys / Drums / Cond). The menu is preview-on-scroll: scrolling only shows
+In [Track Config](#171-track-config), set **Mode** to **Conduct** (the Mode entry
+offers Keys / Drums / Conduct). The menu is preview-on-scroll: scrolling only shows
 the candidate type, and **clicking the jog commits it** behind a confirm dialog.
 
 - Converting to/from Conductor **keeps your sequenced notes** (note, duration,
@@ -753,8 +767,13 @@ Lane length: **Loop + jog rotate**. Lane MIDI note: NOTE FX K1+K2.
 
 ## 9.3 ALL LANES bank
 
-Applies settings to all 32 drum lanes at once. Requires a jog-click confirmation
-on entry. **K1–K3 permanently change notes across all lanes.**
+Applies settings to all 32 drum lanes at once. Because every change here rewrites
+all 32 lanes, the bank opens on an **"Edits will affect all lanes. Proceed?"**
+screen — **jog-click to confirm**. Until you confirm, *nothing* is applied: the
+knobs, the **Loop** button (length and loop window), and the Shift+Step
+double-and-fill / quantize shortcuts are all inert — the gated shortcut steps stay
+dark and holding Loop does nothing, so no edit can land before you say so.
+**K1–K3 permanently change notes across all lanes.**
 
 | Knob | Label | Function |
 |---|---|---|
@@ -1361,9 +1380,25 @@ Once in co-run, the OLED and jog transfer to the external editor. dAVEBOx playba
 | K1–K8 | Drive chain parameter assignments (Edit Slot) |
 | Back | Navigate within the editor |
 | **Step 3** | **Exit co-run** |
+| Note/Session | Open FX bus picker — Master FX, send buses, and the track's insert FX. Back returns to the synth editor. (Falls back to Master FX on Schwung builds without the FX picker.) |
 | Shift | Works normally — Shift navigation is fully supported inside co-run |
 
 **Step 3 blinks** during co-run as the exit affordance. Every other step is darkened while in the editor.
+
+**FX picker:** While in Move co-run (Edit Synth), pressing **Note/Session** opens
+an overlay listing available FX buses — send buses, Master FX, and the current
+track's insert FX slots — so you can navigate to a Schwung chain without leaving
+co-run. Press **Back** to return to the synth editor. On standard Schwung builds
+without the FX picker screen, Note/Session falls back to opening the Master FX
+view.
+
+### Mute is handed to Move/Schwung during co-run
+
+While co-running Move's native instruments and drum pads (Edit Synth, or Shift + Step 3 on a Move-routed track), the **Mute** button mutes the *Move* instrument or drum pad you're working with, instead of toggling dAVEBOx's own track mute. The FX picker overlay behaves the same way.
+
+In the Schwung **chain editor** (Edit Slot), Mute is the chain's **bypass** modifier — hold **Mute** and **jog-click** a slot to bypass that component — so dAVEBOx no longer captures Mute for its own track mute/solo while editing a chain. Outside co-run, Mute is unchanged (dAVEBOx track mute/solo, plus Delete + Mute to clear).
+
+*Requires Schwung with the Mute co-run group; on older Schwung builds Mute stays with dAVEBOx in every mode, exactly as before.*
 
 ### Edit Synth details (Move-routed tracks)
 
@@ -1442,7 +1477,14 @@ Follow → Move** to instead lock dAVEBOx to Move's transport:
   dAVEBOx locally; they don't reposition Move.)
 - **Record count-in.** Arming Record while stopped starts Move and counts a
   one-bar lead-in on Move's clock, then begins recording on the downbeat (your
-  bar 1 lands on Move's bar 2 — a constant, inaudible offset).
+  bar 1 lands on Move's bar 2 — a constant, inaudible offset). Because Move
+  quantizes its *own* transport start to its Ableton Link grid, there can be a
+  short wait — up to about a bar — between pressing Record and Move actually
+  starting. dAVEBOx waits through that Link sync so the count-in always lands on
+  Move's downbeat at the current tempo, instead of starting early with no lead-in.
+  If Move never starts at all (for example if it isn't the Link transport leader),
+  dAVEBOx falls back to its own clock at the last-known tempo and shows a brief
+  on-screen notice, so you still get a count-in and a take.
 - **Stops with Move.** If Move's clock stops (Stop, or the clock simply stops
   arriving), dAVEBOx's sequencer stops too.
 - **Tempo is captured automatically.** dAVEBOx reads its internal tempo from
@@ -1495,7 +1537,7 @@ type or route.)
 |---|---|---|
 | Channel | 1–16 | MIDI channel. Inert (shows "-") on a Conductor. |
 | Route | Move, Schwung, External | Output routing. Inert (shows "-") on a Conductor. |
-| Mode | Keys, Drums, Cond | Track type. Preview-on-scroll; click to commit (confirm dialog). Converting carries notes — see [Switching type](#52-switching-type-converts-your-notes). |
+| Mode | Keys, Drums, Conduct | Track type. Preview-on-scroll; click to commit (confirm dialog). Converting carries notes — see [Switching type](#52-switching-type-converts-your-notes). |
 | Layout | Scale, Chrom | Pad layout for melodic tracks (same as Shift + Step 8). Shows "-" on non-melodic tracks. |
 | VelIn | Live, 1–127 | Live = raw velocity. A fixed value overrides all input velocity. |
 | Looper | On, Off | Whether the track feeds Performance Mode. |
@@ -1947,7 +1989,12 @@ Per-lane. Delete + jog click resets.
 **Melodic:** Metro mode · VelIn · Fix/Adap indicator · `Oct:±N` · `Arp` (inverts
 when latched) · Key + Scale (underlined when Scale Aware on)
 
-**Drum:** `Bank: A/B   Pad: C3 (48)` · mute/solo status for active lane
+**Drum:** `Bank:A/B   Pad:C3 (48)` · mute/solo status for active lane
+
+**Bank strip** (both types): a right-aligned row of blocks in the header — tall
+block = active bank, short stubs = others. Order matches jog navigation. Shown on
+the resting overview and on every parameter-bank overview, where it replaces the
+old `Tr#` indicator.
 
 ## OLED — Track numbers
 
