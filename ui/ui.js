@@ -8076,8 +8076,7 @@ function _onCC_buttons(d1, d2) {
     if (d1 === MoveDelete) {
         S.deleteHeld = d2 === 127;
         /* Loop+Delete on auto bank: reset active lane's loop params */
-        if (d2 === 127 && S.loopHeld && S.activeBank === 6 &&
-                S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM && !S.sessionView) {
+        if (d2 === 127 && S.loopHeld && S.activeBank === 6 && !S.sessionView) {
             var _rdt = S.activeTrack, _rdac = effectiveClip(_rdt), _rdl = S.ccActiveLane[_rdt];
             S.ccLaneLoopStart[_rdt][_rdac][_rdl] = 0;
             S.ccLaneLength[_rdt][_rdac][_rdl] = 0;
@@ -8095,7 +8094,6 @@ function _onCC_buttons(d1, d2) {
          * disqualify check at the top of this handler) opens the menu. */
         if (d2 === 127) {
             S.deleteTapArmed = (S.activeBank === 6 && !S.sessionView &&
-                                S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM &&
                                 !S.clearAutoMenu);
         } else if (S.deleteTapArmed) {
             S.deleteTapArmed = false;
@@ -9246,8 +9244,7 @@ function ccKnobDelta(d2, k) {
 
 function _onCC_stepedit(d1, d2) {
     /* CC step-edit: bank 6 + held step — all 8 knobs write CC automation at step's tick */
-    if (S.heldStep >= 0 && S.activeBank === 6 &&
-            S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM && d1 >= 71 && d1 <= 78) {
+    if (S.heldStep >= 0 && S.activeBank === 6 && d1 >= 71 && d1 <= 78) {
         const _kIdx = d1 - 71;
         const _acc  = ccKnobDelta(d2, _kIdx);  /* run-length acceleration */
         if (_acc === 0) return;
@@ -9293,9 +9290,11 @@ function _onCC_stepedit(d1, d2) {
         return;
     }
 
-    /* Drum step edit: K1 Leng, K2 Vel, K3 Nudg, K4 —, K5 Iter, K6 Prob, K7 Ratch, K8 — */
+    /* Drum step edit: K1 Leng, K2 Vel, K3 Nudg, K4 —, K5 Iter, K6 Prob, K7 Ratch, K8 —.
+     * Bank-gated off the AUTO bank (6): there the held-step + knob edits CC
+     * automation (the CC step editor above), mirroring the melodic NOTE editor. */
     if (S.heldStep >= 0 && S.heldStepNotes.length > 0 && d1 >= 71 && d1 <= 78 &&
-            S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
+            S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.activeBank !== 6) {
         const knobIdx = d1 - 71;
         const dir     = (d2 >= 1 && d2 <= 63) ? 1 : -1;
         const t       = S.activeTrack;
@@ -9990,7 +9989,6 @@ function _onCC_knobs(d1, d2) {
          * Delete+turn = clear the knob's automation + resting value → "—". */
         if (bank === 6) {
             const t  = S.activeTrack;
-            if (S.trackPadMode[t] === PAD_MODE_DRUM) return;  /* CC bank is melodic-only */
             const ac = effectiveClip(t);
             const _setp = (k, v) => { if (typeof host_module_set_param === "function") host_module_set_param("t" + t + "_" + k, v); };
             /* Active lane = last-touched knob; persistent (no timeout). */
@@ -10032,7 +10030,7 @@ function _onCC_knobs(d1, d2) {
             }
 
             /* Held step: the step editor (_onCC_stepedit) is the sole writer. */
-            if (S.heldStep >= 0 && S.trackPadMode[t] !== PAD_MODE_DRUM) return;
+            if (S.heldStep >= 0) return;  /* held step → CC step editor owns it (drum + melodic) */
 
             /* Delete+turn: clear this knob's automation AND resting value → "—". */
             if (S.deleteHeld) {
@@ -12208,7 +12206,7 @@ function _onMidiInternalImpl(data) {
                     S.knobTouched = d1; S.knobTurnedTick[d1] = -1; S.screenDirty = true;
                     /* CC bank: touching a knob makes it the active lane (persistent
                      * — drives the step-LED gradient and highlighted overview cell). */
-                    if (S.activeBank === 6 && S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM) {
+                    if (S.activeBank === 6) {
                         S.ccActiveLane[S.activeTrack] = d1;
                         invalidateLEDCache();
                     }
@@ -12222,8 +12220,7 @@ function _onMidiInternalImpl(data) {
                         setButtonLED(71 + _lt, _newLooper ? trackColor(_lt) : LED_OFF, true);
                     }
                     /* CC bank: Delete+touch clears this knob's automation + resting value → "—" */
-                    if (S.activeBank === 6 && S.deleteHeld && !S.shiftHeld &&
-                            S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM) {
+                    if (S.activeBank === 6 && S.deleteHeld && !S.shiftHeld) {
                         const _dt = S.activeTrack, _dac = effectiveClip(_dt);
                         S.trackCCAutoBits[_dt][_dac] &= ~(1 << d1);
                         S.trackCCLiveVal[_dt][d1] = -1;
