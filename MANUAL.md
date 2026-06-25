@@ -972,8 +972,12 @@ turning (holding the last value), loop after loop, until you stop recording. Kno
 you don't touch keep their existing automation. Switching clips stops recording on
 the previous clip.
 
-**Step-edit:** hold a step on this bank. Turn a knob to write a flat value at that
-step. Turn below 0 to clear that knob's point back to "—".
+**Step-edit:** hold a step on this bank. The held-step display shows each lane's
+value at that step — if a lane has no point of its own there, it shows the line's
+current (interpolated) value in parentheses. Turn a knob to drop a point at that
+step: it starts from that shown value, and the first turn places the point above or
+below it (turn either direction), so a new point lands on the existing curve instead
+of jumping to 0. Turn a point below 0 to clear it back to "—" (or use Delete + step).
 
 **Clearing (all undoable):**
 - **Delete** (tap) opens the CLEAR AUTOMATION menu — check AT and/or CC, then
@@ -1044,8 +1048,13 @@ header. Active lane is highlighted.
 Steps with real recorded breakpoints blip briefly (~every 0.5s) to distinguish
 them from interpolated values.
 
-**Pad colors (AUTO bank):** grayscale version of the note layout — root notes
-bright, in-scale notes grey, chromatic out-of-scale off.
+**Pad colors (AUTO bank):**
+- **Melodic tracks:** grayscale version of the note layout — root notes bright,
+  in-scale notes grey, chromatic out-of-scale off.
+- **Drum tracks:** the pads still play their drum sounds here (they don't select
+  lanes on this bank). The active lane lights in your track colour, any lane that's
+  currently sounding lights dimly in the track colour, and the rest are grey
+  (brighter if the lane has hits, dim if empty). The right 4×4 block is off.
 
 **Undo:** lane double-fill, lane reset, Delete+step, live latch recording, and
 clear automation are all undoable (Shift + Step 1 in loop view, or the Undo
