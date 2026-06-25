@@ -4554,6 +4554,13 @@ function drawUI() {
                 _gPrevPy = -1;
             }
         }
+        /* Live playhead — white vertical line at the current loop position (melodic + drum) */
+        if (S.playing) {
+            var _gPhDen = _gEffLen * _gLTps;
+            var _gPhFrac = _gPhDen > 0 ? (S.masterPos % _gPhDen) / _gPhDen : 0;
+            var _gPhX = Math.max(1, Math.min(126, Math.round(_gPhFrac * 128)));
+            fill_rect(_gPhX, _gY + 1, 1, _gH - 2, 1);
+        }
         /* Step-hold position indicator — black vertical line on graph */
         if (S.heldStep >= 0) {
             var _gSx = Math.floor(S.heldStep * 128 / _gDataLen);
@@ -4866,6 +4873,14 @@ function drawUI() {
                 } else {
                     _prevPy = -1;
                 }
+            }
+            /* Live playhead — white vertical line at the current loop position (melodic + drum) */
+            if (S.playing) {
+                const _pvSpeed = S.ccLaneResTps[t][ac][_ovLane] || S.ccLaneTps[t][ac][_ovLane] || (S.clipTPS[t][ac] || 24);
+                const _pvDen = _gEffLen * _pvSpeed;
+                const _pvFrac = _pvDen > 0 ? (S.masterPos % _pvDen) / _pvDen : 0;
+                const _pvX = Math.max(1, Math.min(126, Math.round(_pvFrac * 128)));
+                fill_rect(_pvX, _gY + 1, 1, _gH - 2, 1);
             }
         }
         } else if (S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM && bank === 1) {

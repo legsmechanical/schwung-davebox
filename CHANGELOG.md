@@ -10,6 +10,7 @@ the section into a versioned heading at release time.
 ### Features
 - **The AUTO bank is now fully functional on drum tracks.** Step LEDs show the automation gradient and a moving playhead, the per-knob automation graph rescales as you change loop lengths, and the pads stay playable while you edit — gray, with the active lane in your track colour and any lane that's sounding lit dimly, while the right 4×4 block stays dark (the pads play their drum sounds and no longer select lanes on this bank). Per-lane loop length (hold Loop + step buttons **or** the jog wheel), Shift + Step 15 double-and-fill, and the rest of the per-lane loop tools all target the automation lane, exactly like melodic tracks.
 - **Inserting an automation point starts from the value already at that step.** Hold a step that has no point of its own and turn a knob to add one: it now starts from the line's current (interpolated) value instead of jumping to 0, and you can turn up **or** down on that first move to place the point above or below — so new points land on the existing curve and the automation stays smooth. Works on melodic and drum tracks.
+- **Automation graph shows a live playhead.** The automation graph on the AUTO bank — both the resting overview and the knob-touched param view — now draws a moving cursor showing where playback is within the lane's loop, so you can see the curve and the playhead together. Melodic and drum.
 
 ## [1.0-beta.5] — 2026-06-24
 ### Features
