@@ -31,13 +31,15 @@ dAVEBOx was built by AI goblins and meticulously designed by a human who is not 
 
 **Bake the chain into notes.** Once you like what the effects are doing, render them down into actual note data. Multi-loop bake (1×–8×) carries delay tails between loops; an optional wrap mode folds tails past the clip end back to the start for seamless loops. Then you can layer fresh effects on top and bake again.
 
-**Per-step note editing:** Pitch, velocity, gate length, timing nudge, probability, iteration, and ratchets can all be set per-step.
+**Per-step note editing:** Pitch, velocity, gate length, timing nudge, probability, iteration, and ratchets set per-step.
 
 **Export to Live.** dAVEBOx sessions can be exported to Ableton Live sets, even carrying over your Move instruments. 
 
-**Live input goes through the effects.** On drum tracks and Schwung-routed melodic tracks, what you play live is processed through the same effects chain as sequenced notes. The arpeggiator picks up your held chord, the delay echoes your live taps, pitch random applies in real time.
+**Process life input through real-time midi effects.** On drum tracks and Schwung-routed melodic tracks, what you play live is processed through the same effects chain as sequenced notes. The arpeggiator picks up your held chord, the delay echoes your live taps, pitch random applies in real time.
 
 **Customizable note repeat pads with groove options.** Drum tracks have single-lane and multi-lane repeat modes with configurable rate, velocity, groove, latch, and a cycle length that lets you build evolving drum patterns without step-sequencing them.
+
+**Conductor tracks.** Live-play and sequence in-key clip transpositions in real-time. 
 
 **Performance mode.** Tap the Loop button in Session View to turn the pads into real-time mod controllers. Hold for temporary, tap to lock hands-free, Shift+Loop for latch. 16 snapshot slots for preset mod combinations.
 
@@ -52,8 +54,9 @@ dAVEBOx was built by AI goblins and meticulously designed by a human who is not 
 - Per-clip and per-drum lane playback direction options
 - Seamless suspend and resume between dAVEBOx and Schwung/Move native
 - Auto-save, Move set association, and save state snapshots that can be loaded on demand
-- 8 assignable CC lanes per track with per-clip automation at 1/32 resolution (interpolated)
+- 8 assignable automation lanes per track with per-clip automation, per lane length, and value-per step editing at 1/32 resolution (interpolated). Target MIDI CC's or Schwung instrument params.
 - Per-track MIDI channel and routing options (Move · Schwung · External)
+- Follow Move's internal clock or follow and send dAVEBOx's own internal clock.
 
   
 ## Requirements
