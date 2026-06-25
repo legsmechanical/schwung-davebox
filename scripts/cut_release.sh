@@ -117,9 +117,9 @@ print(f"  module.json: version → {version}")
 # user-facing changes land so the public manual stays pinned to releases (it
 # doesn't document unreleased features). Best-effort: if the draft is missing,
 # leave the public manual untouched and warn.
-md = pathlib.Path("MANUAL.draft.md")
+md = pathlib.Path("docs/working/MANUAL.draft.md")
 if not md.exists():
-    print("  MANUAL.draft.md: not found — skipping (public MANUAL.md left as-is)")
+    print("  docs/working/MANUAL.draft.md: not found — skipping (public MANUAL.md left as-is)")
 else:
     promoted = re.sub(r"<!-- DRAFT-BANNER-START -->.*?<!-- DRAFT-BANNER-END -->\n*",
                       "", md.read_text(), flags=re.DOTALL)
@@ -133,7 +133,7 @@ echo "Building release tarball..."
 ./scripts/build.sh
 
 # --- commit, tag, push ------------------------------------------------------
-git add CHANGELOG.md release.json module.json MANUAL.md MANUAL.draft.md
+git add CHANGELOG.md release.json module.json MANUAL.md docs/working/MANUAL.draft.md
 git commit -m "release: $TAG"
 git tag -a "$TAG" -m "Release $TAG"
 
