@@ -110,7 +110,7 @@ export function updateStepLEDs() {
         const tCol = trackColor(t);
         const pulsOn = S.playing ? S.flashSixteenth : (Math.floor(S.tickCount / 24) % 2);
         const gestureHeldPage = (S.loopGestureStart >= 0 && S.loopGestureTrack === t) ? S.loopGestureStart : -1;
-        if (S.trackPadMode[t] === PAD_MODE_DRUM) {
+        if (S.trackPadMode[t] === PAD_MODE_DRUM && S.activeBank !== 6) {
             const lane = S.activeDrumLane[t];
             const len  = S.drumLaneLength[t];
             const lsBase = S.drumLaneLoopStart[t] | 0;
@@ -197,8 +197,10 @@ export function updateStepLEDs() {
         }
     }
 
-    /* Drum mode: step buttons show active lane's steps — identical visualization to melodic */
-    if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
+    /* Drum mode: step buttons show active lane's steps — identical visualization to melodic.
+     * On the AUTO bank (6) drum falls through to the CC-automation gradient block below,
+     * so drum AUTO shows the CC gradient/playhead, not drum-lane state (parity w/ melodic). */
+    if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.activeBank !== 6) {
         const t    = S.activeTrack;
         const lane = S.activeDrumLane[t];
         const ls   = S.drumLaneSteps[t][lane];
@@ -262,6 +264,9 @@ export function updateStepLEDs() {
         const t    = S.activeTrack;
         const c    = ac;
         const lane = S.ccActiveLane[t] | 0;
+        /* trackCurrentPage drives the displayed page on the AUTO bank for both
+         * melodic AND drum (page-nav + step-press route through the CC path on
+         * bank 6 so the per-CC-lane loop window works identically to melodic). */
         const pg   = S.trackCurrentPage[t];
         const csCC = S.trackCurrentStep[t];
         var _ccLenCC = S.ccLaneLength[t][c][lane];
@@ -608,6 +613,30 @@ export function updateTrackLEDs() {
             for (let i = 0; i < 32; i++) {
                 const col = i % 8;
                 const row = Math.floor(i / 8);
+                if (S.activeBank === 6) {
+                    /* AUTO bank: the drum pads still PLAY their drum sounds (handled
+                     * in _onPadPressTrackView) but are not lane-selectors here. Left
+                     * 4x4 (lane/sound pads): the active lane = bright track color, any
+                     * lane actually sounding = dim track color, the rest = gray (light
+                     * if the lane has hits, dark if empty). Right 4x4 (perf/vel area):
+                     * LEDs off. */
+                    let g6;
+                    if (col < 4) {
+                        const lane6 = S.drumLanePage[t] * 16 + row * 4 + col;
+                        const note6 = S.drumLaneNote[t][lane6];
+                        if (lane6 === selLane) {
+                            g6 = trackColor(t);
+                        } else if (S.liveActiveNotes.has(note6) || S.seqActiveNotes.has(note6)) {
+                            g6 = trackDimColor(t);
+                        } else {
+                            g6 = S.drumLaneHasNotes[t][lane6] ? 118 : 124;
+                        }
+                    } else {
+                        g6 = LED_OFF;
+                    }
+                    cachedSetLED(TRACK_PAD_BASE + i, g6);
+                    continue;
+                }
                 let color;
                 if (col < 4) {
                     const lane = S.drumLanePage[t] * 16 + row * 4 + col;

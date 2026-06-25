@@ -4169,7 +4169,7 @@ function drawUI() {
             var _sgBarY = 60, _sgBarH = 3;
             var _sgH = 12, _sgY = _sgBarY - _sgH - 2;
             var _sgPages = Math.ceil(_gEffLen6 / 16);
-            var _sgKey = 'sg_' + _t6s + '_' + _ac6s + '_' + _gLane6;
+            var _sgKey = 'sg_' + _t6s + '_' + _ac6s + '_' + _gLane6 + '_' + _gEffLen6;
             if (_sgKey !== S.ccGraphOvKey || (S.tickCount % POLL_INTERVAL) === 0) {
                 S.ccGraphOvData = [];
                 for (var _sgp = 0; _sgp < _sgPages; _sgp++) {
@@ -4373,7 +4373,7 @@ function drawUI() {
             print(_l4x, 52, 'Steps: ', 1);
             print(_nvX, 52, steps + '/256', 0);
         }
-        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
+        if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.activeBank !== 6) {
             const t   = S.activeTrack;
             const len = S.drumLaneLength[t];
             if (S.activeBank === 7) {
@@ -4515,7 +4515,7 @@ function drawUI() {
         var _gPages = Math.ceil(_gEffLen / 16);
         var _gCTps = S.clipTPS[_gt][_gac] || 24;
         var _gTotalSteps = _gEffLen;
-        var _gKey = 'g_' + _gt + '_' + _gac + '_' + _gLane;
+        var _gKey = 'g_' + _gt + '_' + _gac + '_' + _gLane + '_' + _gEffLen;
         if (_gKey !== S.ccGraphOvKey || (S.tickCount % POLL_INTERVAL) === 0) {
             S.ccGraphOvData = [];
             for (var _gp = 0; _gp < _gPages; _gp++) {
@@ -4832,7 +4832,7 @@ function drawUI() {
             const _gEffLen = S.ccLaneLength[t][ac][_ovLane] || S.clipLength[t][ac];
             const _gY = 46, _gH = 12;
             const _gPages = Math.ceil(_gEffLen / 16);
-            const _gKey = 'sg_' + t + '_' + ac + '_' + _ovLane;
+            const _gKey = 'sg_' + t + '_' + ac + '_' + _ovLane + '_' + _gEffLen;
             if (_gKey !== S.ccGraphOvKey || (S.tickCount % POLL_INTERVAL) === 0) {
                 S.ccGraphOvData = [];
                 for (let _gp = 0; _gp < _gPages; _gp++) {
@@ -6745,9 +6745,11 @@ function _tickImpl() {
             S.stepWasHeld = true;
             if (S.activeBank === 6) {
                 /* CC step-edit: seed from the recorded point at this step (or "—"),
-                 * plus the computed output value the lane produces there. The
-                 * first knob-turn writes from the recorded point if set, else the
-                 * clip resting value, else 0. */
+                 * plus the computed output value the lane produces there. The first
+                 * knob-turn writes from the recorded point if set; otherwise it starts
+                 * from the step's interpolated value (what the lane already outputs
+                 * there), so inserting a new breakpoint continues the existing curve
+                 * instead of jumping to 0. Falls back to clip resting value, else 0. */
                 const _t6 = S.activeTrack, _c6 = effectiveClip(_t6);
                 const _info = (typeof host_module_get_param === 'function')
                     ? host_module_get_param('t' + _t6 + '_c' + _c6 + '_ccstepinfo_' + S.heldStep) : null;
@@ -6758,7 +6760,9 @@ function _tickImpl() {
                     S.ccStepEditSet[_ck]      = _pv >= 0;
                     S.ccStepEditComputed[_ck] = (_cv >= 0 && _cv <= 127) ? _cv : -1;
                     const _rest = S.clipCCVal[_t6][_c6][_ck];
-                    S.ccStepEditVal[_ck] = _pv >= 0 ? _pv : (_rest >= 0 ? _rest : 0);
+                    S.ccStepEditVal[_ck] = _pv >= 0 ? _pv
+                        : (_cv >= 0 && _cv <= 127 ? _cv
+                           : (_rest >= 0 ? _rest : 0));
                 }
                 S.screenDirty = true;
             } else if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
@@ -7993,10 +7997,12 @@ function _onCC_jog(d1, d2) {
                     const _t  = S.activeTrack;
                     if (S.recordArmed && !S.recordCountingIn) {
                         /* Block length changes during active recording */
-                    } else if (S.trackPadMode[_t] === PAD_MODE_DRUM) {
+                    } else if (S.trackPadMode[_t] === PAD_MODE_DRUM && S.activeBank !== 6) {
                         if (allLanesGate()) return;
                         /* Drum: adjust length. In ALL LANES bank, length applies to all 32
-                         * lanes atomically; in per-lane DRUM bank, just the active lane. */
+                         * lanes atomically; in per-lane DRUM bank, just the active lane.
+                         * (AUTO bank falls through to the CC-lane-length branch below — each
+                         * automation param lane has its own loop length, like melodic.) */
                         const _lane = S.activeDrumLane[_t];
                         const _cur  = S.drumLaneLength[_t];
                         const _nv   = Math.max(1, Math.min(256, _cur + delta));
@@ -8961,7 +8967,7 @@ function _onCC_transport(d1, d2) {
             forceRedraw();
             return;
         }
-        if (S.trackPadMode[_t_lr] === PAD_MODE_DRUM) {
+        if (S.trackPadMode[_t_lr] === PAD_MODE_DRUM && S.activeBank !== 6) {
             var lsBase = S.drumLaneLoopStart[_t_lr] | 0;
             var startPage = lsBase >> 4;
             var lastPage  = startPage + Math.max(1, Math.ceil(S.drumLaneLength[_t_lr] / 16)) - 1;
@@ -9319,18 +9325,15 @@ function _onCC_stepedit(d1, d2) {
         const _tps   = (_laneTps > 0) ? _laneTps : (S.clipTPS[_t][_ac] || 24);
         const _tick  = S.heldStep * _tps;
         const _hold  = Math.min(65535, _tick + _tps - 1);
-        /* Floor at "—": from an unset step, down → stays "—" (clear this knob's
-         * point in the step window); up → writes the seed (recorded point if
-         * any, else clip resting value, else 0; computed at step-hold time).
-         * From a set step, down past 0 → clears back to "—". */
+        /* New point at an unset step: the value is seeded at the interpolated value
+         * (computed at step-hold time), and this turn's delta is applied immediately,
+         * so EITHER direction creates the point and sets it above OR below the
+         * interpolated value on the first turn. From a set step, down past 0 clears
+         * it back to "—" (and Delete+step clears a step outright). */
         if (!S.ccStepEditSet[_kIdx]) {
-            if (_acc < 0) {
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param('t' + _t + '_cc_auto_clear_range',
-                        _ac + ' ' + _kIdx + ' ' + _tick + ' ' + _hold);
-                return;   /* stays "—" */
-            }
-            S.ccStepEditSet[_kIdx] = true;   /* keep the seed value */
+            S.ccStepEditSet[_kIdx] = true;
+            const _nv0 = S.ccStepEditVal[_kIdx] + _acc;
+            S.ccStepEditVal[_kIdx] = Math.max(0, Math.min(127, _nv0));
         } else {
             const _nv = S.ccStepEditVal[_kIdx] + _acc;
             if (_nv < 0) {
@@ -10810,10 +10813,15 @@ function _onPadPressTrackView(status, d1, d2) {
                     showActionPopup('LANE CLEARED');
                     forceRedraw();
                 } else {
-                    /* Lane pad: select lane, sync its steps and bank params */
-                    setActiveDrumLane(t, lane);
-                    syncDrumLaneSteps(t, lane);
-                    refreshDrumLaneBankParams(t, lane);
+                    /* Lane pad: select lane, sync its steps and bank params.
+                     * On the AUTO bank (6) the pads are play-only (gray, parity with
+                     * melodic) — skip lane-selection so a pad press auditions the drum
+                     * sound without changing which lane the editor is on. */
+                    if (S.activeBank !== 6) {
+                        setActiveDrumLane(t, lane);
+                        syncDrumLaneSteps(t, lane);
+                        refreshDrumLaneBankParams(t, lane);
+                    }
                     if (S.moveCoRunTrack >= 0) {
                         /* Move co-run: the plain pad-on injected to Move (in _onPadPress)
                          * both sounds and selects this drum cell for editing. Suppress
@@ -11395,10 +11403,11 @@ function _fireLoopWindowSetCC(track, startStep, lenSteps) {
 /* Snapshot the gesture context at press-time so a later release fires in the
  * same context the user started in (immune to track/lane/bank flips). */
 function _loopGestureCtxFor(track) {
-    if (S.trackPadMode[track] !== PAD_MODE_DRUM) {
-        if (S.activeBank === 6) return 3;
-        return 0;
-    }
+    /* AUTO bank (6) edits per-CC-lane loop windows on BOTH melodic and drum
+     * tracks — each automation param lane has its own independent loop length,
+     * so the Loop+step gesture targets the active CC lane, not the drum lane. */
+    if (S.activeBank === 6) return 3;
+    if (S.trackPadMode[track] !== PAD_MODE_DRUM) return 0;
     return S.activeBank === 7 ? 2 : 1;
 }
 
@@ -11649,8 +11658,10 @@ function _onStepButtons(d1, d2) {
             S.bankParams[t][5][0] = nextStyle;
             applyBankParam(t, 5, 0, nextStyle);
         } else if (idx === 14) {
-            /* Step 15: double-and-fill */
-            if (S.activeBank === 6 && !isDrum) {
+            /* Step 15: double-and-fill. On the AUTO bank (6) this doubles the active
+             * CC param lane's loop + fills (per-lane, track-type-agnostic) on BOTH
+             * melodic and drum; elsewhere it doubles the clip/drum-lane window. */
+            if (S.activeBank === 6) {
                 doLaneDoubleFill();
             } else {
                 doDoubleFill();
@@ -11681,7 +11692,7 @@ function _onStepButtons(d1, d2) {
             showActionPopup('QUANT 100%');
         }
         forceRedraw();
-    } else if (!S.shiftHeld && S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
+    } else if (!S.shiftHeld && S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.activeBank !== 6) {
         /* Drum mode: tap toggles hit; hold enters step edit (Leng/Vel).
          * Press records time and state; toggle/clear deferred to release. */
         const t       = S.activeTrack;
@@ -12001,7 +12012,7 @@ function _onPadRelease(status, d1, d2) {
             return;
         }
         if (btn === S.heldStepBtn) {
-            if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
+            if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && S.activeBank !== 6) {
                 /* Drum step release: tap toggles, hold-release exits + vel confirm */
                 const t    = S.activeTrack;
                 const lane = S.activeDrumLane[t];
