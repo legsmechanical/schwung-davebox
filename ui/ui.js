@@ -4801,33 +4801,72 @@ function drawUI() {
             if (atHas) _badge('AT');
             if (ccHas) _badge('CC');
         }
+        /* Active lane = touched knob, else the persistent active lane — drives the graph. */
+        const _ovLane = S.knobTouched >= 0 ? S.knobTouched : S.ccActiveLane[t];
+        /* Compact knobs: 2 rows of 4 (geometry mirrors the step-hold view) to free
+         * the lower third for the automation graph. */
         for (let k = 0; k < 8; k++) {
-            const colX = 4 + (k % 4) * 30;
-            const rowY = k < 4 ? 12 : 36;
-            /* In ASSIGN (altMode): highlight ONLY the label half of every cell so it
-             * is visually clear that turning the knob retargets the CC/AT, not the
-             * value. In normal mode, the touched/active lane gets the full-cell
-             * inversion as before. */
+            const colX = 4 + (k % 4) * 31;
+            const rowY = 11 + (k < 4 ? 0 : 18);
             const touchedHi = (S.knobTouched === k) || (S.ccActiveLane[t] === k);
             const lbl = S.trackCCType[t][k] === 2 ? ('Sch' + S.trackCCAssign[t][k])
                       : S.trackCCType[t][k] === 1 ? 'AT' : fmtCCLabel(S.trackCCAssign[t][k]);
             const rawV = S.playing ? S.trackCCLiveVal[t][k] : S.clipCCVal[t][ac][k];
             const val  = (rawV >= 0 && rawV <= 127) ? String(rawV) : '--';
             if (S.altMode) {
-                fill_rect(colX, rowY, 24, 12, 1);                /* label row only */
-                if (touchedHi) fill_rect(colX, rowY + 12, 24, 12, 1);  /* value row only if touched */
-                print(colX, rowY,      col4(lbl), 0);
-                print(colX, rowY + 12, col4(val), touchedHi ? 0 : 1);
+                /* ASSIGN: label half always highlighted (turning retargets CC/AT);
+                 * value half highlighted only when touched. */
+                fill_rect(colX - 1, rowY - 1, 29, 9, 1);
+                if (touchedHi) fill_rect(colX - 1, rowY + 8, 29, 9, 1);
+                print(colX, rowY,     col4(lbl), 0);
+                print(colX, rowY + 9, col4(val), touchedHi ? 0 : 1);
             } else {
-                if (touchedHi) fill_rect(colX, rowY, 24, 24, 1);
-                print(colX, rowY,      col4(lbl), touchedHi ? 0 : 1);
-                print(colX, rowY + 12, col4(val), touchedHi ? 0 : 1);
+                if (touchedHi) fill_rect(colX - 1, rowY - 1, 29, 18, 1);
+                print(colX, rowY,     col4(lbl), touchedHi ? 0 : 1);
+                print(colX, rowY + 9, col4(val), touchedHi ? 0 : 1);
             }
         }
-        /* Bottom line: show full param name when a Sch knob is touched. */
-        if (S.knobTouched >= 0 && S.trackCCType[t][S.knobTouched] === 2) {
-            const _pn = S.schLabel[t][S.knobTouched];
-            if (_pn) print(0, 56, _pn, 1);
+        /* Touch-activated automation graph of the active lane (12px, ported from
+         * the step-hold view) — follows the touched/active knob's lane. */
+        {
+            const _gEffLen = S.ccLaneLength[t][ac][_ovLane] || S.clipLength[t][ac];
+            const _gY = 46, _gH = 12;
+            const _gPages = Math.ceil(_gEffLen / 16);
+            const _gKey = 'sg_' + t + '_' + ac + '_' + _ovLane;
+            if (_gKey !== S.ccGraphOvKey || (S.tickCount % POLL_INTERVAL) === 0) {
+                S.ccGraphOvData = [];
+                for (let _gp = 0; _gp < _gPages; _gp++) {
+                    const _gRaw = (typeof host_module_get_param === 'function')
+                        ? host_module_get_param('t' + t + '_c' + ac + '_ccsv_' + _ovLane + '_' + _gp) : null;
+                    if (_gRaw) {
+                        const _gParts = _gRaw.split(' ');
+                        for (let _gs = 0; _gs < 16 && _gp * 16 + _gs < _gEffLen; _gs++)
+                            S.ccGraphOvData.push(_gs < _gParts.length ? parseInt(_gParts[_gs], 10) : 255);
+                    }
+                }
+                S.ccGraphOvKey = _gKey;
+            }
+            fill_rect(0, _gY, 128, 1, 1);
+            fill_rect(0, _gY + _gH - 1, 128, 1, 1);
+            fill_rect(0, _gY, 1, _gH, 1);
+            fill_rect(127, _gY, 1, _gH, 1);
+            const _dLen = S.ccGraphOvData.length || 1;
+            const _dY = _gY + 2, _dH = _gH - 4;
+            let _prevPy = -1;
+            for (let _gc = 1; _gc < 127; _gc++) {
+                const _idx = Math.floor(_gc * _dLen / 128);
+                const _gv = _idx < S.ccGraphOvData.length ? S.ccGraphOvData[_idx] : -1;
+                if (_gv >= 0 && _gv <= 127) {
+                    const _py = _dY + _dH - 1 - Math.round(_gv * (_dH - 1) / 127);
+                    if (_prevPy >= 0 && _prevPy !== _py)
+                        fill_rect(_gc, Math.min(_prevPy, _py), 1, Math.abs(_py - _prevPy) + 1, 1);
+                    else
+                        fill_rect(_gc, _py, 1, 1, 1);
+                    _prevPy = _py;
+                } else {
+                    _prevPy = -1;
+                }
+            }
         }
         } else if (S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM && bank === 1) {
         /* Melodic NOTE FX: K1=Oct, K2=Ofs, K3=Vel, K4=Qnt, K5=Len, K6=>Gate
