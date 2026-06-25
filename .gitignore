@@ -65,5 +65,11 @@ graphify-out/
 # Internal notes (not published)
 notes/
 
-# Local planning scratch (canonical plans live in docs/superpowers/plans/)
+# Local planning scratch
 docs/plans/
+
+# Claude Code agent files — local-only, kept out of the public repo (Josh 2026-06-25).
+# `CLAUDE.md` (no leading slash) matches both ./CLAUDE.md and dsp/CLAUDE.md at any depth.
+# docs/superpowers/ = the Claude-Code plans + specs corpus.
+CLAUDE.md
+docs/superpowers/
