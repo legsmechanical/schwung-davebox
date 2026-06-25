@@ -716,12 +716,9 @@ typedef struct {
     uint8_t   cc_auto_cur_val[8];
     /* block_count when each knob was last live-turned during recording (0 = never) */
     uint32_t  cc_auto_touch_frame[8];
-    /* Touch-record: last live CC value per knob; bitmask of currently held knobs;
-     * last 1/32 snap tick written per knob (0xFFFFFFFF = force write on next tick) */
+    /* Live CC value per knob — set on knob turn while record-armed; the latch
+     * writes this along the playhead (see cc_latched below). */
     uint8_t   cc_live_val[8];
-    uint8_t   cc_touch_held;
-    uint8_t   _cc_touch_pad[3];
-    uint32_t  cc_touch_last_snap[8];
     /* CC latch recording: a knob latches on first turn while record-armed and
      * thereafter overwrites the lane along the playhead with cc_live_val (one
      * point per 1/32) until recording stops. cc_latched = bitmask of latched

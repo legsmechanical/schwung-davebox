@@ -3220,26 +3220,6 @@ static void set_param(void *instance, const char *key, const char *val) {
             }
             return;
         }
-        if (!strcmp(sub, "cc_touch")) {
-            /* Format: "K 1 V" (touch on, initial value V) or "K 0 0" (touch off) */
-            const char *_p = val;
-            int _k = 0, _on = 0, _v = 0;
-            while (*_p == ' ') _p++;
-            while (*_p >= '0' && *_p <= '9') { _k = _k * 10 + (*_p++ - '0'); }
-            while (*_p == ' ') _p++;
-            while (*_p >= '0' && *_p <= '9') { _on = _on * 10 + (*_p++ - '0'); }
-            while (*_p == ' ') _p++;
-            while (*_p >= '0' && *_p <= '9') { _v = _v * 10 + (*_p++ - '0'); }
-            if (_k < 0 || _k > 7) return;
-            if (_on) {
-                tr->cc_live_val[_k]        = (uint8_t)clamp_i(_v, 0, 127);
-                tr->cc_touch_held         |= (uint8_t)(1u << _k);
-                tr->cc_touch_last_snap[_k] = 0xFFFFFFFFu; /* force write on first tick */
-            } else {
-                tr->cc_touch_held &= (uint8_t)~(1u << _k);
-            }
-            return;
-        }
         if (!strcmp(sub, "cc_rest")) {
             /* Format: "C K V" — set clip C's resting value for knob K.
              * V 0..127 = set (and transmit live); V=255 = unset ("—", send
@@ -4419,7 +4399,6 @@ static void set_param(void *instance, const char *key, const char *val) {
                 tr->record_armed           = 0;
                 tr->recording_pending_page = 0;
                 tr->recording_adaptive_arm = 0;
-                tr->cc_touch_held = 0;
                 /* Cancel any pending count-in for this track. Arming from stopped
                  * schedules a 1-bar count-in that fires recording from the render
                  * thread when it completes (seq8.c). A disarm that lands while the

@@ -1308,7 +1308,15 @@ function disarmRecord() {
             /* Count-in active: only cancel is needed; sending _recording 0 would coalesce it away */
             host_module_set_param('record_count_in_cancel', '1');
         } else {
-            if (t >= 0) host_module_set_param('t' + t + '_recording', '0');
+            if (t >= 0) {
+                host_module_set_param('t' + t + '_recording', '0');
+                /* Re-send the disarm across the next few ticks (drained in tick()):
+                 * a single set_param can be coalesced away by another set_param
+                 * sharing the same audio buffer (e.g. a knob-release on the AUTO
+                 * bank), which would strand recording=1 and flood the lane. */
+                S.recOffTrack = t;
+                S.recOffTicks = 5;
+            }
         }
     }
     setButtonLED(MoveRec, LED_OFF);
@@ -6430,6 +6438,20 @@ function _tickImpl() {
             syncDrumLanesMeta(S.pendingDrumResyncTrack);
             syncDrumLaneSteps(S.pendingDrumResyncTrack, S.activeDrumLane[S.pendingDrumResyncTrack]);
             forceRedraw();
+        }
+    }
+    /* Drain the record-off resend (see disarmRecord): re-asserts recording=0 for
+     * a few ticks so a disarm coalesced in one audio buffer can't strand
+     * recording=1 (which floods the automation lane). Idempotent DSP-side. The
+     * re-arm guard stops the resend if recording is armed again in the window. */
+    if (S.recOffTicks > 0 && S.recOffTrack >= 0) {
+        if (S.recordArmed) {
+            S.recOffTicks = 0; S.recOffTrack = -1;
+        } else {
+            S.recOffTicks--;
+            if (typeof host_module_set_param === 'function')
+                host_module_set_param('t' + S.recOffTrack + '_recording', '0');
+            if (S.recOffTicks <= 0) S.recOffTrack = -1;
         }
     }
     if (S.pendingDrumLaneResync > 0) {
@@ -12230,19 +12252,6 @@ function _onMidiInternalImpl(data) {
                         showActionPopup('CC', 'CLEAR');
                         invalidateLEDCache();
                     }
-                    /* CC bank: touch-record — start overwriting automation while held.
-                     * Initial value = current live/output value, else clip rest, else 0. */
-                    if (S.activeBank === 6 && !S.deleteHeld && !S.sessionView &&
-                            S.recordArmed && !S.recordCountingIn &&
-                            S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM) {
-                        const _dac = effectiveClip(S.activeTrack);
-                        const _lv  = S.trackCCLiveVal[S.activeTrack][d1];
-                        const _rv  = S.clipCCVal[S.activeTrack][_dac][d1];
-                        const _tv  = _lv >= 0 ? _lv : (_rv >= 0 ? _rv : 0);
-                        host_module_set_param('t' + S.activeTrack + '_cc_touch',
-                            d1 + ' 1 ' + _tv);
-                        S.trackCCAutoBits[S.activeTrack][_dac] |= (1 << d1);
-                    }
                     /* SEQ ARP K5 / TRACK ARP K5 touch: switch pads to vel-slider editor immediately. */
                     if ((S.activeBank === 4 && d1 === 4) || (S.activeBank === 5 && d1 === 4)) forceRedraw();
                 }
@@ -12287,10 +12296,6 @@ function _onMidiInternalImpl(data) {
                             if (d1 === 6) { S.allLanesDirResetTick = S.tickCount + 47; S.allLanesDirResetTrack = S.activeTrack; }
                         }
                     }
-                    /* CC bank: touch-record — stop overwriting automation on release */
-                    if (S.activeBank === 6 && S.recordArmed && !S.recordCountingIn &&
-                            S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM)
-                        host_module_set_param('t' + S.activeTrack + '_cc_touch', d1 + ' 0 0');
                     /* SEQ ARP K5 / TRACK ARP K5 release: refresh pads (vel-slider editor → normal pads). */
                     if ((S.activeBank === 4 && d1 === 4) || (S.activeBank === 5 && d1 === 4)) forceRedraw();
                     S.knobTouched = -1;
