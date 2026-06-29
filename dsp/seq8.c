@@ -9354,10 +9354,22 @@ static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
 static inline void rui_touch(seq8_instance_t *inst) { if (inst) inst->rui_rev++; }
 
 /* ------------------------------------------------------------------ */
-/* Remote-UI snapshot: compact JSON for the browser piano roll.         */
-/* Selected-clip-scoped to stay well under 64KB. Native ints only.      */
-/* Read-only + side-effect free (does NOT touch state_dirty; davebox    */
-/* persistence uses the separate state_full path).                      */
+/* Remote-UI snapshot: a FLAT JSON object of string values for the      */
+/* browser piano roll. It MUST be flat-with-string-values because the   */
+/* schwung-manager explodes get_param("state") into top-level keys and  */
+/* drops any array/object/null field (remote_ui.go fetchAllParams) — so  */
+/* structured data is packed into delimited strings, not nested JSON.    */
+/* Selected-clip-scoped to stay well under 64KB. Native ints only.       */
+/* Read-only + side-effect free (does NOT touch state_dirty; davebox     */
+/* persistence uses the separate state_full path).                       */
+/*                                                                       */
+/* Field schema (each value is a string; the browser parses on ':' / ';'):*/
+/*   rui_rev   = "<rev>"                                                  */
+/*   rui_play  = "on:tick:bpm"                                           */
+/*   rui_sel   = "track:clip:lane"   (lane=-1 melodic)                   */
+/*   rui_clip  = "len:tps:loop_start:dir"   (selected clip)             */
+/*   rui_index = per-track "pm:ac:<16 has-bits>", tracks joined by ';'   */
+/*   rui_notes = "tick:pitch:vel:gate;" list for the selected clip       */
 /* ------------------------------------------------------------------ */
 static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
     if (!inst || !out || out_len <= 0) return -1;
@@ -9371,39 +9383,38 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
 
     double bpm = (inst->tracks[0].pfx.cached_bpm > 0)
                  ? inst->tracks[0].pfx.cached_bpm : (double)BPM_DEFAULT;
-    APP("{\"rev\":%u", (unsigned)inst->rui_rev);
-    APP(",\"play\":{\"on\":%d,\"tick\":%u,\"bpm\":%d}",
+    APP("{\"rui_rev\":\"%u\"", (unsigned)inst->rui_rev);
+    APP(",\"rui_play\":\"%d:%u:%d\"",
         inst->playing ? 1 : 0, (unsigned)tr->current_clip_tick, (int)bpm);
-    APP(",\"sel\":{\"t\":%d,\"c\":%d,\"lane\":%d}", t, c, (int)inst->rui_sel_lane);
+    APP(",\"rui_sel\":\"%d:%d:%d\"", t, c, (int)inst->rui_sel_lane);
+    APP(",\"rui_clip\":\"%d:%d:%d:%d\"",
+        (int)cl->length, (int)cl->ticks_per_step, (int)cl->loop_start,
+        (int)cl->playback_dir);
 
-    /* lightweight 8-track index for the clip selector */
-    APP(",\"tracks\":[");
+    /* per-track index: "pm:ac:<16 has-bits>", tracks joined by ';' */
+    APP(",\"rui_index\":\"");
     for (int ti = 0; ti < NUM_TRACKS; ti++) {
         seq8_track_t *trk = &inst->tracks[ti];
-        APP("%s{\"pm\":%d,\"ac\":%d,\"clips\":[", ti ? "," : "",
-            (int)trk->pad_mode, (int)trk->active_clip);
+        APP("%s%d:%d:", ti ? ";" : "", (int)trk->pad_mode, (int)trk->active_clip);
         for (int ci = 0; ci < NUM_CLIPS; ci++) {
             clip_t *cc = &trk->clips[ci];
             int has = 0;
             for (uint16_t k = 0; k < cc->note_count; k++)
                 if (cc->notes[k].active) { has = 1; break; }
-            APP("%s{\"has\":%d,\"len\":%d,\"tps\":%d}", ci ? "," : "",
-                has, (int)cc->length, (int)cc->ticks_per_step);
+            APP("%d", has);
         }
-        APP("]}");
     }
-    APP("]");
+    APP("\"");
 
-    /* full data for the selected clip */
-    APP(",\"clip\":{\"len\":%d,\"tps\":%d,\"ls\":%d,\"dir\":%d,\"notes\":\"",
-        (int)cl->length, (int)cl->ticks_per_step, (int)cl->loop_start,
-        (int)cl->playback_dir);
+    /* selected clip notes */
+    APP(",\"rui_notes\":\"");
     for (uint16_t k = 0; k < cl->note_count; k++) {
         note_t *nt = &cl->notes[k];
         if (!nt->active) continue;
         APP("%u:%d:%d:%d;", (unsigned)nt->tick, (int)nt->pitch, (int)nt->vel, (int)nt->gate);
     }
-    APP("\"}");
+    APP("\"");
+
     APP("}");
     #undef APP
     if (n >= out_len) n = out_len - 1;

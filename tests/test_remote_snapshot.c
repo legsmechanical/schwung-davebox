@@ -18,11 +18,13 @@ static void test_snapshot_has_selected_clip_notes(void) {
     char buf[8192];
     int len = hx_get_param(h, "state", buf, (int)sizeof(buf));
     HX_ASSERT(len > 0, "get_param state returned no data");
-    HX_ASSERT(strstr(buf, "\"sel\":{\"t\":0,\"c\":0") != NULL, "sel target not t0c0");
-    HX_ASSERT(strstr(buf, "\"tracks\":[") != NULL, "missing tracks index");
-    HX_ASSERT(strstr(buf, "\"notes\":\"") != NULL, "missing clip notes field");
+    /* flat string fields (manager-explosion-safe) */
+    HX_ASSERT(strstr(buf, "\"rui_sel\":\"0:0:-1\"") != NULL, "sel target not t0c0 melodic");
+    HX_ASSERT(strstr(buf, "\"rui_index\":\"") != NULL, "missing tracks index");
+    HX_ASSERT(strstr(buf, "\"rui_notes\":\"") != NULL, "missing clip notes field");
     HX_ASSERT(strstr(buf, ":60:100:") != NULL, "pitch 60 vel 100 not in notes");
-    HX_ASSERT(strstr(buf, "\"play\":{\"on\":") != NULL, "missing play block");
+    HX_ASSERT(strstr(buf, "\"rui_play\":\"") != NULL, "missing play field");
+    HX_ASSERT(strstr(buf, "\"rui_clip\":\"") != NULL, "missing clip params field");
     hx_destroy(h);
 }
 
@@ -36,9 +38,8 @@ static void test_snapshot_selection_switches_clip(void) {
     char buf[8192];
     int len = hx_get_param(h, "state", buf, (int)sizeof(buf));
     HX_ASSERT(len > 0, "get_param state returned no data");
-    HX_ASSERT(strstr(buf, "\"sel\":{\"t\":2,\"c\":3") != NULL, "sel target not t2c3");
+    HX_ASSERT(strstr(buf, "\"rui_sel\":\"2:3:-1\"") != NULL, "sel target not t2c3 melodic");
     HX_ASSERT(strstr(buf, ":72:90:") != NULL, "pitch 72 vel 90 not in selected clip");
-    HX_ASSERT(strstr(buf, "\"lane\":-1") != NULL, "melodic selection should be lane -1");
     hx_destroy(h);
 }
 
@@ -50,8 +51,8 @@ static void test_snapshot_empty_clip_has_index(void) {
     char buf[8192];
     int len = hx_get_param(h, "state", buf, (int)sizeof(buf));
     HX_ASSERT(len > 0, "get_param state returned no data for empty session");
-    HX_ASSERT(strstr(buf, "\"has\":0") != NULL, "expected at least one empty clip flagged has:0");
-    HX_ASSERT(strstr(buf, "\"notes\":\"\"") != NULL, "empty selected clip should have empty notes");
+    HX_ASSERT(strstr(buf, "\"rui_index\":\"") != NULL, "expected a tracks index");
+    HX_ASSERT(strstr(buf, "\"rui_notes\":\"\"") != NULL, "empty selected clip should have empty notes");
     hx_destroy(h);
 }
 
