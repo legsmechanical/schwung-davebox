@@ -344,8 +344,8 @@ function selectClip(t,c){
 /* ---------- piano roll geometry ---------- */
 const cv=document.getElementById("rollcanvas"), ctx=cv.getContext("2d");
 const vc=document.getElementById("velcanvas"), vctx=vc.getContext("2d");
-const PITCH_LO=36, PITCH_HI=96, ROWH=8;
-let PXPERTICK=0.6;
+const PITCH_LO=36, PITCH_HI=96;
+let ROWH=8, PXPERTICK=0.6;
 const X=t=>20+t*PXPERTICK, Y=p=>(PITCH_HI-p)*ROWH;
 const tickAt=mx=>Math.max(0,(mx-20)/PXPERTICK);
 const pitchAt=my=>PITCH_HI-1-Math.floor(my/ROWH);
@@ -353,13 +353,19 @@ function snapTicks(){ return +document.getElementById("snap").value||M.clip.tps;
 function snap(t){ const s=snapTicks(); return Math.round(t/s)*s; }
 function maxTick(){ return Math.max(1,M.clip.len*M.clip.tps); }
 function layout(){
+  /* fill available height: size each pitch row so the full range spans the roll
+   * viewport (clamped), removing the empty band below the grid */
+  const roll=document.getElementById("roll");
+  const avail=roll.clientHeight||480;
+  ROWH=Math.max(7,Math.min(16,Math.floor(avail/(PITCH_HI-PITCH_LO))));
   cv.width=Math.max(880,Math.ceil(maxTick()*PXPERTICK)+40);
   cv.height=(PITCH_HI-PITCH_LO)*ROWH;
   vc.width=cv.width;
 }
 
 /* ---------- draw ---------- */
-const DLBL=48, DLANEH=13, DCELLW=24;
+const DLBL=48, DCELLW=24;
+let DLANEH=13;
 const NOTE_NAMES=["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
 const noteName=n=>NOTE_NAMES[((n%12)+12)%12]+(Math.floor(n/12)-1);
 function drumCellAt(mx,my){
@@ -371,6 +377,8 @@ function drumCellAt(mx,my){
 function hitAt(lane,tick){ const a=M.dnotes[lane]||[]; return a.findIndex(h=>h.tick===tick); }
 function drawDrum(){
   const lanes=M.dlanes, len=M.clip.len, tps=M.clip.tps;
+  const roll=document.getElementById("roll"); const avail=roll.clientHeight||440;
+  DLANEH=Math.max(11, Math.min(20, Math.floor(avail/Math.max(1,lanes.length))));
   cv.width=Math.max(420, DLBL+len*DCELLW); cv.height=Math.max(160, lanes.length*DLANEH);
   ctx.fillStyle="#15171c"; ctx.fillRect(0,0,cv.width,cv.height);
   lanes.forEach((ln,l)=>{ const y=l*DLANEH;
@@ -558,9 +566,20 @@ let auto=true;
 document.getElementById("auto").onclick=e=>{auto=!auto;e.target.classList.toggle("on",auto);};
 document.getElementById("sync").onclick=()=>{ suppressRefreshUntil=0; refresh(); };
 document.getElementById("snap").onchange=()=>{};
-setInterval(()=>{ if(auto) refresh(); }, 600);
+/* adaptive poll: brisk while playing (live playhead), relaxed when stopped
+ * (lighter SHM/device load). Self-scheduling so the cadence tracks transport. */
+(function poll(){
+  if(auto) refresh();
+  const playing = M && M.play && M.play.on;
+  setTimeout(poll, playing ? 350 : 1000);
+})();
 
 refresh();
+/* first layout() at boot can see clientHeight 0 (pre-paint) → relayout after a
+ * frame, and on window resize, so the grid fills the viewport (laptop use). */
+function relayout(){ if(M){ layout(); draw(); } }
+requestAnimationFrame(relayout);
+window.addEventListener("resize", relayout);
 window._dbg={get M(){return M;}, refresh, applyParams, draw, noteAt,
              geom:{X,Y,ROWH,PITCH_HI,PITCH_LO,get px(){return PXPERTICK;}}};
 })();
