@@ -423,7 +423,7 @@ function drumHitAt(mx,my){
   const arr=M.dnotes[lane]||[]; const dpt=DCELLW/M.clip.tps;
   for(let i=arr.length-1;i>=0;i--){ const h=arr[i];
     const x=DLBL+h.tick*dpt, w=Math.max(5,h.gate*dpt);
-    if(mx>=x&&mx<=x+w) return {lane,tick:h.tick,i,edge:(mx>=x+w-5)}; }
+    if(mx>=x&&mx<=x+w) return {lane,tick:h.tick,i,edge:(mx>=x+w-edgeZone(w))}; }
   return null;
 }
 function drumAdd(lane,tick){ const arr=M.dnotes[lane]||(M.dnotes[lane]=[]);
@@ -845,11 +845,13 @@ sc.addEventListener("click",e=>{
 });
 
 /* ---------- hit testing ---------- */
+/* right-edge resize grab zone: roomy but never more than ~40% of the note */
+function edgeZone(w){ return Math.max(4,Math.min(9,w*0.4)); }
 function noteAt(mx,my){
   for(let i=M.notes.length-1;i>=0;i--){ const nt=M.notes[i];
     const x=X(nt.tick), w=Math.max(3,nt.gate*PXPERTICK), y=Y(nt.pitch)-ROWH+1;
     if(mx>=x&&mx<=x+w&&my>=y&&my<=y+ROWH-1){
-      return {i, edge:(mx>=x+w-5)}; }
+      return {i, edge:(mx>=x+w-edgeZone(w))}; }
   }
   return null;
 }
@@ -860,6 +862,13 @@ function afterEdit(){ suppressRefreshUntil=now()+250; }
 
 /* ---------- editing interactions ---------- */
 let drag=null;   /* {mode,i, ...} */
+/* hover cursor: show the resize handle over a note's right edge */
+cv.addEventListener("mousemove",e=>{
+  if(drag||ddrag||!M) return;
+  const r=cv.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
+  const hit=isDrum()?(mx<DLBL?null:drumHitAt(mx,my)):noteAt(mx,my);
+  cv.style.cursor=(hit&&hit.edge)?"ew-resize":(isDrum()?"pointer":"crosshair");
+});
 cv.addEventListener("contextmenu",e=>{ e.preventDefault();
   const r=cv.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
   if(isDrum()){ const hit=drumHitAt(mx,my); if(hit) drumDelete(hit.lane,hit.tick); return; }
