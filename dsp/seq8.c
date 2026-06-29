@@ -748,6 +748,14 @@ typedef struct {
     seq8_track_t tracks[NUM_TRACKS];
     uint8_t      active_track;
 
+    /* Remote-UI (piano-roll) selection + change revision. The browser sets the
+     * snapshot target via tN_cC_ruisel; rui_rev bumps on any clip/param edit so
+     * the browser can cheaply detect device-side changes. lane = -1 for melodic. */
+    uint8_t  rui_sel_track;   /* 0..NUM_TRACKS-1 */
+    uint8_t  rui_sel_clip;    /* 0..NUM_CLIPS-1 */
+    int16_t  rui_sel_lane;    /* -1 melodic, 0..DRUM_LANES-1 drum */
+    uint32_t rui_rev;         /* monotonic edit counter */
+
     /* Phase 1 / Bundle 2C-Rpt2: global Delete-held flag. JS pushes the
      * edge via a single `t0_delete_held` set_param on every Delete CC
      * edge (per-track-shaped key, but read here at instance level —
@@ -6566,6 +6574,8 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
                            ? (float)g_host->sample_rate : 44100.0f;
     inst->log_fp         = fopen(SEQ8_LOG_PATH, "a");
 
+    inst->rui_sel_lane = -1;  /* remote-UI: melodic by default (calloc zeros the rest) */
+
     inst->pad_key      = 9;   /* A */
     inst->pad_scale    = 1;   /* Minor */
     inst->launch_quant = 0;   /* Now */
@@ -9339,6 +9349,68 @@ static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
     return -1;
 }
 
+/* Bump the remote-UI revision so the browser notices device/remote edits.
+ * static inline → no unused-function warning until M2 wires in edit ops. */
+static inline void rui_touch(seq8_instance_t *inst) { if (inst) inst->rui_rev++; }
+
+/* ------------------------------------------------------------------ */
+/* Remote-UI snapshot: compact JSON for the browser piano roll.         */
+/* Selected-clip-scoped to stay well under 64KB. Native ints only.      */
+/* Read-only + side-effect free (does NOT touch state_dirty; davebox    */
+/* persistence uses the separate state_full path).                      */
+/* ------------------------------------------------------------------ */
+static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
+    if (!inst || !out || out_len <= 0) return -1;
+    int t = inst->rui_sel_track; if (t < 0 || t >= NUM_TRACKS) t = 0;
+    int c = inst->rui_sel_clip;  if (c < 0 || c >= NUM_CLIPS)  c = 0;
+    seq8_track_t *tr = &inst->tracks[t];
+    clip_t *cl = &tr->clips[c];   /* melodic in M1; drum lane snapshot is M5 */
+
+    int n = 0;  /* cursor; snprintf returns intended length, so guard each append */
+    #define APP(...) do { if (n < out_len) n += snprintf(out + n, out_len - n, __VA_ARGS__); } while (0)
+
+    double bpm = (inst->tracks[0].pfx.cached_bpm > 0)
+                 ? inst->tracks[0].pfx.cached_bpm : (double)BPM_DEFAULT;
+    APP("{\"rev\":%u", (unsigned)inst->rui_rev);
+    APP(",\"play\":{\"on\":%d,\"tick\":%u,\"bpm\":%d}",
+        inst->playing ? 1 : 0, (unsigned)tr->current_clip_tick, (int)bpm);
+    APP(",\"sel\":{\"t\":%d,\"c\":%d,\"lane\":%d}", t, c, (int)inst->rui_sel_lane);
+
+    /* lightweight 8-track index for the clip selector */
+    APP(",\"tracks\":[");
+    for (int ti = 0; ti < NUM_TRACKS; ti++) {
+        seq8_track_t *trk = &inst->tracks[ti];
+        APP("%s{\"pm\":%d,\"ac\":%d,\"clips\":[", ti ? "," : "",
+            (int)trk->pad_mode, (int)trk->active_clip);
+        for (int ci = 0; ci < NUM_CLIPS; ci++) {
+            clip_t *cc = &trk->clips[ci];
+            int has = 0;
+            for (uint16_t k = 0; k < cc->note_count; k++)
+                if (cc->notes[k].active) { has = 1; break; }
+            APP("%s{\"has\":%d,\"len\":%d,\"tps\":%d}", ci ? "," : "",
+                has, (int)cc->length, (int)cc->ticks_per_step);
+        }
+        APP("]}");
+    }
+    APP("]");
+
+    /* full data for the selected clip */
+    APP(",\"clip\":{\"len\":%d,\"tps\":%d,\"ls\":%d,\"dir\":%d,\"notes\":\"",
+        (int)cl->length, (int)cl->ticks_per_step, (int)cl->loop_start,
+        (int)cl->playback_dir);
+    for (uint16_t k = 0; k < cl->note_count; k++) {
+        note_t *nt = &cl->notes[k];
+        if (!nt->active) continue;
+        APP("%u:%d:%d:%d;", (unsigned)nt->tick, (int)nt->pitch, (int)nt->vel, (int)nt->gate);
+    }
+    APP("\"}");
+    APP("}");
+    #undef APP
+    if (n >= out_len) n = out_len - 1;
+    out[n] = '\0';
+    return n;
+}
+
 /* ------------------------------------------------------------------ */
 /* get_param                                                            */
 /* ------------------------------------------------------------------ */
@@ -9353,6 +9425,13 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         int v = inst->solo_fallback_pending ? 1 : 0;
         inst->solo_fallback_pending = 0;
         return snprintf(out, out_len, "%d", v);
+    }
+
+    if (!strcmp(key, "state")) {
+        /* Remote-UI snapshot for the browser piano roll. This is the key the
+         * schwung-manager reads on subscribe (comp+":state"); davebox's own
+         * persistence uses state_full, so claiming "state" here is free. */
+        return seq8_remote_snapshot(inst, out, out_len);
     }
 
     if (!strcmp(key, "state_full")) {

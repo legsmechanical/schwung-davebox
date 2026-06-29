@@ -2229,6 +2229,16 @@ static void set_param(void *instance, const char *key, const char *val) {
             if (cidx >= NUM_CLIPS) return;
             clip_t *cl = &tr->clips[cidx];
 
+            /* tN_cC_ruisel "[lane]": select this clip as the remote-UI snapshot
+             * target. Optional arg = drum lane index (-1/absent = melodic). */
+            if (!strcmp(p, "_ruisel")) {
+                inst->rui_sel_track = (uint8_t)tidx;
+                inst->rui_sel_clip  = (uint8_t)cidx;
+                inst->rui_sel_lane  = (val && val[0] && val[0] != '-') ?
+                                          (int16_t)clamp_i(my_atoi(val), 0, DRUM_LANES - 1) : -1;
+                return;
+            }
+
             if (!strncmp(p, "_step_", 6)) {
                 const char *q = p + 6;
                 int sidx = 0;
