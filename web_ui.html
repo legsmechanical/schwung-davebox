@@ -42,6 +42,17 @@
   #rollwrap{flex:1;display:flex;flex-direction:column;min-width:0}
   #roll{flex:1;position:relative;overflow:auto;background:var(--bg)}
   #rollcanvas{display:block;cursor:crosshair}
+  #stepwrap{flex:0 0 22px;border-top:1px solid #000;background:#0d0f13;position:relative;overflow:hidden}
+  #stepcanvas{display:block;cursor:pointer;position:absolute;left:0;top:0}
+  #steplabel{position:absolute;left:6px;top:5px;font:9px ui-monospace,monospace;color:var(--dim);pointer-events:none}
+  #editbar{flex:0 0 auto;border-top:1px solid #000;background:var(--panel);padding:6px 10px;
+           display:flex;gap:8px 22px;align-items:center;flex-wrap:wrap;min-height:34px;row-gap:6px}
+  .ebgrp{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .ebgrp .et{font:11px ui-monospace,monospace;font-weight:600;color:var(--accent);letter-spacing:.4px}
+  .ebgrp label{color:var(--dim);font-size:11px;gap:3px}
+  .ebgrp input[type=number]{width:58px;text-align:right}
+  .ebgrp select{font-size:11px;padding:3px 6px}
+  .eb-empty{color:var(--dim);font-size:11px;font-style:italic}
   #velwrap{flex:0 0 56px;border-top:1px solid #000;background:#101216;position:relative;overflow:hidden}
   #velcanvas{display:block;cursor:ns-resize}
   #vellabel{position:absolute;left:6px;top:3px;font:10px ui-monospace,monospace;color:var(--dim);pointer-events:none}
@@ -91,12 +102,16 @@
         </div>
       </div>
       <div id="velwrap"><canvas id="velcanvas" width="900" height="56"></canvas><div id="vellabel">VEL</div></div>
+      <div id="stepwrap"><canvas id="stepcanvas" width="900" height="22"></canvas><div id="steplabel">STEP</div></div>
+      <div id="editbar">
+        <div id="noteedit" class="ebgrp"></div>
+        <div id="stepedit" class="ebgrp"></div>
+      </div>
     </div>
     <div id="side">
       <h4>Clip</h4>
       <div id="clipinfo"></div>
       <div class="btnrow" id="clipops"></div>
-      <div id="noteedit"></div>
       <div id="fxpanel"></div>
       <div id="drumpanel"></div>
       <h4 style="margin-top:14px">Global</h4>
@@ -267,9 +282,17 @@ function parseModel(){
   /* selected drum lane "len:tps:loop" (drum only) */
   const lr=get("rui_lane"); let laneInfo=null;
   if(lr){ const la=lr.split(":").map(Number); laneInfo={len:la[0]|0,tps:la[1]|0,ls:la[2]|0}; }
+  /* per-step trig conditions for the step strip: melodic clip (rui_steps) or
+   * selected drum lane (rui_dsteps). Map step-index → {iter,rand,ratch,nudge}. */
+  const stepTrig={};
+  const sel_pm=(tracks[st]&&tracks[st].pm)||0;
+  const draw_src=(sel_pm===1?get("rui_dsteps"):get("rui_steps"))||"";
+  draw_src.split(";").filter(Boolean).forEach(tok=>{
+    const a=tok.split(":").map(Number); stepTrig[a[0]]={iter:a[1]|0,rand:a[2]|0,ratch:a[3]|0,nudge:a[4]|0};
+  });
   return {rev:+(get("rui_rev")||0), play:{on:pon,tick:ptick,bpm:pbpm},
           sel:{t:st,c:sc,lane:sl}, clip:{len:cl,tps:ct,ls:cls,dir:cd}, tracks, notes,
-          dlanes, dnotes, pfx, glob, scaleMask, laneInfo};
+          dlanes, dnotes, pfx, glob, scaleMask, laneInfo, stepTrig};
 }
 const isDrum = ()=> M && M.tracks[M.sel.t] && M.tracks[M.sel.t].pm===1;
 
@@ -318,32 +341,31 @@ function renderChrome(){
 /* rebuild the side panel (clip controls + FX). Skipped while a side input is
  * focused so polls don't clobber in-progress typing. */
 function renderSidePanels(){
-  if(document.activeElement && document.activeElement.closest && document.activeElement.closest("#side")) return;
-  renderSide(); renderClipOps(); renderNoteEdit(); renderFX(); renderDrumPanel(); renderGlobals();
+  if(document.activeElement && document.activeElement.closest && document.activeElement.closest("#side,#editbar")) return;
+  renderSide(); renderClipOps(); renderNoteEdit(); renderStepEdit(); renderFX(); renderDrumPanel(); renderGlobals();
 }
 /* ---------- selected-note numeric editor (melodic) ---------- */
 let selNote=null;   /* {tick,pitch} of the selected melodic note (or null) */
 function findSelNote(){ if(!selNote||!M||isDrum()) return -1;
   return M.notes.findIndex(n=>n.tick===selNote.tick&&n.pitch===selNote.pitch); }
-function neRow(lbl,id,val,min,max){
-  return `<div class="kv"><span>${lbl}</span><span><input type="number" class="neIn" id="${id}" value="${val}" min="${min}" max="${max}" step="1"></span></div>`;
+function ebNum(lbl,id,val,min,max){
+  return `<label>${lbl} <input type="number" id="${id}" value="${val}" min="${min}" max="${max}" step="1"></label>`;
 }
 function renderNoteEdit(){
   const el=document.getElementById("noteedit"); if(!el) return;
-  if(isDrum()){ el.innerHTML=""; return; }      /* drum editing is per-lane on the grid */
+  if(isDrum()){ el.innerHTML=`<span class="eb-empty">Drum: edit hits on the lane grid</span>`; return; }
   const i=findSelNote();
-  if(i<0){ el.innerHTML=`<div class="kv"><span>Note</span><span style="color:var(--dim)">— click a note —</span></div>`; return; }
-  const nt=M.notes[i], tps=M.clip.tps;
+  if(i<0){ el.innerHTML=`<span class="eb-empty">Click a note to edit it (Shift-drag / Snap=Off for off-grid)</span>`; return; }
+  const nt=M.notes[i];
   el.innerHTML=
-    `<div class="kv"><span>Note</span><span>${noteName(nt.pitch)}</span></div>`+
-    neRow("Pos (tick)","nePos",nt.tick,0,maxTick()-1)+
-    neRow("Pitch","nePitch",nt.pitch,0,127)+
-    neRow("Vel","neVel",nt.vel,1,127)+
-    neRow("Len (tick)","neLen",nt.gate,1,maxTick())+
-    `<div class="btnrow"><button class="sm" id="neNL" title="nudge −1 tick">◀</button>`+
+    `<span class="et">♪ ${noteName(nt.pitch)}</span>`+
+    ebNum("Pos","nePos",nt.tick,0,maxTick()-1)+
+    ebNum("Pitch","nePitch",nt.pitch,0,127)+
+    ebNum("Vel","neVel",nt.vel,1,127)+
+    ebNum("Len","neLen",nt.gate,1,maxTick())+
+    `<button class="sm" id="neNL" title="nudge −1 tick">◀</button>`+
     `<button class="sm" id="neNR" title="nudge +1 tick">▶</button>`+
-    `<button class="sm danger" id="neDel">Delete</button></div>`+
-    `<div class="hint">${tps} ticks/step. Shift-drag or Snap=Off for off-grid.</div>`;
+    `<button class="sm danger" id="neDel">Del</button>`;
   const cur=()=>{ const k=findSelNote(); return k<0?null:M.notes[k]; };
   function moveTo(tick,pitch){ const n=cur(); if(!n) return; const o={tick:n.tick,pitch:n.pitch};
     tick=Math.max(0,Math.min(maxTick()-1,tick|0)); pitch=Math.max(0,Math.min(127,pitch|0));
@@ -362,6 +384,36 @@ function renderNoteEdit(){
   el.querySelector("#neDel").onclick=()=>{ const n=cur(); if(!n) return;
     M.notes.splice(findSelNote(),1); const o={tick:n.tick,pitch:n.pitch}; selNote=null;
     draw(); emit("note_del",`${o.tick} ${o.pitch}`); renderNoteEdit(); };
+}
+/* ---------- step-param editor (per-step iter/prob/ratchet/nudge) ---------- */
+function stepCount(s,tps){ let nc=0;
+  if(isDrum()){ (M.dnotes[M.sel.lane]||[]).forEach(h=>{ if(Math.round(h.tick/tps)===s) nc++; }); }
+  else { M.notes.forEach(n=>{ if(Math.round(n.tick/tps)===s) nc++; }); }
+  return nc; }
+function renderStepEdit(){
+  const el=document.getElementById("stepedit"); if(!el) return;
+  const drum=isDrum();
+  const len=drum?(M.laneInfo?M.laneInfo.len:0):M.clip.len;
+  if(selStep<0||selStep>=len||(drum&&M.sel.lane<0)){ if(selStep>=len) selStep=-1; el.innerHTML=""; return; }
+  const s=selStep, tps=drum?(M.laneInfo?M.laneInfo.tps:M.clip.tps):M.clip.tps;
+  const tr=M.stepTrig[s]||{iter:0,rand:0,ratch:0,nudge:0};
+  const nc=stepCount(s,tps), tmax=Math.max(1,tps-1);
+  const pfx=drum?`t${M.sel.t}_l${M.sel.lane}_step_${s}`:`t${M.sel.t}_c${M.sel.c}_step_${s}`;
+  let iterOpts=`<option value="0">Every</option>`;
+  for(let cl=2;cl<=8;cl++)for(let ci=1;ci<=cl;ci++){const v=(cl<<4)|ci;
+    iterOpts+=`<option value="${v}"${v===tr.iter?" selected":""}>${ci}/${cl}</option>`;}
+  el.innerHTML=
+    `<span class="et">▣ Step ${s+1}${drum?` · L${M.sel.lane}`:""} · ${nc} note${nc===1?"":"s"}</span>`+
+    `<label>Iter <select id="seIter">${iterOpts}</select></label>`+
+    `<label>Prob <input type="number" id="seRand" value="${tr.rand}" min="0" max="100">%</label>`+
+    `<label>Ratch <input type="number" id="seRatch" value="${tr.ratch}" min="0" max="4"></label>`+
+    `<label>Nudge <input type="number" id="seNudge" value="${tr.nudge}" min="${-tmax}" max="${tmax}"${nc?"":" disabled"}></label>`;
+  function setTrig(f,v){ const o=Object.assign({iter:0,rand:0,ratch:0,nudge:0},M.stepTrig[s]); o[f]=v; M.stepTrig[s]=o; }
+  el.querySelector("#seIter").onchange=e=>{ const v=+e.target.value; setTrig("iter",v); R.setParam(P+pfx+"_iter",String(v)); afterEdit(); drawStepStrip(); };
+  el.querySelector("#seRand").onchange=e=>{ const v=Math.max(0,Math.min(100,+e.target.value|0)); setTrig("rand",v); R.setParam(P+pfx+"_rand",String(v)); afterEdit(); drawStepStrip(); };
+  el.querySelector("#seRatch").onchange=e=>{ const v=Math.max(0,Math.min(4,+e.target.value|0)); setTrig("ratch",v); R.setParam(P+pfx+"_ratch",String(v)); afterEdit(); drawStepStrip(); };
+  const nu=el.querySelector("#seNudge");
+  if(nu&&!nu.disabled) nu.onchange=e=>{ const v=Math.max(-tmax,Math.min(tmax,+e.target.value|0)); setTrig("nudge",v); R.setParam(P+pfx+"_nudge",String(v)); afterEdit(); drawStepStrip(); };
 }
 const RES_TPS=[12,24,48,96,192,384], RES_LAB=["1/32","1/16","1/8","1/4","1/2","1/1"];
 function pullSoon(){ setTimeout(()=>{ suppressRefreshUntil=0; refresh(); }, 130); }
@@ -545,7 +597,7 @@ function dropClip(src,dst,copy){
 }
 function selectClip(t,c){
   R.setParam(P+`t${t}_c${c}_ruisel`,"");
-  selNote=null;   /* new clip → drop the note selection */
+  selNote=null; selStep=-1;   /* new clip → drop note + step selection */
   if(M){ M.sel.t=t; M.sel.c=c; renderSession(); renderChrome(); }
   /* selection is not an edit — pull the newly-selected clip promptly */
   suppressRefreshUntil=0; setTimeout(refresh,30);
@@ -554,6 +606,8 @@ function selectClip(t,c){
 /* ---------- piano roll geometry ---------- */
 const cv=document.getElementById("rollcanvas"), ctx=cv.getContext("2d");
 const vc=document.getElementById("velcanvas"), vctx=vc.getContext("2d");
+const sc=document.getElementById("stepcanvas"), sctx=sc.getContext("2d");
+let selStep=-1;   /* selected step index for the step-param editor (or -1) */
 const PITCH_LO=36, PITCH_HI=96;
 let ROWH=8, PXPERTICK=0.6;
 /* zoom multipliers (1 = auto-fit baseline); H scales ticks→px, V scales row height */
@@ -666,7 +720,7 @@ function draw(){
   document.getElementById("drumph").style.display=(drum && !hasDrumData)?"flex":"none";
   cv.style.display=(drum && !hasDrumData)?"none":"block";
   document.getElementById("velwrap").style.display=drum?"none":"block";
-  if(drum){ if(hasDrumData) drawDrum(); return; }
+  if(drum){ if(hasDrumData) drawDrum(); drawStepStrip(); return; }
   const W=cv.width,H=cv.height,tps=M.clip.tps,total=maxTick();
   ctx.fillStyle="#15171c"; ctx.fillRect(0,0,W,H);
   const sk=(M.glob?M.glob.key:0)%12;
@@ -704,6 +758,43 @@ function drawVel(){
     vctx.fillStyle=`rgba(57,208,200,${0.4+0.6*(nt.vel/127)})`; vctx.fillRect(x,H-h-2,Math.max(2,3),h);
   });
 }
+/* ---------- step strip (per-step trig conditions, aligned to the time grid) ---------- */
+function stepGeom(){ const drum=isDrum();
+  const len=drum?(M.laneInfo?M.laneInfo.len:0):M.clip.len;
+  const tps=drum?(M.laneInfo?M.laneInfo.tps:M.clip.tps):M.clip.tps;
+  const x0=s=>drum?(DLBL+s*DCELLW):X(s*tps);
+  return {drum,len,tps,x0}; }
+function drawStepStrip(){
+  if(!M){ return; }
+  sc.width=cv.width; const W=sc.width, H=sc.height;
+  sctx.fillStyle="#0d0f13"; sctx.fillRect(0,0,W,H);
+  const g=stepGeom();
+  if(g.drum && M.sel.lane<0) return;            /* no drum lane selected → blank */
+  const noteSet=new Set();
+  if(g.drum){ (M.dnotes[M.sel.lane]||[]).forEach(h=>noteSet.add(Math.round(h.tick/g.tps))); }
+  else { M.notes.forEach(n=>noteSet.add(Math.round(n.tick/g.tps))); }
+  for(let s=0;s<g.len;s++){
+    const xa=g.x0(s), xb=g.x0(s+1), w=Math.max(2,xb-xa-1);
+    const tr=M.stepTrig[s]; const hasTrig=tr&&(tr.iter||tr.rand||tr.ratch||tr.nudge);
+    const hasNote=noteSet.has(s);
+    sctx.fillStyle = s===selStep ? "#39d0c8" : hasTrig ? "#6b54c6" : hasNote ? "#2b3543" : "#161922";
+    sctx.fillRect(xa+0.5,3,w,H-6);
+    if(s%4===0){ sctx.fillStyle="#39414f"; sctx.fillRect(xa,0,1,H); }
+    if(hasTrig&&s!==selStep){ sctx.fillStyle="#cdbcff"; sctx.fillRect(xa+w-3,4,3,3); }
+  }
+  if(M.play.on){ const tot=g.len*g.tps; if(tot>0){ const ps=Math.floor((M.play.tick%tot)/g.tps);
+    sctx.strokeStyle="#ffcf4d"; sctx.lineWidth=1; const px=g.x0(ps);
+    sctx.strokeRect(px+0.5,1.5,Math.max(2,g.x0(ps+1)-px-1),H-3); } }
+}
+sc.addEventListener("click",e=>{
+  if(!M) return;
+  const g=stepGeom(); if(g.drum&&M.sel.lane<0) return;
+  const r=sc.getBoundingClientRect(), mx=e.clientX-r.left;
+  let pick=-1; for(let s=0;s<g.len;s++){ if(mx>=g.x0(s)&&mx<g.x0(s+1)){ pick=s; break; } }
+  if(pick<0) return;
+  selStep=(selStep===pick)?-1:pick;
+  drawStepStrip(); renderStepEdit();
+});
 
 /* ---------- hit testing ---------- */
 function noteAt(mx,my){
@@ -738,7 +829,7 @@ function drumToggle(lane,tick,del){
 let ddrag=null;   /* drum velocity drag: {lane,tick,i,startY,startVel,moved} */
 function selectLane(lane){
   if(lane<0||lane>=M.dlanes.length) return;
-  M.sel.lane=lane;
+  M.sel.lane=lane; selStep=-1;   /* lane change → drop step selection (drum steps are per-lane) */
   R.setParam(P+`t${M.sel.t}_c${M.sel.c}_ruisel`, String(lane));
   renderSidePanels(); renderChrome(); draw(); pullSoon();
 }
@@ -875,6 +966,11 @@ document.getElementById("zxout").onclick=()=>zoomH(1/1.3);
 document.getElementById("zyin").onclick=()=>zoomV(1.3);
 document.getElementById("zyout").onclick=()=>zoomV(1/1.3);
 document.getElementById("zrst").onclick=zoomReset;
+/* keep the VEL lane + step strip horizontally aligned with the roll as it scrolls */
+document.getElementById("roll").addEventListener("scroll",e=>{
+  const sx=e.target.scrollLeft, tf=`translateX(${-sx}px)`;
+  sc.style.transform=tf; vc.style.transform=tf;
+});
 /* Ctrl+wheel = H zoom · Ctrl+Shift+wheel = V zoom (anchored to cursor not yet — keeps it simple) */
 document.getElementById("roll").addEventListener("wheel",e=>{
   if(!e.ctrlKey&&!e.metaKey) return;

@@ -9519,6 +9519,21 @@ static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
 /*   rui_index = per-track "pm:ac:qc:pl:<16 has-bits>", joined by ';'     */
 /*   rui_notes = "tick:pitch:vel:gate;" list for the selected clip       */
 /* ------------------------------------------------------------------ */
+/* Emit sparse per-step trig conditions for one clip: "s:iter:rand:ratch:nudge;"
+ * for each step (within the loop length) that has any non-default value. nudge =
+ * the step's primary-note within-step tick offset. Returns the new cursor. */
+static int rui_emit_steps(char *out, int n, int out_len, clip_t *cl) {
+    #define APP2(...) do { if (n < out_len) n += snprintf(out + n, out_len - n, __VA_ARGS__); } while (0)
+    int L = cl->length; if (L > SEQ_STEPS) L = SEQ_STEPS;
+    for (int s = 0; s < L; s++) {
+        int it = cl->step_iter[s], rd = cl->step_random[s], rt = cl->step_ratchet[s];
+        int nudge = (cl->step_note_count[s] > 0) ? (int)cl->note_tick_offset[s][0] : 0;
+        if (it || rd || rt || nudge) APP2("%d:%d:%d:%d:%d;", s, it, rd, rt, nudge);
+    }
+    #undef APP2
+    return n;
+}
+
 static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
     if (!inst || !out || out_len <= 0) return -1;
     int t = inst->rui_sel_track; if (t < 0 || t >= NUM_TRACKS) t = 0;
@@ -9590,6 +9605,17 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
     } else {
         APP(",\"rui_lane\":\"\"");
     }
+
+    /* per-step trig conditions (sparse "s:iter:rand:ratch:nudge;") for the step
+     * strip. rui_steps = selected MELODIC clip; rui_dsteps = selected drum LANE
+     * (drum step params are per-lane). Both always present (one empty per mode). */
+    APP(",\"rui_steps\":\"");
+    if (!drum) n = rui_emit_steps(out, n, out_len, gcl);
+    APP("\"");
+    APP(",\"rui_dsteps\":\"");
+    if (drum && dclip && inst->rui_sel_lane >= 0 && inst->rui_sel_lane < DRUM_LANES)
+        n = rui_emit_steps(out, n, out_len, &dclip->lanes[inst->rui_sel_lane].clip);
+    APP("\"");
 
     /* per-track index: "pm:ac:qc:pl:<16 has-bits>", tracks joined by ';'
      * (pm=pad_mode, ac=active clip, qc=queued clip or -1, pl=clip playing) —
