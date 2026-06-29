@@ -346,6 +346,7 @@ function renderSidePanels(){
 }
 /* ---------- selected-note numeric editor (melodic) ---------- */
 let selNote=null;   /* {tick,pitch} of the selected melodic note (or null) */
+let selDrum=null;   /* {lane,tick} of the selected drum hit (or null) */
 function findSelNote(){ if(!selNote||!M||isDrum()) return -1;
   return M.notes.findIndex(n=>n.tick===selNote.tick&&n.pitch===selNote.pitch); }
 function ebNum(lbl,id,val,min,max){
@@ -353,7 +354,7 @@ function ebNum(lbl,id,val,min,max){
 }
 function renderNoteEdit(){
   const el=document.getElementById("noteedit"); if(!el) return;
-  if(isDrum()){ el.innerHTML=`<span class="eb-empty">Drum: edit hits on the lane grid</span>`; return; }
+  if(isDrum()){ renderDrumNoteEdit(el); return; }
   const i=findSelNote();
   if(i<0){ el.innerHTML=`<span class="eb-empty">Click a note to edit it (Shift-drag / Snap=Off for off-grid)</span>`; return; }
   const nt=M.notes[i];
@@ -385,6 +386,54 @@ function renderNoteEdit(){
     M.notes.splice(findSelNote(),1); const o={tick:n.tick,pitch:n.pitch}; selNote=null;
     draw(); emit("note_del",`${o.tick} ${o.pitch}`); renderNoteEdit(); };
 }
+/* ---------- selected drum-hit editor (per-lane, absolute tick) ---------- */
+function maxTickDrum(){ return Math.max(1,M.clip.len*M.clip.tps); }
+function findSelDrum(){ if(!selDrum||!M||!isDrum()) return null;
+  const arr=M.dnotes[selDrum.lane]||[]; return arr.find(x=>x.tick===selDrum.tick)||null; }
+function renderDrumNoteEdit(el){
+  if(M.sel.lane<0){ el.innerHTML=`<span class="eb-empty">Click a lane name to select it, then edit its hits</span>`; return; }
+  const h=findSelDrum();
+  if(!h){ el.innerHTML=`<span class="eb-empty">Click a hit to edit it (Shift-drag / Snap=Off for off-grid)</span>`; return; }
+  const lane=selDrum.lane, ln=M.dlanes[lane];
+  el.innerHTML=
+    `<span class="et">● ${ln?noteName(ln.note):("L"+lane)}</span>`+
+    ebNum("Pos","dnPos",h.tick,0,maxTickDrum()-1)+
+    ebNum("Vel","dnVel",h.vel,1,127)+
+    ebNum("Len","dnLen",h.gate,1,maxTickDrum())+
+    `<button class="sm" id="dnNL" title="nudge −1 tick">◀</button>`+
+    `<button class="sm" id="dnNR" title="nudge +1 tick">▶</button>`+
+    `<button class="sm danger" id="dnDel">Del</button>`;
+  const cur=()=>findSelDrum();
+  function moveTo(tick){ const n=cur(); if(!n) return; const o=n.tick;
+    tick=Math.max(0,Math.min(maxTickDrum()-1,tick|0)); if(tick===o) return;
+    if((M.dnotes[lane]||[]).some(x=>x!==n&&x.tick===tick)) return;
+    n.tick=tick; selDrum={lane,tick}; draw();
+    R.setParam(P+`t${M.sel.t}_l${lane}_note_move`,`${o} ${tick}`); afterEdit(); renderNoteEdit(); }
+  el.querySelector("#dnPos").onchange=e=>moveTo(+e.target.value);
+  el.querySelector("#dnVel").onchange=e=>{ const n=cur(); if(!n) return; n.vel=Math.max(1,Math.min(127,+e.target.value|0));
+    draw(); R.setParam(P+`t${M.sel.t}_l${lane}_note_vel`,`${n.tick} ${n.vel}`); afterEdit(); };
+  el.querySelector("#dnLen").onchange=e=>{ const n=cur(); if(!n) return; n.gate=Math.max(1,+e.target.value|0);
+    draw(); R.setParam(P+`t${M.sel.t}_l${lane}_note_resize`,`${n.tick} ${n.gate}`); afterEdit(); };
+  el.querySelector("#dnNL").onclick=()=>{ const n=cur(); if(n) moveTo(n.tick-1); };
+  el.querySelector("#dnNR").onclick=()=>{ const n=cur(); if(n) moveTo(n.tick+1); };
+  el.querySelector("#dnDel").onclick=()=>{ const n=cur(); if(n) drumDelete(lane,n.tick); };
+}
+function drumHitAt(mx,my){
+  const lane=Math.floor(my/DLANEH); if(lane<0||lane>=M.dlanes.length) return null;
+  const arr=M.dnotes[lane]||[]; const dpt=DCELLW/M.clip.tps;
+  for(let i=arr.length-1;i>=0;i--){ const h=arr[i];
+    const x=DLBL+h.tick*dpt, w=Math.max(5,h.gate*dpt);
+    if(mx>=x&&mx<=x+w) return {lane,tick:h.tick,i,edge:(mx>=x+w-5)}; }
+  return null;
+}
+function drumAdd(lane,tick){ const arr=M.dnotes[lane]||(M.dnotes[lane]=[]);
+  if(arr.some(h=>h.tick===tick)) return;
+  arr.push({tick,vel:100,gate:M.clip.tps}); if(M.dlanes[lane]) M.dlanes[lane].has=true;
+  draw(); R.setParam(P+`t${M.sel.t}_l${lane}_note_add`,`${tick} 100 ${M.clip.tps}`); afterEdit(); }
+function drumDelete(lane,tick){ const arr=M.dnotes[lane]||[]; const i=arr.findIndex(h=>h.tick===tick);
+  if(i<0) return; arr.splice(i,1); if(M.dlanes[lane]) M.dlanes[lane].has=arr.length>0;
+  if(selDrum&&selDrum.lane===lane&&selDrum.tick===tick) selDrum=null;
+  draw(); renderNoteEdit(); R.setParam(P+`t${M.sel.t}_l${lane}_note_del`,String(tick)); afterEdit(); }
 /* ---------- step-param editor (per-step iter/prob/ratchet/nudge) ---------- */
 function stepCount(s,tps){ let nc=0;
   if(isDrum()){ (M.dnotes[M.sel.lane]||[]).forEach(h=>{ if(Math.round(h.tick/tps)===s) nc++; }); }
@@ -597,7 +646,7 @@ function dropClip(src,dst,copy){
 }
 function selectClip(t,c){
   R.setParam(P+`t${t}_c${c}_ruisel`,"");
-  selNote=null; selStep=-1;   /* new clip → drop note + step selection */
+  selNote=null; selStep=-1; selDrum=null;   /* new clip → drop note + step + drum-hit selection */
   if(M){ M.sel.t=t; M.sel.c=c; renderSession(); renderChrome(); }
   /* selection is not an edit — pull the newly-selected clip promptly */
   suppressRefreshUntil=0; setTimeout(refresh,30);
@@ -676,13 +725,6 @@ const DLBL=48;
 let DCELLW=24, DLANEH=13;
 const NOTE_NAMES=["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
 const noteName=n=>NOTE_NAMES[((n%12)+12)%12]+(Math.floor(n/12)-1);
-function drumCellAt(mx,my){
-  if(mx<DLBL) return null;
-  const l=Math.floor(my/DLANEH); if(l<0||l>=M.dlanes.length) return null;
-  const s=Math.floor((mx-DLBL)/DCELLW); if(s<0||s>=M.clip.len) return null;
-  return {lane:l, step:s, tick:s*M.clip.tps};
-}
-function hitAt(lane,tick){ const a=M.dnotes[lane]||[]; return a.findIndex(h=>h.tick===tick); }
 function drawDrum(){
   const lanes=M.dlanes, len=M.clip.len, tps=M.clip.tps;
   const roll=document.getElementById("roll"); const avail=roll.clientHeight||440;
@@ -702,11 +744,17 @@ function drawDrum(){
   for(let s=0;s<=len;s++){ const x=DLBL+s*DCELLW;
     ctx.strokeStyle=(s%4===0)?"#39414f":"#262c36"; ctx.lineWidth=1;
     ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,cv.height); ctx.stroke(); }
+  /* hits at their ABSOLUTE tick (off-grid capable), width from gate */
+  const dpt=DCELLW/tps;
   for(const L in M.dnotes){ const l=+L; if(l>=lanes.length) continue;
-    M.dnotes[L].forEach(h=>{ const s=Math.round(h.tick/tps); if(s<0||s>=len) return;
-      const x=DLBL+s*DCELLW, y=l*DLANEH;
+    M.dnotes[L].forEach(h=>{
+      const x=DLBL+h.tick*dpt; if(x>cv.width) return;
+      const w=Math.max(5,Math.min(h.gate*dpt, cv.width-x-1)), y=l*DLANEH;
+      const sel=selDrum&&selDrum.lane===l&&selDrum.tick===h.tick;
       ctx.fillStyle=`rgba(57,208,200,${0.35+0.65*(h.vel/127)})`;
-      ctx.fillRect(x+1.5,y+1.5,DCELLW-3,DLANEH-4);
+      ctx.fillRect(x+0.5,y+1.5,w,DLANEH-4);
+      ctx.strokeStyle=sel?"#ffcf4d":"#0c2e2c"; ctx.lineWidth=sel?2:1;
+      ctx.strokeRect(x+0.5,y+1.5,w,DLANEH-4);
     });
   }
   if(M.play.on){ const total=len*tps; if(total>0){ const s=Math.floor((M.play.tick%total)/tps);
@@ -814,22 +862,13 @@ function afterEdit(){ suppressRefreshUntil=now()+250; }
 let drag=null;   /* {mode,i, ...} */
 cv.addEventListener("contextmenu",e=>{ e.preventDefault();
   const r=cv.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
-  if(isDrum()){ const cell=drumCellAt(mx,my); if(cell) drumToggle(cell.lane,cell.tick,true); return; }
+  if(isDrum()){ const hit=drumHitAt(mx,my); if(hit) drumDelete(hit.lane,hit.tick); return; }
   const hit=noteAt(mx,my); if(hit){ const nt=M.notes[hit.i];
     M.notes.splice(hit.i,1); draw(); emit("note_del",`${nt.tick} ${nt.pitch}`); } });
-function drumToggle(lane,tick,del){
-  const arr=M.dnotes[lane]||(M.dnotes[lane]=[]);
-  const i=arr.findIndex(h=>h.tick===tick);
-  if(i>=0) arr.splice(i,1); else if(!del) arr.push({tick,vel:100,gate:M.clip.tps});
-  else return;
-  if(M.dlanes[lane]) M.dlanes[lane].has=arr.length>0;
-  draw();
-  R.setParam(P+`t${M.sel.t}_l${lane}_${del?"note_del":"note_toggle"}`, String(tick)); afterEdit();
-}
 let ddrag=null;   /* drum velocity drag: {lane,tick,i,startY,startVel,moved} */
 function selectLane(lane){
   if(lane<0||lane>=M.dlanes.length) return;
-  M.sel.lane=lane; selStep=-1;   /* lane change → drop step selection (drum steps are per-lane) */
+  M.sel.lane=lane; selStep=-1; selDrum=null;   /* lane change → drop step + hit selection (per-lane) */
   R.setParam(P+`t${M.sel.t}_c${M.sel.c}_ruisel`, String(lane));
   renderSidePanels(); renderChrome(); draw(); pullSoon();
 }
@@ -838,12 +877,20 @@ cv.addEventListener("mousedown",e=>{
   if(isDrum()){
     const r=cv.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
     if(mx<DLBL){ selectLane(Math.floor(my/DLANEH)); return; }   /* lane label → select lane */
-    const cell=drumCellAt(mx,my); if(!cell) return;
-    const i=hitAt(cell.lane,cell.tick);
-    if(i>=0){ /* existing hit: drag = set velocity, tap = remove */
-      ddrag={lane:cell.lane,tick:cell.tick,i,startY:my,startVel:(M.dnotes[cell.lane][i].vel||100),moved:false};
-      dragging=true;
-    } else { drumToggle(cell.lane,cell.tick,false); }   /* empty → add */
+    const lane=Math.floor(my/DLANEH); if(lane<0||lane>=M.dlanes.length) return;
+    if(lane!==M.sel.lane) selectLane(lane);                     /* operating on a lane selects it */
+    const hit=drumHitAt(mx,my);
+    if(hit && e.altKey){ drumDelete(lane,hit.tick); return; }
+    if(hit){ selDrum={lane,tick:hit.tick}; renderNoteEdit();    /* click selects */
+      const dpt=DCELLW/M.clip.tps;
+      if(hit.edge){ ddrag={mode:"resize",lane,tick:hit.tick,o:{...M.dnotes[lane][hit.i]}}; }
+      else        { ddrag={mode:"move",lane,tick:hit.tick,gx:mx-(DLBL+hit.tick*dpt),o:{...M.dnotes[lane][hit.i]}}; }
+      dragging=true; return;
+    }
+    /* empty → add at snapped tick (Shift / Snap=Off = off-grid) */
+    const dpt=DCELLW/M.clip.tps;
+    const tk=Math.max(0,Math.min(maxTickDrum()-1,snap((mx-DLBL)/dpt,e.shiftKey)));
+    drumAdd(lane,tk); selDrum={lane,tick:tk}; renderNoteEdit();
     return;
   }
   const r=cv.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
@@ -888,22 +935,31 @@ window.addEventListener("mouseup",()=>{
   drag=null; dragging=false;
 });
 
-/* drum per-cell velocity: drag up/down on a hit (≈2 vel/px). Tap (no move) removes. */
+/* drum hit drag: body = move tick (off-grid w/ Shift / Snap=Off), right edge = resize gate */
 window.addEventListener("mousemove",e=>{
   if(!ddrag) return;
-  const r=cv.getBoundingClientRect(), my=e.clientY-r.top;
-  if(Math.abs(my-ddrag.startY)>3) ddrag.moved=true;
-  if(!ddrag.moved) return;
-  const vel=Math.max(1,Math.min(127, Math.round(ddrag.startVel + (ddrag.startY-my)*2)));
-  const arr=M.dnotes[ddrag.lane]; if(!arr||!arr[ddrag.i]) return;
-  if(arr[ddrag.i].vel!==vel){ arr[ddrag.i].vel=vel; ddrag.vel=vel; draw(); }
+  const r=cv.getBoundingClientRect(), mx=e.clientX-r.left;
+  const arr=M.dnotes[ddrag.lane]; if(!arr) return;
+  const i=arr.findIndex(h=>h.tick===ddrag.tick); if(i<0) return;
+  const h=arr[i], dpt=DCELLW/M.clip.tps, maxT=maxTickDrum()-1;
+  if(ddrag.mode==="move"){
+    let nt=Math.max(0,Math.min(maxT, snap((mx-ddrag.gx-DLBL)/dpt, e.shiftKey)));
+    if(arr.some(x=>x!==h&&x.tick===nt)) return;     /* don't collide onto another hit */
+    h.tick=nt; ddrag.tick=nt; if(selDrum) selDrum.tick=nt;
+  } else { /* resize */
+    const end=Math.max(h.tick+1, snap((mx-DLBL)/dpt, e.shiftKey)); h.gate=Math.max(1,end-h.tick);
+  }
+  draw();
 });
 window.addEventListener("mouseup",()=>{
   if(!ddrag) return;
-  if(ddrag.moved && ddrag.vel!=null){
-    R.setParam(P+`t${M.sel.t}_l${ddrag.lane}_note_vel`, `${ddrag.tick} ${ddrag.vel}`); afterEdit();
-  } else {
-    drumToggle(ddrag.lane,ddrag.tick,true);   /* tap with no drag → remove */
+  const arr=M.dnotes[ddrag.lane]||[]; const h=arr.find(x=>x.tick===ddrag.tick), o=ddrag.o;
+  if(h){
+    if(ddrag.mode==="move" && h.tick!==o.tick)
+      R.setParam(P+`t${M.sel.t}_l${ddrag.lane}_note_move`,`${o.tick} ${h.tick}`);
+    else if(ddrag.mode==="resize" && h.gate!==o.gate)
+      R.setParam(P+`t${M.sel.t}_l${ddrag.lane}_note_resize`,`${h.tick} ${h.gate}`);
+    afterEdit(); selDrum={lane:ddrag.lane,tick:h.tick}; renderNoteEdit();
   }
   ddrag=null; dragging=false;
 });
