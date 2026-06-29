@@ -2555,6 +2555,17 @@ static void set_param(void *instance, const char *key, const char *val) {
                 }
                 return;
             }
+            /* tN_cC_dir "0..3": per-clip playback direction (remote UI). Unlike the
+             * active-clip tN_clip_playback_dir sub, this targets the named clip. */
+            if (!strcmp(p, "_dir")) {
+                cl->playback_dir = (uint8_t)clamp_i(my_atoi(val), 0, 3);
+                cl->pp_dir_state = initial_pp_dir(cl->playback_dir);
+                if (cidx == (int)tr->active_clip) silence_track_from_set_param(inst, tr);
+                rui_touch(inst);
+                inst->state_dirty = 1;
+                return;
+            }
+
             if (!strncmp(p, "_length", 7) && p[7] == '\0') {
                 int max_len = SEQ_STEPS - (int)cl->loop_start;
                 if (max_len < 1) max_len = 1;
@@ -2577,6 +2588,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                     }
                 }
                 clip_migrate_to_notes(cl);
+                rui_touch(inst);
                 return;
             }
             if (!strncmp(p, "_loop_set", 9) && p[9] == '\0') {

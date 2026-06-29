@@ -119,9 +119,15 @@ if (!window.schwungRemote) {
     _mock: true,
     getParam: k => Promise.resolve(KV[k] != null ? KV[k] : ""),
     setParam: (k, v) => {
-      const m = k.match(/t(\d+)_c(\d+)_(note_\w+|notes_op|ruisel)$/);
+      const m = k.match(/t(\d+)_c(\d+)_(note_\w+|notes_op|ruisel|length|dir)$/);
       if(!m) return;
-      const op3 = m[3]; const ns = parseNotes();
+      const op3 = m[3];
+      if(op3==="length"||op3==="dir"){
+        const c=(KV["synth:rui_clip"]||"16:24:0:0").split(":").map(Number);
+        if(op3==="length") c[0]=Math.max(1,Math.min(256,+v|0)); else c[3]=+v|0;
+        KV["synth:rui_clip"]=c.join(":"); KV["synth:rui_rev"]=String((+KV["synth:rui_rev"]||0)+1); return;
+      }
+      const ns = parseNotes();
       const num = s => s.split(/\s+/).filter(Boolean).map(Number);
       if(op3==="note_add")    applyOp(ns,'a',num(v));
       else if(op3==="note_del")    applyOp(ns,'d',num(v));
@@ -175,12 +181,28 @@ function renderChrome(){
   tr.textContent=M.play.on?"▶ playing":"■ stopped"; tr.classList.toggle("play",!!M.play.on);
   document.getElementById("bpm").textContent=(M.play.bpm|0)+" BPM";
   document.getElementById("clipname").textContent=(isDrum()?"D":"M")+(M.sel.t+1)+" · clip "+(M.sel.c+1);
-  const dir=["Fwd","Bwd","PP-Fwd","PP-Bwd"][M.clip.dir]||M.clip.dir;
+  renderSide();
+}
+function renderSide(){
   const tpsName={6:"1/64",12:"1/32",24:"1/16",48:"1/8",96:"1/4",192:"1/2",384:"1/1"}[M.clip.tps]||M.clip.tps;
-  document.getElementById("clipinfo").innerHTML=
-    [["Length",M.clip.len+" steps"],["Resolution",tpsName],["Loop start",M.clip.ls],
-     ["Direction",dir],["Notes",M.notes.length]]
-    .map(([k,v])=>`<div class="kv"><span>${k}</span><span>${v}</span></div>`).join("");
+  const el=document.getElementById("clipinfo");
+  el.innerHTML=
+    `<div class="kv"><span>Length</span><span><button id="lenDn">−</button>`+
+      `<input id="lenIn" type="number" min="1" max="256" value="${M.clip.len}" `+
+      `style="width:52px;text-align:right">`+
+      `<button id="lenUp">+</button></span></div>`+
+    `<div class="kv"><span>Direction</span><span><select id="dirSel">`+
+      ["Fwd","Bwd","PP-Fwd","PP-Bwd"].map((n,i)=>`<option value="${i}"${i===M.clip.dir?" selected":""}>${n}</option>`).join("")+
+      `</select></span></div>`+
+    `<div class="kv"><span>Resolution</span><span>${tpsName}</span></div>`+
+    `<div class="kv"><span>Loop start</span><span>${M.clip.ls}</span></div>`+
+    `<div class="kv"><span>Notes</span><span>${M.notes.length}</span></div>`;
+  const setLen=v=>{ v=Math.max(1,Math.min(256,v|0)); if(v===M.clip.len)return;
+    M.clip.len=v; emit("length",String(v)); layout(); draw(); renderSide(); };
+  el.querySelector("#lenIn").onchange=e=>setLen(+e.target.value);
+  el.querySelector("#lenUp").onclick=()=>setLen(M.clip.len+1);
+  el.querySelector("#lenDn").onclick=()=>setLen(M.clip.len-1);
+  el.querySelector("#dirSel").onchange=e=>{ M.clip.dir=+e.target.value; emit("dir",e.target.value); };
 }
 function renderSelector(){
   const tracks=document.getElementById("tracks"), clips=document.getElementById("clips");
