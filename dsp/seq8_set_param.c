@@ -2761,6 +2761,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 pfx_set(inst, tr, &cl->pfx_params, pfx_key, sp);
                 if ((int)tr->active_clip == cidx)
                     pfx_sync_from_clip(tr);
+                rui_touch(inst);
                 inst->state_dirty = 1;
                 return;
             }

@@ -9542,6 +9542,23 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
         (int)gcl->length, (int)gcl->ticks_per_step, (int)gcl->loop_start,
         (int)gcl->playback_dir);
 
+    /* per-clip FX (melodic only): 29 values in a fixed order the browser mirrors —
+     * NOTE FX (8) | HARMZ (4) | MIDI DLY (10) | SEQ ARP (7). Edited via
+     * tN_cC_pfx_set "key value". Drum lanes carry their own (smaller) pfx — later. */
+    if (!drum) {
+        clip_pfx_params_t *pf = &gcl->pfx_params;
+        APP(",\"rui_pfx\":\"%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d\"",
+            pf->octave_shift, pf->note_offset, pf->gate_time, pf->velocity_offset, pf->quantize,
+            pf->note_random, pf->note_random_mode, (int)pf->note_length_mode,
+            pf->octaver, pf->harmonize_1, pf->harmonize_2, pf->harmonize_3,
+            pf->delay_time_idx, pf->delay_level, pf->repeat_times, pf->fb_velocity, pf->fb_note,
+            pf->fb_note_random, pf->fb_note_random_mode, pf->fb_gate_time, pf->fb_clock, pf->delay_retrig,
+            pf->seq_arp_style, pf->seq_arp_rate, pf->seq_arp_octaves, pf->seq_arp_gate,
+            pf->seq_arp_steps_mode, pf->seq_arp_retrigger, pf->seq_arp_sync);
+    } else {
+        APP(",\"rui_pfx\":\"\"");
+    }
+
     /* per-track index: "pm:ac:<16 has-bits>", tracks joined by ';' */
     APP(",\"rui_index\":\"");
     for (int ti = 0; ti < NUM_TRACKS; ti++) {

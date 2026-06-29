@@ -134,9 +134,35 @@ static void test_drum_lane_ops(void) {
     hx_destroy(h);
 }
 
+/* per-clip FX params reach the selected clip's pfx and surface in rui_pfx */
+static void test_clip_fx(void) {
+    hx_t *h = hx_create(NULL);
+    hx_set_param(h, "t1_c0_ruisel", "");
+    /* tN_cC_pfx_set "key value" — set a few across the four banks */
+    hx_set_param(h, "t1_c0_pfx_set", "noteFX_octave 2");
+    hx_set_param(h, "t1_c0_pfx_set", "harm_interval1 7");
+    hx_set_param(h, "t1_c0_pfx_set", "delay_level 90");
+    hx_set_param(h, "t1_c0_pfx_set", "seq_arp_style 3");
+    char buf[8192]; hx_get_param(h, "state", buf, (int)sizeof(buf));
+    const char *k = strstr(buf, "\"rui_pfx\":\"");
+    HX_ASSERT(k != NULL, "missing rui_pfx");
+    k += strlen("\"rui_pfx\":\"");
+    /* fixed order: [0]=octave [9]=harm1 [13]=delay_level [22]=arp_style */
+    int v[29]; int got = 0; const char *p = k;
+    for (got = 0; got < 29 && *p && *p != '"'; got++) { v[got] = atoi(p);
+        while (*p && *p != ':' && *p != '"') p++; if (*p == ':') p++; }
+    HX_ASSERT(got == 29, "rui_pfx did not have 29 values");
+    HX_ASSERT(v[0] == 2,  "noteFX_octave (idx0) not 2");
+    HX_ASSERT(v[9] == 7,  "harm_interval1 (idx9) not 7");
+    HX_ASSERT(v[13] == 90, "delay_level (idx13) not 90");
+    HX_ASSERT(v[22] == 3, "seq_arp_style (idx22) not 3");
+    hx_destroy(h);
+}
+
 int main(void) {
     test_add();
     test_clip_params();
+    test_clip_fx();
     test_drum_lane_ops();
     test_del();
     test_move();
