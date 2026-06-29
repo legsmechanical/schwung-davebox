@@ -86,7 +86,7 @@
 <script src="/static/schwung-remote-api.js"></script>
 <script>
 /* ---- fallback shim: standalone local preview without a device. Speaks the same
-       "synth:"-prefixed flat fields the manager seeds, and APPLIES note ops to its
+       "overtake_dsp:"-prefixed flat fields the manager seeds, and APPLIES note ops to its
        mock store so the preview is a faithful edit loop. ---- */
 if (!window.schwungRemote) {
   let rev=1;
@@ -112,25 +112,25 @@ if (!window.schwungRemote) {
   const pfx=[0,0,100,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,100,0,1,0]; // sensible defaults
   const KV={};
   function rebuild(){
-    KV["synth:rui_rev"]=String(rev);
-    KV["synth:rui_play"]="1:120:120";
-    KV["synth:rui_sel"]=sel.t+":"+sel.c+":"+sel.lane;
+    KV["overtake_dsp:rui_rev"]=String(rev);
+    KV["overtake_dsp:rui_play"]="1:120:120";
+    KV["overtake_dsp:rui_sel"]=sel.t+":"+sel.c+":"+sel.lane;
     const isDrum=tracks[sel.t].pm===1;
-    KV["synth:rui_index"]=tracks.map((tk,t)=>{
+    KV["overtake_dsp:rui_index"]=tracks.map((tk,t)=>{
       const has=Array.from({length:16},(_,c)=> (c===0 && ((t===0&&drum.some(l=>l.hits.length))||(t===1&&mel.length)))?1:0).join("");
       return tk.pm+":"+tk.ac+":"+has;
     }).join(";");
     if(isDrum){
-      KV["synth:rui_clip"]="16:24:0:0";
-      KV["synth:rui_dlanes"]=drum.map(l=>l.note+","+(l.hits.length?1:0)).join(";");
-      KV["synth:rui_dnotes"]=drum.map((l,i)=>l.hits.length?i+"|"+l.hits.map(h=>h.tick+":"+h.vel+":"+h.gate).join(","):null)
+      KV["overtake_dsp:rui_clip"]="16:24:0:0";
+      KV["overtake_dsp:rui_dlanes"]=drum.map(l=>l.note+","+(l.hits.length?1:0)).join(";");
+      KV["overtake_dsp:rui_dnotes"]=drum.map((l,i)=>l.hits.length?i+"|"+l.hits.map(h=>h.tick+":"+h.vel+":"+h.gate).join(","):null)
                                  .filter(Boolean).join(";");
-      KV["synth:rui_notes"]="";
+      KV["overtake_dsp:rui_notes"]="";
     } else {
-      KV["synth:rui_clip"]=clipLen+":24:0:"+clipDir;
-      KV["synth:rui_notes"]=mel.map(n=>n.tick+":"+n.pitch+":"+n.vel+":"+n.gate+";").join("");
-      KV["synth:rui_pfx"]=pfx.join(":");
-      delete KV["synth:rui_dlanes"]; delete KV["synth:rui_dnotes"];
+      KV["overtake_dsp:rui_clip"]=clipLen+":24:0:"+clipDir;
+      KV["overtake_dsp:rui_notes"]=mel.map(n=>n.tick+":"+n.pitch+":"+n.vel+":"+n.gate+";").join("");
+      KV["overtake_dsp:rui_pfx"]=pfx.join(":");
+      delete KV["overtake_dsp:rui_dlanes"]; delete KV["overtake_dsp:rui_dnotes"];
     }
   }
   const findM=(tk,pi)=>mel.findIndex(n=>n.tick===tk&&n.pitch===pi);
@@ -183,7 +183,7 @@ if (!window.schwungRemote) {
 <script>
 (function(){
 const R = window.schwungRemote;
-const P = "synth:";
+const P = "overtake_dsp:";
 const kv = {};
 let M = null;
 let lastRev = null, lastSelKey = null;

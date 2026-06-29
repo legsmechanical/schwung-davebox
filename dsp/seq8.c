@@ -9643,6 +9643,16 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         return seq8_remote_snapshot(inst, out, out_len);
     }
 
+    if (!strcmp(key, "module_id")) {
+        /* Remote-UI discovery probe. davebox runs as an overtake tool (no chain
+         * slot), so the schwung-manager can't find it via the per-slot
+         * "synth_module" key. Instead it probes "overtake_dsp:module_id" on the
+         * active overtake DSP; answering here opts davebox in to having its
+         * web_ui.html served. Any overtake tool that ships a web_ui.html and
+         * answers this key gets a remote UI — generic, no host C change. */
+        return snprintf(out, out_len, "davebox");
+    }
+
     if (!strcmp(key, "state_full")) {
         /* Only return a payload when state is dirty. Returning the cached
          * state_buf when clean made JS pollDSP unconditionally overwrite the

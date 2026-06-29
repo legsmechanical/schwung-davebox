@@ -55,10 +55,25 @@ static void test_snapshot_empty_clip_has_index(void) {
     hx_destroy(h);
 }
 
+/* The schwung-manager discovers an active overtake tool by probing
+ * "overtake_dsp:module_id" (forwarded to the DSP's get_param("module_id")).
+ * davebox must answer "davebox" so the manager can locate web_ui.html and
+ * route the remote UI. */
+static void test_module_id_probe(void) {
+    hx_t *h = hx_create(NULL);
+    HX_ASSERT(h != NULL, "hx_create returned NULL");
+    char buf[64];
+    int len = hx_get_param(h, "module_id", buf, (int)sizeof(buf));
+    HX_ASSERT(len > 0, "get_param module_id returned no data");
+    HX_ASSERT(strcmp(buf, "davebox") == 0, "module_id probe must return \"davebox\"");
+    hx_destroy(h);
+}
+
 int main(void) {
     test_snapshot_has_selected_clip_notes();
     test_snapshot_selection_switches_clip();
     test_snapshot_empty_clip_has_index();
-    printf("PASS: remote snapshot (notes round-trip, selection switch, empty index)\n");
+    test_module_id_probe();
+    printf("PASS: remote snapshot (notes round-trip, selection switch, empty index, module_id probe)\n");
     return 0;
 }
