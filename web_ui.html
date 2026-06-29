@@ -36,6 +36,8 @@
   .sclip.sel{outline:2px solid var(--ink);outline-offset:-1px;z-index:2}
   .sclip.playing{box-shadow:inset 0 0 0 2px var(--play)}
   .sclip.queued{border-style:dashed;border-color:var(--play)}
+  .sclip[draggable=true]{cursor:grab}
+  .sclip.drop{outline:2px dashed var(--accent);outline-offset:-1px;z-index:3}
   #main{flex:1;display:flex;min-height:0}
   #rollwrap{flex:1;display:flex;flex-direction:column;min-width:0}
   #roll{flex:1;position:relative;overflow:auto;background:var(--bg)}
@@ -445,6 +447,7 @@ function renderGlobals(){
 /* Session grid: tracks = columns, scenes = rows. Track headers + clips show the
  * device track colors. Click a clip = select it for editing; double-click =
  * launch it; ▶ in the left column = launch the whole scene row. */
+let clipDrag=null;   /* {t,c} source while dragging a clip in the session grid */
 function renderSession(){
   const grid=document.getElementById("grid");
   const NT=M.tracks.length||8, NC=16;
@@ -461,8 +464,8 @@ function renderSession(){
       const cls="sclip"+(t===M.sel.t&&c===M.sel.c?" sel":"")
                 +(trk.pl&&trk.ac===c?" playing":"")+(trk.qc===c?" queued":"");
       const bg=has?col:hexA(col,0.14);
-      html+=`<div class="${cls}" data-t="${t}" data-c="${c}" style="background:${bg}" `+
-            `title="track ${t+1} ${SCENE_LETTERS[c]}${has?' · clip':' · empty'}"></div>`;
+      html+=`<div class="${cls}" data-t="${t}" data-c="${c}" data-has="${has?1:0}" draggable="${has?'true':'false'}" style="background:${bg}" `+
+            `title="track ${t+1} ${SCENE_LETTERS[c]}${has?' · clip · drag to move (Alt=copy)':' · empty'}"></div>`;
     });
   }
   grid.innerHTML=html;
@@ -471,7 +474,30 @@ function renderSession(){
   grid.querySelectorAll(".sclip").forEach(el=>{
     el.onclick=()=>selectClip(+el.dataset.t,+el.dataset.c);
     el.ondblclick=()=>launchClip(+el.dataset.t,+el.dataset.c);
+    /* drag a clip to another slot: move (Alt = copy); only between same-mode tracks */
+    el.ondragstart=e=>{ if(el.dataset.has!=="1"){ e.preventDefault(); return; }
+      clipDrag={t:+el.dataset.t,c:+el.dataset.c}; e.dataTransfer.effectAllowed="copyMove"; };
+    el.ondragover=e=>{ if(!clipDrag) return;
+      const ok=M.tracks[clipDrag.t].pm===M.tracks[+el.dataset.t].pm;
+      if(!ok){ e.dataTransfer.dropEffect="none"; return; }
+      e.preventDefault(); e.dataTransfer.dropEffect=e.altKey?"copy":"move"; el.classList.add("drop"); };
+    el.ondragleave=()=>el.classList.remove("drop");
+    el.ondrop=e=>{ e.preventDefault(); el.classList.remove("drop");
+      const dst={t:+el.dataset.t,c:+el.dataset.c}; const src=clipDrag; clipDrag=null;
+      if(!src||(src.t===dst.t&&src.c===dst.c)) return;
+      if(M.tracks[src.t].pm!==M.tracks[dst.t].pm) return;
+      dropClip(src,dst,e.altKey); };
   });
+}
+/* perform a clip move/copy via clip_copy + (move) clearing the source */
+function dropClip(src,dst,copy){
+  const drum=M.tracks[src.t].pm===1;
+  R.setParam(P+(drum?"drum_clip_copy":"clip_copy"), `${src.t} ${src.c} ${dst.t} ${dst.c}`);
+  if(!copy) R.setParam(P+(drum?`t${src.t}_c${src.c}_drum_clear`:`t${src.t}_c${src.c}_clear`),"0");
+  /* optimistic grid update */
+  M.tracks[dst.t].has[dst.c]=true; if(!copy) M.tracks[src.t].has[src.c]=false;
+  afterEdit(); renderSession();
+  setTimeout(()=>selectClip(dst.t,dst.c),160);
 }
 function selectClip(t,c){
   R.setParam(P+`t${t}_c${c}_ruisel`,"");
