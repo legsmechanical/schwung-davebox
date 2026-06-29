@@ -10,16 +10,15 @@ static void test_snapshot_has_selected_clip_notes(void) {
     hx_t *h = hx_create(NULL);
     HX_ASSERT(h != NULL, "hx_create returned NULL");
 
-    /* add a melodic note to track 0, clip 0 via the existing step path */
-    hx_set_param(h, "t0_c0_step_0_toggle", "60 100");
-    /* select t0c0 as the remote snapshot target */
-    hx_set_param(h, "t0_c0_ruisel", "");
+    /* track 0 defaults to DRUM, so use track 1 (melodic) for the melodic path */
+    hx_set_param(h, "t1_c0_step_0_toggle", "60 100");
+    hx_set_param(h, "t1_c0_ruisel", "");
 
     char buf[8192];
     int len = hx_get_param(h, "state", buf, (int)sizeof(buf));
     HX_ASSERT(len > 0, "get_param state returned no data");
     /* flat string fields (manager-explosion-safe) */
-    HX_ASSERT(strstr(buf, "\"rui_sel\":\"0:0:-1\"") != NULL, "sel target not t0c0 melodic");
+    HX_ASSERT(strstr(buf, "\"rui_sel\":\"1:0:-1\"") != NULL, "sel target not t1c0 melodic");
     HX_ASSERT(strstr(buf, "\"rui_index\":\"") != NULL, "missing tracks index");
     HX_ASSERT(strstr(buf, "\"rui_notes\":\"") != NULL, "missing clip notes field");
     HX_ASSERT(strstr(buf, ":60:100:") != NULL, "pitch 60 vel 100 not in notes");

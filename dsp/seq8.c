@@ -6501,6 +6501,57 @@ static void clip_note_finalize(seq8_instance_t *inst, clip_t *cl) {
     inst->state_dirty = 1;
 }
 
+/* Drum-lane note op for the remote piano roll. A lane is monophonic at a fixed
+ * pitch (lane_note), so ops key off tick only; pitch is forced to lane_note.
+ *   t tick [vel] [gate]   toggle a hit at tick (add if absent, else remove)
+ *   a tick [vel] [gate]   add (no-op if a hit already exists at tick)
+ *   d tick                delete the hit at tick
+ *   v tick vel            set velocity
+ *   r tick gate           set gate
+ *   m oldtick newtick      move in time
+ * Returns 1 if the lane changed. */
+static int lane_note_apply_op(clip_t *cl, uint8_t lane_note, char op, const char *args) {
+    uint32_t maxtick = (uint32_t)cl->length * cl->ticks_per_step;
+    if (maxtick == 0) maxtick = 1;
+    long a[3] = {0,0,0}; int na = 0; const char *p = args;
+    while (na < 3) {
+        while (*p == ' ') p++;
+        if (!*p || *p == ';') break;
+        a[na++] = my_atoi(p);
+        while (*p && *p != ' ' && *p != ';') p++;
+    }
+    if (na < 1) return 0;
+    uint32_t tick = (uint32_t)clamp_i((int)a[0], 0, (int)maxtick - 1);
+    int idx = -1; uint16_t i;
+    for (i = 0; i < cl->note_count; i++)
+        if (cl->notes[i].active && cl->notes[i].tick == tick) { idx = (int)i; break; }
+    switch (op) {
+    case 't':
+        if (idx >= 0) { cl->notes[idx].active = 0; cl->occ_dirty = 1; return 1; }
+        /* fall through to add */
+    case 'a': {
+        if (idx >= 0) return 0;
+        uint8_t  vel  = (uint8_t)clamp_i(na > 1 ? (int)a[1] : SEQ_VEL, 1, 127);
+        uint16_t gate = (uint16_t)clamp_i(na > 2 ? (int)a[2] : GATE_TICKS, 1, 65535);
+        return clip_insert_note(cl, tick, gate, lane_note, vel) >= 0 ? 1 : 0;
+    }
+    case 'd':
+        if (idx < 0) return 0;
+        cl->notes[idx].active = 0; cl->occ_dirty = 1; return 1;
+    case 'v':
+        if (idx < 0 || na < 2) return 0;
+        cl->notes[idx].vel = (uint8_t)clamp_i((int)a[1], 1, 127); return 1;
+    case 'r':
+        if (idx < 0 || na < 2) return 0;
+        cl->notes[idx].gate = (uint16_t)clamp_i((int)a[1], 1, 65535); return 1;
+    case 'm':
+        if (idx < 0 || na < 2) return 0;
+        cl->notes[idx].tick = (uint32_t)clamp_i((int)a[1], 0, (int)maxtick - 1);
+        cl->occ_dirty = 1; return 1;
+    }
+    return 0;
+}
+
 /* Distribute 'hits' evenly across 'len' steps; returns count placed (<= hits, <= len).
  * Positions written ascending to out[]. First hit always at step 0.
  * Integer Bresenham distribution (pos[i] = (i * len) / hits) — yields the same
@@ -9471,7 +9522,12 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
     int t = inst->rui_sel_track; if (t < 0 || t >= NUM_TRACKS) t = 0;
     int c = inst->rui_sel_clip;  if (c < 0 || c >= NUM_CLIPS)  c = 0;
     seq8_track_t *tr = &inst->tracks[t];
-    clip_t *cl = &tr->clips[c];   /* melodic in M1; drum lane snapshot is M5 */
+    int drum = (tr->pad_mode == PAD_MODE_DRUM);
+    drum_clip_t *dclip = (drum && tr->drum_clips[tr->active_clip])
+                         ? tr->drum_clips[tr->active_clip] : NULL;
+    /* grid-reference clip: drum -> active drum clip lane 0; melodic -> selected clip.
+     * (Drum lane keys are active-clip-scoped, so the drum view shows the ACTIVE clip.) */
+    clip_t *gcl = dclip ? &dclip->lanes[0].clip : &tr->clips[c];
 
     int n = 0;  /* cursor; snprintf returns intended length, so guard each append */
     #define APP(...) do { if (n < out_len) n += snprintf(out + n, out_len - n, __VA_ARGS__); } while (0)
@@ -9483,8 +9539,8 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
         inst->playing ? 1 : 0, (unsigned)tr->current_clip_tick, (int)bpm);
     APP(",\"rui_sel\":\"%d:%d:%d\"", t, c, (int)inst->rui_sel_lane);
     APP(",\"rui_clip\":\"%d:%d:%d:%d\"",
-        (int)cl->length, (int)cl->ticks_per_step, (int)cl->loop_start,
-        (int)cl->playback_dir);
+        (int)gcl->length, (int)gcl->ticks_per_step, (int)gcl->loop_start,
+        (int)gcl->playback_dir);
 
     /* per-track index: "pm:ac:<16 has-bits>", tracks joined by ';' */
     APP(",\"rui_index\":\"");
@@ -9501,14 +9557,44 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
     }
     APP("\"");
 
-    /* selected clip notes */
-    APP(",\"rui_notes\":\"");
-    for (uint16_t k = 0; k < cl->note_count; k++) {
-        note_t *nt = &cl->notes[k];
-        if (!nt->active) continue;
-        APP("%u:%d:%d:%d;", (unsigned)nt->tick, (int)nt->pitch, (int)nt->vel, (int)nt->gate);
+    if (dclip) {
+        /* drum: 32 lanes (base note + has-content) for the active drum clip */
+        APP(",\"rui_dlanes\":\"");
+        for (int l = 0; l < DRUM_LANES; l++) {
+            clip_t *lc = &dclip->lanes[l].clip;
+            int has = 0;
+            for (uint16_t k = 0; k < lc->note_count; k++)
+                if (lc->notes[k].active) { has = 1; break; }
+            APP("%s%d,%d", l ? ";" : "", (int)dclip->lanes[l].midi_note, has);
+        }
+        APP("\"");
+        /* per-lane hits: "L|tick:vel:gate,tick:vel:gate;L|..." (non-empty lanes) */
+        APP(",\"rui_dnotes\":\"");
+        int firstlane = 1;
+        for (int l = 0; l < DRUM_LANES; l++) {
+            clip_t *lc = &dclip->lanes[l].clip;
+            int wrote = 0;
+            for (uint16_t k = 0; k < lc->note_count; k++) {
+                note_t *nt = &lc->notes[k];
+                if (!nt->active) continue;
+                if (!wrote) { APP("%s%d|%u:%d:%d", firstlane ? "" : ";", l,
+                                  (unsigned)nt->tick, (int)nt->vel, (int)nt->gate);
+                              firstlane = 0; wrote = 1; }
+                else APP(",%u:%d:%d", (unsigned)nt->tick, (int)nt->vel, (int)nt->gate);
+            }
+        }
+        APP("\"");
+        APP(",\"rui_notes\":\"\"");
+    } else {
+        /* melodic: selected clip notes */
+        APP(",\"rui_notes\":\"");
+        for (uint16_t k = 0; k < gcl->note_count; k++) {
+            note_t *nt = &gcl->notes[k];
+            if (!nt->active) continue;
+            APP("%u:%d:%d:%d;", (unsigned)nt->tick, (int)nt->pitch, (int)nt->vel, (int)nt->gate);
+        }
+        APP("\"");
     }
-    APP("\"");
 
     APP("}");
     #undef APP

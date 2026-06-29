@@ -115,9 +115,29 @@ static void test_clip_params(void) {
     hx_destroy(h);
 }
 
+/* drum-lane grid ops + drum snapshot. A tN_lL_* write converts the track to drum
+ * and allocates its drum clips (the documented auto-allocation trigger). */
+static void test_drum_lane_ops(void) {
+    hx_t *h = hx_create(NULL);
+    hx_set_param(h, "t3_l5_note_toggle", "48 100 24");   /* add hit: lane 5, tick 48 */
+    hx_set_param(h, "t3_c0_ruisel", "5");                /* select t3 (now drum), lane 5 */
+    char buf[8192]; int len = hx_get_param(h, "state", buf, (int)sizeof(buf));
+    HX_ASSERT(len > 0, "no snapshot");
+    HX_ASSERT(strstr(buf, "\"rui_dlanes\":\"") != NULL, "missing rui_dlanes (drum)");
+    HX_ASSERT(strstr(buf, "\"rui_dnotes\":\"") != NULL, "missing rui_dnotes (drum)");
+    HX_ASSERT(strstr(buf, "5|48:100:") != NULL, "lane-5 hit not in rui_dnotes");
+    HX_ASSERT(strstr(buf, "\"rui_notes\":\"\"") != NULL, "drum melodic-notes field should be empty");
+    /* toggle the same cell off */
+    hx_set_param(h, "t3_l5_note_toggle", "48");
+    hx_get_param(h, "state", buf, (int)sizeof(buf));
+    HX_ASSERT(strstr(buf, "5|48:") == NULL, "lane-5 hit not removed by toggle-off");
+    hx_destroy(h);
+}
+
 int main(void) {
     test_add();
     test_clip_params();
+    test_drum_lane_ops();
     test_del();
     test_move();
     test_resize();
