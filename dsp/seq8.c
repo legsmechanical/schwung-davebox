@@ -9597,11 +9597,11 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
     } else {
         APP(",\"rui_pfx\":\"\"");
     }
-    /* rui_lane = selected drum lane's "len:tps:loop_start" (per-lane length edit) */
+    /* rui_lane = selected drum lane's "len:tps:loop_start:dir" (per-lane settings) */
     if (drum && dclip && inst->rui_sel_lane >= 0 && inst->rui_sel_lane < DRUM_LANES) {
         clip_t *lc = &dclip->lanes[inst->rui_sel_lane].clip;
-        APP(",\"rui_lane\":\"%d:%d:%d\"",
-            (int)lc->length, (int)lc->ticks_per_step, (int)lc->loop_start);
+        APP(",\"rui_lane\":\"%d:%d:%d:%d\"",
+            (int)lc->length, (int)lc->ticks_per_step, (int)lc->loop_start, (int)lc->playback_dir);
     } else {
         APP(",\"rui_lane\":\"\"");
     }

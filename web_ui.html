@@ -281,7 +281,7 @@ function parseModel(){
   for(let i=0;i<12;i++) scaleMask.push(sm[i]==="1");
   /* selected drum lane "len:tps:loop" (drum only) */
   const lr=get("rui_lane"); let laneInfo=null;
-  if(lr){ const la=lr.split(":").map(Number); laneInfo={len:la[0]|0,tps:la[1]|0,ls:la[2]|0}; }
+  if(lr){ const la=lr.split(":").map(Number); laneInfo={len:la[0]|0,tps:la[1]|0,ls:la[2]|0,dir:la[3]|0}; }
   /* per-step trig conditions for the step strip: melodic clip (rui_steps) or
    * selected drum lane (rui_dsteps). Map step-index → {iter,rand,ratch,nudge}. */
   const stepTrig={};
@@ -465,6 +465,17 @@ function renderStepEdit(){
   if(nu&&!nu.disabled) nu.onchange=e=>{ const v=Math.max(-tmax,Math.min(tmax,+e.target.value|0)); setTrig("nudge",v); R.setParam(P+pfx+"_nudge",String(v)); afterEdit(); drawStepStrip(); };
 }
 const RES_TPS=[12,24,48,96,192,384], RES_LAB=["1/32","1/16","1/8","1/4","1/2","1/1"];
+const DIR_LAB=["Fwd","Bwd","PP-Fwd","PP-Bwd"];
+let allLanes=false;   /* drum: edits target ALL lanes at once (like the hardware ALL LANES bank) */
+/* emit a per-lane setting honoring All-Lanes: atomic tN_all_lanes_* key when one
+ * exists, else broadcast tN_lL_<suffix> across every lane. */
+function laneEmit(suffix,val,allKey){
+  if(allLanes){
+    if(allKey) R.setParam(P+`t${M.sel.t}_${allKey}`,val);
+    else for(let l=0;l<M.dlanes.length;l++) R.setParam(P+`t${M.sel.t}_l${l}_${suffix}`,val);
+  } else R.setParam(P+`t${M.sel.t}_l${M.sel.lane}_${suffix}`,val);
+  afterEdit();
+}
 function pullSoon(){ setTimeout(()=>{ suppressRefreshUntil=0; refresh(); }, 130); }
 /* per-clip / per-drum-lane FX. Melodic → tN_cC_pfx_set; drum (lane selected) →
  * tN_lL_pfx_set. The snapshot's rui_pfx already targets the selected lane. */
@@ -472,8 +483,8 @@ function renderFX(){
   const el=document.getElementById("fxpanel");
   const drum=isDrum(), laneSel=drum && M.sel.lane>=0;
   if((drum && !laneSel) || !M.pfx || M.pfx.length<PFX.length){ el.innerHTML=""; return; }
-  const ctx=drum ? ("Lane "+M.sel.lane+" FX") : "Clip FX";
-  let html=`<h4 style="margin-top:14px">${ctx}</h4>`, lastG=null;
+  const ctx=drum ? (allLanes?"All Lanes FX":("Lane "+M.sel.lane+" FX")) : "Clip FX";
+  let html=`<h4 style="margin-top:14px${drum&&allLanes?";color:var(--accent)":""}">${ctx}</h4>`, lastG=null;
   PFX.forEach((d,i)=>{
     if(d.g!==lastG){ html+=`<div class="kv" style="border:0;padding-top:8px"><span style="color:var(--dim)">${d.g}</span><span></span></div>`; lastG=d.g; }
     const v=M.pfx[i];
@@ -491,8 +502,10 @@ function renderFX(){
   el.innerHTML=html;
   const setI=(i,val)=>{ const d=PFX[i]; val=Math.max(d.lo,Math.min(d.hi,val|0));
     if(M.pfx[i]===val) return; M.pfx[i]=val;
-    const key=drum ? `t${M.sel.t}_l${M.sel.lane}_pfx_set` : `t${M.sel.t}_c${M.sel.c}_pfx_set`;
-    R.setParam(P+key, d.key+" "+val); afterEdit();
+    if(drum && allLanes){ for(let l=0;l<M.dlanes.length;l++) R.setParam(P+`t${M.sel.t}_l${l}_pfx_set`, d.key+" "+val); }
+    else { const key=drum ? `t${M.sel.t}_l${M.sel.lane}_pfx_set` : `t${M.sel.t}_c${M.sel.c}_pfx_set`;
+      R.setParam(P+key, d.key+" "+val); }
+    afterEdit();
     const inp=el.querySelector(`.fxin[data-i="${i}"]`); if(inp) inp.value=val; };
   el.querySelectorAll(".fxin").forEach(inp=>inp.onchange=e=>setI(+e.target.dataset.i,+e.target.value));
   el.querySelectorAll(".fxup").forEach(b=>b.onclick=e=>setI(+e.currentTarget.dataset.i,M.pfx[+e.currentTarget.dataset.i]+1));
@@ -549,33 +562,63 @@ function renderDrumPanel(){
     return;
   }
   const li=M.laneInfo, ln=M.dlanes[M.sel.lane], lane=M.sel.lane;
-  const muted=!!(ln&&ln.mute), soloed=!!(ln&&ln.solo);
-  el.innerHTML=`<h4 style="margin-top:14px">Lane ${lane}${ln?` · ${noteName(ln.note)}`:""}</h4>`+
-    `<div class="kv"><span>Trigger note</span><span><button id="lnDn" class="sm">−</button>`+
-    `<input id="lnIn" type="number" min="0" max="127" value="${ln?ln.note:36}" style="width:46px;text-align:right">`+
-    `<button id="lnUp" class="sm">+</button></span></div>`+
+  const muted=!!(ln&&ln.mute), soloed=!!(ln&&ln.solo), ridx=RES_TPS.indexOf(li.tps);
+  const dis=allLanes?" disabled":"";   /* trigger note is per-lane identity → no All-Lanes */
+  el.innerHTML=
+    `<h4 style="margin-top:14px${allLanes?";color:var(--accent)":""}">`+
+      `${allLanes?"ALL LANES":("Lane "+lane+(ln?" · "+noteName(ln.note):""))}</h4>`+
+    `<div class="kv"><span>Edit scope</span><span>`+
+      `<button id="laThis" class="sm${allLanes?"":" on"}">This</button>`+
+      `<button id="laAll" class="sm${allLanes?" on":""}">All</button></span></div>`+
+    `<div class="kv"><span>Trigger note</span><span><button id="lnDn" class="sm"${dis}>−</button>`+
+      `<input id="lnIn" type="number" min="0" max="127" value="${ln?ln.note:36}" style="width:46px;text-align:right"${dis}>`+
+      `<button id="lnUp" class="sm"${dis}>+</button></span></div>`+
     `<div class="kv"><span>Length</span><span><button id="llDn" class="sm">−</button>`+
-    `<input id="llIn" type="number" min="1" max="256" value="${li.len}" style="width:46px;text-align:right">`+
-    `<button id="llUp" class="sm">+</button></span></div>`+
+      `<input id="llIn" type="number" min="1" max="256" value="${li.len}" style="width:46px;text-align:right">`+
+      `<button id="llUp" class="sm">+</button></span></div>`+
+    `<div class="kv"><span>Resolution</span><span><select id="lResSel">`+
+      RES_LAB.map((n,i)=>`<option value="${i}"${i===ridx?" selected":""}>${n}</option>`).join("")+`</select></span></div>`+
+    `<div class="kv"><span>Loop start</span><span><button id="lsDn" class="sm">−</button>`+
+      `<input id="lsIn" type="number" min="0" max="255" value="${li.ls}" style="width:46px;text-align:right">`+
+      `<button id="lsUp" class="sm">+</button></span></div>`+
+    `<div class="kv"><span>Direction</span><span><select id="lDirSel">`+
+      DIR_LAB.map((n,i)=>`<option value="${i}"${i===li.dir?" selected":""}>${n}</option>`).join("")+`</select></span></div>`+
     `<div class="kv"><span>Mute / Solo</span><span>`+
-    `<button id="lMute" class="sm${muted?" on":""}">Mute</button>`+
-    `<button id="lSolo" class="sm${soloed?" on":""}">Solo</button></span></div>`;
-  const setLL=v=>{ v=Math.max(1,Math.min(256,v|0)); if(v===li.len)return; li.len=v;
-    R.setParam(P+`t${M.sel.t}_l${lane}_clip_length`,String(v)); afterEdit();
-    const inp=el.querySelector("#llIn"); if(inp)inp.value=v; };
+      `<button id="lMute" class="sm${muted?" on":""}">Mute</button>`+
+      `<button id="lSolo" class="sm${soloed?" on":""}">Solo</button></span></div>`;
+  el.querySelector("#laThis").onclick=()=>{ allLanes=false; renderDrumPanel(); renderFX(); };
+  el.querySelector("#laAll").onclick=()=>{ allLanes=true; renderDrumPanel(); renderFX(); };
+  /* trigger note — per-lane only */
+  const setLN=v=>{ if(allLanes)return; v=Math.max(0,Math.min(127,v|0)); if(!ln||v===ln.note)return; ln.note=v;
+    R.setParam(P+`t${M.sel.t}_l${lane}_lane_note`,String(v)); afterEdit(); renderDrumPanel(); draw(); };
+  if(!allLanes){ el.querySelector("#lnIn").onchange=e=>setLN(+e.target.value);
+    el.querySelector("#lnUp").onclick=()=>setLN((ln?ln.note:36)+1);
+    el.querySelector("#lnDn").onclick=()=>setLN((ln?ln.note:36)-1); }
+  /* length */
+  const setLL=v=>{ v=Math.max(1,Math.min(256,v|0)); li.len=v;
+    laneEmit("clip_length",String(v),"all_lanes_length"); const inp=el.querySelector("#llIn"); if(inp)inp.value=v; };
   el.querySelector("#llIn").onchange=e=>setLL(+e.target.value);
   el.querySelector("#llUp").onclick=()=>setLL(li.len+1);
   el.querySelector("#llDn").onclick=()=>setLL(li.len-1);
-  const setLN=v=>{ v=Math.max(0,Math.min(127,v|0)); if(!ln||v===ln.note)return; ln.note=v;
-    R.setParam(P+`t${M.sel.t}_l${lane}_lane_note`,String(v)); afterEdit();
-    renderDrumPanel(); draw(); };   /* re-render → header + lane label update */
-  el.querySelector("#lnIn").onchange=e=>setLN(+e.target.value);
-  el.querySelector("#lnUp").onclick=()=>setLN((ln?ln.note:36)+1);
-  el.querySelector("#lnDn").onclick=()=>setLN((ln?ln.note:36)-1);
-  el.querySelector("#lMute").onclick=()=>{ if(!ln)return; ln.mute=!muted;
-    R.setParam(P+`t${M.sel.t}_l${lane}_mute`,ln.mute?"1":"0"); afterEdit(); renderDrumPanel(); };
-  el.querySelector("#lSolo").onclick=()=>{ if(!ln)return; ln.solo=!soloed;
-    R.setParam(P+`t${M.sel.t}_l${lane}_solo`,ln.solo?"1":"0"); afterEdit(); renderDrumPanel(); };
+  /* resolution */
+  el.querySelector("#lResSel").onchange=e=>{ laneEmit("clip_resolution",e.target.value,"all_lanes_clip_resolution"); pullSoon(); };
+  /* loop start (loop_set packed = ls*65536 + len) */
+  const setLS=v=>{ v=Math.max(0,Math.min(255,v|0)); li.ls=v;
+    laneEmit("loop_set",String(v*65536+li.len),"all_lanes_loop_set"); const inp=el.querySelector("#lsIn"); if(inp)inp.value=v; pullSoon(); };
+  el.querySelector("#lsIn").onchange=e=>setLS(+e.target.value);
+  el.querySelector("#lsUp").onclick=()=>setLS(li.ls+1);
+  el.querySelector("#lsDn").onclick=()=>setLS(li.ls-1);
+  /* direction */
+  el.querySelector("#lDirSel").onchange=e=>{ li.dir=+e.target.value; laneEmit("playback_dir",e.target.value,"all_lanes_playback_dir"); };
+  /* mute / solo — no atomic all key, broadcast across lanes when All */
+  el.querySelector("#lMute").onclick=()=>{ const nv=!muted;
+    if(allLanes){ for(let l=0;l<M.dlanes.length;l++){ M.dlanes[l].mute=nv; R.setParam(P+`t${M.sel.t}_l${l}_mute`,nv?"1":"0"); } }
+    else if(ln){ ln.mute=nv; R.setParam(P+`t${M.sel.t}_l${lane}_mute`,nv?"1":"0"); }
+    afterEdit(); renderDrumPanel(); draw(); };
+  el.querySelector("#lSolo").onclick=()=>{ const nv=!soloed;
+    if(allLanes){ for(let l=0;l<M.dlanes.length;l++){ M.dlanes[l].solo=nv; R.setParam(P+`t${M.sel.t}_l${l}_solo`,nv?"1":"0"); } }
+    else if(ln){ ln.solo=nv; R.setParam(P+`t${M.sel.t}_l${lane}_solo`,nv?"1":"0"); }
+    afterEdit(); renderDrumPanel(); draw(); };
 }
 /* Global params: BPM (top bar) + key/scale/swing/scale-aware/launch-quant (side). */
 function renderGlobals(){
@@ -663,7 +706,7 @@ function dropClip(src,dst,copy){
 }
 function selectClip(t,c){
   R.setParam(P+`t${t}_c${c}_ruisel`,"");
-  selNote=null; selStep=-1; selDrum=null;   /* new clip → drop note + step + drum-hit selection */
+  selNote=null; selStep=-1; selDrum=null; allLanes=false;   /* new clip → drop selections + All-Lanes mode */
   if(M){ M.sel.t=t; M.sel.c=c; renderSession(); renderChrome(); }
   /* selection is not an edit — pull the newly-selected clip promptly */
   suppressRefreshUntil=0; setTimeout(refresh,30);
