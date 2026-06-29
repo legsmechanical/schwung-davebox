@@ -2663,6 +2663,25 @@ function pollDSP() {
         }
     }
     if (typeof host_module_get_param !== 'function') return;
+    /* Remote-UI edit sync: the browser piano-roll edits notes[]/clips directly in
+     * the DSP (they play immediately) but the on-device JS keeps its own clip
+     * grid + step mirror, which would otherwise only refresh on a local action.
+     * The DSP bumps rui_rev on every remote content edit (not on selection); when
+     * it changes, re-read clips from DSP so new clips + notes appear on-device.
+     * Throttled to the pollDSP cadence; zero cost while idle (rev unchanged). */
+    {
+        const _rr = host_module_get_param('rui_rev');
+        if (_rr !== null && _rr !== undefined) {
+            const _rev = parseInt(_rr, 10) | 0;
+            if (S.lastRemoteRev === undefined) {
+                S.lastRemoteRev = _rev;
+            } else if (_rev !== S.lastRemoteRev) {
+                S.lastRemoteRev = _rev;
+                syncClipsFromDsp();
+                S.screenDirty = true;
+            }
+        }
+    }
     /* Keep the AUTOMATION-bank AT indicator live (it appears as you record). */
     if (S.activeBank === 6) {
         const _at = S.activeTrack, _ac = effectiveClip(_at);

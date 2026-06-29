@@ -9643,6 +9643,15 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         return seq8_remote_snapshot(inst, out, out_len);
     }
 
+    if (!strcmp(key, "rui_rev")) {
+        /* Cheap monotonic edit counter, bumped by rui_touch() on every remote
+         * content edit (note/lane/length/dir/pfx) — NOT on mere clip selection.
+         * The on-device JS polls this each pollDSP cycle and re-syncs its clip
+         * grid + step view from DSP when it changes, so remote edits (new clips,
+         * added notes) become visible on-device without a local action. */
+        return snprintf(out, out_len, "%u", (unsigned)inst->rui_rev);
+    }
+
     if (!strcmp(key, "module_id")) {
         /* Remote-UI discovery probe. davebox runs as an overtake tool (no chain
          * slot), so the schwung-manager can't find it via the per-slot
