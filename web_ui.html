@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>dAVEBOx — Clip Editor</title>
+<style>
+  :root{--bg:#15171c;--panel:#1d2026;--ink:#e7e9ee;--dim:#8b909c;--accent:#39d0c8;
+        --grid:#2a2e37;--bar:#39414f;--row:#21252e;--rowblk:#191c22;--play:#ffcf4d;--has:#36506b;}
+  *{box-sizing:border-box} html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font:13px/1.4 ui-sans-serif,system-ui,-apple-system,sans-serif;overflow:hidden}
+  #app{display:flex;flex-direction:column;height:100%}
+  #top{display:flex;gap:12px;align-items:center;padding:8px 12px;background:var(--panel);
+       border-bottom:1px solid #000;flex:0 0 auto}
+  #top strong{letter-spacing:.5px}
+  .badge{padding:2px 9px;border-radius:10px;background:#0c0e12;color:var(--dim);font-size:12px}
+  .badge.play{color:var(--play)}
+  label{color:var(--dim);font-size:12px;display:flex;gap:4px;align-items:center}
+  select,button{background:#262b34;color:var(--ink);border:1px solid #333a45;border-radius:6px;
+    padding:4px 9px;cursor:pointer;font-size:12px}
+  button.on{border-color:var(--accent);color:var(--accent)}
+  #main{flex:1;display:flex;min-height:0}
+  #left{flex:0 0 auto;display:flex;background:var(--panel);border-right:1px solid #000}
+  #tracks{display:flex;flex-direction:column;padding:6px 4px 6px 8px;gap:2px;justify-content:flex-start}
+  .trk{font:11px ui-monospace,monospace;color:var(--dim);height:18px;display:flex;align-items:center;white-space:nowrap}
+  .trk.sel{color:var(--accent);font-weight:600}
+  #clips{display:grid;grid-auto-rows:18px;gap:2px;padding:6px 8px}
+  .cell{width:16px;height:18px;background:var(--row);border-radius:3px;cursor:pointer}
+  .cell.has{background:var(--has)}.cell.ac{outline:1px solid #4a5567}
+  .cell.sel{outline:2px solid var(--accent);outline-offset:0}
+  #roll{flex:1;position:relative;overflow:auto;background:var(--bg)}
+  #rollcanvas{display:block}
+  #drumph{position:absolute;inset:0;display:none;flex-direction:column;gap:6px;
+    align-items:center;justify-content:center;color:var(--dim);text-align:center;padding:20px;font-size:14px}
+  #drumph b{color:var(--ink)}
+  #side{flex:0 0 280px;background:var(--panel);border-left:1px solid #000;overflow:auto;padding:12px}
+  #side h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
+  .kv{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #23272f}
+  .kv span:last-child{color:var(--accent);font-variant-numeric:tabular-nums}
+  .hint{color:var(--dim);font-size:11px;margin-top:10px;line-height:1.5}
+</style></head>
+<body><div id="app">
+  <div id="top">
+    <strong>dAVEBOx</strong>
+    <span class="badge" id="transport">—</span>
+    <span class="badge" id="bpm">120 BPM</span>
+    <label>Snap <select id="snap">
+      <option value="6">1/64</option><option value="12">1/32</option>
+      <option value="24" selected>1/16</option><option value="48">1/8</option>
+      <option value="96">1/4</option></select></label>
+    <span style="flex:1"></span>
+    <span class="badge" id="clipname">—</span>
+    <button id="sync" title="Re-pull from device">Sync</button>
+    <button id="auto" class="on" title="Auto-refresh">Auto</button>
+  </div>
+  <div id="main">
+    <div id="left">
+      <div id="tracks"></div>
+      <div id="clips" title="tracks × 16 clip slots"></div>
+    </div>
+    <div id="roll">
+      <canvas id="rollcanvas" width="900" height="480"></canvas>
+      <div id="drumph">
+        <div>This track is in <b>Drum</b> mode.</div>
+        <div>The 32-lane drum view arrives in a later milestone.</div>
+        <div>Select a melodic track to edit on the piano roll.</div>
+      </div>
+    </div>
+    <div id="side">
+      <h4>Clip</h4>
+      <div id="clipinfo"></div>
+      <div class="hint">M1: read-only view. Click a clip slot to select it.
+        Note editing, clip params &amp; FX panels land in the next milestones.</div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/schwung-remote-api.js"></script>
+<script>
+/* ---- fallback shim: standalone local preview without a device. Speaks the
+       same "synth:"-prefixed flat fields the manager would seed. ---- */
+if (!window.schwungRemote) {
+  const KV = {
+    "synth:rui_rev":  "1",
+    "synth:rui_play": "1:120:120",                 /* on:tick:bpm */
+    "synth:rui_sel":  "1:0:-1",                     /* track1 clip0 melodic */
+    "synth:rui_clip": "16:24:0:0",                  /* len:tps:ls:dir */
+    "synth:rui_index":
+      "1:0:1000000000000000;" +                     /* t0 drum, clip0 has */
+      "0:0:1100000000000000;" +                     /* t1 melodic, clips 0,1 */
+      "0:0:0000000000000000;0:0:0000000000000000;" +
+      "0:0:0000000000000000;0:0:0000000000000000;" +
+      "0:0:0000000000000000;0:0:0000000000000000",
+    "synth:rui_notes":
+      "0:60:100:24;24:64:90:24;48:67:110:24;72:72:80:48;" +
+      "96:60:100:24;120:63:70:24;144:67:100:48;192:72:120:24;216:69:90:24;"
+  };
+  let subs = [];
+  window.schwungRemote = {
+    _mock: true,
+    getParam: k => Promise.resolve(KV[k] != null ? KV[k] : ""),
+    setParam: (k, v) => { console.log("setParam", k, v); },
+    onParamChange: cb => { subs.push(cb); },
+    /* emulate the manager re-pushing the full seeded set on subscribe */
+    resubscribe: () => subs.forEach(cb => cb(Object.assign({}, KV)))
+  };
+}
+</script>
+
+<script>
+(function(){
+const R = window.schwungRemote;
+const P = "synth:";                 /* davebox loads as the slot "synth" component */
+const kv = {};                      /* accumulated key->value from param updates  */
+let M = null;                       /* parsed model */
+let lastRev = null, lastSelKey = null;
+
+/* ---- parse the flat snapshot fields into a model ---- */
+function parseModel(){
+  const get = k => kv[P+k];
+  if (get("rui_sel") == null) return null;
+  const [pon,ptick,pbpm] = (get("rui_play")||"0:0:120").split(":").map(Number);
+  const [st,sc,sl]       = (get("rui_sel")||"0:0:-1").split(":").map(Number);
+  const [cl,ct,cls,cd]   = (get("rui_clip")||"16:24:0:0").split(":").map(Number);
+  const tracks = (get("rui_index")||"").split(";").map(seg=>{
+    const c1 = seg.indexOf(":"), c2 = seg.indexOf(":", c1+1);
+    const pm = +seg.slice(0,c1), ac = +seg.slice(c1+1,c2), bits = seg.slice(c2+1);
+    const has = []; for(let i=0;i<16;i++) has.push(bits[i]==="1");
+    return {pm,ac,has};
+  });
+  const notes = (get("rui_notes")||"").split(";").filter(Boolean).map(tok=>{
+    const [tick,pitch,vel,gate] = tok.split(":").map(Number);
+    return {tick,pitch,vel,gate};
+  });
+  return {rev:+(get("rui_rev")||0), play:{on:pon,tick:ptick,bpm:pbpm},
+          sel:{t:st,c:sc,lane:sl}, clip:{len:cl,tps:ct,ls:cls,dir:cd}, tracks, notes};
+}
+
+/* ---- top bar + side panel ---- */
+function renderChrome(){
+  const tr = document.getElementById("transport");
+  tr.textContent = M.play.on ? "▶ playing" : "■ stopped";
+  tr.classList.toggle("play", !!M.play.on);
+  document.getElementById("bpm").textContent = (M.play.bpm|0)+" BPM";
+  const drum = M.tracks[M.sel.t] && M.tracks[M.sel.t].pm === 1;
+  document.getElementById("clipname").textContent =
+    (drum?"D":"M")+(M.sel.t+1)+" · clip "+(M.sel.c+1);
+  const dir = ["Fwd","Bwd","PP-Fwd","PP-Bwd"][M.clip.dir] || M.clip.dir;
+  const tpsName = {6:"1/64",12:"1/32",24:"1/16",48:"1/8",96:"1/4",192:"1/2",384:"1/1"}[M.clip.tps]||M.clip.tps;
+  document.getElementById("clipinfo").innerHTML =
+    [["Length", M.clip.len+" steps"],["Resolution", tpsName],
+     ["Loop start", M.clip.ls],["Direction", dir],["Notes", M.notes.length]]
+    .map(([k,v])=>`<div class="kv"><span>${k}</span><span>${v}</span></div>`).join("");
+}
+
+/* ---- clip selector (8 track rows × 16 clip cells) ---- */
+function renderSelector(){
+  const tracks=document.getElementById("tracks"), clips=document.getElementById("clips");
+  clips.style.gridTemplateColumns=`repeat(16,16px)`;
+  tracks.innerHTML=""; clips.innerHTML="";
+  M.tracks.forEach((trk,t)=>{
+    const lab=document.createElement("div");
+    lab.className="trk"+(t===M.sel.t?" sel":"");
+    lab.textContent=(trk.pm===1?"D":trk.pm===2?"C":"M")+(t+1);
+    tracks.appendChild(lab);
+    trk.has.forEach((has,c)=>{
+      const cell=document.createElement("div");
+      cell.className="cell"+(has?" has":"")+(c===trk.ac?" ac":"")
+                     +(t===M.sel.t&&c===M.sel.c?" sel":"");
+      cell.title=`track ${t+1} clip ${c+1}`;
+      cell.onclick=()=>selectClip(t,c);
+      clips.appendChild(cell);
+    });
+  });
+}
+function selectClip(t,c){
+  R.setParam(P+`t${t}_c${c}_ruisel`, "");
+  /* optimistic: reflect selection instantly, then re-pull for the clip's notes */
+  if(M){ M.sel.t=t; M.sel.c=c; renderSelector(); renderChrome(); }
+  setTimeout(refresh, 30);
+}
+
+/* ---- piano roll ---- */
+const cv=document.getElementById("rollcanvas"), ctx=cv.getContext("2d");
+const PITCH_LO=36, PITCH_HI=96, ROWH=8;       /* C2..C7 */
+let PXPERTICK=0.6;
+function layout(){
+  const total=Math.max(1,M.clip.len*M.clip.tps);
+  cv.width=Math.max(880, Math.ceil(total*PXPERTICK)+40);
+  cv.height=(PITCH_HI-PITCH_LO)*ROWH;
+}
+const X=t=>20+t*PXPERTICK, Y=p=>(PITCH_HI-p)*ROWH;
+function draw(){
+  if(!M) return;
+  const drum = M.tracks[M.sel.t] && M.tracks[M.sel.t].pm===1;
+  document.getElementById("drumph").style.display = drum ? "flex" : "none";
+  cv.style.display = drum ? "none" : "block";
+  if(drum) return;
+  const W=cv.width,H=cv.height,tps=M.clip.tps,total=M.clip.len*tps;
+  ctx.fillStyle="#15171c"; ctx.fillRect(0,0,W,H);
+  for(let p=PITCH_LO;p<PITCH_HI;p++){ const s=((p%12)+12)%12, blk=[1,3,6,8,10].includes(s);
+    ctx.fillStyle=blk?"#191c22":"#21252e"; ctx.fillRect(0,Y(p)-ROWH,W,ROWH-1);
+    if(s===0){ ctx.fillStyle="#3a4150"; ctx.font="9px ui-monospace,monospace";
+      ctx.fillText("C"+(Math.floor(p/12)-1),2,Y(p)-1); } }
+  for(let st=0;st<=M.clip.len;st++){ const x=X(st*tps);
+    ctx.strokeStyle=(st%4===0)?"#39414f":"#2a2e37"; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+  M.notes.forEach(nt=>{
+    if(nt.pitch<PITCH_LO||nt.pitch>=PITCH_HI) return;
+    const x=X(nt.tick), w=Math.max(3,nt.gate*PXPERTICK), y=Y(nt.pitch)-ROWH+1;
+    ctx.fillStyle=`rgba(57,208,200,${0.30+0.70*(nt.vel/127)})`;
+    ctx.fillRect(x,y,w,ROWH-2);
+    ctx.strokeStyle="#0c2e2c"; ctx.lineWidth=1; ctx.strokeRect(x+0.5,y+0.5,w-1,ROWH-3);
+  });
+  if(M.play.on && total>0){ const x=X(M.play.tick%total);
+    ctx.strokeStyle="#ffcf4d"; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+}
+
+/* ---- apply an incoming param batch ---- */
+function applyParams(params){
+  let touched=false;
+  for(const k in params){ if(k.indexOf(P+"rui_")===0){ kv[k]=params[k]; touched=true; } }
+  if(!touched) return;
+  const m=parseModel(); if(!m) return; M=m;
+  const selKey=M.sel.t+":"+M.sel.c;
+  renderChrome();
+  if(selKey!==lastSelKey){ lastSelKey=selKey; renderSelector(); }
+  else renderSelector();                         /* cheap; keeps has-bits fresh */
+  if(M.rev!==lastRev || selKey!==lastSelKey){ lastRev=M.rev; layout(); }
+  draw();
+}
+
+/* ---- refresh: re-subscribe so the manager re-seeds + pushes the full set ---- */
+function refresh(){
+  if(typeof R.resubscribe==="function"){ R.resubscribe(); return; }   /* mock */
+  if(window.parent){ window.parent.postMessage({type:"subscribe"},"*"); }
+  /* belt-and-suspenders: also pull the keys directly from cache */
+  const keys=["rui_rev","rui_play","rui_sel","rui_clip","rui_index","rui_notes"];
+  Promise.all(keys.map(k=>R.getParam(P+k).then(v=>[P+k,v]).catch(()=>null)))
+    .then(pairs=>{ const o={}; pairs.forEach(p=>{if(p&&p[1]!=null)o[p[0]]=p[1];}); applyParams(o); });
+}
+
+/* ---- wire up ---- */
+R.onParamChange && R.onParamChange(applyParams);
+let auto=true;
+document.getElementById("auto").onclick=e=>{auto=!auto;e.target.classList.toggle("on",auto);};
+document.getElementById("sync").onclick=refresh;
+document.getElementById("snap").onchange=()=>{ /* used by M2 editing */ };
+setInterval(()=>{ if(auto) refresh(); }, M_INTERVAL());
+function M_INTERVAL(){ return 600; }
+
+/* boot */
+refresh();
+window._dbg={get M(){return M;}, refresh, applyParams};   /* for headless preview */
+})();
+</script>
+</body></html>
