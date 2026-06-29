@@ -9636,14 +9636,15 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
     APP("\"");
 
     if (dclip) {
-        /* drum: 32 lanes (base note + has-content) for the active drum clip */
+        /* drum: 32 lanes "note,has,mute,solo" for the active drum clip */
         APP(",\"rui_dlanes\":\"");
         for (int l = 0; l < DRUM_LANES; l++) {
             clip_t *lc = &dclip->lanes[l].clip;
             int has = 0;
             for (uint16_t k = 0; k < lc->note_count; k++)
                 if (lc->notes[k].active) { has = 1; break; }
-            APP("%s%d,%d", l ? ";" : "", (int)dclip->lanes[l].midi_note, has);
+            int mu = (tr->drum_lane_mute >> l) & 1, so = (tr->drum_lane_solo >> l) & 1;
+            APP("%s%d,%d,%d,%d", l ? ";" : "", (int)dclip->lanes[l].midi_note, has, mu, so);
         }
         APP("\"");
         /* per-lane hits: "L|tick:vel:gate,tick:vel:gate;L|..." (non-empty lanes) */

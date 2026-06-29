@@ -263,7 +263,7 @@ function parseModel(){
   });
   /* drum data (present only when the selected track is in drum mode) */
   const dlanes = (get("rui_dlanes")||"").split(";").filter(Boolean).map(s=>{
-    const [note,has]=s.split(",").map(Number); return {note,has:!!has};
+    const [note,has,mu,so]=s.split(",").map(Number); return {note,has:!!has,mute:!!mu,solo:!!so};
   });
   const dnotes = {};
   (get("rui_dnotes")||"").split(";").filter(Boolean).forEach(blk=>{
@@ -548,17 +548,34 @@ function renderDrumPanel(){
     el.innerHTML=`<div class="hint">Click a <b>lane label</b> (left of the drum grid) to edit that lane's length + FX.</div>`;
     return;
   }
-  const li=M.laneInfo;
-  el.innerHTML=`<h4 style="margin-top:14px">Lane ${M.sel.lane}</h4>`+
-    `<div class="kv"><span>Lane length</span><span><button id="llDn" class="sm">−</button>`+
-    `<input id="llIn" type="number" min="1" max="256" value="${li.len}" style="width:52px;text-align:right">`+
-    `<button id="llUp" class="sm">+</button></span></div>`;
+  const li=M.laneInfo, ln=M.dlanes[M.sel.lane], lane=M.sel.lane;
+  const muted=!!(ln&&ln.mute), soloed=!!(ln&&ln.solo);
+  el.innerHTML=`<h4 style="margin-top:14px">Lane ${lane}${ln?` · ${noteName(ln.note)}`:""}</h4>`+
+    `<div class="kv"><span>Trigger note</span><span><button id="lnDn" class="sm">−</button>`+
+    `<input id="lnIn" type="number" min="0" max="127" value="${ln?ln.note:36}" style="width:46px;text-align:right">`+
+    `<button id="lnUp" class="sm">+</button></span></div>`+
+    `<div class="kv"><span>Length</span><span><button id="llDn" class="sm">−</button>`+
+    `<input id="llIn" type="number" min="1" max="256" value="${li.len}" style="width:46px;text-align:right">`+
+    `<button id="llUp" class="sm">+</button></span></div>`+
+    `<div class="kv"><span>Mute / Solo</span><span>`+
+    `<button id="lMute" class="sm${muted?" on":""}">Mute</button>`+
+    `<button id="lSolo" class="sm${soloed?" on":""}">Solo</button></span></div>`;
   const setLL=v=>{ v=Math.max(1,Math.min(256,v|0)); if(v===li.len)return; li.len=v;
-    R.setParam(P+`t${M.sel.t}_l${M.sel.lane}_clip_length`,String(v)); afterEdit();
+    R.setParam(P+`t${M.sel.t}_l${lane}_clip_length`,String(v)); afterEdit();
     const inp=el.querySelector("#llIn"); if(inp)inp.value=v; };
   el.querySelector("#llIn").onchange=e=>setLL(+e.target.value);
   el.querySelector("#llUp").onclick=()=>setLL(li.len+1);
   el.querySelector("#llDn").onclick=()=>setLL(li.len-1);
+  const setLN=v=>{ v=Math.max(0,Math.min(127,v|0)); if(!ln||v===ln.note)return; ln.note=v;
+    R.setParam(P+`t${M.sel.t}_l${lane}_lane_note`,String(v)); afterEdit();
+    renderDrumPanel(); draw(); };   /* re-render → header + lane label update */
+  el.querySelector("#lnIn").onchange=e=>setLN(+e.target.value);
+  el.querySelector("#lnUp").onclick=()=>setLN((ln?ln.note:36)+1);
+  el.querySelector("#lnDn").onclick=()=>setLN((ln?ln.note:36)-1);
+  el.querySelector("#lMute").onclick=()=>{ if(!ln)return; ln.mute=!muted;
+    R.setParam(P+`t${M.sel.t}_l${lane}_mute`,ln.mute?"1":"0"); afterEdit(); renderDrumPanel(); };
+  el.querySelector("#lSolo").onclick=()=>{ if(!ln)return; ln.solo=!soloed;
+    R.setParam(P+`t${M.sel.t}_l${lane}_solo`,ln.solo?"1":"0"); afterEdit(); renderDrumPanel(); };
 }
 /* Global params: BPM (top bar) + key/scale/swing/scale-aware/launch-quant (side). */
 function renderGlobals(){
@@ -740,6 +757,8 @@ function drawDrum(){
     ctx.globalAlpha=ln.has?1:0.55; ctx.fillStyle=selL?"#cfe9e7":(ln.has?"#aeb4c0":"#6b707c");
     ctx.font="10px ui-monospace,monospace"; ctx.fillText(noteName(ln.note),7,y+DLANEH-3);
     ctx.globalAlpha=1;
+    if(ln.mute||ln.solo){ ctx.fillStyle=ln.solo?"#ffcf4d":"#e88";
+      ctx.fillText(ln.solo?"S":"M",DLBL-11,y+DLANEH-3); }
   });
   for(let s=0;s<=len;s++){ const x=DLBL+s*DCELLW;
     ctx.strokeStyle=(s%4===0)?"#39414f":"#262c36"; ctx.lineWidth=1;
@@ -747,11 +766,12 @@ function drawDrum(){
   /* hits at their ABSOLUTE tick (off-grid capable), width from gate */
   const dpt=DCELLW/tps;
   for(const L in M.dnotes){ const l=+L; if(l>=lanes.length) continue;
+    const dim=lanes[l]&&lanes[l].mute?0.32:1;   /* muted lane → dim its hits */
     M.dnotes[L].forEach(h=>{
       const x=DLBL+h.tick*dpt; if(x>cv.width) return;
       const w=Math.max(5,Math.min(h.gate*dpt, cv.width-x-1)), y=l*DLANEH;
       const sel=selDrum&&selDrum.lane===l&&selDrum.tick===h.tick;
-      ctx.fillStyle=`rgba(57,208,200,${0.35+0.65*(h.vel/127)})`;
+      ctx.fillStyle=`rgba(57,208,200,${(0.35+0.65*(h.vel/127))*dim})`;
       ctx.fillRect(x+0.5,y+1.5,w,DLANEH-4);
       ctx.strokeStyle=sel?"#ffcf4d":"#0c2e2c"; ctx.lineWidth=sel?2:1;
       ctx.strokeRect(x+0.5,y+1.5,w,DLANEH-4);
