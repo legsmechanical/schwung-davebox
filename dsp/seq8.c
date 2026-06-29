@@ -6402,6 +6402,105 @@ static int clip_insert_note(clip_t *cl, uint32_t tick, uint16_t gate,
     return idx;
 }
 
+/* ------------------------------------------------------------------ */
+/* Remote-UI note-centric editing helpers (piano roll).                 */
+/* These edit notes[] directly (the canonical playback model) and run   */
+/* only from set_param context, which the host drains at audio-buffer   */
+/* boundaries — never concurrent with render — so array rewrites are     */
+/* safe (same contract clip_migrate_to_notes already relies on).        */
+/* ------------------------------------------------------------------ */
+
+/* Bump the remote-UI revision so the browser notices device/remote edits. */
+static inline void rui_touch(seq8_instance_t *inst) { if (inst) inst->rui_rev++; }
+
+/* Find an active note by exact tick+pitch. Returns index or -1. */
+static int clip_find_note(clip_t *cl, uint32_t tick, uint8_t pitch) {
+    uint16_t i;
+    for (i = 0; i < cl->note_count; i++)
+        if (cl->notes[i].active && cl->notes[i].tick == tick && cl->notes[i].pitch == pitch)
+            return (int)i;
+    return -1;
+}
+
+/* Drop tombstoned (active==0) notes, packing survivors down. Reclaims slots
+ * so add/del/move churn from the piano roll never starves MAX_NOTES_PER_CLIP. */
+static void clip_compact_notes(clip_t *cl) {
+    uint16_t w = 0, r;
+    for (r = 0; r < cl->note_count; r++) {
+        if (!cl->notes[r].active) continue;
+        if (w != r) cl->notes[w] = cl->notes[r];
+        w++;
+    }
+    for (r = w; r < cl->note_count; r++) cl->notes[r].active = 0;
+    cl->note_count = w;
+    cl->occ_dirty = 1;
+}
+
+/* Apply one piano-roll note op to a melodic clip. op: a/d/m/r/v.
+ *   a tick pitch [vel] [gate]      add (deduped on tick+pitch)
+ *   d tick pitch                   delete (tombstone)
+ *   m oldtick oldpitch newtick newpitch   move (in place)
+ *   r tick pitch newgate           resize gate
+ *   v tick pitch newvel            set velocity
+ * Returns 1 if the clip changed. Clamps all inputs to the clip window. */
+static int clip_note_apply_op(clip_t *cl, char op, const char *args) {
+    uint32_t maxtick = (uint32_t)cl->length * cl->ticks_per_step;
+    if (maxtick == 0) maxtick = 1;
+    long a[4] = {0,0,0,0}; int na = 0; const char *p = args;
+    while (na < 4) {
+        while (*p == ' ') p++;
+        if (!*p || *p == ';') break;
+        a[na++] = my_atoi(p);
+        while (*p && *p != ' ' && *p != ';') p++;
+    }
+    switch (op) {
+    case 'a': {
+        if (na < 2) return 0;
+        uint32_t tick = (uint32_t)clamp_i((int)a[0], 0, (int)maxtick - 1);
+        uint8_t  pitch = (uint8_t)clamp_i((int)a[1], 0, 127);
+        uint8_t  vel   = (uint8_t)clamp_i(na > 2 ? (int)a[2] : SEQ_VEL, 1, 127);
+        uint16_t gate  = (uint16_t)clamp_i(na > 3 ? (int)a[3] : GATE_TICKS, 1, 65535);
+        if (clip_find_note(cl, tick, pitch) >= 0) return 0;   /* no duplicate */
+        return clip_insert_note(cl, tick, gate, pitch, vel) >= 0 ? 1 : 0;
+    }
+    case 'd': {
+        if (na < 2) return 0;
+        int idx = clip_find_note(cl, (uint32_t)a[0], (uint8_t)clamp_i((int)a[1], 0, 127));
+        if (idx < 0) return 0;
+        cl->notes[idx].active = 0; cl->occ_dirty = 1; return 1;
+    }
+    case 'm': {
+        if (na < 4) return 0;
+        int idx = clip_find_note(cl, (uint32_t)a[0], (uint8_t)clamp_i((int)a[1], 0, 127));
+        if (idx < 0) return 0;
+        cl->notes[idx].tick  = (uint32_t)clamp_i((int)a[2], 0, (int)maxtick - 1);
+        cl->notes[idx].pitch = (uint8_t)clamp_i((int)a[3], 0, 127);
+        cl->occ_dirty = 1; return 1;
+    }
+    case 'r': {
+        if (na < 3) return 0;
+        int idx = clip_find_note(cl, (uint32_t)a[0], (uint8_t)clamp_i((int)a[1], 0, 127));
+        if (idx < 0) return 0;
+        cl->notes[idx].gate = (uint16_t)clamp_i((int)a[2], 1, 65535); return 1;
+    }
+    case 'v': {
+        if (na < 3) return 0;
+        int idx = clip_find_note(cl, (uint32_t)a[0], (uint8_t)clamp_i((int)a[1], 0, 127));
+        if (idx < 0) return 0;
+        cl->notes[idx].vel = (uint8_t)clamp_i((int)a[2], 1, 127); return 1;
+    }
+    }
+    return 0;
+}
+
+/* Commit note edits: reclaim tombstones, re-derive the step/LED view, mark dirty. */
+static void clip_note_finalize(seq8_instance_t *inst, clip_t *cl) {
+    clip_compact_notes(cl);
+    clip_build_steps_from_notes(cl);
+    rui_touch(inst);
+    inst->state_dirty = 1;
+}
+
 /* Distribute 'hits' evenly across 'len' steps; returns count placed (<= hits, <= len).
  * Positions written ascending to out[]. First hit always at step 0.
  * Integer Bresenham distribution (pos[i] = (i * len) / hits) — yields the same
@@ -9348,10 +9447,6 @@ static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
 
     return -1;
 }
-
-/* Bump the remote-UI revision so the browser notices device/remote edits.
- * static inline → no unused-function warning until M2 wires in edit ops. */
-static inline void rui_touch(seq8_instance_t *inst) { if (inst) inst->rui_rev++; }
 
 /* ------------------------------------------------------------------ */
 /* Remote-UI snapshot: a FLAT JSON object of string values for the      */

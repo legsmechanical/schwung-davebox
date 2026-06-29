@@ -2239,6 +2239,28 @@ static void set_param(void *instance, const char *key, const char *val) {
                 return;
             }
 
+            /* Remote-UI piano-roll note edits (melodic clip). Each writes notes[]
+             * directly then re-derives steps[] via clip_note_finalize. */
+            if (!strcmp(p, "_note_add"))    { if (clip_note_apply_op(cl, 'a', val)) clip_note_finalize(inst, cl); return; }
+            if (!strcmp(p, "_note_del"))    { if (clip_note_apply_op(cl, 'd', val)) clip_note_finalize(inst, cl); return; }
+            if (!strcmp(p, "_note_move"))   { if (clip_note_apply_op(cl, 'm', val)) clip_note_finalize(inst, cl); return; }
+            if (!strcmp(p, "_note_resize")) { if (clip_note_apply_op(cl, 'r', val)) clip_note_finalize(inst, cl); return; }
+            if (!strcmp(p, "_note_vel"))    { if (clip_note_apply_op(cl, 'v', val)) clip_note_finalize(inst, cl); return; }
+            if (!strcmp(p, "_notes_op")) {
+                /* batch: "<op> args; <op> args; ..." — one finalize for the lot */
+                const char *s = val; int changed = 0;
+                while (*s) {
+                    while (*s == ' ' || *s == ';') s++;
+                    if (!*s) break;
+                    char op = *s++;
+                    while (*s == ' ') s++;
+                    changed |= clip_note_apply_op(cl, op, s);
+                    while (*s && *s != ';') s++;   /* advance to next ';' */
+                }
+                if (changed) clip_note_finalize(inst, cl);
+                return;
+            }
+
             if (!strncmp(p, "_step_", 6)) {
                 const char *q = p + 6;
                 int sidx = 0;
