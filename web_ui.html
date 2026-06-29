@@ -6,7 +6,8 @@
   :root{--bg:#15171c;--panel:#1d2026;--ink:#e7e9ee;--dim:#8b909c;--accent:#39d0c8;
         --grid:#2a2e37;--bar:#39414f;--row:#21252e;--rowblk:#191c22;--play:#ffcf4d;--has:#36506b;}
   *{box-sizing:border-box} html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
-    font:13px/1.4 ui-sans-serif,system-ui,-apple-system,sans-serif;overflow:hidden}
+    font:13px/1.4 ui-sans-serif,system-ui,-apple-system,sans-serif;overflow:hidden;
+    -webkit-user-select:none;user-select:none}
   #app{display:flex;flex-direction:column;height:100%}
   #top{display:flex;gap:12px;align-items:center;padding:8px 12px;background:var(--panel);
        border-bottom:1px solid #000;flex:0 0 auto}
@@ -19,15 +20,19 @@
   button.on{border-color:var(--accent);color:var(--accent)}
   #main{flex:1;display:flex;min-height:0}
   #left{flex:0 0 auto;display:flex;background:var(--panel);border-right:1px solid #000}
-  #tracks{display:flex;flex-direction:column;padding:6px 4px 6px 8px;gap:2px;justify-content:flex-start}
-  .trk{font:11px ui-monospace,monospace;color:var(--dim);height:18px;display:flex;align-items:center;white-space:nowrap}
+  #tracks{display:flex;flex-direction:column;padding:6px 4px 6px 8px;gap:2px}
+  .trk{font:11px ui-monospace,monospace;color:var(--dim);height:18px;display:flex;align-items:center;white-space:nowrap;cursor:pointer}
   .trk.sel{color:var(--accent);font-weight:600}
   #clips{display:grid;grid-auto-rows:18px;gap:2px;padding:6px 8px}
   .cell{width:16px;height:18px;background:var(--row);border-radius:3px;cursor:pointer}
   .cell.has{background:var(--has)}.cell.ac{outline:1px solid #4a5567}
-  .cell.sel{outline:2px solid var(--accent);outline-offset:0}
+  .cell.sel{outline:2px solid var(--accent)}
+  #rollwrap{flex:1;display:flex;flex-direction:column;min-width:0}
   #roll{flex:1;position:relative;overflow:auto;background:var(--bg)}
-  #rollcanvas{display:block}
+  #rollcanvas{display:block;cursor:crosshair}
+  #velwrap{flex:0 0 56px;border-top:1px solid #000;background:#101216;position:relative;overflow:hidden}
+  #velcanvas{display:block;cursor:ns-resize}
+  #vellabel{position:absolute;left:6px;top:3px;font:10px ui-monospace,monospace;color:var(--dim);pointer-events:none}
   #drumph{position:absolute;inset:0;display:none;flex-direction:column;gap:6px;
     align-items:center;justify-content:center;color:var(--dim);text-align:center;padding:20px;font-size:14px}
   #drumph b{color:var(--ink)}
@@ -56,36 +61,40 @@
       <div id="tracks"></div>
       <div id="clips" title="tracks × 16 clip slots"></div>
     </div>
-    <div id="roll">
-      <canvas id="rollcanvas" width="900" height="480"></canvas>
-      <div id="drumph">
-        <div>This track is in <b>Drum</b> mode.</div>
-        <div>The 32-lane drum view arrives in a later milestone.</div>
-        <div>Select a melodic track to edit on the piano roll.</div>
+    <div id="rollwrap">
+      <div id="roll">
+        <canvas id="rollcanvas" width="900" height="480"></canvas>
+        <div id="drumph">
+          <div>This track is in <b>Drum</b> mode.</div>
+          <div>The 32-lane drum view arrives in a later milestone.</div>
+          <div>Select a melodic track to edit on the piano roll.</div>
+        </div>
       </div>
+      <div id="velwrap"><canvas id="velcanvas" width="900" height="56"></canvas><div id="vellabel">VEL</div></div>
     </div>
     <div id="side">
       <h4>Clip</h4>
       <div id="clipinfo"></div>
-      <div class="hint">M1: read-only view. Click a clip slot to select it.
-        Note editing, clip params &amp; FX panels land in the next milestones.</div>
+      <div class="hint"><b>Click</b> empty = add note · <b>drag</b> body = move ·
+        <b>drag right edge</b> = length · <b>right-click</b> / Alt-click = delete ·
+        drag in the <b>VEL</b> lane = velocity. Edits snap to the grid selector.</div>
     </div>
   </div>
 </div>
 
 <script src="/static/schwung-remote-api.js"></script>
 <script>
-/* ---- fallback shim: standalone local preview without a device. Speaks the
-       same "synth:"-prefixed flat fields the manager would seed. ---- */
+/* ---- fallback shim: standalone local preview without a device. Speaks the same
+       "synth:"-prefixed flat fields the manager seeds, and APPLIES note ops to its
+       mock store so the preview is a faithful edit loop. ---- */
 if (!window.schwungRemote) {
   const KV = {
     "synth:rui_rev":  "1",
-    "synth:rui_play": "1:120:120",                 /* on:tick:bpm */
-    "synth:rui_sel":  "1:0:-1",                     /* track1 clip0 melodic */
-    "synth:rui_clip": "16:24:0:0",                  /* len:tps:ls:dir */
+    "synth:rui_play": "1:120:120",
+    "synth:rui_sel":  "1:0:-1",
+    "synth:rui_clip": "16:24:0:0",
     "synth:rui_index":
-      "1:0:1000000000000000;" +                     /* t0 drum, clip0 has */
-      "0:0:1100000000000000;" +                     /* t1 melodic, clips 0,1 */
+      "1:0:1000000000000000;0:0:1100000000000000;" +
       "0:0:0000000000000000;0:0:0000000000000000;" +
       "0:0:0000000000000000;0:0:0000000000000000;" +
       "0:0:0000000000000000;0:0:0000000000000000",
@@ -93,13 +102,38 @@ if (!window.schwungRemote) {
       "0:60:100:24;24:64:90:24;48:67:110:24;72:72:80:48;" +
       "96:60:100:24;120:63:70:24;144:67:100:48;192:72:120:24;216:69:90:24;"
   };
+  const parseNotes = () => (KV["synth:rui_notes"]||"").split(";").filter(Boolean)
+        .map(t=>t.split(":").map(Number)).map(([tick,pitch,vel,gate])=>({tick,pitch,vel,gate}));
+  const writeNotes = ns => { KV["synth:rui_notes"] = ns.map(n=>`${n.tick}:${n.pitch}:${n.vel}:${n.gate};`).join("");
+        KV["synth:rui_rev"] = String((+KV["synth:rui_rev"]||0)+1); };
+  const find = (ns,tk,pi)=>ns.findIndex(n=>n.tick===tk&&n.pitch===pi);
+  function applyOp(ns, op, a){
+    if(op==='a'){ const [tk,pi,ve=100,ga=24]=a; if(find(ns,tk,pi)<0) ns.push({tick:tk,pitch:pi,vel:ve,gate:ga}); }
+    else if(op==='d'){ const i=find(ns,a[0],a[1]); if(i>=0) ns.splice(i,1); }
+    else if(op==='m'){ const i=find(ns,a[0],a[1]); if(i>=0){ ns[i].tick=a[2]; ns[i].pitch=a[3]; } }
+    else if(op==='r'){ const i=find(ns,a[0],a[1]); if(i>=0) ns[i].gate=a[2]; }
+    else if(op==='v'){ const i=find(ns,a[0],a[1]); if(i>=0) ns[i].vel=a[2]; }
+  }
   let subs = [];
   window.schwungRemote = {
     _mock: true,
     getParam: k => Promise.resolve(KV[k] != null ? KV[k] : ""),
-    setParam: (k, v) => { console.log("setParam", k, v); },
+    setParam: (k, v) => {
+      const m = k.match(/t(\d+)_c(\d+)_(note_\w+|notes_op|ruisel)$/);
+      if(!m) return;
+      const op3 = m[3]; const ns = parseNotes();
+      const num = s => s.split(/\s+/).filter(Boolean).map(Number);
+      if(op3==="note_add")    applyOp(ns,'a',num(v));
+      else if(op3==="note_del")    applyOp(ns,'d',num(v));
+      else if(op3==="note_move")   applyOp(ns,'m',num(v));
+      else if(op3==="note_resize") applyOp(ns,'r',num(v));
+      else if(op3==="note_vel")    applyOp(ns,'v',num(v));
+      else if(op3==="notes_op")    v.split(";").forEach(seg=>{const t=seg.trim();if(!t)return;
+                                     const p=t.split(/\s+/); applyOp(ns,p[0],p.slice(1).map(Number));});
+      else return;
+      writeNotes(ns);
+    },
     onParamChange: cb => { subs.push(cb); },
-    /* emulate the manager re-pushing the full seeded set on subscribe */
     resubscribe: () => subs.forEach(cb => cb(Object.assign({}, KV)))
   };
 }
@@ -108,12 +142,13 @@ if (!window.schwungRemote) {
 <script>
 (function(){
 const R = window.schwungRemote;
-const P = "synth:";                 /* davebox loads as the slot "synth" component */
-const kv = {};                      /* accumulated key->value from param updates  */
-let M = null;                       /* parsed model */
+const P = "synth:";
+const kv = {};
+let M = null;
 let lastRev = null, lastSelKey = null;
+let dragging = false, suppressRefreshUntil = 0;
 
-/* ---- parse the flat snapshot fields into a model ---- */
+/* ---------- parse flat snapshot fields ---------- */
 function parseModel(){
   const get = k => kv[P+k];
   if (get("rui_sel") == null) return null;
@@ -121,80 +156,80 @@ function parseModel(){
   const [st,sc,sl]       = (get("rui_sel")||"0:0:-1").split(":").map(Number);
   const [cl,ct,cls,cd]   = (get("rui_clip")||"16:24:0:0").split(":").map(Number);
   const tracks = (get("rui_index")||"").split(";").map(seg=>{
-    const c1 = seg.indexOf(":"), c2 = seg.indexOf(":", c1+1);
-    const pm = +seg.slice(0,c1), ac = +seg.slice(c1+1,c2), bits = seg.slice(c2+1);
-    const has = []; for(let i=0;i<16;i++) has.push(bits[i]==="1");
+    const c1=seg.indexOf(":"), c2=seg.indexOf(":",c1+1);
+    const pm=+seg.slice(0,c1), ac=+seg.slice(c1+1,c2), bits=seg.slice(c2+1);
+    const has=[]; for(let i=0;i<16;i++) has.push(bits[i]==="1");
     return {pm,ac,has};
   });
   const notes = (get("rui_notes")||"").split(";").filter(Boolean).map(tok=>{
-    const [tick,pitch,vel,gate] = tok.split(":").map(Number);
-    return {tick,pitch,vel,gate};
+    const [tick,pitch,vel,gate]=tok.split(":").map(Number); return {tick,pitch,vel,gate};
   });
   return {rev:+(get("rui_rev")||0), play:{on:pon,tick:ptick,bpm:pbpm},
           sel:{t:st,c:sc,lane:sl}, clip:{len:cl,tps:ct,ls:cls,dir:cd}, tracks, notes};
 }
+const isDrum = ()=> M && M.tracks[M.sel.t] && M.tracks[M.sel.t].pm===1;
 
-/* ---- top bar + side panel ---- */
+/* ---------- chrome + selector ---------- */
 function renderChrome(){
-  const tr = document.getElementById("transport");
-  tr.textContent = M.play.on ? "▶ playing" : "■ stopped";
-  tr.classList.toggle("play", !!M.play.on);
-  document.getElementById("bpm").textContent = (M.play.bpm|0)+" BPM";
-  const drum = M.tracks[M.sel.t] && M.tracks[M.sel.t].pm === 1;
-  document.getElementById("clipname").textContent =
-    (drum?"D":"M")+(M.sel.t+1)+" · clip "+(M.sel.c+1);
-  const dir = ["Fwd","Bwd","PP-Fwd","PP-Bwd"][M.clip.dir] || M.clip.dir;
-  const tpsName = {6:"1/64",12:"1/32",24:"1/16",48:"1/8",96:"1/4",192:"1/2",384:"1/1"}[M.clip.tps]||M.clip.tps;
-  document.getElementById("clipinfo").innerHTML =
-    [["Length", M.clip.len+" steps"],["Resolution", tpsName],
-     ["Loop start", M.clip.ls],["Direction", dir],["Notes", M.notes.length]]
+  const tr=document.getElementById("transport");
+  tr.textContent=M.play.on?"▶ playing":"■ stopped"; tr.classList.toggle("play",!!M.play.on);
+  document.getElementById("bpm").textContent=(M.play.bpm|0)+" BPM";
+  document.getElementById("clipname").textContent=(isDrum()?"D":"M")+(M.sel.t+1)+" · clip "+(M.sel.c+1);
+  const dir=["Fwd","Bwd","PP-Fwd","PP-Bwd"][M.clip.dir]||M.clip.dir;
+  const tpsName={6:"1/64",12:"1/32",24:"1/16",48:"1/8",96:"1/4",192:"1/2",384:"1/1"}[M.clip.tps]||M.clip.tps;
+  document.getElementById("clipinfo").innerHTML=
+    [["Length",M.clip.len+" steps"],["Resolution",tpsName],["Loop start",M.clip.ls],
+     ["Direction",dir],["Notes",M.notes.length]]
     .map(([k,v])=>`<div class="kv"><span>${k}</span><span>${v}</span></div>`).join("");
 }
-
-/* ---- clip selector (8 track rows × 16 clip cells) ---- */
 function renderSelector(){
   const tracks=document.getElementById("tracks"), clips=document.getElementById("clips");
-  clips.style.gridTemplateColumns=`repeat(16,16px)`;
-  tracks.innerHTML=""; clips.innerHTML="";
+  clips.style.gridTemplateColumns=`repeat(16,16px)`; tracks.innerHTML=""; clips.innerHTML="";
   M.tracks.forEach((trk,t)=>{
-    const lab=document.createElement("div");
-    lab.className="trk"+(t===M.sel.t?" sel":"");
+    const lab=document.createElement("div"); lab.className="trk"+(t===M.sel.t?" sel":"");
     lab.textContent=(trk.pm===1?"D":trk.pm===2?"C":"M")+(t+1);
-    tracks.appendChild(lab);
+    lab.onclick=()=>selectClip(t, trk.ac); tracks.appendChild(lab);
     trk.has.forEach((has,c)=>{
       const cell=document.createElement("div");
       cell.className="cell"+(has?" has":"")+(c===trk.ac?" ac":"")
                      +(t===M.sel.t&&c===M.sel.c?" sel":"");
-      cell.title=`track ${t+1} clip ${c+1}`;
-      cell.onclick=()=>selectClip(t,c);
+      cell.title=`track ${t+1} clip ${c+1}`; cell.onclick=()=>selectClip(t,c);
       clips.appendChild(cell);
     });
   });
 }
 function selectClip(t,c){
-  R.setParam(P+`t${t}_c${c}_ruisel`, "");
-  /* optimistic: reflect selection instantly, then re-pull for the clip's notes */
+  R.setParam(P+`t${t}_c${c}_ruisel`,"");
   if(M){ M.sel.t=t; M.sel.c=c; renderSelector(); renderChrome(); }
-  setTimeout(refresh, 30);
+  suppressRefreshUntil=now()+120; setTimeout(refresh,40);
 }
 
-/* ---- piano roll ---- */
+/* ---------- piano roll geometry ---------- */
 const cv=document.getElementById("rollcanvas"), ctx=cv.getContext("2d");
-const PITCH_LO=36, PITCH_HI=96, ROWH=8;       /* C2..C7 */
+const vc=document.getElementById("velcanvas"), vctx=vc.getContext("2d");
+const PITCH_LO=36, PITCH_HI=96, ROWH=8;
 let PXPERTICK=0.6;
-function layout(){
-  const total=Math.max(1,M.clip.len*M.clip.tps);
-  cv.width=Math.max(880, Math.ceil(total*PXPERTICK)+40);
-  cv.height=(PITCH_HI-PITCH_LO)*ROWH;
-}
 const X=t=>20+t*PXPERTICK, Y=p=>(PITCH_HI-p)*ROWH;
+const tickAt=mx=>Math.max(0,(mx-20)/PXPERTICK);
+const pitchAt=my=>PITCH_HI-1-Math.floor(my/ROWH);
+function snapTicks(){ return +document.getElementById("snap").value||M.clip.tps; }
+function snap(t){ const s=snapTicks(); return Math.round(t/s)*s; }
+function maxTick(){ return Math.max(1,M.clip.len*M.clip.tps); }
+function layout(){
+  cv.width=Math.max(880,Math.ceil(maxTick()*PXPERTICK)+40);
+  cv.height=(PITCH_HI-PITCH_LO)*ROWH;
+  vc.width=cv.width;
+}
+
+/* ---------- draw ---------- */
 function draw(){
   if(!M) return;
-  const drum = M.tracks[M.sel.t] && M.tracks[M.sel.t].pm===1;
-  document.getElementById("drumph").style.display = drum ? "flex" : "none";
-  cv.style.display = drum ? "none" : "block";
+  const drum=isDrum();
+  document.getElementById("drumph").style.display=drum?"flex":"none";
+  cv.style.display=drum?"none":"block";
+  document.getElementById("velwrap").style.display=drum?"none":"block";
   if(drum) return;
-  const W=cv.width,H=cv.height,tps=M.clip.tps,total=M.clip.len*tps;
+  const W=cv.width,H=cv.height,tps=M.clip.tps,total=maxTick();
   ctx.fillStyle="#15171c"; ctx.fillRect(0,0,W,H);
   for(let p=PITCH_LO;p<PITCH_HI;p++){ const s=((p%12)+12)%12, blk=[1,3,6,8,10].includes(s);
     ctx.fillStyle=blk?"#191c22":"#21252e"; ctx.fillRect(0,Y(p)-ROWH,W,ROWH-1);
@@ -206,51 +241,139 @@ function draw(){
   M.notes.forEach(nt=>{
     if(nt.pitch<PITCH_LO||nt.pitch>=PITCH_HI) return;
     const x=X(nt.tick), w=Math.max(3,nt.gate*PXPERTICK), y=Y(nt.pitch)-ROWH+1;
-    ctx.fillStyle=`rgba(57,208,200,${0.30+0.70*(nt.vel/127)})`;
-    ctx.fillRect(x,y,w,ROWH-2);
+    ctx.fillStyle=`rgba(57,208,200,${0.30+0.70*(nt.vel/127)})`; ctx.fillRect(x,y,w,ROWH-2);
     ctx.strokeStyle="#0c2e2c"; ctx.lineWidth=1; ctx.strokeRect(x+0.5,y+0.5,w-1,ROWH-3);
   });
-  if(M.play.on && total>0){ const x=X(M.play.tick%total);
-    ctx.strokeStyle="#ffcf4d"; ctx.lineWidth=1.5;
-    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+  if(M.play.on&&total>0){ const x=X(M.play.tick%total);
+    ctx.strokeStyle="#ffcf4d"; ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+  drawVel();
+}
+function drawVel(){
+  const W=vc.width,H=vc.height,total=maxTick();
+  vctx.fillStyle="#101216"; vctx.fillRect(0,0,W,H);
+  for(let st=0;st<=M.clip.len;st++){ const x=X(st*M.clip.tps);
+    vctx.strokeStyle=(st%4===0)?"#262c36":"#1a1e25"; vctx.beginPath(); vctx.moveTo(x,0); vctx.lineTo(x,H); vctx.stroke(); }
+  M.notes.forEach(nt=>{ const x=X(nt.tick), h=Math.max(2,(nt.vel/127)*(H-6));
+    vctx.fillStyle=`rgba(57,208,200,${0.4+0.6*(nt.vel/127)})`; vctx.fillRect(x,H-h-2,Math.max(2,3),h);
+  });
 }
 
-/* ---- apply an incoming param batch ---- */
+/* ---------- hit testing ---------- */
+function noteAt(mx,my){
+  for(let i=M.notes.length-1;i>=0;i--){ const nt=M.notes[i];
+    const x=X(nt.tick), w=Math.max(3,nt.gate*PXPERTICK), y=Y(nt.pitch)-ROWH+1;
+    if(mx>=x&&mx<=x+w&&my>=y&&my<=y+ROWH-1){
+      return {i, edge:(mx>=x+w-5)}; }
+  }
+  return null;
+}
+
+/* ---------- emit (per-track-prefixed, ≤255B) ---------- */
+function emit(op,val){ R.setParam(P+`t${M.sel.t}_c${M.sel.c}_${op}`, val); afterEdit(); }
+function afterEdit(){ suppressRefreshUntil=now()+250; }
+
+/* ---------- editing interactions ---------- */
+let drag=null;   /* {mode,i, ...} */
+cv.addEventListener("contextmenu",e=>{ e.preventDefault();
+  const r=cv.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
+  const hit=noteAt(mx,my); if(hit){ const nt=M.notes[hit.i];
+    M.notes.splice(hit.i,1); draw(); emit("note_del",`${nt.tick} ${nt.pitch}`); } });
+cv.addEventListener("mousedown",e=>{
+  if(isDrum()||e.button===2) return;
+  const r=cv.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
+  const hit=noteAt(mx,my);
+  if(hit && e.altKey){ const nt=M.notes[hit.i]; M.notes.splice(hit.i,1); draw();
+    emit("note_del",`${nt.tick} ${nt.pitch}`); return; }
+  if(hit){ const nt=M.notes[hit.i];
+    if(hit.edge){ drag={mode:"resize",i:hit.i,o:{...nt}}; }
+    else        { drag={mode:"move",  i:hit.i,o:{...nt},gx:mx-X(nt.tick),gp:nt.pitch-pitchAt(my)}; }
+    dragging=true; return;
+  }
+  /* empty → add */
+  const tk=Math.min(maxTick()-1,Math.max(0,snap(tickAt(mx))));
+  const pi=Math.max(0,Math.min(127,pitchAt(my)));
+  if(M.notes.some(n=>n.tick===tk&&n.pitch===pi)) return;
+  const gate=snapTicks(), nt={tick:tk,pitch:pi,vel:100,gate};
+  M.notes.push(nt); draw(); emit("note_add",`${tk} ${pi} 100 ${gate}`);
+});
+window.addEventListener("mousemove",e=>{
+  if(!drag) return;
+  const r=cv.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
+  const nt=M.notes[drag.i]; if(!nt) return;
+  if(drag.mode==="move"){
+    nt.tick=Math.min(maxTick()-1,Math.max(0,snap(tickAt(mx-drag.gx))));
+    nt.pitch=Math.max(0,Math.min(127,pitchAt(my)+drag.gp));
+  } else { /* resize */
+    const end=Math.max(nt.tick+1,snap(tickAt(mx))); nt.gate=Math.max(1,end-nt.tick);
+  }
+  draw();
+});
+window.addEventListener("mouseup",()=>{
+  if(!drag){ dragging=false; return; }
+  const nt=M.notes[drag.i], o=drag.o;
+  if(drag.mode==="move"){
+    if(nt.tick!==o.tick||nt.pitch!==o.pitch) emit("note_move",`${o.tick} ${o.pitch} ${nt.tick} ${nt.pitch}`);
+  } else if(drag.mode==="resize"){
+    if(nt.gate!==o.gate) emit("note_resize",`${nt.tick} ${nt.pitch} ${nt.gate}`);
+  }
+  drag=null; dragging=false;
+});
+
+/* velocity lane drag */
+let vdrag=null;
+vc.addEventListener("mousedown",e=>{ if(isDrum())return;
+  const r=vc.getBoundingClientRect(); vdrag={};
+  vAdjust(e.clientX-r.left, e.clientY-r.top, true); dragging=true; });
+window.addEventListener("mousemove",e=>{ if(!vdrag)return;
+  const r=vc.getBoundingClientRect(); vAdjust(e.clientX-r.left, e.clientY-r.top, false); });
+window.addEventListener("mouseup",()=>{ if(vdrag){ vdrag=null; dragging=false; } });
+function vAdjust(mx,my,pick){
+  /* nearest note by x; set vel from y */
+  let best=-1,bd=1e9; M.notes.forEach((n,i)=>{ const d=Math.abs(X(n.tick)-mx); if(d<bd){bd=d;best=i;} });
+  if(best<0||bd>10) return;
+  const vel=Math.max(1,Math.min(127,Math.round((1-my/vc.height)*127)));
+  const nt=M.notes[best]; if(nt.vel===vel) return; nt.vel=vel; drawVel();
+  emit("note_vel",`${nt.tick} ${nt.pitch} ${vel}`);
+}
+
+/* ---------- apply incoming snapshot ---------- */
 function applyParams(params){
   let touched=false;
   for(const k in params){ if(k.indexOf(P+"rui_")===0){ kv[k]=params[k]; touched=true; } }
   if(!touched) return;
-  const m=parseModel(); if(!m) return; M=m;
+  if(dragging) return;                          /* don't clobber an active drag */
+  const m=parseModel(); if(!m) return;
+  /* during the post-edit suppress window, ignore snapshots that haven't caught up */
+  if(now()<suppressRefreshUntil && M && m.rev<=M.rev) { return; }
+  M=m;
   const selKey=M.sel.t+":"+M.sel.c;
-  renderChrome();
-  if(selKey!==lastSelKey){ lastSelKey=selKey; renderSelector(); }
-  else renderSelector();                         /* cheap; keeps has-bits fresh */
-  if(M.rev!==lastRev || selKey!==lastSelKey){ lastRev=M.rev; layout(); }
+  renderChrome(); renderSelector();
+  if(M.rev!==lastRev || selKey!==lastSelKey){ lastRev=M.rev; lastSelKey=selKey; layout(); }
   draw();
 }
 
-/* ---- refresh: re-subscribe so the manager re-seeds + pushes the full set ---- */
+/* ---------- refresh ---------- */
 function refresh(){
-  if(typeof R.resubscribe==="function"){ R.resubscribe(); return; }   /* mock */
+  if(dragging || now()<suppressRefreshUntil) return;
+  if(typeof R.resubscribe==="function"){ R.resubscribe(); return; }
   if(window.parent){ window.parent.postMessage({type:"subscribe"},"*"); }
-  /* belt-and-suspenders: also pull the keys directly from cache */
   const keys=["rui_rev","rui_play","rui_sel","rui_clip","rui_index","rui_notes"];
   Promise.all(keys.map(k=>R.getParam(P+k).then(v=>[P+k,v]).catch(()=>null)))
     .then(pairs=>{ const o={}; pairs.forEach(p=>{if(p&&p[1]!=null)o[p[0]]=p[1];}); applyParams(o); });
 }
+function now(){ return (window.performance&&performance.now)?performance.now():+new Date(); }
 
-/* ---- wire up ---- */
+/* ---------- wire ---------- */
 R.onParamChange && R.onParamChange(applyParams);
 let auto=true;
 document.getElementById("auto").onclick=e=>{auto=!auto;e.target.classList.toggle("on",auto);};
-document.getElementById("sync").onclick=refresh;
-document.getElementById("snap").onchange=()=>{ /* used by M2 editing */ };
-setInterval(()=>{ if(auto) refresh(); }, M_INTERVAL());
-function M_INTERVAL(){ return 600; }
+document.getElementById("sync").onclick=()=>{ suppressRefreshUntil=0; refresh(); };
+document.getElementById("snap").onchange=()=>{};
+setInterval(()=>{ if(auto) refresh(); }, 600);
 
-/* boot */
 refresh();
-window._dbg={get M(){return M;}, refresh, applyParams};   /* for headless preview */
+window._dbg={get M(){return M;}, refresh, applyParams, draw, noteAt,
+             geom:{X,Y,ROWH,PITCH_HI,PITCH_LO,get px(){return PXPERTICK;}}};
 })();
 </script>
 </body></html>
