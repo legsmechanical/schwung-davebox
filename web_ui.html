@@ -60,6 +60,7 @@
   #globals input[type=number]{width:54px;text-align:right}
   .zoom{display:flex;gap:2px;align-items:center;color:var(--dim);font-size:12px}
   .zoom button{padding:3px 5px;font-size:11px}
+  .neIn{width:66px;text-align:right}
 </style></head>
 <body><div id="app">
   <div id="top">
@@ -69,7 +70,7 @@
     <label>Snap <select id="snap">
       <option value="6">1/64</option><option value="12">1/32</option>
       <option value="24" selected>1/16</option><option value="48">1/8</option>
-      <option value="96">1/4</option></select></label>
+      <option value="96">1/4</option><option value="0">Off</option></select></label>
     <span class="zoom" title="Ctrl+wheel = H zoom · Ctrl+Shift+wheel = V zoom">Zoom
       <button class="sm" id="zxout">H−</button><button class="sm" id="zxin">H+</button>
       <button class="sm" id="zyout">V−</button><button class="sm" id="zyin">V+</button>
@@ -95,6 +96,7 @@
       <h4>Clip</h4>
       <div id="clipinfo"></div>
       <div class="btnrow" id="clipops"></div>
+      <div id="noteedit"></div>
       <div id="fxpanel"></div>
       <div id="drumpanel"></div>
       <h4 style="margin-top:14px">Global</h4>
@@ -317,7 +319,49 @@ function renderChrome(){
  * focused so polls don't clobber in-progress typing. */
 function renderSidePanels(){
   if(document.activeElement && document.activeElement.closest && document.activeElement.closest("#side")) return;
-  renderSide(); renderClipOps(); renderFX(); renderDrumPanel(); renderGlobals();
+  renderSide(); renderClipOps(); renderNoteEdit(); renderFX(); renderDrumPanel(); renderGlobals();
+}
+/* ---------- selected-note numeric editor (melodic) ---------- */
+let selNote=null;   /* {tick,pitch} of the selected melodic note (or null) */
+function findSelNote(){ if(!selNote||!M||isDrum()) return -1;
+  return M.notes.findIndex(n=>n.tick===selNote.tick&&n.pitch===selNote.pitch); }
+function neRow(lbl,id,val,min,max){
+  return `<div class="kv"><span>${lbl}</span><span><input type="number" class="neIn" id="${id}" value="${val}" min="${min}" max="${max}" step="1"></span></div>`;
+}
+function renderNoteEdit(){
+  const el=document.getElementById("noteedit"); if(!el) return;
+  if(isDrum()){ el.innerHTML=""; return; }      /* drum editing is per-lane on the grid */
+  const i=findSelNote();
+  if(i<0){ el.innerHTML=`<div class="kv"><span>Note</span><span style="color:var(--dim)">— click a note —</span></div>`; return; }
+  const nt=M.notes[i], tps=M.clip.tps;
+  el.innerHTML=
+    `<div class="kv"><span>Note</span><span>${noteName(nt.pitch)}</span></div>`+
+    neRow("Pos (tick)","nePos",nt.tick,0,maxTick()-1)+
+    neRow("Pitch","nePitch",nt.pitch,0,127)+
+    neRow("Vel","neVel",nt.vel,1,127)+
+    neRow("Len (tick)","neLen",nt.gate,1,maxTick())+
+    `<div class="btnrow"><button class="sm" id="neNL" title="nudge −1 tick">◀</button>`+
+    `<button class="sm" id="neNR" title="nudge +1 tick">▶</button>`+
+    `<button class="sm danger" id="neDel">Delete</button></div>`+
+    `<div class="hint">${tps} ticks/step. Shift-drag or Snap=Off for off-grid.</div>`;
+  const cur=()=>{ const k=findSelNote(); return k<0?null:M.notes[k]; };
+  function moveTo(tick,pitch){ const n=cur(); if(!n) return; const o={tick:n.tick,pitch:n.pitch};
+    tick=Math.max(0,Math.min(maxTick()-1,tick|0)); pitch=Math.max(0,Math.min(127,pitch|0));
+    if(tick===o.tick&&pitch===o.pitch) return;
+    if(M.notes.some(x=>x!==n&&x.tick===tick&&x.pitch===pitch)) return;
+    n.tick=tick; n.pitch=pitch; selNote={tick,pitch}; draw();
+    emit("note_move",`${o.tick} ${o.pitch} ${tick} ${pitch}`); renderNoteEdit(); }
+  el.querySelector("#nePos").onchange=e=>moveTo(+e.target.value, cur()?cur().pitch:0);
+  el.querySelector("#nePitch").onchange=e=>moveTo(cur()?cur().tick:0, +e.target.value);
+  el.querySelector("#neVel").onchange=e=>{ const n=cur(); if(!n) return; n.vel=Math.max(1,Math.min(127,+e.target.value|0));
+    draw(); emit("note_vel",`${n.tick} ${n.pitch} ${n.vel}`); };
+  el.querySelector("#neLen").onchange=e=>{ const n=cur(); if(!n) return; n.gate=Math.max(1,+e.target.value|0);
+    draw(); emit("note_resize",`${n.tick} ${n.pitch} ${n.gate}`); };
+  el.querySelector("#neNL").onclick=()=>{ const n=cur(); if(n) moveTo(n.tick-1,n.pitch); };
+  el.querySelector("#neNR").onclick=()=>{ const n=cur(); if(n) moveTo(n.tick+1,n.pitch); };
+  el.querySelector("#neDel").onclick=()=>{ const n=cur(); if(!n) return;
+    M.notes.splice(findSelNote(),1); const o={tick:n.tick,pitch:n.pitch}; selNote=null;
+    draw(); emit("note_del",`${o.tick} ${o.pitch}`); renderNoteEdit(); };
 }
 const RES_TPS=[12,24,48,96,192,384], RES_LAB=["1/32","1/16","1/8","1/4","1/2","1/1"];
 function pullSoon(){ setTimeout(()=>{ suppressRefreshUntil=0; refresh(); }, 130); }
@@ -501,6 +545,7 @@ function dropClip(src,dst,copy){
 }
 function selectClip(t,c){
   R.setParam(P+`t${t}_c${c}_ruisel`,"");
+  selNote=null;   /* new clip → drop the note selection */
   if(M){ M.sel.t=t; M.sel.c=c; renderSession(); renderChrome(); }
   /* selection is not an edit — pull the newly-selected clip promptly */
   suppressRefreshUntil=0; setTimeout(refresh,30);
@@ -552,8 +597,10 @@ function snapPitch(pi){
   }
   return pi;
 }
-function snapTicks(){ return +document.getElementById("snap").value||M.clip.tps; }
-function snap(t){ const s=snapTicks(); return Math.round(t/s)*s; }
+/* Snap=Off (value 0) → free placement at integer ticks; Shift-drag forces free. */
+function snapTicks(){ const n=+document.getElementById("snap").value; return isNaN(n)?M.clip.tps:n; }
+function snap(t,free){ const s=snapTicks(); if(free||s<=0) return Math.max(0,Math.round(t)); return Math.round(t/s)*s; }
+function gateDefault(){ return snapTicks()||M.clip.tps; }
 function maxTick(){ return Math.max(1,M.clip.len*M.clip.tps); }
 function layout(){
   /* fill available height: size each row so the (possibly folded) row set spans
@@ -640,8 +687,9 @@ function draw(){
   M.notes.forEach(nt=>{
     if(nt.pitch<PITCH_LO||nt.pitch>=PITCH_HI) return;
     const x=X(nt.tick), w=Math.max(3,nt.gate*PXPERTICK), y=Y(nt.pitch)-ROWH+1;
+    const sel=selNote&&nt.tick===selNote.tick&&nt.pitch===selNote.pitch;
     ctx.fillStyle=`rgba(57,208,200,${0.30+0.70*(nt.vel/127)})`; ctx.fillRect(x,y,w,ROWH-2);
-    ctx.strokeStyle="#0c2e2c"; ctx.lineWidth=1; ctx.strokeRect(x+0.5,y+0.5,w-1,ROWH-3);
+    ctx.strokeStyle=sel?"#ffcf4d":"#0c2e2c"; ctx.lineWidth=sel?2:1; ctx.strokeRect(x+0.5,y+0.5,w-1,ROWH-3);
   });
   if(M.play.on&&total>0){ const x=X(M.play.tick%total);
     ctx.strokeStyle="#ffcf4d"; ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
@@ -709,29 +757,31 @@ cv.addEventListener("mousedown",e=>{
   }
   const r=cv.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
   const hit=noteAt(mx,my);
-  if(hit && e.altKey){ const nt=M.notes[hit.i]; M.notes.splice(hit.i,1); draw();
-    emit("note_del",`${nt.tick} ${nt.pitch}`); return; }
+  if(hit && e.altKey){ const nt=M.notes[hit.i]; M.notes.splice(hit.i,1);
+    if(selNote&&selNote.tick===nt.tick&&selNote.pitch===nt.pitch) selNote=null;
+    draw(); renderNoteEdit(); emit("note_del",`${nt.tick} ${nt.pitch}`); return; }
   if(hit){ const nt=M.notes[hit.i];
+    selNote={tick:nt.tick,pitch:nt.pitch}; renderNoteEdit();   /* click selects */
     if(hit.edge){ drag={mode:"resize",i:hit.i,o:{...nt}}; }
     else        { drag={mode:"move",  i:hit.i,o:{...nt},gx:mx-X(nt.tick),gr:rowIdxForPitch(nt.pitch)-rowAt(my)}; }
     dragging=true; return;
   }
-  /* empty → add (scale-snapped when scale-aware) */
-  const tk=Math.min(maxTick()-1,Math.max(0,snap(tickAt(mx))));
+  /* empty → add (scale-snapped when scale-aware; Shift or Snap=Off = off-grid) */
+  const tk=Math.min(maxTick()-1,Math.max(0,snap(tickAt(mx),e.shiftKey)));
   const pi=snapPitch(Math.max(0,Math.min(127,pitchAt(my))));
   if(M.notes.some(n=>n.tick===tk&&n.pitch===pi)) return;
-  const gate=snapTicks(), nt={tick:tk,pitch:pi,vel:100,gate};
-  M.notes.push(nt); draw(); emit("note_add",`${tk} ${pi} 100 ${gate}`);
+  const gate=gateDefault(), nt={tick:tk,pitch:pi,vel:100,gate};
+  M.notes.push(nt); selNote={tick:tk,pitch:pi}; draw(); renderNoteEdit(); emit("note_add",`${tk} ${pi} 100 ${gate}`);
 });
 window.addEventListener("mousemove",e=>{
   if(!drag) return;
   const r=cv.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
   const nt=M.notes[drag.i]; if(!nt) return;
   if(drag.mode==="move"){
-    nt.tick=Math.min(maxTick()-1,Math.max(0,snap(tickAt(mx-drag.gx))));
+    nt.tick=Math.min(maxTick()-1,Math.max(0,snap(tickAt(mx-drag.gx),e.shiftKey)));
     nt.pitch=rowList[Math.max(0,Math.min(rowList.length-1,rowAt(my)+drag.gr))];
   } else { /* resize */
-    const end=Math.max(nt.tick+1,snap(tickAt(mx))); nt.gate=Math.max(1,end-nt.tick);
+    const end=Math.max(nt.tick+1,snap(tickAt(mx),e.shiftKey)); nt.gate=Math.max(1,end-nt.tick);
   }
   draw();
 });
@@ -743,6 +793,7 @@ window.addEventListener("mouseup",()=>{
   } else if(drag.mode==="resize"){
     if(nt.gate!==o.gate) emit("note_resize",`${nt.tick} ${nt.pitch} ${nt.gate}`);
   }
+  if(nt){ selNote={tick:nt.tick,pitch:nt.pitch}; renderNoteEdit(); }
   drag=null; dragging=false;
 });
 
