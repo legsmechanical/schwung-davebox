@@ -75,6 +75,7 @@
     <div id="side">
       <h4>Clip</h4>
       <div id="clipinfo"></div>
+      <div id="fxpanel"></div>
       <div class="hint"><b>Click</b> empty = add note · <b>drag</b> body = move ·
         <b>drag right edge</b> = length · <b>right-click</b> / Alt-click = delete ·
         drag in the <b>VEL</b> lane = velocity. Edits snap to the grid selector.</div>
@@ -101,6 +102,14 @@ if (!window.schwungRemote) {
   [[2,96],[2,288]].forEach(([l,t])=>drum[2].hits.push({tick:t,vel:100,gate:24}));               // snare
   for(let t=0;t<384;t+=48) drum[6].hits.push({tick:t,vel:70,gate:24});                            // hat
   const tracks=Array.from({length:8},(_,t)=>({pm:t===0?1:0, ac:0}));
+  // per-clip FX (melodic), 29 values matching the DSP rui_pfx order
+  const PFXKEYS=["noteFX_octave","noteFX_offset","noteFX_gate","noteFX_velocity","quantize",
+    "noteFX_random","noteFX_random_mode","noteFX_length_mode","harm_octaver","harm_interval1",
+    "harm_interval2","harm_interval3","delay_time","delay_level","delay_repeats","delay_vel_fb",
+    "delay_pitch_fb","delay_pitch_random","delay_pitch_random_mode","delay_gate_fb","delay_clock_fb",
+    "delay_retrig","seq_arp_style","seq_arp_rate","seq_arp_octaves","seq_arp_gate","seq_arp_steps_mode",
+    "seq_arp_retrigger","seq_arp_sync"];
+  const pfx=[0,0,100,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,100,0,1,0]; // sensible defaults
   const KV={};
   function rebuild(){
     KV["synth:rui_rev"]=String(rev);
@@ -120,6 +129,7 @@ if (!window.schwungRemote) {
     } else {
       KV["synth:rui_clip"]=clipLen+":24:0:"+clipDir;
       KV["synth:rui_notes"]=mel.map(n=>n.tick+":"+n.pitch+":"+n.vel+":"+n.gate+";").join("");
+      KV["synth:rui_pfx"]=pfx.join(":");
       delete KV["synth:rui_dlanes"]; delete KV["synth:rui_dnotes"];
     }
   }
@@ -149,6 +159,10 @@ if (!window.schwungRemote) {
         else if(op==="note_vel"&&i>=0)arr[i].vel=n[1];
         else if(op==="note_resize"&&i>=0)arr[i].gate=n[1];
         rev++; rebuild(); return;
+      }
+      if((m=k.match(/t(\d+)_c(\d+)_pfx_set$/))){    // per-clip FX param
+        const sp=v.indexOf(" "); const key=v.slice(0,sp), val=+v.slice(sp+1);
+        const idx=PFXKEYS.indexOf(key); if(idx>=0){ pfx[idx]=val; rev++; rebuild(); } return;
       }
       if((m=k.match(/t(\d+)_c(\d+)_(note_\w+|notes_op|length|dir)$/))){
         const op3=m[3];
@@ -202,11 +216,45 @@ function parseModel(){
       const [tick,vel,gate]=h.split(":").map(Number); return {tick,vel,gate};
     });
   });
+  const pfx=(get("rui_pfx")||"").split(":").filter(s=>s!=="").map(Number);
   return {rev:+(get("rui_rev")||0), play:{on:pon,tick:ptick,bpm:pbpm},
           sel:{t:st,c:sc,lane:sl}, clip:{len:cl,tps:ct,ls:cls,dir:cd}, tracks, notes,
-          dlanes, dnotes};
+          dlanes, dnotes, pfx};
 }
 const isDrum = ()=> M && M.tracks[M.sel.t] && M.tracks[M.sel.t].pm===1;
+
+/* per-clip FX descriptors — MUST match the DSP rui_pfx value order (29 entries) */
+const PFX=[
+ {g:"NOTE FX",key:"noteFX_octave",l:"Octave",lo:-4,hi:4},
+ {g:"NOTE FX",key:"noteFX_offset",l:"Offset",lo:-24,hi:24},
+ {g:"NOTE FX",key:"noteFX_gate",l:"Gate %",lo:0,hi:400},
+ {g:"NOTE FX",key:"noteFX_velocity",l:"Vel ±",lo:-127,hi:127},
+ {g:"NOTE FX",key:"quantize",l:"Quantize",lo:0,hi:100},
+ {g:"NOTE FX",key:"noteFX_random",l:"Random",lo:0,hi:24},
+ {g:"NOTE FX",key:"noteFX_random_mode",l:"Rnd Mode",lo:0,hi:2,opts:["Uniform","Gauss","Walk"]},
+ {g:"NOTE FX",key:"noteFX_length_mode",l:"Len",lo:0,hi:8,opts:["--",".25",".5",".75","1","2","4","8","16"]},
+ {g:"HARMZ",key:"harm_octaver",l:"Octaver",lo:-4,hi:4},
+ {g:"HARMZ",key:"harm_interval1",l:"Intv 1",lo:-24,hi:24},
+ {g:"HARMZ",key:"harm_interval2",l:"Intv 2",lo:-24,hi:24},
+ {g:"HARMZ",key:"harm_interval3",l:"Intv 3",lo:-24,hi:24},
+ {g:"MIDI DLY",key:"delay_time",l:"Time",lo:0,hi:16},
+ {g:"MIDI DLY",key:"delay_level",l:"Level",lo:0,hi:127},
+ {g:"MIDI DLY",key:"delay_repeats",l:"Repeats",lo:0,hi:16},
+ {g:"MIDI DLY",key:"delay_vel_fb",l:"Vel FB",lo:-127,hi:127},
+ {g:"MIDI DLY",key:"delay_pitch_fb",l:"Pitch FB",lo:-24,hi:24},
+ {g:"MIDI DLY",key:"delay_pitch_random",l:"Pitch Rnd",lo:0,hi:24},
+ {g:"MIDI DLY",key:"delay_pitch_random_mode",l:"PRnd Mode",lo:0,hi:2,opts:["Uniform","Gauss","Walk"]},
+ {g:"MIDI DLY",key:"delay_gate_fb",l:"Gate FB",lo:0,hi:10},
+ {g:"MIDI DLY",key:"delay_clock_fb",l:"Clock FB",lo:-100,hi:100},
+ {g:"MIDI DLY",key:"delay_retrig",l:"Retrig",lo:0,hi:1,opts:["Off","On"]},
+ {g:"SEQ ARP",key:"seq_arp_style",l:"Style",lo:0,hi:9,opts:["Off","Up","Dn","U-D","D-U","Cnv","Div","Ord","Rnd","RnO"]},
+ {g:"SEQ ARP",key:"seq_arp_rate",l:"Rate",lo:0,hi:9},
+ {g:"SEQ ARP",key:"seq_arp_octaves",l:"Octaves",lo:-4,hi:4},
+ {g:"SEQ ARP",key:"seq_arp_gate",l:"Gate %",lo:1,hi:200},
+ {g:"SEQ ARP",key:"seq_arp_steps_mode",l:"Steps",lo:0,hi:2,opts:["Off","Mute","Skip"]},
+ {g:"SEQ ARP",key:"seq_arp_retrigger",l:"Retrig",lo:0,hi:1,opts:["Off","On"]},
+ {g:"SEQ ARP",key:"seq_arp_sync",l:"Sync",lo:0,hi:1,opts:["Free","Sync"]},
+];
 
 /* ---------- chrome + selector ---------- */
 function renderChrome(){
@@ -214,7 +262,40 @@ function renderChrome(){
   tr.textContent=M.play.on?"▶ playing":"■ stopped"; tr.classList.toggle("play",!!M.play.on);
   document.getElementById("bpm").textContent=(M.play.bpm|0)+" BPM";
   document.getElementById("clipname").textContent=(isDrum()?"D":"M")+(M.sel.t+1)+" · clip "+(M.sel.c+1);
-  renderSide();
+}
+/* rebuild the side panel (clip controls + FX). Skipped while a side input is
+ * focused so polls don't clobber in-progress typing. */
+function renderSidePanels(){
+  if(document.activeElement && document.activeElement.closest && document.activeElement.closest("#side")) return;
+  renderSide(); renderFX();
+}
+function renderFX(){
+  const el=document.getElementById("fxpanel");
+  if(isDrum() || !M.pfx || M.pfx.length<PFX.length){ el.innerHTML=""; return; }
+  let html="", lastG=null;
+  PFX.forEach((d,i)=>{
+    if(d.g!==lastG){ html+=`<h4 style="margin-top:14px">${d.g}</h4>`; lastG=d.g; }
+    const v=M.pfx[i];
+    if(d.opts){
+      html+=`<div class="kv"><span>${d.l}</span><span><select class="fxsel" data-i="${i}">`+
+        d.opts.map((o,oi)=>`<option value="${d.lo+oi}"${(d.lo+oi)===v?" selected":""}>${o}</option>`).join("")+
+        `</select></span></div>`;
+    } else {
+      html+=`<div class="kv"><span>${d.l}</span><span>`+
+        `<button class="fxdn" data-i="${i}">−</button>`+
+        `<input class="fxin" data-i="${i}" type="number" min="${d.lo}" max="${d.hi}" value="${v}" style="width:54px;text-align:right">`+
+        `<button class="fxup" data-i="${i}">+</button></span></div>`;
+    }
+  });
+  el.innerHTML=html;
+  const setI=(i,val)=>{ const d=PFX[i]; val=Math.max(d.lo,Math.min(d.hi,val|0));
+    if(M.pfx[i]===val) return; M.pfx[i]=val;
+    R.setParam(P+`t${M.sel.t}_c${M.sel.c}_pfx_set`, d.key+" "+val); afterEdit();
+    const inp=el.querySelector(`.fxin[data-i="${i}"]`); if(inp) inp.value=val; };
+  el.querySelectorAll(".fxin").forEach(inp=>inp.onchange=e=>setI(+e.target.dataset.i,+e.target.value));
+  el.querySelectorAll(".fxup").forEach(b=>b.onclick=e=>setI(+e.currentTarget.dataset.i,M.pfx[+e.currentTarget.dataset.i]+1));
+  el.querySelectorAll(".fxdn").forEach(b=>b.onclick=e=>setI(+e.currentTarget.dataset.i,M.pfx[+e.currentTarget.dataset.i]-1));
+  el.querySelectorAll(".fxsel").forEach(s=>s.onchange=e=>setI(+e.target.dataset.i,+e.target.value));
 }
 function renderSide(){
   const tpsName={6:"1/64",12:"1/32",24:"1/16",48:"1/8",96:"1/4",192:"1/2",384:"1/1"}[M.clip.tps]||M.clip.tps;
@@ -451,10 +532,12 @@ function applyParams(params){
   const m=parseModel(); if(!m) return;
   /* during the post-edit suppress window, ignore snapshots that haven't caught up */
   if(now()<suppressRefreshUntil && M && m.rev<=M.rev) { return; }
+  const prevRev=lastRev, prevSel=lastSelKey;
   M=m;
   const selKey=M.sel.t+":"+M.sel.c;
   renderChrome(); renderSelector();
-  if(M.rev!==lastRev || selKey!==lastSelKey){ lastRev=M.rev; lastSelKey=selKey; layout(); }
+  if(M.rev!==prevRev || selKey!==prevSel){ lastRev=M.rev; lastSelKey=selKey;
+    layout(); renderSidePanels(); }
   draw();
 }
 
