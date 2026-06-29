@@ -9,24 +9,33 @@
     font:13px/1.4 ui-sans-serif,system-ui,-apple-system,sans-serif;overflow:hidden;
     -webkit-user-select:none;user-select:none}
   #app{display:flex;flex-direction:column;height:100%}
-  #top{display:flex;gap:12px;align-items:center;padding:8px 12px;background:var(--panel);
-       border-bottom:1px solid #000;flex:0 0 auto}
+  #top{display:flex;gap:10px;align-items:center;padding:8px 12px;background:var(--panel);
+       border-bottom:1px solid #000;flex:0 0 auto;flex-wrap:wrap}
   #top strong{letter-spacing:.5px}
   .badge{padding:2px 9px;border-radius:10px;background:#0c0e12;color:var(--dim);font-size:12px}
   .badge.play{color:var(--play)}
   label{color:var(--dim);font-size:12px;display:flex;gap:4px;align-items:center}
-  select,button{background:#262b34;color:var(--ink);border:1px solid #333a45;border-radius:6px;
-    padding:4px 9px;cursor:pointer;font-size:12px}
+  select,button,input[type=number]{background:#262b34;color:var(--ink);border:1px solid #333a45;border-radius:6px;
+    padding:4px 8px;cursor:pointer;font-size:12px}
+  input[type=number]{cursor:text}
   button.on{border-color:var(--accent);color:var(--accent)}
-  #main{flex:1;display:flex;min-height:0}
-  #left{flex:0 0 auto;display:flex;background:var(--panel);border-right:1px solid #000}
-  #tracks{display:flex;flex-direction:column;padding:6px 4px 6px 8px;gap:2px}
-  .trk{font:11px ui-monospace,monospace;color:var(--dim);height:18px;display:flex;align-items:center;white-space:nowrap;cursor:pointer}
-  .trk.sel{color:var(--accent);font-weight:600}
-  #clips{display:grid;grid-auto-rows:18px;gap:2px;padding:6px 8px}
-  .cell{width:16px;height:18px;background:var(--row);border-radius:3px;cursor:pointer}
-  .cell.has{background:var(--has)}.cell.ac{outline:1px solid #4a5567}
-  .cell.sel{outline:2px solid var(--accent)}
+  button.sm{padding:3px 7px;font-size:11px}
+  /* ---- session grid (tracks = columns, scenes = rows) ---- */
+  #session{flex:0 0 auto;max-height:42vh;overflow:auto;background:var(--panel);
+           border-bottom:1px solid #000;padding:6px 8px}
+  #grid{display:grid;gap:3px;align-items:stretch}
+  .strk{font:11px ui-monospace,monospace;font-weight:600;color:#0c0e12;text-align:center;
+        padding:3px 2px;border-radius:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+  .strk.sel{outline:2px solid var(--ink)}
+  .scorner{font:10px ui-monospace,monospace;color:var(--dim);display:flex;align-items:center;justify-content:center}
+  .slaunch{font:10px ui-monospace,monospace;color:var(--dim);background:#0c0e12;border:1px solid #2a2e37;
+           border-radius:4px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:3px;padding:2px}
+  .slaunch:hover{color:var(--ink);border-color:var(--accent)}
+  .sclip{height:18px;border-radius:3px;cursor:pointer;position:relative;background:var(--row);
+         border:1px solid transparent}
+  .sclip.sel{outline:2px solid var(--ink);outline-offset:-1px;z-index:2}
+  .sclip.playing{box-shadow:inset 0 0 0 2px var(--play)}
+  .sclip.queued{border-style:dashed;border-color:var(--play)}
   #rollwrap{flex:1;display:flex;flex-direction:column;min-width:0}
   #roll{flex:1;position:relative;overflow:auto;background:var(--bg)}
   #rollcanvas{display:block;cursor:crosshair}
@@ -38,15 +47,20 @@
   #drumph b{color:var(--ink)}
   #side{flex:0 0 280px;background:var(--panel);border-left:1px solid #000;overflow:auto;padding:12px}
   #side h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
-  .kv{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #23272f}
+  .kv{display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-bottom:1px solid #23272f}
   .kv span:last-child{color:var(--accent);font-variant-numeric:tabular-nums}
+  .btnrow{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+  .btnrow button{flex:1 1 auto}
+  button.danger{border-color:#7a3030;color:#e88}
   .hint{color:var(--dim);font-size:11px;margin-top:10px;line-height:1.5}
+  #globals{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  #globals input[type=number]{width:54px;text-align:right}
 </style></head>
 <body><div id="app">
   <div id="top">
     <strong>dAVEBOx</strong>
     <span class="badge" id="transport">—</span>
-    <span class="badge" id="bpm">120 BPM</span>
+    <span id="globals"></span>
     <label>Snap <select id="snap">
       <option value="6">1/64</option><option value="12">1/32</option>
       <option value="24" selected>1/16</option><option value="48">1/8</option>
@@ -56,18 +70,14 @@
     <button id="sync" title="Re-pull from device">Sync</button>
     <button id="auto" class="on" title="Auto-refresh">Auto</button>
   </div>
+  <div id="session"><div id="grid" title="tracks × scenes — click a clip to edit, ▶ launches a scene"></div></div>
   <div id="main">
-    <div id="left">
-      <div id="tracks"></div>
-      <div id="clips" title="tracks × 16 clip slots"></div>
-    </div>
     <div id="rollwrap">
       <div id="roll">
         <canvas id="rollcanvas" width="900" height="480"></canvas>
         <div id="drumph">
-          <div>This track is in <b>Drum</b> mode.</div>
-          <div>The 32-lane drum view arrives in a later milestone.</div>
-          <div>Select a melodic track to edit on the piano roll.</div>
+          <div>This track is in <b>Drum</b> mode but has no drum clip yet.</div>
+          <div>Add a hit on the device, or pick a melodic track.</div>
         </div>
       </div>
       <div id="velwrap"><canvas id="velcanvas" width="900" height="56"></canvas><div id="vellabel">VEL</div></div>
@@ -75,7 +85,11 @@
     <div id="side">
       <h4>Clip</h4>
       <div id="clipinfo"></div>
+      <div class="btnrow" id="clipops"></div>
       <div id="fxpanel"></div>
+      <div id="drumpanel"></div>
+      <h4 style="margin-top:14px">Global</h4>
+      <div id="globalpanel"></div>
       <div class="hint"><b>Click</b> empty = add note · <b>drag</b> body = move ·
         <b>drag right edge</b> = length · <b>right-click</b> / Alt-click = delete ·
         drag in the <b>VEL</b> lane = velocity. Edits snap to the grid selector.</div>
@@ -189,6 +203,19 @@ let M = null;
 let lastRev = null, lastSelKey = null;
 let dragging = false, suppressRefreshUntil = 0;
 
+/* device track colors (fixed Move palette by track index — mirrors
+ * ui_constants.mjs TRACK_COLORS). Clips inherit the track color. */
+const TRACK_COLORS=["#FF0000","#0000FF","#56BF13","#00FF00","#FF4DC4","#274FCC","#876700","#007F12"];
+const SCENE_LETTERS="ABCDEFGHIJKLMNOP";
+const KEY_NAMES=["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+const SCALE_NAMES=["Major","Minor","Dorian","Phrygian","Lydian","Mixolydian","Locrian",
+                   "Harm Min","Mel Min","Pent Maj","Pent Min","Blues","Whole Tone","Dim"];
+const trackColor=t=>TRACK_COLORS[t%TRACK_COLORS.length];
+const hexA=(h,a)=>{const n=parseInt(h.slice(1),16);return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;};
+/* clip / scene / global launch + ops (overtake_dsp: keys forwarded straight to DSP) */
+function launchScene(c){ R.setParam(P+"launch_scene", String(c)); afterEdit(); }
+function launchClip(t,c){ R.setParam(P+`t${t}_launch_clip`, String(c)); afterEdit(); }
+
 /* ---------- parse flat snapshot fields ---------- */
 function parseModel(){
   const get = k => kv[P+k];
@@ -197,10 +224,13 @@ function parseModel(){
   const [st,sc,sl]       = (get("rui_sel")||"0:0:-1").split(":").map(Number);
   const [cl,ct,cls,cd]   = (get("rui_clip")||"16:24:0:0").split(":").map(Number);
   const tracks = (get("rui_index")||"").split(";").map(seg=>{
-    const c1=seg.indexOf(":"), c2=seg.indexOf(":",c1+1);
-    const pm=+seg.slice(0,c1), ac=+seg.slice(c1+1,c2), bits=seg.slice(c2+1);
+    /* new format pm:ac:qc:pl:<16 bits>; tolerate the old pm:ac:<bits> */
+    const p=seg.split(":");
+    let pm,ac,qc,pl,bits;
+    if(p.length>=5){ pm=+p[0]||0; ac=+p[1]||0; qc=(p[2]===""||p[2]===undefined)?-1:+p[2]; pl=+p[3]?1:0; bits=p[4]||""; }
+    else { pm=+p[0]||0; ac=+p[1]||0; qc=-1; pl=0; bits=p[2]||""; }
     const has=[]; for(let i=0;i<16;i++) has.push(bits[i]==="1");
-    return {pm,ac,has};
+    return {pm,ac,qc,pl,has};
   });
   const notes = (get("rui_notes")||"").split(";").filter(Boolean).map(tok=>{
     const [tick,pitch,vel,gate]=tok.split(":").map(Number); return {tick,pitch,vel,gate};
@@ -217,9 +247,18 @@ function parseModel(){
     });
   });
   const pfx=(get("rui_pfx")||"").split(":").filter(s=>s!=="").map(Number);
+  /* globals: key:scale:swing:swingRes:launchQuant:scaleAware */
+  const g=(get("rui_glob")||"0:1:0:0:0:0").split(":").map(Number);
+  const glob={key:g[0]|0, scale:g[1]|0, swing:g[2]|0, swingRes:g[3]|0, quant:g[4]|0, scaleAware:!!g[5]};
+  /* 12 pitch-class in-scale bits (absolute, key applied) */
+  const sm=get("rui_scale")||"111111111111"; const scaleMask=[];
+  for(let i=0;i<12;i++) scaleMask.push(sm[i]==="1");
+  /* selected drum lane "len:tps:loop" (drum only) */
+  const lr=get("rui_lane"); let laneInfo=null;
+  if(lr){ const la=lr.split(":").map(Number); laneInfo={len:la[0]|0,tps:la[1]|0,ls:la[2]|0}; }
   return {rev:+(get("rui_rev")||0), play:{on:pon,tick:ptick,bpm:pbpm},
           sel:{t:st,c:sc,lane:sl}, clip:{len:cl,tps:ct,ls:cls,dir:cd}, tracks, notes,
-          dlanes, dnotes, pfx};
+          dlanes, dnotes, pfx, glob, scaleMask, laneInfo};
 }
 const isDrum = ()=> M && M.tracks[M.sel.t] && M.tracks[M.sel.t].pm===1;
 
@@ -260,21 +299,29 @@ const PFX=[
 function renderChrome(){
   const tr=document.getElementById("transport");
   tr.textContent=M.play.on?"▶ playing":"■ stopped"; tr.classList.toggle("play",!!M.play.on);
-  document.getElementById("bpm").textContent=(M.play.bpm|0)+" BPM";
-  document.getElementById("clipname").textContent=(isDrum()?"D":"M")+(M.sel.t+1)+" · clip "+(M.sel.c+1);
+  /* keep the BPM input live without clobbering an in-progress edit */
+  const bi=document.getElementById("bpmIn"); if(bi && document.activeElement!==bi) bi.value=M.play.bpm|0;
+  const lane=(isDrum()&&M.sel.lane>=0)?(" · lane "+M.sel.lane):"";
+  document.getElementById("clipname").textContent=(isDrum()?"D":"M")+(M.sel.t+1)+" · "+SCENE_LETTERS[M.sel.c]+lane;
 }
 /* rebuild the side panel (clip controls + FX). Skipped while a side input is
  * focused so polls don't clobber in-progress typing. */
 function renderSidePanels(){
   if(document.activeElement && document.activeElement.closest && document.activeElement.closest("#side")) return;
-  renderSide(); renderFX();
+  renderSide(); renderClipOps(); renderFX(); renderDrumPanel(); renderGlobals();
 }
+const RES_TPS=[12,24,48,96,192,384], RES_LAB=["1/32","1/16","1/8","1/4","1/2","1/1"];
+function pullSoon(){ setTimeout(()=>{ suppressRefreshUntil=0; refresh(); }, 130); }
+/* per-clip / per-drum-lane FX. Melodic → tN_cC_pfx_set; drum (lane selected) →
+ * tN_lL_pfx_set. The snapshot's rui_pfx already targets the selected lane. */
 function renderFX(){
   const el=document.getElementById("fxpanel");
-  if(isDrum() || !M.pfx || M.pfx.length<PFX.length){ el.innerHTML=""; return; }
-  let html="", lastG=null;
+  const drum=isDrum(), laneSel=drum && M.sel.lane>=0;
+  if((drum && !laneSel) || !M.pfx || M.pfx.length<PFX.length){ el.innerHTML=""; return; }
+  const ctx=drum ? ("Lane "+M.sel.lane+" FX") : "Clip FX";
+  let html=`<h4 style="margin-top:14px">${ctx}</h4>`, lastG=null;
   PFX.forEach((d,i)=>{
-    if(d.g!==lastG){ html+=`<h4 style="margin-top:14px">${d.g}</h4>`; lastG=d.g; }
+    if(d.g!==lastG){ html+=`<div class="kv" style="border:0;padding-top:8px"><span style="color:var(--dim)">${d.g}</span><span></span></div>`; lastG=d.g; }
     const v=M.pfx[i];
     if(d.opts){
       html+=`<div class="kv"><span>${d.l}</span><span><select class="fxsel" data-i="${i}">`+
@@ -282,15 +329,16 @@ function renderFX(){
         `</select></span></div>`;
     } else {
       html+=`<div class="kv"><span>${d.l}</span><span>`+
-        `<button class="fxdn" data-i="${i}">−</button>`+
+        `<button class="fxdn sm" data-i="${i}">−</button>`+
         `<input class="fxin" data-i="${i}" type="number" min="${d.lo}" max="${d.hi}" value="${v}" style="width:54px;text-align:right">`+
-        `<button class="fxup" data-i="${i}">+</button></span></div>`;
+        `<button class="fxup sm" data-i="${i}">+</button></span></div>`;
     }
   });
   el.innerHTML=html;
   const setI=(i,val)=>{ const d=PFX[i]; val=Math.max(d.lo,Math.min(d.hi,val|0));
     if(M.pfx[i]===val) return; M.pfx[i]=val;
-    R.setParam(P+`t${M.sel.t}_c${M.sel.c}_pfx_set`, d.key+" "+val); afterEdit();
+    const key=drum ? `t${M.sel.t}_l${M.sel.lane}_pfx_set` : `t${M.sel.t}_c${M.sel.c}_pfx_set`;
+    R.setParam(P+key, d.key+" "+val); afterEdit();
     const inp=el.querySelector(`.fxin[data-i="${i}"]`); if(inp) inp.value=val; };
   el.querySelectorAll(".fxin").forEach(inp=>inp.onchange=e=>setI(+e.target.dataset.i,+e.target.value));
   el.querySelectorAll(".fxup").forEach(b=>b.onclick=e=>setI(+e.currentTarget.dataset.i,M.pfx[+e.currentTarget.dataset.i]+1));
@@ -298,45 +346,129 @@ function renderFX(){
   el.querySelectorAll(".fxsel").forEach(s=>s.onchange=e=>setI(+e.target.dataset.i,+e.target.value));
 }
 function renderSide(){
-  const tpsName={6:"1/64",12:"1/32",24:"1/16",48:"1/8",96:"1/4",192:"1/2",384:"1/1"}[M.clip.tps]||M.clip.tps;
+  const ridx=RES_TPS.indexOf(M.clip.tps);
   const el=document.getElementById("clipinfo");
   el.innerHTML=
-    `<div class="kv"><span>Length</span><span><button id="lenDn">−</button>`+
-      `<input id="lenIn" type="number" min="1" max="256" value="${M.clip.len}" `+
-      `style="width:52px;text-align:right">`+
-      `<button id="lenUp">+</button></span></div>`+
+    `<div class="kv"><span>Length</span><span><button id="lenDn" class="sm">−</button>`+
+      `<input id="lenIn" type="number" min="1" max="256" value="${M.clip.len}" style="width:52px;text-align:right">`+
+      `<button id="lenUp" class="sm">+</button></span></div>`+
     `<div class="kv"><span>Direction</span><span><select id="dirSel">`+
       ["Fwd","Bwd","PP-Fwd","PP-Bwd"].map((n,i)=>`<option value="${i}"${i===M.clip.dir?" selected":""}>${n}</option>`).join("")+
       `</select></span></div>`+
-    `<div class="kv"><span>Resolution</span><span>${tpsName}</span></div>`+
+    `<div class="kv"><span>Resolution</span><span><select id="resSel">`+
+      RES_LAB.map((n,i)=>`<option value="${i}"${i===ridx?" selected":""}>${n}</option>`).join("")+
+      `</select></span></div>`+
     `<div class="kv"><span>Loop start</span><span>${M.clip.ls}</span></div>`+
-    `<div class="kv"><span>Notes</span><span>${M.notes.length}</span></div>`;
+    `<div class="kv"><span>Notes</span><span>${isDrum()?"—":M.notes.length}</span></div>`;
   const setLen=v=>{ v=Math.max(1,Math.min(256,v|0)); if(v===M.clip.len)return;
     M.clip.len=v; emit("length",String(v)); layout(); draw(); renderSide(); };
   el.querySelector("#lenIn").onchange=e=>setLen(+e.target.value);
   el.querySelector("#lenUp").onclick=()=>setLen(M.clip.len+1);
   el.querySelector("#lenDn").onclick=()=>setLen(M.clip.len-1);
   el.querySelector("#dirSel").onchange=e=>{ M.clip.dir=+e.target.value; emit("dir",e.target.value); };
+  el.querySelector("#resSel").onchange=e=>{ emit("resolution",e.target.value); pullSoon(); };
 }
-function renderSelector(){
-  const tracks=document.getElementById("tracks"), clips=document.getElementById("clips");
-  clips.style.gridTemplateColumns=`repeat(16,16px)`; tracks.innerHTML=""; clips.innerHTML="";
+/* Clip management: Clear (wipe notes, keep length/FX) · Duplicate (→ next empty
+ * slot, same track) · Delete (hard reset to defaults). */
+function renderClipOps(){
+  const el=document.getElementById("clipops"); const t=M.sel.t,c=M.sel.c,drum=isDrum();
+  el.innerHTML=`<button class="sm" id="opClear">Clear</button>`+
+    `<button class="sm" id="opDup">Duplicate</button>`+
+    `<button class="sm danger" id="opDel">Delete</button>`;
+  el.querySelector("#opClear").onclick=()=>{
+    R.setParam(P+(drum?`t${t}_c${c}_drum_clear`:`t${t}_c${c}_clear`),"0"); afterEdit(); pullSoon(); };
+  el.querySelector("#opDel").onclick=()=>{
+    R.setParam(P+`t${t}_c${c}_hard_reset`,"1"); afterEdit(); pullSoon(); };
+  el.querySelector("#opDup").onclick=()=>{
+    const tr=M.tracks[t]; let dst=-1;
+    for(let i=0;i<16;i++) if(!tr.has[i] && i!==c){ dst=i; break; }
+    if(dst<0) return;
+    R.setParam(P+(drum?"drum_clip_copy":"clip_copy"), `${t} ${c} ${t} ${dst}`); afterEdit();
+    setTimeout(()=>selectClip(t,dst),140); };
+}
+/* Drum: per-lane length for the selected lane (click a lane label to select). */
+function renderDrumPanel(){
+  const el=document.getElementById("drumpanel");
+  if(!isDrum()){ el.innerHTML=""; return; }
+  if(M.sel.lane<0 || !M.laneInfo){
+    el.innerHTML=`<div class="hint">Click a <b>lane label</b> (left of the drum grid) to edit that lane's length + FX.</div>`;
+    return;
+  }
+  const li=M.laneInfo;
+  el.innerHTML=`<h4 style="margin-top:14px">Lane ${M.sel.lane}</h4>`+
+    `<div class="kv"><span>Lane length</span><span><button id="llDn" class="sm">−</button>`+
+    `<input id="llIn" type="number" min="1" max="256" value="${li.len}" style="width:52px;text-align:right">`+
+    `<button id="llUp" class="sm">+</button></span></div>`;
+  const setLL=v=>{ v=Math.max(1,Math.min(256,v|0)); if(v===li.len)return; li.len=v;
+    R.setParam(P+`t${M.sel.t}_l${M.sel.lane}_clip_length`,String(v)); afterEdit();
+    const inp=el.querySelector("#llIn"); if(inp)inp.value=v; };
+  el.querySelector("#llIn").onchange=e=>setLL(+e.target.value);
+  el.querySelector("#llUp").onclick=()=>setLL(li.len+1);
+  el.querySelector("#llDn").onclick=()=>setLL(li.len-1);
+}
+/* Global params: BPM (top bar) + key/scale/swing/scale-aware/launch-quant (side). */
+function renderGlobals(){
+  const g=M.glob||{key:0,scale:0,swing:0,swingRes:0,quant:0,scaleAware:false};
+  const tb=document.getElementById("globals");
+  if(document.activeElement!==tb.querySelector("#bpmIn"))
+    tb.innerHTML=`<label>BPM <input id="bpmIn" type="number" min="40" max="250" value="${M.play.bpm|0}"></label>`;
+  tb.querySelector("#bpmIn").onchange=e=>{ const v=Math.max(40,Math.min(250,+e.target.value|0));
+    R.setParam(P+"bpm",String(v)); afterEdit(); };
+  const el=document.getElementById("globalpanel");
+  const opt=(arr,sel)=>arr.map((n,i)=>`<option value="${i}"${i===sel?" selected":""}>${n}</option>`).join("");
+  const QUANT=["Off","1 bar","1/2","1/4","1/8","1/16"];
+  el.innerHTML=
+    `<div class="kv"><span>Key</span><span><select id="gKey">${opt(KEY_NAMES,g.key)}</select></span></div>`+
+    `<div class="kv"><span>Scale</span><span><select id="gScale">${opt(SCALE_NAMES,g.scale)}</select></span></div>`+
+    `<div class="kv"><span>Scale-aware roll</span><span><button class="sm${g.scaleAware?" on":""}" id="gSA">${g.scaleAware?"On":"Off"}</button></span></div>`+
+    `<div class="kv"><span>Swing</span><span><button id="swDn" class="sm">−</button>`+
+      `<input id="swIn" type="number" min="0" max="100" value="${g.swing}" style="width:46px;text-align:right"><button id="swUp" class="sm">+</button></span></div>`+
+    `<div class="kv"><span>Swing res</span><span><select id="gSwR"><option value="0"${!g.swingRes?" selected":""}>1/16</option><option value="1"${g.swingRes?" selected":""}>1/8</option></select></span></div>`+
+    `<div class="kv"><span>Launch quant</span><span><select id="gQ">${opt(QUANT,g.quant)}</select></span></div>`;
+  const setG=(key,val)=>{ R.setParam(P+key,String(val)); afterEdit(); };
+  el.querySelector("#gKey").onchange=e=>{ g.key=+e.target.value; setG("key",e.target.value); pullSoon(); };
+  el.querySelector("#gScale").onchange=e=>{ g.scale=+e.target.value; setG("scale",e.target.value); pullSoon(); };
+  el.querySelector("#gSA").onclick=()=>{ g.scaleAware=!g.scaleAware; setG("scale_aware",g.scaleAware?1:0); renderGlobals(); };
+  el.querySelector("#swIn").onchange=e=>{ const v=Math.max(0,Math.min(100,+e.target.value|0)); g.swing=v; setG("swing_amt",v); };
+  el.querySelector("#swUp").onclick=()=>{ g.swing=Math.min(100,(g.swing||0)+5); setG("swing_amt",g.swing); renderGlobals(); };
+  el.querySelector("#swDn").onclick=()=>{ g.swing=Math.max(0,(g.swing||0)-5); setG("swing_amt",g.swing); renderGlobals(); };
+  el.querySelector("#gSwR").onchange=e=>setG("swing_res",e.target.value);
+  el.querySelector("#gQ").onchange=e=>setG("launch_quant",e.target.value);
+}
+/* Session grid: tracks = columns, scenes = rows. Track headers + clips show the
+ * device track colors. Click a clip = select it for editing; double-click =
+ * launch it; ▶ in the left column = launch the whole scene row. */
+function renderSession(){
+  const grid=document.getElementById("grid");
+  const NT=M.tracks.length||8, NC=16;
+  grid.style.gridTemplateColumns=`30px repeat(${NT},minmax(20px,1fr))`;
+  let html=`<div class="scorner"></div>`;
   M.tracks.forEach((trk,t)=>{
-    const lab=document.createElement("div"); lab.className="trk"+(t===M.sel.t?" sel":"");
-    lab.textContent=(trk.pm===1?"D":trk.pm===2?"C":"M")+(t+1);
-    lab.onclick=()=>selectClip(t, trk.ac); tracks.appendChild(lab);
-    trk.has.forEach((has,c)=>{
-      const cell=document.createElement("div");
-      cell.className="cell"+(has?" has":"")+(c===trk.ac?" ac":"")
-                     +(t===M.sel.t&&c===M.sel.c?" sel":"");
-      cell.title=`track ${t+1} clip ${c+1}`; cell.onclick=()=>selectClip(t,c);
-      clips.appendChild(cell);
+    const lbl=(trk.pm===1?"D":trk.pm===2?"C":"M")+(t+1);
+    html+=`<div class="strk${t===M.sel.t?" sel":""}" data-t="${t}" style="background:${trackColor(t)}" title="track ${t+1}">${lbl}</div>`;
+  });
+  for(let c=0;c<NC;c++){
+    html+=`<div class="slaunch" data-scene="${c}" title="Launch scene ${SCENE_LETTERS[c]}">▶${SCENE_LETTERS[c]}</div>`;
+    M.tracks.forEach((trk,t)=>{
+      const col=trackColor(t), has=trk.has[c];
+      const cls="sclip"+(t===M.sel.t&&c===M.sel.c?" sel":"")
+                +(trk.pl&&trk.ac===c?" playing":"")+(trk.qc===c?" queued":"");
+      const bg=has?col:hexA(col,0.14);
+      html+=`<div class="${cls}" data-t="${t}" data-c="${c}" style="background:${bg}" `+
+            `title="track ${t+1} ${SCENE_LETTERS[c]}${has?' · clip':' · empty'}"></div>`;
     });
+  }
+  grid.innerHTML=html;
+  grid.querySelectorAll(".strk").forEach(el=>el.onclick=()=>{const t=+el.dataset.t; selectClip(t,M.tracks[t].ac);});
+  grid.querySelectorAll(".slaunch").forEach(el=>el.onclick=()=>launchScene(+el.dataset.scene));
+  grid.querySelectorAll(".sclip").forEach(el=>{
+    el.onclick=()=>selectClip(+el.dataset.t,+el.dataset.c);
+    el.ondblclick=()=>launchClip(+el.dataset.t,+el.dataset.c);
   });
 }
 function selectClip(t,c){
   R.setParam(P+`t${t}_c${c}_ruisel`,"");
-  if(M){ M.sel.t=t; M.sel.c=c; renderSelector(); renderChrome(); }
+  if(M){ M.sel.t=t; M.sel.c=c; renderSession(); renderChrome(); }
   /* selection is not an edit — pull the newly-selected clip promptly */
   suppressRefreshUntil=0; setTimeout(refresh,30);
 }
@@ -349,6 +481,16 @@ let ROWH=8, PXPERTICK=0.6;
 const X=t=>20+t*PXPERTICK, Y=p=>(PITCH_HI-p)*ROWH;
 const tickAt=mx=>Math.max(0,(mx-20)/PXPERTICK);
 const pitchAt=my=>PITCH_HI-1-Math.floor(my/ROWH);
+/* scale-aware: snap a pitch to the nearest in-scale pitch when scale-aware is on */
+function snapPitch(pi){
+  if(!(M&&M.glob&&M.glob.scaleAware)||!M.scaleMask) return pi;
+  for(let d=0;d<12;d++){
+    const up=pi+d, dn=pi-d;
+    if(up<=127 && M.scaleMask[((up%12)+12)%12]) return up;
+    if(dn>=0  && M.scaleMask[((dn%12)+12)%12]) return dn;
+  }
+  return pi;
+}
 function snapTicks(){ return +document.getElementById("snap").value||M.clip.tps; }
 function snap(t){ const s=snapTicks(); return Math.round(t/s)*s; }
 function maxTick(){ return Math.max(1,M.clip.len*M.clip.tps); }
@@ -382,9 +524,12 @@ function drawDrum(){
   cv.width=Math.max(420, DLBL+len*DCELLW); cv.height=Math.max(160, lanes.length*DLANEH);
   ctx.fillStyle="#15171c"; ctx.fillRect(0,0,cv.width,cv.height);
   lanes.forEach((ln,l)=>{ const y=l*DLANEH;
+    const selL=(l===M.sel.lane);
     ctx.fillStyle=(l%2)?"#191c22":"#1d212a"; ctx.fillRect(0,y,cv.width,DLANEH-1);
-    ctx.globalAlpha=ln.has?1:0.55; ctx.fillStyle=ln.has?"#aeb4c0":"#6b707c";
-    ctx.font="10px ui-monospace,monospace"; ctx.fillText(noteName(ln.note),5,y+DLANEH-3);
+    if(selL){ ctx.fillStyle="rgba(57,208,200,0.10)"; ctx.fillRect(0,y,cv.width,DLANEH-1);
+      ctx.fillStyle="#39d0c8"; ctx.fillRect(0,y,3,DLANEH-1); }
+    ctx.globalAlpha=ln.has?1:0.55; ctx.fillStyle=selL?"#cfe9e7":(ln.has?"#aeb4c0":"#6b707c");
+    ctx.font="10px ui-monospace,monospace"; ctx.fillText(noteName(ln.note),7,y+DLANEH-3);
     ctx.globalAlpha=1;
   });
   for(let s=0;s<=len;s++){ const x=DLBL+s*DCELLW;
@@ -411,8 +556,15 @@ function draw(){
   if(drum){ if(hasDrumData) drawDrum(); return; }
   const W=cv.width,H=cv.height,tps=M.clip.tps,total=maxTick();
   ctx.fillStyle="#15171c"; ctx.fillRect(0,0,W,H);
+  const sk=(M.glob?M.glob.key:0)%12;
   for(let p=PITCH_LO;p<PITCH_HI;p++){ const s=((p%12)+12)%12, blk=[1,3,6,8,10].includes(s);
-    ctx.fillStyle=blk?"#191c22":"#21252e"; ctx.fillRect(0,Y(p)-ROWH,W,ROWH-1);
+    const inScale = M.scaleMask ? M.scaleMask[s] : true;
+    const root = (s===sk);
+    /* scale-aware shading: in-scale rows lifted, out-of-scale dimmed, root tinted */
+    ctx.fillStyle = root ? (blk?"#243a39":"#2b4544")
+                  : inScale ? (blk?"#1d2730":"#26313e")
+                  : (blk?"#141619":"#181b21");
+    ctx.fillRect(0,Y(p)-ROWH,W,ROWH-1);
     if(s===0){ ctx.fillStyle="#3a4150"; ctx.font="9px ui-monospace,monospace";
       ctx.fillText("C"+(Math.floor(p/12)-1),2,Y(p)-1); } }
   for(let st=0;st<=M.clip.len;st++){ const x=X(st*tps);
@@ -468,11 +620,24 @@ function drumToggle(lane,tick,del){
   draw();
   R.setParam(P+`t${M.sel.t}_l${lane}_${del?"note_del":"note_toggle"}`, String(tick)); afterEdit();
 }
+let ddrag=null;   /* drum velocity drag: {lane,tick,i,startY,startVel,moved} */
+function selectLane(lane){
+  if(lane<0||lane>=M.dlanes.length) return;
+  M.sel.lane=lane;
+  R.setParam(P+`t${M.sel.t}_c${M.sel.c}_ruisel`, String(lane));
+  renderSidePanels(); renderChrome(); draw(); pullSoon();
+}
 cv.addEventListener("mousedown",e=>{
   if(e.button===2) return;
   if(isDrum()){
-    const r=cv.getBoundingClientRect(); const cell=drumCellAt(e.clientX-r.left,e.clientY-r.top);
-    if(cell) drumToggle(cell.lane,cell.tick,false);
+    const r=cv.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
+    if(mx<DLBL){ selectLane(Math.floor(my/DLANEH)); return; }   /* lane label → select lane */
+    const cell=drumCellAt(mx,my); if(!cell) return;
+    const i=hitAt(cell.lane,cell.tick);
+    if(i>=0){ /* existing hit: drag = set velocity, tap = remove */
+      ddrag={lane:cell.lane,tick:cell.tick,i,startY:my,startVel:(M.dnotes[cell.lane][i].vel||100),moved:false};
+      dragging=true;
+    } else { drumToggle(cell.lane,cell.tick,false); }   /* empty → add */
     return;
   }
   const r=cv.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
@@ -484,9 +649,9 @@ cv.addEventListener("mousedown",e=>{
     else        { drag={mode:"move",  i:hit.i,o:{...nt},gx:mx-X(nt.tick),gp:nt.pitch-pitchAt(my)}; }
     dragging=true; return;
   }
-  /* empty → add */
+  /* empty → add (scale-snapped when scale-aware) */
   const tk=Math.min(maxTick()-1,Math.max(0,snap(tickAt(mx))));
-  const pi=Math.max(0,Math.min(127,pitchAt(my)));
+  const pi=snapPitch(Math.max(0,Math.min(127,pitchAt(my))));
   if(M.notes.some(n=>n.tick===tk&&n.pitch===pi)) return;
   const gate=snapTicks(), nt={tick:tk,pitch:pi,vel:100,gate};
   M.notes.push(nt); draw(); emit("note_add",`${tk} ${pi} 100 ${gate}`);
@@ -497,7 +662,7 @@ window.addEventListener("mousemove",e=>{
   const nt=M.notes[drag.i]; if(!nt) return;
   if(drag.mode==="move"){
     nt.tick=Math.min(maxTick()-1,Math.max(0,snap(tickAt(mx-drag.gx))));
-    nt.pitch=Math.max(0,Math.min(127,pitchAt(my)+drag.gp));
+    nt.pitch=snapPitch(Math.max(0,Math.min(127,pitchAt(my)+drag.gp)));
   } else { /* resize */
     const end=Math.max(nt.tick+1,snap(tickAt(mx))); nt.gate=Math.max(1,end-nt.tick);
   }
@@ -512,6 +677,26 @@ window.addEventListener("mouseup",()=>{
     if(nt.gate!==o.gate) emit("note_resize",`${nt.tick} ${nt.pitch} ${nt.gate}`);
   }
   drag=null; dragging=false;
+});
+
+/* drum per-cell velocity: drag up/down on a hit (≈2 vel/px). Tap (no move) removes. */
+window.addEventListener("mousemove",e=>{
+  if(!ddrag) return;
+  const r=cv.getBoundingClientRect(), my=e.clientY-r.top;
+  if(Math.abs(my-ddrag.startY)>3) ddrag.moved=true;
+  if(!ddrag.moved) return;
+  const vel=Math.max(1,Math.min(127, Math.round(ddrag.startVel + (ddrag.startY-my)*2)));
+  const arr=M.dnotes[ddrag.lane]; if(!arr||!arr[ddrag.i]) return;
+  if(arr[ddrag.i].vel!==vel){ arr[ddrag.i].vel=vel; ddrag.vel=vel; draw(); }
+});
+window.addEventListener("mouseup",()=>{
+  if(!ddrag) return;
+  if(ddrag.moved && ddrag.vel!=null){
+    R.setParam(P+`t${M.sel.t}_l${ddrag.lane}_note_vel`, `${ddrag.tick} ${ddrag.vel}`); afterEdit();
+  } else {
+    drumToggle(ddrag.lane,ddrag.tick,true);   /* tap with no drag → remove */
+  }
+  ddrag=null; dragging=false;
 });
 
 /* velocity lane drag */
@@ -543,7 +728,7 @@ function applyParams(params){
   const prevRev=lastRev, prevSel=lastSelKey;
   M=m;
   const selKey=M.sel.t+":"+M.sel.c;
-  renderChrome(); renderSelector();
+  renderChrome(); renderSession();
   if(M.rev!==prevRev || selKey!==prevSel){ lastRev=M.rev; lastSelKey=selKey;
     layout(); renderSidePanels(); }
   draw();
@@ -554,7 +739,8 @@ function refresh(){
   if(dragging || now()<suppressRefreshUntil) return;
   if(typeof R.resubscribe==="function"){ R.resubscribe(); return; }
   if(window.parent){ window.parent.postMessage({type:"subscribe"},"*"); }
-  const keys=["rui_rev","rui_play","rui_sel","rui_clip","rui_index","rui_notes"];
+  const keys=["rui_rev","rui_play","rui_sel","rui_clip","rui_glob","rui_scale","rui_index",
+              "rui_notes","rui_pfx","rui_lane","rui_dlanes","rui_dnotes"];
   Promise.all(keys.map(k=>R.getParam(P+k).then(v=>[P+k,v]).catch(()=>null)))
     .then(pairs=>{ const o={}; pairs.forEach(p=>{if(p&&p[1]!=null)o[p[0]]=p[1];}); applyParams(o); });
 }

@@ -2261,6 +2261,36 @@ static void set_param(void *instance, const char *key, const char *val) {
                 return;
             }
 
+            /* tN_cC_resolution "idx" (0-5): change THIS clip's ticks_per_step and
+             * rescale its notes proportionally — remote-UI per-clip variant of
+             * clip_resolution (which only targets the active clip). */
+            if (!strcmp(p, "_resolution")) {
+                if (tr->recording) return;
+                int ridx = clamp_i(my_atoi(val), 0, 5);
+                uint16_t new_tps = TPS_VALUES[ridx];
+                uint16_t old_tps = cl->ticks_per_step;
+                if (new_tps == old_tps || old_tps == 0) return;
+                uint32_t gmax_res = (uint32_t)SEQ_STEPS * new_tps;
+                if (gmax_res > 65535) gmax_res = 65535;
+                for (uint16_t ni = 0; ni < cl->note_count; ni++) {
+                    note_t *n = &cl->notes[ni];
+                    n->tick = (uint32_t)((uint64_t)n->tick * new_tps / old_tps);
+                    uint32_t ng = (uint32_t)((uint64_t)n->gate * new_tps / old_tps);
+                    if (ng < 1) ng = 1;
+                    if (ng > gmax_res) ng = gmax_res;
+                    n->gate = (uint16_t)ng;
+                }
+                cl->ticks_per_step = new_tps;
+                if (cidx == tr->active_clip && old_tps > 0) {
+                    tr->tick_in_step = (uint32_t)((uint64_t)tr->tick_in_step * new_tps / old_tps);
+                    if (tr->tick_in_step >= new_tps) tr->tick_in_step = 0;
+                }
+                clip_build_steps_from_notes(cl);
+                rui_touch(inst);
+                inst->state_dirty = 1;
+                return;
+            }
+
             if (!strncmp(p, "_step_", 6)) {
                 const char *q = p + 6;
                 int sidx = 0;

@@ -9514,7 +9514,9 @@ static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
 /*   rui_play  = "on:tick:bpm"                                           */
 /*   rui_sel   = "track:clip:lane"   (lane=-1 melodic)                   */
 /*   rui_clip  = "len:tps:loop_start:dir"   (selected clip)             */
-/*   rui_index = per-track "pm:ac:<16 has-bits>", tracks joined by ';'   */
+/*   rui_glob  = "key:scale:swing_amt:swing_res:launch_quant:scale_aware" */
+/*   rui_scale = 12 pitch-class in-scale bits (pc0..11 absolute)          */
+/*   rui_index = per-track "pm:ac:qc:pl:<16 has-bits>", joined by ';'     */
 /*   rui_notes = "tick:pitch:vel:gate;" list for the selected clip       */
 /* ------------------------------------------------------------------ */
 static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
@@ -9541,12 +9543,34 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
     APP(",\"rui_clip\":\"%d:%d:%d:%d\"",
         (int)gcl->length, (int)gcl->ticks_per_step, (int)gcl->loop_start,
         (int)gcl->playback_dir);
+    /* global params: key:scale:swing_amt:swing_res:launch_quant:scale_aware (bpm in rui_play) */
+    APP(",\"rui_glob\":\"%d:%d:%d:%d:%d:%d\"",
+        (int)inst->pad_key, (int)inst->pad_scale, (int)inst->swing_amt,
+        (int)inst->swing_res, (int)inst->launch_quant, (int)inst->scale_aware);
+    /* rui_scale: 12 pitch-class bits (pc 0..11 absolute, key applied) — which
+     * notes are in the current key+scale, so the piano roll can shade rows. */
+    APP(",\"rui_scale\":\"");
+    {
+        int sc = inst->pad_scale; if (sc < 0 || sc >= 14) sc = 0;
+        int kk = ((int)inst->pad_key) % 12; if (kk < 0) kk += 12;
+        int smask[12] = {0};
+        for (int d = 0; d < SCALE_SIZES[sc]; d++)
+            smask[(kk + SCALE_IVLS[sc][d]) % 12] = 1;
+        for (int pc = 0; pc < 12; pc++) APP("%d", smask[pc]);
+    }
+    APP("\"");
 
     /* per-clip FX (melodic only): 29 values in a fixed order the browser mirrors —
      * NOTE FX (8) | HARMZ (4) | MIDI DLY (10) | SEQ ARP (7). Edited via
      * tN_cC_pfx_set "key value". Drum lanes carry their own (smaller) pfx — later. */
-    if (!drum) {
-        clip_pfx_params_t *pf = &gcl->pfx_params;
+    /* rui_pfx = 29 FX values. Melodic: the selected clip's pfx. Drum: the
+     * SELECTED LANE's pfx (each drum lane has its own pfx chain), so the browser
+     * can edit per-lane drum FX via tN_lL_pfx_set; empty if no lane selected. */
+    clip_pfx_params_t *pf = NULL;
+    if (!drum) pf = &gcl->pfx_params;
+    else if (dclip && inst->rui_sel_lane >= 0 && inst->rui_sel_lane < DRUM_LANES)
+        pf = &dclip->lanes[inst->rui_sel_lane].pfx_params;
+    if (pf) {
         APP(",\"rui_pfx\":\"%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d\"",
             pf->octave_shift, pf->note_offset, pf->gate_time, pf->velocity_offset, pf->quantize,
             pf->note_random, pf->note_random_mode, (int)pf->note_length_mode,
@@ -9558,12 +9582,23 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
     } else {
         APP(",\"rui_pfx\":\"\"");
     }
+    /* rui_lane = selected drum lane's "len:tps:loop_start" (per-lane length edit) */
+    if (drum && dclip && inst->rui_sel_lane >= 0 && inst->rui_sel_lane < DRUM_LANES) {
+        clip_t *lc = &dclip->lanes[inst->rui_sel_lane].clip;
+        APP(",\"rui_lane\":\"%d:%d:%d\"",
+            (int)lc->length, (int)lc->ticks_per_step, (int)lc->loop_start);
+    } else {
+        APP(",\"rui_lane\":\"\"");
+    }
 
-    /* per-track index: "pm:ac:<16 has-bits>", tracks joined by ';' */
+    /* per-track index: "pm:ac:qc:pl:<16 has-bits>", tracks joined by ';'
+     * (pm=pad_mode, ac=active clip, qc=queued clip or -1, pl=clip playing) —
+     * drives the session grid's playing/queued indicators. */
     APP(",\"rui_index\":\"");
     for (int ti = 0; ti < NUM_TRACKS; ti++) {
         seq8_track_t *trk = &inst->tracks[ti];
-        APP("%s%d:%d:", ti ? ";" : "", (int)trk->pad_mode, (int)trk->active_clip);
+        APP("%s%d:%d:%d:%d:", ti ? ";" : "", (int)trk->pad_mode, (int)trk->active_clip,
+            (int)trk->queued_clip, trk->clip_playing ? 1 : 0);
         for (int ci = 0; ci < NUM_CLIPS; ci++) {
             clip_t *cc = &trk->clips[ci];
             int has = 0;
