@@ -754,6 +754,7 @@ typedef struct {
     uint8_t  rui_sel_track;   /* 0..NUM_TRACKS-1 */
     uint8_t  rui_sel_clip;    /* 0..NUM_CLIPS-1 */
     int16_t  rui_sel_lane;    /* -1 melodic, 0..DRUM_LANES-1 drum */
+    int8_t   rui_cc_focus;   /* knob 0..7 whose CC breakpoints emit in rui_cc; -1 = none */
     uint32_t rui_rev;         /* monotonic edit counter */
 
     /* Phase 1 / Bundle 2C-Rpt2: global Delete-held flag. JS pushes the
@@ -6724,7 +6725,8 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
                            ? (float)g_host->sample_rate : 44100.0f;
     inst->log_fp         = fopen(SEQ8_LOG_PATH, "a");
 
-    inst->rui_sel_lane = -1;  /* remote-UI: melodic by default (calloc zeros the rest) */
+    inst->rui_sel_lane  = -1;  /* remote-UI: melodic by default (calloc zeros the rest) */
+    inst->rui_cc_focus  = -1;  /* no CC lane focused initially */
 
     inst->pad_key      = 9;   /* A */
     inst->pad_scale    = 1;   /* Minor */
@@ -9605,6 +9607,31 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
     } else {
         APP(",\"rui_lane\":\"\"");
     }
+
+    /* rui_ccmeta: per knob "assign,type,hasdata,rest,curval,ls,len,tps,restps" x8 (melodic only). */
+    APP(",\"rui_ccmeta\":\"");
+    if (!drum) {
+        cc_auto_t *ca = &tr->clip_cc_auto[c];
+        for (int k = 0; k < 8; k++) {
+            APP("%s%d,%d,%d,%d,%d,%d,%d,%d,%d", k ? ";" : "",
+                (int)tr->cc_assign[k], (int)tr->cc_type[k],
+                ca->count[k] > 0 ? 1 : 0, (int)ca->rest_val[k], (int)tr->cc_auto_cur_val[k],
+                (int)ca->lane_loop_start[k], (int)ca->lane_length[k],
+                (int)ca->lane_tps[k], (int)ca->lane_res_tps[k]);
+        }
+    }
+    APP("\"");
+
+    /* rui_cc: breakpoints "k|tick:val,tick:val" for the focused knob only (gated). */
+    APP(",\"rui_cc\":\"");
+    if (!drum && inst->rui_cc_focus >= 0 && inst->rui_cc_focus < 8) {
+        int k = inst->rui_cc_focus;
+        cc_auto_t *ca = &tr->clip_cc_auto[c];
+        APP("%d|", k);
+        for (int i = 0; i < (int)ca->count[k]; i++)
+            APP("%s%d:%d", i ? "," : "", (int)ca->ticks[k][i], (int)ca->vals[k][i]);
+    }
+    APP("\"");
 
     /* per-step trig conditions (sparse "s:iter:rand:ratch:nudge;") for the step
      * strip. rui_steps = selected MELODIC clip; rui_dsteps = selected drum LANE

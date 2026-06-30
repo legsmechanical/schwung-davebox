@@ -69,11 +69,46 @@ static void test_module_id_probe(void) {
     hx_destroy(h);
 }
 
+static void test_snapshot_ccmeta_present(void) {
+    hx_t *h = hx_create(NULL);
+    HX_ASSERT(h != NULL, "hx_create returned NULL");
+    /* track 1 melodic; assign knob 0 -> CC 11, write breakpoints, select clip 0 */
+    hx_set_param(h, "t1_cc_type_assign", "0 0 11");      /* knob0 type CC, cc#11 */
+    hx_set_param(h, "t1_cc_auto_set", "0 0 0 64");       /* clip0 knob0 tick0 val64 */
+    hx_set_param(h, "t1_cc_auto_set", "0 0 48 100");     /* clip0 knob0 tick48 val100 */
+    hx_set_param(h, "t1_c0_ruisel", "");
+    char buf[16384];
+    int len = hx_get_param(h, "state", buf, (int)sizeof(buf));
+    HX_ASSERT(len > 0, "no state");
+    HX_ASSERT(strstr(buf, "\"rui_ccmeta\":\"") != NULL, "missing rui_ccmeta");
+    HX_ASSERT(strstr(buf, "\"rui_ccmeta\":\"11,0,1,") != NULL, "knob0 meta wrong");
+    HX_ASSERT(strstr(buf, "\"rui_cc\":\"\"") != NULL, "rui_cc should be empty when unfocused");
+    hx_destroy(h);
+}
+
+static void test_snapshot_cc_focus_emits_breakpoints(void) {
+    hx_t *h = hx_create(NULL);
+    HX_ASSERT(h != NULL, "hx_create returned NULL");
+    hx_set_param(h, "t1_cc_auto_set", "0 0 0 64");
+    hx_set_param(h, "t1_cc_auto_set", "0 0 48 100");
+    hx_set_param(h, "t1_c0_ruisel", "");
+    hx_set_param(h, "t1_c0_cc_focus", "0");             /* focus knob 0 */
+    char buf[16384];
+    hx_get_param(h, "state", buf, (int)sizeof(buf));
+    HX_ASSERT(strstr(buf, "\"rui_cc\":\"0|0:64,48:100\"") != NULL, "focused breakpoints wrong");
+    hx_set_param(h, "t1_c0_cc_focus", "-1");
+    hx_get_param(h, "state", buf, (int)sizeof(buf));
+    HX_ASSERT(strstr(buf, "\"rui_cc\":\"\"") != NULL, "rui_cc should clear on focus -1");
+    hx_destroy(h);
+}
+
 int main(void) {
     test_snapshot_has_selected_clip_notes();
     test_snapshot_selection_switches_clip();
     test_snapshot_empty_clip_has_index();
     test_module_id_probe();
-    printf("PASS: remote snapshot (notes round-trip, selection switch, empty index, module_id probe)\n");
+    test_snapshot_ccmeta_present();
+    test_snapshot_cc_focus_emits_breakpoints();
+    printf("PASS: remote snapshot (notes round-trip, selection switch, empty index, module_id probe, ccmeta, cc_focus)\n");
     return 0;
 }

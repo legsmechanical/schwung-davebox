@@ -2239,6 +2239,14 @@ static void set_param(void *instance, const char *key, const char *val) {
                 return;
             }
 
+            /* tN_cC_cc_focus "<k>" — gate rui_cc to knob k (-1 = none); bump rev to force re-read. */
+            if (!strcmp(p, "_cc_focus")) {
+                int k = val ? my_atoi(val) : -1;
+                inst->rui_cc_focus = (k >= 0 && k < 8) ? (int8_t)k : -1;
+                rui_touch(inst);
+                return;
+            }
+
             /* Remote-UI piano-roll note edits (melodic clip). Each writes notes[]
              * directly then re-derives steps[] via clip_note_finalize. */
             if (!strcmp(p, "_note_add"))    { if (clip_note_apply_op(cl, 'a', val)) clip_note_finalize(inst, cl); return; }
