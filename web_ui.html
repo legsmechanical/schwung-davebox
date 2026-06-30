@@ -250,10 +250,10 @@
        mock store so the preview is a faithful edit loop. ---- */
 if (!window.schwungRemote) {
   let rev=1;
-  /* live playhead tick for the preview: advance at 120 BPM over a 384-tick (16-step
-     @ tps24) loop — 96 ticks/beat * 120/60000 = 0.192 ticks/ms — so the smooth
-     playhead is visible in a plain browser. */
-  const phTick=()=>Math.floor(performance.now()*0.192)%384;
+  /* live playhead tick for the preview: advance at 120 BPM (96 ticks/beat * 120/60000
+     = 0.192 ticks/ms) and wrap within the loop window [ls, ls+len)*tps24 — exactly like
+     the device's current_clip_tick — so a foreground preview faithfully shows looping. */
+  const phTick=()=>{ const win=Math.max(1,clipLen*24); return clipLs*24 + Math.floor(performance.now()*0.192)%win; };
   const sel={t:1,c:0,lane:-1};
   let clipLen=16, clipDir=0, clipLs=0;
   // melodic store (track 1, clip 0)
@@ -1870,9 +1870,14 @@ function phStep(){
   const ph=document.getElementById("playhead");
   if(!ph){ phRAF=0; return; }
   if(!phPlaying || !M || cv.style.display==="none"){ ph.style.display="none"; phRAF=0; return; }
-  const total=endTick();
+  /* Wrap within the DEVICE's loop window [ls, ls+len)*tps — the device's
+   * current_clip_tick wraps there (playback_audible_cct = current_step*tps + tick),
+   * NOT at displayTicks() (which rounds up to a whole bar). Wrapping at displayTicks
+   * let the line overshoot the loop end on non-bar-aligned clips, so it appeared to
+   * jump back before finishing. loopTicks() = [ls*tps, (ls+len)*tps]. */
+  const [lsT,leT]=loopTicks(); const win=leT-lsT;
   let est=phAnchorTick + (now()-phAnchorT)*(BEAT_TICKS*phBpm/60000);  /* ticks/ms at BPM */
-  est = total>0 ? (est%total) : phAnchorTick;        /* same wrap the roll used */
+  est = win>0 ? lsT + (((est-lsT)%win)+win)%win : phAnchorTick;       /* loop-window wrap, matches device */
   const x=xOfTick(est);
   if(x<GUTTER||x>VW){ ph.style.display="none"; }
   else { ph.style.display="block"; ph.style.transform="translateX("+x+"px)"; }
