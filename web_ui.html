@@ -525,7 +525,9 @@ function renderSide(){
     `<div class="kv"><span>Resolution</span><span><select id="resSel">`+
       RES_LAB.map((n,i)=>`<option value="${i}"${i===ridx?" selected":""}>${n}</option>`).join("")+
       `</select></span></div>`+
-    `<div class="kv"><span>Loop start</span><span>${M.clip.ls}</span></div>`+
+    `<div class="kv"><span>Loop start</span><span><button id="clsDn" class="sm">−</button>`+
+      `<input id="clsIn" type="number" min="0" max="255" value="${M.clip.ls}" style="width:52px;text-align:right">`+
+      `<button id="clsUp" class="sm">+</button></span></div>`+
     `<div class="kv"><span>Notes</span><span>${isDrum()?"—":M.notes.length}</span></div>`;
   const setLen=v=>{ v=Math.max(1,Math.min(256,v|0)); if(v===M.clip.len)return;
     M.clip.len=v; emit("length",String(v)); layout(); draw(); renderSide(); };
@@ -534,6 +536,12 @@ function renderSide(){
   el.querySelector("#lenDn").onclick=()=>setLen(M.clip.len-1);
   el.querySelector("#dirSel").onchange=e=>{ M.clip.dir=+e.target.value; emit("dir",e.target.value); };
   el.querySelector("#resSel").onchange=e=>{ emit("resolution",e.target.value); pullSoon(); };
+  /* loop start (loop_set packed = ls*65536 + len) */
+  const setCLS=v=>{ v=Math.max(0,Math.min(255,v|0)); M.clip.ls=v;
+    emit("loop_set",String(v*65536+M.clip.len)); const inp=el.querySelector("#clsIn"); if(inp)inp.value=v; pullSoon(); };
+  el.querySelector("#clsIn").onchange=e=>setCLS(+e.target.value);
+  el.querySelector("#clsUp").onclick=()=>setCLS(M.clip.ls+1);
+  el.querySelector("#clsDn").onclick=()=>setCLS(M.clip.ls-1);
 }
 /* Clip management: Clear (wipe notes, keep length/FX) · Duplicate (→ next empty
  * slot, same track) · Delete (hard reset to defaults). */
