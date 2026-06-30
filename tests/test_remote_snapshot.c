@@ -102,6 +102,59 @@ static void test_snapshot_cc_focus_emits_breakpoints(void) {
     hx_destroy(h);
 }
 
+/* A DRUM track with notes must light its clip's has-bit in rui_index, so the
+ * session grid doesn't show populated drum clips as empty. Before the fix the
+ * has-bits scanned only trk->clips[] (melodic), so drum tracks emitted all 0s. */
+static void test_snapshot_drum_clip_has_bit(void) {
+    hx_t *h = hx_create(NULL);
+    HX_ASSERT(h != NULL, "hx_create returned NULL");
+    seq8_instance_t *inst = (seq8_instance_t *)h->inst;
+    /* track 0 -> drum: first tN_lL_* write allocates drum clips + sets pad_mode */
+    hx_set_param(h, "t0_l0_clip_length", "16");
+    HX_ASSERT(inst->tracks[0].pad_mode == PAD_MODE_DRUM, "track 0 should be drum");
+    /* add a hit at tick 0 in lane 0 of the active drum clip (clip 0) */
+    hx_set_param(h, "t0_l0_note_add", "0 100");
+    hx_set_param(h, "t0_c0_ruisel", "");
+    char buf[16384];
+    int len = hx_get_param(h, "state", buf, (int)sizeof(buf));
+    HX_ASSERT(len > 0, "no state");
+    /* rui_index track-0 record = "pm:ac:qc:pl:<16 has-bits>:route:chan". Skip the
+     * 4 leading colon-separated fields; the first has-bit (clip 0) must be '1'. */
+    const char *p = strstr(buf, "\"rui_index\":\"");
+    HX_ASSERT(p != NULL, "missing rui_index");
+    p += strlen("\"rui_index\":\"");
+    int colons = 0;
+    while (*p && colons < 4) { if (*p == ':') colons++; p++; }
+    HX_ASSERT(*p == '1', "drum clip 0 with a note must set its rui_index has-bit");
+    hx_destroy(h);
+}
+
+/* CC automation must surface in the snapshot on DRUM tracks too — the engine
+ * already evaluates clip_cc_auto for drums (indexed by active_clip). Before the
+ * fix rui_ccmeta + rui_cc were gated !drum, hiding all drum CC automation. */
+static void test_snapshot_drum_cc_automation(void) {
+    hx_t *h = hx_create(NULL);
+    HX_ASSERT(h != NULL, "hx_create returned NULL");
+    seq8_instance_t *inst = (seq8_instance_t *)h->inst;
+    seq8_track_t *tr = &inst->tracks[0];
+    hx_set_param(h, "t0_l0_clip_length", "16");           /* track 0 -> drum */
+    HX_ASSERT(tr->pad_mode == PAD_MODE_DRUM, "track 0 should be drum");
+    /* knob 0 -> CC 74; write breakpoints into the active clip's automation (clip 0) */
+    hx_set_param(h, "t0_cc_type_assign", "0 0 74");        /* knob0 type CC, cc#74 */
+    hx_set_param(h, "t0_cc_auto_set", "0 0 0 64");         /* clip0 knob0 tick0 val64 */
+    hx_set_param(h, "t0_cc_auto_set", "0 0 48 100");       /* clip0 knob0 tick48 val100 */
+    hx_set_param(h, "t0_c0_ruisel", "");
+    hx_set_param(h, "t0_c0_cc_focus", "0");                /* focus knob 0 */
+    char buf[16384];
+    int len = hx_get_param(h, "state", buf, (int)sizeof(buf));
+    HX_ASSERT(len > 0, "no state");
+    HX_ASSERT(strstr(buf, "\"rui_ccmeta\":\"74,0,1,") != NULL,
+              "drum track knob0 ccmeta should expose cc#74 type0 hasdata1");
+    HX_ASSERT(strstr(buf, "\"rui_cc\":\"0|0:64,48:100\"") != NULL,
+              "drum track focused breakpoints should emit");
+    hx_destroy(h);
+}
+
 static void test_snapshot_cond_present(void) {
     hx_t *h = hx_create(NULL);
     HX_ASSERT(h != NULL, "hx_create returned NULL");
@@ -138,6 +191,8 @@ int main(void) {
     test_module_id_probe();
     test_snapshot_ccmeta_present();
     test_snapshot_cc_focus_emits_breakpoints();
+    test_snapshot_drum_clip_has_bit();
+    test_snapshot_drum_cc_automation();
     test_snapshot_cond_present();
     test_snapshot_cond_none();
     printf("PASS: remote snapshot (notes round-trip, selection switch, empty index, module_id probe, ccmeta, cc_focus, rui_cond)\n");

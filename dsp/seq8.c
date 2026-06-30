@@ -9542,6 +9542,10 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
     int c = inst->rui_sel_clip;  if (c < 0 || c >= NUM_CLIPS)  c = 0;
     seq8_track_t *tr = &inst->tracks[t];
     int drum = (tr->pad_mode == PAD_MODE_DRUM);
+    /* CC automation is track-level, keyed by clip slot: melodic edits the selected
+     * clip (c); drum playback evaluates the active clip (active_clip). */
+    int cc_clip = drum ? (int)tr->active_clip : c;
+    if (cc_clip < 0 || cc_clip >= NUM_CLIPS) cc_clip = 0;
     drum_clip_t *dclip = (drum && tr->drum_clips[tr->active_clip])
                          ? tr->drum_clips[tr->active_clip] : NULL;
     /* grid-reference clip: drum -> active drum clip lane 0; melodic -> selected clip.
@@ -9608,10 +9612,12 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
         APP(",\"rui_lane\":\"\"");
     }
 
-    /* rui_ccmeta: per knob "assign,type,hasdata,rest,curval,ls,len,tps,restps" x8 (melodic only). */
+    /* rui_ccmeta: per knob "assign,type,hasdata,rest,curval,ls,len,tps,restps" x8.
+     * Emitted for melodic AND drum tracks (engine evaluates clip_cc_auto for both);
+     * keyed by cc_clip (selected clip melodic, active clip drum). */
     APP(",\"rui_ccmeta\":\"");
-    if (!drum) {
-        cc_auto_t *ca = &tr->clip_cc_auto[c];
+    {
+        cc_auto_t *ca = &tr->clip_cc_auto[cc_clip];
         for (int k = 0; k < 8; k++) {
             APP("%s%d,%d,%d,%d,%d,%d,%d,%d,%d", k ? ";" : "",
                 (int)tr->cc_assign[k], (int)tr->cc_type[k],
@@ -9622,11 +9628,12 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
     }
     APP("\"");
 
-    /* rui_cc: breakpoints "k|tick:val,tick:val" for the focused knob only (gated). */
+    /* rui_cc: breakpoints "k|tick:val,tick:val" for the focused knob only.
+     * Emitted for melodic AND drum (keyed by cc_clip) when a knob is focused. */
     APP(",\"rui_cc\":\"");
-    if (!drum && inst->rui_cc_focus >= 0 && inst->rui_cc_focus < 8) {
+    if (inst->rui_cc_focus >= 0 && inst->rui_cc_focus < 8) {
         int k = inst->rui_cc_focus;
-        cc_auto_t *ca = &tr->clip_cc_auto[c];
+        cc_auto_t *ca = &tr->clip_cc_auto[cc_clip];
         APP("%d|", k);
         for (int i = 0; i < (int)ca->count[k]; i++)
             APP("%s%d:%d", i ? "," : "", (int)ca->ticks[k][i], (int)ca->vals[k][i]);
@@ -9654,10 +9661,22 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
         APP("%s%d:%d:%d:%d:", ti ? ";" : "", (int)trk->pad_mode, (int)trk->active_clip,
             (int)trk->queued_clip, trk->clip_playing ? 1 : 0);
         for (int ci = 0; ci < NUM_CLIPS; ci++) {
-            clip_t *cc = &trk->clips[ci];
             int has = 0;
-            for (uint16_t k = 0; k < cc->note_count; k++)
-                if (cc->notes[k].active) { has = 1; break; }
+            if (trk->pad_mode == PAD_MODE_DRUM) {
+                /* drum: scan all lanes of the drum clip (NULL until first used) */
+                drum_clip_t *dc = trk->drum_clips[ci];
+                if (dc) {
+                    for (int l = 0; l < DRUM_LANES && !has; l++) {
+                        clip_t *lc = &dc->lanes[l].clip;
+                        for (uint16_t k = 0; k < lc->note_count; k++)
+                            if (lc->notes[k].active) { has = 1; break; }
+                    }
+                }
+            } else {
+                clip_t *cc = &trk->clips[ci];
+                for (uint16_t k = 0; k < cc->note_count; k++)
+                    if (cc->notes[k].active) { has = 1; break; }
+            }
             APP("%d", has);
         }
         APP(":%d:%d", (int)trk->pfx.route, (int)trk->channel + 1);
