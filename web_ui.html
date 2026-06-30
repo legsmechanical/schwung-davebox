@@ -69,6 +69,11 @@
   #rollwrap{flex:1;display:flex;flex-direction:column;min-width:0}
   #rollview{flex:1;position:relative;overflow:hidden;background:var(--bg);touch-action:none}
   #rollcanvas{display:block;position:absolute;left:0;top:0;touch-action:none}
+  /* smooth playhead: a thin DOM line over the roll, glided via rAF (top/bottom =
+     RULER / STEPBAND constants so it auto-tracks viewport resize) */
+  #playhead{position:absolute;left:0;top:24px;bottom:28px;width:2px;margin-left:-1px;
+    background:var(--play);box-shadow:0 0 3px rgba(255,207,77,.5);pointer-events:none;
+    display:none;will-change:transform}
   /* docked context editor (selected note / step) */
   #editbar{flex:0 0 auto;border-top:2px solid var(--accent-dim);background:var(--panel2);padding:10px 14px;
            display:flex;gap:10px 24px;align-items:center;flex-wrap:wrap;min-height:50px;row-gap:8px}
@@ -219,6 +224,7 @@
           <div>This track is in <b>Drum</b> mode but has no drum clip yet.</div>
           <div>Add a hit on the device, or pick a melodic track.</div>
         </div>
+        <div id="playhead"></div>
       </div>
       <div class="bandhdr" id="velhdr" title="Show / hide the velocity lane"><span class="tw">▼</span><span class="bl">Velocity</span></div>
       <div id="velwrap"><canvas id="velcanvas"></canvas></div>
@@ -244,6 +250,10 @@
        mock store so the preview is a faithful edit loop. ---- */
 if (!window.schwungRemote) {
   let rev=1;
+  /* live playhead tick for the preview: advance at 120 BPM over a 384-tick (16-step
+     @ tps24) loop — 96 ticks/beat * 120/60000 = 0.192 ticks/ms — so the smooth
+     playhead is visible in a plain browser. */
+  const phTick=()=>Math.floor(performance.now()*0.192)%384;
   const sel={t:1,c:0,lane:-1};
   let clipLen=16, clipDir=0, clipLs=0;
   // melodic store (track 1, clip 0)
@@ -274,7 +284,7 @@ if (!window.schwungRemote) {
   const KV={};
   function rebuild(){
     KV["overtake_dsp:rui_rev"]=String(rev);
-    KV["overtake_dsp:rui_play"]="1:120:120";
+    KV["overtake_dsp:rui_play"]="1:"+phTick()+":120";
     KV["overtake_dsp:rui_sel"]=sel.t+":"+sel.c+":"+sel.lane;
     const isDrum=tracks[sel.t].pm===1;
     KV["overtake_dsp:rui_index"]=tracks.map((tk,t)=>{
@@ -358,7 +368,8 @@ if (!window.schwungRemote) {
       }
     },
     onParamChange:cb=>{subs.push(cb);},
-    resubscribe:()=>subs.forEach(cb=>cb(Object.assign({},KV)))
+    resubscribe:()=>{ KV["overtake_dsp:rui_play"]="1:"+phTick()+":120";   /* keep preview tick live */
+      subs.forEach(cb=>cb(Object.assign({},KV))); }
   };
 }
 </script>
@@ -371,6 +382,8 @@ const kv = {};
 let M = null;
 let lastRev = null, lastSelKey = null;
 let dragging = false, suppressRefreshUntil = 0, fastUntil = 0;
+/* smooth-playhead anchor: re-set on every accepted poll, extrapolated at BPM by rAF */
+let phAnchorTick = 0, phAnchorT = 0, phPlaying = false, phBpm = 120, phRAF = 0;
 
 /* device track colors (fixed Move palette by track index — mirrors
  * ui_constants.mjs TRACK_COLORS). Clips inherit the track color. */
@@ -1314,7 +1327,7 @@ function draw(){
   /* note-area content is clipped so it never paints over the frozen ruler/gutter/step band */
   ctx.save(); ctx.beginPath(); ctx.rect(GUTTER,RULER,VW-GUTTER,noteAreaH()); ctx.clip();
     if(drum) drawLaneBodies(); else drawPitchBodies();
-    drawGrid(); if(drum) drawDrumHits(); else drawNotes(); drawPlayhead(); drawLoopShade(); drawMarquee();
+    drawGrid(); if(drum) drawDrumHits(); else drawNotes(); drawLoopShade(); drawMarquee();
   ctx.restore();
   drawStepBand(); drawRuler(); drawLoopBrace(); if(drum) drawGutterDrum(); else drawGutterMelodic();
   ctx.fillStyle="#13161b"; ctx.fillRect(0,0,GUTTER,RULER);                  /* corner */
@@ -1374,9 +1387,8 @@ function drawDrumHits(){ const [r0,r1]=visRows(), tps=gridTps(), n=M.dlanes.leng
       ctx.fillStyle=hexA(ac,(0.38+0.62*(h.vel/127))*dim); ctx.fillRect(x,y+2,w,ROWH-4);
       ctx.strokeStyle=sel?"#ffcf4d":(inStep?"#9d86ff":"#0c2e2c"); ctx.lineWidth=(sel||inStep)?2:1; ctx.strokeRect(x+0.5,y+2.5,Math.max(1,w-1),ROWH-5); }); }
 }
-function drawPlayhead(){ if(!M.play.on) return; const total=endTick(); if(total<=0) return;
-  const x=xOfTick(M.play.tick%total); if(x<GUTTER||x>VW) return;
-  ctx.strokeStyle="#ffcf4d"; ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(x,RULER); ctx.lineTo(x,VH-STEPBAND); ctx.stroke(); }
+/* smooth playhead — see the rAF extrapolation block near the poll loop; the line
+ * is a DOM overlay (#playhead) moved per-frame, not painted into the roll. */
 /* musical ruler: numbered bars, beat ticks when zoomed in; label density adapts
  * to zoom so numbers never crowd or vanish. */
 function drawRuler(){ ctx.fillStyle="#13161b"; ctx.fillRect(GUTTER,0,VW-GUTTER,RULER);
@@ -1817,6 +1829,9 @@ function applyParams(params){
   if(now()<suppressRefreshUntil && M && m.rev<=M.rev) { return; }
   const prevRev=lastRev, prevSel=lastSelKey;
   M=m;
+  /* re-anchor the smooth playhead to the device's authoritative tick every poll */
+  phAnchorTick=M.play.tick; phAnchorT=now(); phBpm=M.play.bpm||120; phPlaying=!!M.play.on;
+  if(phPlaying) startPlayhead(); else stopPlayhead();
   /* drum: land on a lane so the Lane + FX populate immediately instead of a blank
    * "select a lane" prompt on first click (once per clip; device honors the ruisel). */
   if(isDrum() && M.sel.lane<0){ const ck=M.sel.t+":"+M.sel.c;
@@ -1843,6 +1858,29 @@ function refresh(){
     .then(pairs=>{ const o={}; pairs.forEach(p=>{if(p&&p[1]!=null)o[p[0]]=p[1];}); applyParams(o); });
 }
 function now(){ return (window.performance&&performance.now)?performance.now():+new Date(); }
+
+/* ---------- smooth playhead (client-side tempo extrapolation) ----------
+ * The device only reports the playhead a few times/sec (each poll), so drawing it
+ * straight from M.play.tick steps. Instead we anchor to the device tick+timestamp
+ * on every poll (applyParams) and glide a lightweight DOM line at the known BPM
+ * between polls — re-anchoring each poll auto-corrects drift and snaps cleanly on
+ * stop / loop-jump / tempo change. Only the #playhead line moves per frame; the
+ * roll is never redrawn here. The rAF loop runs ONLY while playing. */
+function phStep(){
+  const ph=document.getElementById("playhead");
+  if(!ph){ phRAF=0; return; }
+  if(!phPlaying || !M || cv.style.display==="none"){ ph.style.display="none"; phRAF=0; return; }
+  const total=endTick();
+  let est=phAnchorTick + (now()-phAnchorT)*(BEAT_TICKS*phBpm/60000);  /* ticks/ms at BPM */
+  est = total>0 ? (est%total) : phAnchorTick;        /* same wrap the roll used */
+  const x=xOfTick(est);
+  if(x<GUTTER||x>VW){ ph.style.display="none"; }
+  else { ph.style.display="block"; ph.style.transform="translateX("+x+"px)"; }
+  phRAF=requestAnimationFrame(phStep);
+}
+function startPlayhead(){ if(!phRAF) phRAF=requestAnimationFrame(phStep); }
+function stopPlayhead(){ if(phRAF){ cancelAnimationFrame(phRAF); phRAF=0; }
+  const ph=document.getElementById("playhead"); if(ph) ph.style.display="none"; }
 
 /* ---------- wire ---------- */
 R.onParamChange && R.onParamChange(applyParams);
