@@ -34,6 +34,8 @@
   button.danger:hover{border-color:#8a3a3a}
   button.ghost{background:transparent;border-color:transparent;color:var(--dim);padding:5px 8px}
   button.ghost:hover{color:var(--ink);background:#21262f}
+  #xport{color:var(--accent);font-size:13px;line-height:1;min-width:26px}
+  #xport.play{color:var(--play)}
   button svg{display:block;pointer-events:none;width:16px;height:16px}
   button.ghost svg{width:18px;height:18px}
   .seg.tools button{padding:5px 10px}
@@ -191,6 +193,7 @@
 <body><div id="app">
   <div id="top">
     <span class="brand">dAVEBO<span class="dot">x</span></span>
+    <button class="ghost" id="xport" title="Start / stop transport">▶</button>
     <span class="badge play" id="transport">—</span>
     <span id="globals"></span>
     <span class="badge clip" id="clipname">—</span>
@@ -255,6 +258,7 @@ if (!window.schwungRemote) {
      the device's current_clip_tick — so a foreground preview faithfully shows looping. */
   const phTick=()=>{ const win=Math.max(1,clipLen*24); return clipLs*24 + Math.floor(performance.now()*0.192)%win; };
   const sel={t:1,c:0,lane:-1};
+  let mockPlay=1;                 /* preview transport state, toggled by the transport key */
   let clipLen=16, clipDir=0, clipLs=0;
   // melodic store (track 1, clip 0)
   let mel=[[0,60,100,24],[24,64,90,24],[48,67,110,24],[72,72,80,48],
@@ -284,7 +288,7 @@ if (!window.schwungRemote) {
   const KV={};
   function rebuild(){
     KV["overtake_dsp:rui_rev"]=String(rev);
-    KV["overtake_dsp:rui_play"]="1:"+phTick()+":120";
+    KV["overtake_dsp:rui_play"]=mockPlay+":"+phTick()+":120";
     KV["overtake_dsp:rui_sel"]=sel.t+":"+sel.c+":"+sel.lane;
     const isDrum=tracks[sel.t].pm===1;
     KV["overtake_dsp:rui_index"]=tracks.map((tk,t)=>{
@@ -326,6 +330,8 @@ if (!window.schwungRemote) {
     getParam:k=>Promise.resolve(KV[k]!=null?KV[k]:""),
     setParam:(k,v)=>{
       let m;
+      /* transport start/stop — flip the preview playing state */
+      if(/(^|:)transport$/.test(k)){ mockPlay=(String(v)==="play")?1:0; rev++; rebuild(); return; }
       /* CC automation (Task 1 keys) — keep the preview curve live */
       if(/_cc_focus$/.test(k)){ ccFocus=+v; rev++; rebuild(); return; }
       if(/_cc_auto_set$/.test(k)){ const a=String(v).split(/\s+/).map(Number); const kn=a[1],tk=a[2],vl=a[3];
@@ -368,7 +374,7 @@ if (!window.schwungRemote) {
       }
     },
     onParamChange:cb=>{subs.push(cb);},
-    resubscribe:()=>{ KV["overtake_dsp:rui_play"]="1:"+phTick()+":120";   /* keep preview tick live */
+    resubscribe:()=>{ KV["overtake_dsp:rui_play"]=mockPlay+":"+phTick()+":120";   /* keep preview tick live */
       subs.forEach(cb=>cb(Object.assign({},KV))); }
   };
 }
@@ -521,6 +527,10 @@ const PFX=[
 function renderChrome(){
   const tr=document.getElementById("transport");
   tr.textContent=M.play.on?"▶ playing":"■ stopped"; tr.classList.toggle("play",!!M.play.on);
+  /* play/stop button shows the ACTION (▶ start when stopped, ■ stop when playing) */
+  const xp=document.getElementById("xport");
+  if(xp){ xp.textContent=M.play.on?"■":"▶"; xp.classList.toggle("play",!!M.play.on);
+    xp.title=M.play.on?"Stop transport":"Start transport"; }
   /* keep the BPM input live without clobbering an in-progress edit */
   const bi=document.getElementById("bpmIn"); if(bi && document.activeElement!==bi) bi.value=M.play.bpm|0;
   const lane=(isDrum()&&M.sel.lane>=0)?(" · lane "+M.sel.lane):"";
@@ -1927,6 +1937,10 @@ document.getElementById("toolSel").onclick=()=>setTool("select");
 document.getElementById("toolErase").onclick=()=>setTool("erase");
 document.getElementById("hUndo").onclick=doUndo;     /* global undo/redo in the top toolbar */
 document.getElementById("hRedo").onclick=doRedo;
+/* transport start/stop — toggles on current state; renderChrome keeps the label in
+ * sync each poll, so a click never fights the status text. */
+document.getElementById("xport").onclick=()=>{ if(!M) return;
+  R.setParam(P+"transport", M.play.on ? "stop" : "play"); afterEdit(); pullSoon(); };
 /* ---------- keyboard shortcuts ---------- */
 function deleteSelection(){ if(isDrum()){ if(selDrum) drumDelete(selDrum.lane,selDrum.tick); return; }
   const ns=selectedNotes(); if(!ns.length) return;
