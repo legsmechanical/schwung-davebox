@@ -114,6 +114,10 @@ static void test_snapshot_cond_present(void) {
     char buf[16384];
     hx_get_param(h, "state", buf, (int)sizeof(buf));
     HX_ASSERT(strstr(buf, "\"rui_cond\":\"2:0:1;") != NULL, "condTrk/clip/lock header wrong");
+    /* within-group delimiter must be commas: "resp,oct,when". */
+    HX_ASSERT(strstr(buf, ";1,0,0") != NULL, "track-0 default group (resp,oct,when) wrong");
+    HX_ASSERT(strstr(buf, ";0,0,0") != NULL, "track-3 resp-off group wrong");
+    HX_ASSERT(strstr(buf, ";1,1,0") != NULL, "track-4 oct+1 group wrong");
     hx_destroy(h);
 }
 
