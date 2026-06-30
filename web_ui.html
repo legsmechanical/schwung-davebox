@@ -227,7 +227,7 @@ const P = "overtake_dsp:";
 const kv = {};
 let M = null;
 let lastRev = null, lastSelKey = null;
-let dragging = false, suppressRefreshUntil = 0;
+let dragging = false, suppressRefreshUntil = 0, fastUntil = 0;
 
 /* device track colors (fixed Move palette by track index — mirrors
  * ui_constants.mjs TRACK_COLORS). Clips inherit the track color. */
@@ -929,7 +929,7 @@ function noteAt(mx,my){
 
 /* ---------- emit (per-track-prefixed, ≤255B) ---------- */
 function emit(op,val){ R.setParam(P+`t${M.sel.t}_c${M.sel.c}_${op}`, val); afterEdit(); }
-function afterEdit(){ suppressRefreshUntil=now()+250; }
+function afterEdit(){ suppressRefreshUntil=now()+250; fastUntil=now()+1400; }
 
 /* ---------- editing interactions ---------- */
 let drag=null;   /* {mode,i, ...} */
@@ -1122,7 +1122,11 @@ document.getElementById("roll").addEventListener("wheel",e=>{
 (function poll(){
   if(auto && !document.hidden) refresh();
   const playing = M && M.play && M.play.on;
-  setTimeout(poll, document.hidden ? 3000 : (playing ? 350 : 1000));
+  /* polls are cheap now (manager rev-gates the heavy snapshot read), so we can
+   * poll briskly for snappier device→browser sync; faster still right after an
+   * edit to pick up device-side recompute; paused entirely when hidden. */
+  const ms = document.hidden ? 3000 : (now()<fastUntil ? 150 : (playing ? 250 : 500));
+  setTimeout(poll, ms);
 })();
 document.addEventListener("visibilitychange",()=>{ if(!document.hidden){ suppressRefreshUntil=0; refresh(); } });
 

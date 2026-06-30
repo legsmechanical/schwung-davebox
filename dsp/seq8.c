@@ -9714,6 +9714,21 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         return snprintf(out, out_len, "%u", (unsigned)inst->rui_rev);
     }
 
+    if (!strcmp(key, "rui_poll")) {
+        /* Cheap poll digest "rev:on:tick:bpm" — same values as the snapshot's
+         * rui_rev + rui_play, but with NO note/step serialization. The manager
+         * reads this every browser poll and only does the full get_param("state")
+         * read when rev changes (content edit); while playing it pushes just the
+         * playhead. Keeps idle/playing polls off the heavy snapshot path. */
+        int pt = inst->rui_sel_track; if (pt < 0 || pt >= NUM_TRACKS) pt = 0;
+        seq8_track_t *ptr = &inst->tracks[pt];
+        double pbpm = (inst->tracks[0].pfx.cached_bpm > 0)
+                      ? inst->tracks[0].pfx.cached_bpm : (double)BPM_DEFAULT;
+        return snprintf(out, out_len, "%u:%d:%u:%d",
+                        (unsigned)inst->rui_rev, inst->playing ? 1 : 0,
+                        (unsigned)ptr->current_clip_tick, (int)pbpm);
+    }
+
     if (!strcmp(key, "module_id")) {
         /* Remote-UI discovery probe. davebox runs as an overtake tool (no chain
          * slot), so the schwung-manager can't find it via the per-slot
