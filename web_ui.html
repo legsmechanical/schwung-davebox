@@ -50,7 +50,7 @@
   #session.collapsed{display:none}
   #grid{display:grid;gap:3px;align-items:stretch}
   .strk{position:relative;font:11px ui-monospace,monospace;font-weight:700;color:#0b0d11;text-align:center;
-        padding:4px 2px;border-radius:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+        padding:4px 17px 4px 4px;border-radius:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
   .strk.sel{outline:2px solid var(--ink);outline-offset:-1px}
   .strk.eff{opacity:.42}                 /* effectively silenced (muted, or solo elsewhere) */
   .strk .cind{font-weight:800;margin-left:2px}
@@ -58,9 +58,9 @@
   .strk .cind.resp{color:#0b0d11;opacity:.65}
   .strk .cind.tm{color:#7a0d0d}          /* muted "M" badge */
   .strk .cind.ts{color:#0a5d12}          /* soloed "S" badge */
-  .strk-gear{position:absolute;left:1px;top:0;font-size:9px;line-height:1;opacity:.5;cursor:pointer;
-             padding:1px 2px;color:#0b0d11}
-  .strk-gear:hover{opacity:1}
+  .strk-gear{position:absolute;right:1px;top:50%;transform:translateY(-50%);font-size:14px;line-height:1;
+             opacity:.6;cursor:pointer;padding:3px 4px;color:#0b0d11}
+  .strk-gear:hover,.strk-gear:active{opacity:1}
   /* per-track settings dropdown (route / MIDI channel) */
   .trkgear{position:fixed;width:188px;background:var(--panel2);border:1px solid var(--ctl-br);
     border-radius:var(--rad);box-shadow:0 12px 32px rgba(0,0,0,.55);padding:10px 12px;z-index:40}
@@ -93,13 +93,14 @@
      strip: horizontal drag = vertical zoom (right=in, left=out). Narrow so they
      coexist with the loop brace (ruler) + gutter and never block note editing.
      top=RULER(24) / bottom=STEPBAND(28) / left=GUTTER(48) mirror the JS consts. */
-  .zoomstrip{position:absolute;z-index:6;touch-action:none;
-    background-color:rgba(57,208,200,.05);transition:background-color .12s}
-  .zoomstrip:hover{background-color:rgba(57,208,200,.16)}
-  .zoomstrip.zh{top:0;left:48px;right:0;height:5px;cursor:ns-resize;
-    background-image:repeating-linear-gradient(90deg,transparent 0 7px,rgba(57,208,200,.2) 7px 8px)}
-  .zoomstrip.zv{top:24px;bottom:28px;left:0;width:8px;cursor:ew-resize;
-    background-image:repeating-linear-gradient(0deg,transparent 0 7px,rgba(57,208,200,.2) 7px 8px)}
+  .zoomstrip{position:absolute;z-index:7;touch-action:none;user-select:none;
+    display:flex;align-items:center;justify-content:center;gap:5px;
+    background-color:rgba(57,208,200,.16);box-shadow:inset 0 0 0 1px rgba(57,208,200,.34);
+    color:rgba(150,238,230,.92);font-size:8px;font-weight:700;letter-spacing:1px;
+    transition:background-color .12s}
+  .zoomstrip:hover,.zoomstrip:active{background-color:rgba(57,208,200,.34)}
+  .zoomstrip.zh{top:0;left:48px;right:0;height:11px;cursor:ns-resize}
+  .zoomstrip.zv{top:24px;bottom:28px;left:0;width:11px;cursor:ew-resize;flex-direction:column}
   /* docked context editor (selected note / step) */
   #editbar{flex:0 0 auto;border-top:2px solid var(--accent-dim);background:var(--panel2);padding:10px 14px;
            display:flex;gap:10px 24px;align-items:center;flex-wrap:wrap;min-height:50px;row-gap:8px}
@@ -252,8 +253,8 @@
           <div>Add a hit on the device, or pick a melodic track.</div>
         </div>
         <div id="playhead"></div>
-        <div class="zoomstrip zh" id="zstripH" title="Zoom horizontally — drag down to zoom in, up to zoom out"></div>
-        <div class="zoomstrip zv" id="zstripV" title="Zoom vertically — drag right to zoom in, left to zoom out"></div>
+        <div class="zoomstrip zh" id="zstripH" title="Zoom horizontally — drag down to zoom in, up to zoom out">↕ ZOOM ↕</div>
+        <div class="zoomstrip zv" id="zstripV" title="Zoom vertically — drag right to zoom in, left to zoom out">↔</div>
       </div>
       <div class="bandhdr" id="velhdr" title="Show / hide the velocity lane"><span class="tw">▼</span><span class="bl">Velocity</span></div>
       <div id="velwrap"><canvas id="velcanvas"></canvas></div>
@@ -1169,7 +1170,7 @@ function renderSession(){
                + (trk.solo?` <span class="cind ts" title="Soloed">S</span>`:"");
     html+=`<div class="strk${t===M.sel.t?" sel":""}${eff?" eff":""}" data-t="${t}" style="background:${trackColor(t)}" `+
           `title="${ttl} · click=mute, right-click=solo">`+
-          `<span class="strk-gear" data-t="${t}" title="Track route / channel">⚙</span>${lbl}${cind}${mind}</div>`;
+          `${lbl}${cind}${mind}<span class="strk-gear" data-t="${t}" title="Track settings (route / channel)">☰</span></div>`;
   });
   for(let c=0;c<NC;c++){
     html+=`<div class="slaunch" data-scene="${c}" title="Launch scene ${SCENE_LETTERS[c]}">▶${SCENE_LETTERS[c]}</div>`;
