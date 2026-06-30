@@ -85,22 +85,25 @@
   #rollcanvas{display:block;position:absolute;left:0;top:0;touch-action:none}
   /* smooth playhead: a thin DOM line over the roll, glided via rAF (top/bottom =
      RULER / STEPBAND constants so it auto-tracks viewport resize) */
-  #playhead{position:absolute;left:0;top:24px;bottom:28px;width:2px;margin-left:-1px;
+  #playhead{position:absolute;left:0;top:36px;bottom:28px;width:2px;margin-left:-1px;
     background:var(--play);box-shadow:0 0 3px rgba(255,207,77,.5);pointer-events:none;
     display:none;will-change:transform}
-  /* continuous edge zoom strips — thin/faint drag bars on the extreme top + left
-     edges. Top strip: vertical drag = horizontal zoom (down=in, up=out). Left
-     strip: horizontal drag = vertical zoom (right=in, left=out). Narrow so they
-     coexist with the loop brace (ruler) + gutter and never block note editing.
-     top=RULER(24) / bottom=STEPBAND(28) / left=GUTTER(48) mirror the JS consts. */
+  /* continuous edge zoom strips — drag bars in the RESERVED empty bands at the top
+     of the ruler + left of the gutter (the JS reserves a ZB=12px band there: ruler
+     content / loop brace shifted down by ZB, pitch labels shifted right by ZB), so
+     the strips never cover the brace, pitch labels, or notes. Top strip: vertical
+     drag = horizontal zoom (down=in, up=out). Left strip: horizontal drag = vertical
+     zoom (right=in, left=out). zh: top 0, left=GUTTER(60), height=ZB(12) — spans the
+     note-area width above the ruler content. zv: left 0, top=RULER(36),
+     bottom=STEPBAND(28), width=ZB(12) — left of the gutter, spanning the note rows. */
   .zoomstrip{position:absolute;z-index:7;touch-action:none;user-select:none;
     display:flex;align-items:center;justify-content:center;gap:5px;
     background-color:rgba(57,208,200,.16);box-shadow:inset 0 0 0 1px rgba(57,208,200,.34);
     color:rgba(150,238,230,.92);font-size:8px;font-weight:700;letter-spacing:1px;
     transition:background-color .12s}
   .zoomstrip:hover,.zoomstrip:active{background-color:rgba(57,208,200,.34)}
-  .zoomstrip.zh{top:0;left:48px;right:0;height:11px;cursor:ns-resize}
-  .zoomstrip.zv{top:24px;bottom:28px;left:0;width:11px;cursor:ew-resize;flex-direction:column}
+  .zoomstrip.zh{top:0;left:60px;right:0;height:12px;cursor:ns-resize}
+  .zoomstrip.zv{top:36px;bottom:28px;left:0;width:12px;cursor:ew-resize;flex-direction:column}
   /* docked context editor (selected note / step) */
   #editbar{flex:0 0 auto;border-top:2px solid var(--accent-dim);background:var(--panel2);padding:10px 14px;
            display:flex;gap:10px 24px;align-items:center;flex-wrap:wrap;min-height:50px;row-gap:8px}
@@ -1296,7 +1299,8 @@ let selSet=new Set();            /* multi-selection (Select tool): keys "tick:pi
 let marquee=null;                /* {x0,y0,x1,y1} during a Select-tool drag */
 const nKey=n=>n.tick+":"+n.pitch;
 function isNoteSelected(n){ return (selSet.size&&selSet.has(nKey(n))) || (selNote&&selNote.tick===n.tick&&selNote.pitch===n.pitch); }
-const GUTTER=48, RULER=24, STEPBAND=28;       /* px: left gutter, top ruler (+loop brace), bottom step-edit band */
+const ZB=12;                                  /* px: edge zoom-band thickness reserved at top of ruler / left of gutter for the zoom strips */
+const GUTTER=48+ZB, RULER=24+ZB, STEPBAND=28; /* px: left gutter, top ruler (+loop brace), bottom step-edit band — gutter/ruler each gain ZB so the zoom strips sit in an empty band clear of the brace + pitch labels */
 let VW=880, VH=400, VVW=880, VVH=56;          /* css px of the main + velocity canvases */
 let PXPERTICK=0.6, ROWH=14, scrollX=0, scrollY=0;
 const MIN_PX=0.03, MAX_PX=8, MIN_ROWH=6, MAX_ROWH=42;
@@ -1499,8 +1503,8 @@ function drawRuler(){ ctx.fillStyle="#13161b"; ctx.fillRect(GUTTER,0,VW-GUTTER,R
       vline(x,RULER-6,RULER); } }
   ctx.lineWidth=1;
   for(let bar=0; bar*BAR_TICKS<=endT; bar++){ const x=xOfTick(bar*BAR_TICKS); if(x<GUTTER-30||x>VW) continue;
-    ctx.strokeStyle="#3c4456"; vline(x,3,RULER);
-    if(bar%everyBars===0){ ctx.fillStyle="#808995"; ctx.fillText(String(bar+1), x+4, RULER/2); } }
+    ctx.strokeStyle="#3c4456"; vline(x,ZB,RULER);
+    if(bar%everyBars===0){ ctx.fillStyle="#808995"; ctx.fillText(String(bar+1), x+4, (ZB+RULER)/2); } }
   ctx.strokeStyle="#000"; ctx.beginPath(); ctx.moveTo(GUTTER,RULER-0.5); ctx.lineTo(VW,RULER-0.5); ctx.stroke();
 }
 /* dim the out-of-loop region so the playing window [ls,ls+len) is obvious */
@@ -1515,10 +1519,10 @@ function drawLoopShade(){ const [lsT,leT]=loopTicks(); const xL=xOfTick(lsT), xR
 /* draggable loop brace in the ruler: body = move loop_start, ends = resize length */
 function drawLoopBrace(){ const [lsT,leT]=loopTicks(); const xL=xOfTick(lsT), xR=xOfTick(leT);
   const a=Math.max(GUTTER,xL), b=Math.min(VW,xR);
-  if(b>a){ ctx.fillStyle="rgba(255,207,77,0.9)"; ctx.fillRect(a,0,b-a,3); }
+  if(b>a){ ctx.fillStyle="rgba(255,207,77,0.9)"; ctx.fillRect(a,ZB,b-a,3); }
   ctx.fillStyle="#ffcf4d";
-  if(xL>=GUTTER&&xL<=VW){ ctx.fillRect(xL,0,3,RULER); ctx.fillRect(xL,0,9,4); }
-  if(xR>=GUTTER&&xR<=VW){ ctx.fillRect(xR-3,0,3,RULER); ctx.fillRect(xR-9,0,9,4); }
+  if(xL>=GUTTER&&xL<=VW){ ctx.fillRect(xL,ZB,3,RULER-ZB); ctx.fillRect(xL,ZB,9,4); }
+  if(xR>=GUTTER&&xR<=VW){ ctx.fillRect(xR-3,ZB,3,RULER-ZB); ctx.fillRect(xR-9,ZB,9,4); }
 }
 /* marquee selection rectangle (Select tool) */
 function drawMarquee(){ if(!marquee) return; const x=Math.min(marquee.x0,marquee.x1), y=Math.min(marquee.y0,marquee.y1),
@@ -1553,15 +1557,15 @@ function drawGutterMelodic(){ ctx.fillStyle="#171a20"; ctx.fillRect(0,RULER,GUTT
   for(let r=r0;r<=r1;r++){ const p=rowList[r], s=((p%12)+12)%12, blk=BLACK_KEY[s], y=yOfRow(r);
     ctx.fillStyle=blk?"#0e1014":"#262a31"; ctx.fillRect(GUTTER-13,y,13,ROWH-1);
     if(s===sk){ ctx.fillStyle="rgba(57,208,200,0.55)"; ctx.fillRect(GUTTER-13,y,3,ROWH-1); }
-    if(ROWH>=11 || s===0){ ctx.fillStyle=(s===0)?"#9aa1ae":(s===sk?"#39d0c8":"#5a606c"); ctx.fillText(noteName(p),3,y+ROWH/2); } }
+    if(ROWH>=11 || s===0){ ctx.fillStyle=(s===0)?"#9aa1ae":(s===sk?"#39d0c8":"#5a606c"); ctx.fillText(noteName(p),ZB+3,y+ROWH/2); } }
   /* (step-band gutter + STEP label are painted by drawStepBand) */
 }
 function drawGutterDrum(){ ctx.fillStyle="#171a20"; ctx.fillRect(0,RULER,GUTTER,VH-RULER-STEPBAND);
   const [r0,r1]=visRows(), n=M.dlanes.length; ctx.font="9px ui-monospace,monospace";
   for(let r=r0;r<=r1;r++){ const l=n-1-r; if(l<0||l>=n) continue; const ln=M.dlanes[l], selL=(l===M.sel.lane), y=yOfRow(r);
-    if(selL){ ctx.fillStyle="rgba(57,208,200,0.12)"; ctx.fillRect(0,y,GUTTER,ROWH-1); ctx.fillStyle="#39d0c8"; ctx.fillRect(0,y,3,ROWH-1); }
+    if(selL){ ctx.fillStyle="rgba(57,208,200,0.12)"; ctx.fillRect(0,y,GUTTER,ROWH-1); ctx.fillStyle="#39d0c8"; ctx.fillRect(ZB,y,3,ROWH-1); }
     ctx.globalAlpha=ln&&ln.has?1:0.5; ctx.fillStyle=selL?"#cfe9e7":(ln&&ln.has?"#aeb4c0":"#6b707c");
-    ctx.fillText(ln?noteName(ln.note):("L"+l),7,y+ROWH/2); ctx.globalAlpha=1;
+    ctx.fillText(ln?noteName(ln.note):("L"+l),ZB+7,y+ROWH/2); ctx.globalAlpha=1;
     if(ln&&(ln.mute||ln.solo)){ ctx.fillStyle=ln.solo?"#ffcf4d":"#e88"; ctx.fillText(ln.solo?"S":"M",GUTTER-10,y+ROWH/2); } }
   /* (step-band gutter + STEP label are painted by drawStepBand) */
 }
