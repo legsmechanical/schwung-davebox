@@ -9617,9 +9617,10 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
         n = rui_emit_steps(out, n, out_len, &dclip->lanes[inst->rui_sel_lane].clip);
     APP("\"");
 
-    /* per-track index: "pm:ac:qc:pl:<16 has-bits>", tracks joined by ';'
-     * (pm=pad_mode, ac=active clip, qc=queued clip or -1, pl=clip playing) —
-     * drives the session grid's playing/queued indicators. */
+    /* per-track index: "pm:ac:qc:pl:<16 has-bits>:route:chan", tracks joined by ';'
+     * (pm=pad_mode, ac=active clip, qc=queued clip or -1, pl=clip playing,
+     * route=0 Schwung/1 Move/2 External, chan=1-based MIDI channel) — drives the
+     * session grid's playing/queued indicators + routing labels in the headers. */
     APP(",\"rui_index\":\"");
     for (int ti = 0; ti < NUM_TRACKS; ti++) {
         seq8_track_t *trk = &inst->tracks[ti];
@@ -9632,6 +9633,7 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
                 if (cc->notes[k].active) { has = 1; break; }
             APP("%d", has);
         }
+        APP(":%d:%d", (int)trk->pfx.route, (int)trk->channel + 1);
     }
     APP("\"");
 
@@ -9644,7 +9646,11 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
             for (uint16_t k = 0; k < lc->note_count; k++)
                 if (lc->notes[k].active) { has = 1; break; }
             int mu = (tr->drum_lane_mute >> l) & 1, so = (tr->drum_lane_solo >> l) & 1;
-            APP("%s%d,%d,%d,%d", l ? ";" : "", (int)dclip->lanes[l].midi_note, has, mu, so);
+            /* note,has,mute,solo,length,loop_start,tps — the loop fields let the remote
+             * UI draw each lane's [ls, ls+len) window for a per-lane overview. */
+            APP("%s%d,%d,%d,%d,%d,%d,%d", l ? ";" : "", (int)dclip->lanes[l].midi_note, has, mu, so,
+                (int)lc->length, (int)lc->loop_start,
+                (int)(lc->ticks_per_step ? lc->ticks_per_step : TICKS_PER_STEP));
         }
         APP("\"");
         /* per-lane hits: "L|tick:vel:gate,tick:vel:gate;L|..." (non-empty lanes) */
