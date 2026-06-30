@@ -1083,7 +1083,7 @@ function renderGlobals(){
   el.innerHTML=
     `<div class="kv"><span>Key</span><span><select id="gKey">${opt(KEY_NAMES,g.key)}</select></span></div>`+
     `<div class="kv"><span>Scale</span><span><select id="gScale">${opt(SCALE_NAMES,g.scale)}</select></span></div>`+
-    `<div class="kv"><span>Scale-aware roll</span><span><button class="sm${g.scaleAware?" on":""}" id="gSA">${g.scaleAware?"On":"Off"}</button></span></div>`+
+    `<div class="kv"><span>Scale aware</span><span><button class="sm${g.scaleAware?" on":""}" id="gSA">${g.scaleAware?"On":"Off"}</button></span></div>`+
     sliderRow("gSw","Swing",g.swing,0,100)+
     `<div class="kv"><span>Swing res</span><span><select id="gSwR"><option value="0"${!g.swingRes?" selected":""}>1/16</option><option value="1"${g.swingRes?" selected":""}>1/8</option></select></span></div>`+
     `<div class="kv"><span>Launch quant</span><span><select id="gQ">${opt(QUANT,g.quant)}</select></span></div>`;
