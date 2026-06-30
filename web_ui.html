@@ -50,6 +50,9 @@
   .strk{font:11px ui-monospace,monospace;font-weight:700;color:#0b0d11;text-align:center;
         padding:4px 2px;border-radius:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
   .strk.sel{outline:2px solid var(--ink);outline-offset:-1px}
+  .strk .cind{font-weight:800;margin-left:2px}
+  .strk .cind.cond{color:#0b0d11}
+  .strk .cind.resp{color:#0b0d11;opacity:.65}
   .scorner{font:10px ui-monospace,monospace;color:var(--faint);display:flex;align-items:center;justify-content:center}
   .slaunch{font:10px ui-monospace,monospace;color:var(--dim);background:#0b0d11;border:1px solid #262c36;
            border-radius:4px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:3px;padding:2px}
@@ -219,7 +222,7 @@
       </div>
       <div class="bandhdr" id="velhdr" title="Show / hide the velocity lane"><span class="tw">▼</span><span class="bl">Velocity</span></div>
       <div id="velwrap"><canvas id="velcanvas"></canvas></div>
-      <div class="bandhdr" id="autohdr" title="Show / hide CC automation (melodic only)"><span class="tw">▶</span><span class="bl">Automation</span><span class="bsum" id="autohsum"></span></div>
+      <div class="bandhdr" id="autohdr" title="Show / hide CC automation (per clip)"><span class="tw">▶</span><span class="bl">Automation</span><span class="bsum" id="autohsum"></span></div>
       <div id="autopick"></div>
       <div id="autoctl"></div>
       <div id="autowrap"><canvas id="autocanvas"></canvas></div>
@@ -265,6 +268,9 @@ if (!window.schwungRemote) {
   let ccFocus=-1;
   const ccLanes={0:[[0,40],[96,90],[192,60],[288,110]]};
   const CC_ASSIGN=[7,74,71,73,72,91,93,10];
+  /* mock conductor: selected track (1) is the conductor of clip 0, all tracks set
+   * as responders so the responder panel + grid badges preview on a plain browser. */
+  const cond={trk:1,clip:0,lock:0,resp:Array.from({length:8},()=>({resp:1,oct:0,when:0}))};
   const KV={};
   function rebuild(){
     KV["overtake_dsp:rui_rev"]=String(rev);
@@ -292,6 +298,8 @@ if (!window.schwungRemote) {
       KV["overtake_dsp:rui_cc"]= ccFocus>=0 ? ccFocus+"|"+(ccLanes[ccFocus]||[]).map(p=>p[0]+":"+p[1]).join(",") : "";
       delete KV["overtake_dsp:rui_dlanes"]; delete KV["overtake_dsp:rui_dnotes"];
     }
+    KV["overtake_dsp:rui_cond"]=cond.trk+":"+cond.clip+":"+cond.lock+
+      cond.resp.map(r=>";"+r.resp+","+r.oct+","+r.when).join("");
   }
   const findM=(tk,pi)=>mel.findIndex(n=>n.tick===tk&&n.pitch===pi);
   function melOp(op,a){
@@ -316,6 +324,12 @@ if (!window.schwungRemote) {
       if(/_cc_auto_clear_range$/.test(k)){ const a=String(v).split(/\s+/).map(Number); const kn=a[1],t1=a[2],t2=a[3];
         if(ccLanes[kn]) ccLanes[kn]=ccLanes[kn].filter(p=>p[0]<t1||p[0]>t2); rev++; rebuild(); return; }
       if(/_cc_auto_clear_k$/.test(k)){ const a=String(v).split(/\s+/).map(Number); ccLanes[a[1]]=[]; rev++; rebuild(); return; }
+      /* conductor responder edits — mutate the mock cond so the panel reflects them */
+      if(/_cond_lock$/.test(k)){ cond.lock=+v?1:0; rev++; rebuild(); return; }
+      if((m=k.match(/_cond_(resp|when)$/))){ const a=String(v).split(/\s+/).map(Number);
+        if(cond.resp[a[0]]) cond.resp[a[0]][m[1]]=a[1]?1:0; rev++; rebuild(); return; }
+      if(/_cond_oct$/.test(k)){ const a=String(v).split(/\s+/).map(Number);
+        if(cond.resp[a[0]]) cond.resp[a[0]].oct=Math.max(-4,Math.min(4,a[1]|0)); rev++; rebuild(); return; }
       if((m=k.match(/t(\d+)_c(\d+)_ruisel$/))){ sel.t=+m[1]; sel.c=+m[2];
         sel.lane=(v&&v[0]&&v[0]!=='-')?+v:-1; rev++; rebuild(); return; }
       if((m=k.match(/t(\d+)_l(\d+)_(note_\w+)$/))){      // drum lane op
@@ -382,6 +396,11 @@ function parseCcMeta(s){ if(!s) return []; return s.split(";").map(g=>{
 /* focused knob's breakpoints: "k|tick:val,tick:val,..." (empty when no focus) */
 function parseCc(s){ if(!s) return null; const [k,pts]=s.split("|");
   return {k:+k, points:(pts||"").split(",").filter(Boolean).map(p=>{const [t,v]=p.split(":").map(Number); return {tick:t,val:v};})}; }
+/* conductor/responder map: header "condTrk:condClip:lock" + 8 ";resp,oct,when"
+ * groups (one per track). No conductor → "-1:-1:0" (no groups). */
+function parseCond(s){ if(!s) return {trk:-1};
+  const [hdr,...g]=s.split(";"); const [trk,clip,lock]=hdr.split(":").map(Number);
+  return {trk,clip,lock,resp:g.map(x=>{const a=x.split(",").map(Number); return {resp:a[0],oct:a[1],when:a[2]};})}; }
 function parseModel(){
   const get = k => kv[P+k];
   if (get("rui_sel") == null) return null;
@@ -439,7 +458,8 @@ function parseModel(){
   const cc=parseCc(get("rui_cc")||"");
   return {rev:+(get("rui_rev")||0), play:{on:pon,tick:ptick,bpm:pbpm},
           sel:{t:st,c:sc,lane:sl}, clip:{len:cl,tps:ct,ls:cls,dir:cd}, tracks, notes,
-          dlanes, dnotes, pfx, glob, scaleMask, laneInfo, stepTrig, ccmeta, cc};
+          dlanes, dnotes, pfx, glob, scaleMask, laneInfo, stepTrig, ccmeta, cc,
+          cond: parseCond(get("rui_cond")||"")};
 }
 const isDrum = ()=> M && M.tracks[M.sel.t] && M.tracks[M.sel.t].pm===1;
 
@@ -551,10 +571,58 @@ function laneSum(){ if(M.sel.lane<0||!M.laneInfo) return "select a lane";
   const ln=M.dlanes[M.sel.lane]; return `${ln?noteName(ln.note):"L"+M.sel.lane} · ${M.laneInfo.len} stp`; }
 function fxSum(){ const drum=isDrum();
   return drum ? (allLanes?"all lanes":("lane "+M.sel.lane)) : ""; }
+/* ---------- conductor responder editor (shown when the selected track IS the
+ * conductor). Edits the conductor's clip M.cond.clip: a Lock toggle + one row per
+ * eligible responder track (not the conductor, not a drum track): responder on/off,
+ * an octave stepper (-4..+4), and a Now/Next toggle. Writes go to per-track
+ * tN_cC_cond_* keys; the model is mutated optimistically. The poll re-render is
+ * guarded at the #side level (renderSidePanels) so in-progress edits aren't lost. */
+function condEligible(ti){ return M.cond && M.cond.trk>=0 && ti!==M.cond.trk && M.tracks[ti] && M.tracks[ti].pm!==1; }
+function condSum(){ if(!M.cond||M.cond.trk<0) return ""; let n=0;
+  for(let ti=0;ti<M.tracks.length;ti++){ const r=M.cond.resp&&M.cond.resp[ti];
+    if(condEligible(ti) && r && r.resp) n++; }
+  return n+" resp"+(M.cond.lock?" · lock":""); }
+function renderCondPanel(){
+  const el=document.getElementById("condpanel"); if(!el||!M.cond||M.cond.trk<0) return;
+  if(!M.cond.resp) M.cond.resp=[];
+  const ct=M.cond.trk, cc=M.cond.clip, locked=!!M.cond.lock;
+  let html=`<div class="kv"><span>Lock responders</span><span>`+
+    `<button id="cdLock" class="sm${locked?" on":""}">${locked?"Locked":"Unlocked"}</button></span></div>`+
+    `<div class="hint">Responder tracks follow this conductor clip, transposed per row.</div>`;
+  for(let ti=0;ti<M.tracks.length;ti++){
+    if(!condEligible(ti)) continue;
+    const r=(M.cond.resp&&M.cond.resp[ti])||{resp:0,oct:0,when:0};
+    html+=`<div class="kv" data-ti="${ti}"><span>${(M.tracks[ti].pm===2?"C":"M")+(ti+1)}</span><span class="stp">`+
+      `<button class="sm cdResp${r.resp?" on":""}">${r.resp?"On":"Off"}</button>`+
+      `<button class="sm cdOctD" title="octave −">−</button>`+
+      `<input class="cdOct" type="number" min="-4" max="4" value="${r.oct|0}" style="width:46px;text-align:right">`+
+      `<button class="sm cdOctU" title="octave +">+</button>`+
+      `<button class="sm cdWhen${r.when?" on":""}" title="apply Now or at Next loop">${r.when?"Now":"Next"}</button>`+
+      `</span></div>`;
+  }
+  el.innerHTML=html;
+  const wr=(suffix,val)=>{ R.setParam(P+`t${ct}_c${cc}_cond_${suffix}`,val); afterEdit(); pullSoon(); };
+  el.querySelector("#cdLock").onclick=()=>{ const nl=!M.cond.lock; M.cond.lock=nl?1:0;
+    wr("lock",nl?"1":"0"); renderCondPanel(); };
+  el.querySelectorAll(".kv[data-ti]").forEach(row=>{
+    const ti=+row.dataset.ti, r=(M.cond.resp&&M.cond.resp[ti])||(M.cond.resp[ti]={resp:0,oct:0,when:0});
+    const oi=row.querySelector(".cdOct");
+    const setOct=v=>{ v=Math.max(-4,Math.min(4,v|0)); r.oct=v; oi.value=v; wr("oct",`${ti} ${v}`); };
+    row.querySelector(".cdResp").onclick=e=>{ const on=!r.resp; r.resp=on?1:0;
+      e.currentTarget.classList.toggle("on",on); e.currentTarget.textContent=on?"On":"Off"; wr("resp",`${ti} ${on?1:0}`); };
+    row.querySelector(".cdOctD").onclick=()=>setOct((r.oct|0)-1);
+    row.querySelector(".cdOctU").onclick=()=>setOct((r.oct|0)+1);
+    oi.onchange=e=>setOct(+e.target.value);
+    row.querySelector(".cdWhen").onclick=e=>{ const nw=!r.when; r.when=nw?1:0;
+      e.currentTarget.classList.toggle("on",nw); e.currentTarget.textContent=nw?"Now":"Next"; wr("when",`${ti} ${nw?1:0}`); };
+  });
+}
 function renderInspector(){
   const insp=document.getElementById("inspector"); if(!insp||!M) return;
   const drum=isDrum(), laneSel=drum && M.sel.lane>=0;
+  const showCond = M.cond && M.cond.trk>=0 && M.cond.trk===M.sel.t;
   let html="";
+  if(showCond) html+=secEl("cond","Conductor",condSum(),`<div id="condpanel"></div>`,true);
   if(drum){
     html+=secEl("lane","Lane",laneSum(),`<div id="drumpanel"></div><div id="laneUtil"></div>`,true);
     if(laneSel) html+=secEl("fx","FX",fxSum(),`<div id="fxpanel"></div><div id="fxUtil"></div>`,true);
@@ -567,6 +635,7 @@ function renderInspector(){
   insp.querySelectorAll(".sec-h").forEach(h=>h.onclick=()=>{
     const s=h.parentNode,id=s.dataset.sec,open=!s.classList.contains("open");
     s.classList.toggle("open",open); secOpen[id]=open; saveSec(); });
+  if(showCond) renderCondPanel();
   if(drum){
     renderDrumPanel(); renderLaneUtil();
     if(laneSel){ renderFX(); renderFXUtil(); }
@@ -1026,7 +1095,15 @@ function renderSession(){
     const rl=trk.route===1?"Mv":trk.route===2?"Ext":trk.route===0?"Schw":null;
     const lbl=(rl!=null&&trk.chan!=null)?`${t+1} - ${rl} Ch.${trk.chan}`:(trk.pm===1?"D":trk.pm===2?"C":"M")+(t+1);
     const ttl=(rl!=null&&trk.chan!=null)?`Track ${t+1} → ${rl==="Mv"?"Move":rl==="Schw"?"Schwung":"External"}, MIDI Ch ${trk.chan}`:`track ${t+1}`;
-    html+=`<div class="strk${t===M.sel.t?" sel":""}" data-t="${t}" style="background:${trackColor(t)}" title="${ttl}">${lbl}</div>`;
+    /* conductor / responder indicator (rui_cond): "C" on the conductor track,
+     * a dot on every non-drum responder track */
+    let cind="";
+    if(M.cond && M.cond.trk>=0){
+      if(t===M.cond.trk) cind=` <span class="cind cond" title="Conductor">C</span>`;
+      else if(trk.pm!==1 && M.cond.resp && M.cond.resp[t] && M.cond.resp[t].resp===1)
+        cind=` <span class="cind resp" title="Responds to conductor">•</span>`;
+    }
+    html+=`<div class="strk${t===M.sel.t?" sel":""}" data-t="${t}" style="background:${trackColor(t)}" title="${ttl}">${lbl}${cind}</div>`;
   });
   for(let c=0;c<NC;c++){
     html+=`<div class="slaunch" data-scene="${c}" title="Launch scene ${SCENE_LETTERS[c]}">▶${SCENE_LETTERS[c]}</div>`;
@@ -1148,7 +1225,7 @@ function setLoop(ls,len,commit){ ls=Math.max(0,Math.min(255,ls|0)); len=Math.max
   if(isDrum()){ if(M.laneInfo){ M.laneInfo.ls=ls; M.laneInfo.len=len; } } else { M.clip.ls=ls; M.clip.len=len; }
   clampScroll();
   /* automation focus: the brace edits the focused CC lane's loop instead of the clip's */
-  const key=(!isDrum()&&ccSel>=0)?`t${M.sel.t}_c${M.sel.c}_k${ccSel}_cc_loop_set`
+  const key=(!isDrum()&&ccSel>=0)?`t${M.sel.t}_c${ccClip()}_k${ccSel}_cc_loop_set`
     :isDrum()?`t${M.sel.t}_l${M.sel.lane}_loop_set`:`t${M.sel.t}_c${M.sel.c}_loop_set`;
   const n=now(); if(commit||n-loopEmitT>55){ loopEmitT=n; R.setParam(P+key,String(ls*65536+len)); afterEdit(); }
   if(commit) pullSoon(); }
@@ -1600,6 +1677,10 @@ function vAdjust(mx,my){ const drum=isDrum();
  * tN_cC_cc_focus; the device streams that lane's breakpoints as rui_cc. Edits use
  * the verified tN_cc_auto_* keys; the model is mutated optimistically (like notes)
  * so the curve follows the gesture before the device round-trips. */
+/* CC automation is track-level; melodic sources it from the selected clip, drum
+ * mode from the track's ACTIVE clip (rui_index ac). All CC writes target ccClip(). */
+function ccClip(){ if(!M) return 0;
+  if(isDrum()){ const tr=M.tracks[M.sel.t]; return tr?tr.ac:M.sel.c; } return M.sel.c; }
 function bandsApply(){
   const drum=isDrum();
   const vh=document.getElementById("velhdr"), vw=document.getElementById("velwrap");
@@ -1607,16 +1688,18 @@ function bandsApply(){
   if(vw) vw.style.display=velOpen?"block":"none";
   const ah=document.getElementById("autohdr"), ap=document.getElementById("autopick"),
         actl=document.getElementById("autoctl"), aw=document.getElementById("autowrap");
-  if(ah){ ah.style.display=drum?"none":"flex"; ah.querySelector(".tw").textContent=autoOpen?"▼":"▶"; }
-  const show=autoOpen&&!drum;
+  /* automation is shown for drum tracks too (engine supports track-level CC, keyed
+   * by the active clip) — no longer hidden in drum mode */
+  if(ah){ ah.style.display="flex"; ah.querySelector(".tw").textContent=autoOpen?"▼":"▶"; }
+  const show=autoOpen;
   if(ap) ap.style.display=show?"flex":"none";
   if(actl) actl.style.display=(show&&ccSel>=0)?"flex":"none";
   if(aw) aw.style.display=(show&&ccSel>=0)?"block":"none";
 }
-function ccLabel(m){ return m.type===1?"Pr":m.type===2?"Chn":("CC"+(m.assign|0)); }
+function ccLabel(m){ return m.type===1?"Aft":m.type===2?"Schw":("CC"+(m.assign|0)); }
 function renderCcPicker(){
   const el=document.getElementById("autopick"); if(!el) return;
-  if(isDrum()||!autoOpen){ el.innerHTML=""; return; }
+  if(!autoOpen){ el.innerHTML=""; return; }
   const meta=(M&&M.ccmeta)||[];
   let html="";
   for(let k=0;k<8;k++){ const m=meta[k]||{assign:0,type:0,hasdata:false,cur:255};
@@ -1631,21 +1714,21 @@ function renderCcPicker(){
   if(hs) hs.textContent=(ccSel>=0)?ccLabel(meta[ccSel]||{assign:0,type:0}):"";
 }
 function focusCc(k){ if(!M) return; ccSel=(ccSel===k?-1:k);
-  R.setParam(P+`t${M.sel.t}_c${M.sel.c}_cc_focus`,String(ccSel)); afterEdit(); pullSoon();
+  R.setParam(P+`t${M.sel.t}_c${ccClip()}_cc_focus`,String(ccSel)); afterEdit(); pullSoon();
   renderCcPicker(); renderCcCtl(); bandsApply(); layout(); drawAuto(); }
 function renderCcCtl(){
   const el=document.getElementById("autoctl"); if(!el) return;
   /* don't clobber an in-progress edit of a control input (poll re-render) */
   if(document.activeElement && document.activeElement.closest && document.activeElement.closest("#autoctl")) return;
-  if(isDrum()||!autoOpen||ccSel<0||!M){ el.innerHTML=""; el.style.display="none"; return; }
+  if(!autoOpen||ccSel<0||!M){ el.innerHTML=""; el.style.display="none"; return; }
   el.style.display="flex";
   const m=(M.ccmeta&&M.ccmeta[ccSel])||{assign:0,type:0,rest:255};
   const restv=(m.rest!=null&&m.rest!==255)?m.rest:"";
   el.innerHTML=
     `<span class="cclab">Lane ${ccSel+1}</span>`+
     `<label>Type <select id="ccType"><option value="0"${(m.type|0)===0?" selected":""}>CC</option>`+
-      `<option value="1"${(m.type|0)===1?" selected":""}>ChPr</option>`+
-      `<option value="2"${(m.type|0)===2?" selected":""}>Chain</option></select></label>`+
+      `<option value="2"${(m.type|0)===2?" selected":""}>Schw</option>`+
+      `<option value="1"${(m.type|0)===1?" selected":""}>Aft</option></select></label>`+
     `<label>CC# <input id="ccNum" type="number" min="0" max="127" value="${m.assign|0}" style="width:54px;text-align:right"></label>`+
     `<label>Rest <input id="ccRest" type="number" min="0" max="127" placeholder="—" value="${restv}" style="width:54px;text-align:right"></label>`+
     `<button class="sm danger" id="ccClr" title="Erase this lane's automation">Clear lane</button>`;
@@ -1656,15 +1739,15 @@ function renderCcCtl(){
   el.querySelector("#ccNum").onchange=assign;
   el.querySelector("#ccRest").onchange=e=>{ const s=e.target.value;
     const v=(s===""||s==null)?128:Math.max(0,Math.min(127,+s|0));
-    R.setParam(P+`t${M.sel.t}_cc_rest`,`${M.sel.c} ${ccSel} ${v}`); afterEdit(); pullSoon(); };
-  el.querySelector("#ccClr").onclick=()=>{ R.setParam(P+`t${M.sel.t}_cc_auto_clear_k`,`${M.sel.c} ${ccSel}`);
+    R.setParam(P+`t${M.sel.t}_cc_rest`,`${ccClip()} ${ccSel} ${v}`); afterEdit(); pullSoon(); };
+  el.querySelector("#ccClr").onclick=()=>{ R.setParam(P+`t${M.sel.t}_cc_auto_clear_k`,`${ccClip()} ${ccSel}`);
     if(M.cc&&M.cc.k===ccSel) M.cc.points=[]; afterEdit(); pullSoon(); drawAuto(); };
 }
 const AVPAD=5;   /* top inset; ccVofY MUST use this so it stays the exact inverse of ccYofV */
 const ccYofV=v=>AVH-3-(Math.max(0,Math.min(127,v))/127)*(AVH-8);
 const ccVofY=y=>Math.max(0,Math.min(127,Math.round((1-(y-AVPAD)/(AVH-8))*127)));
 function drawAuto(){
-  if(!autoOpen||isDrum()||ccSel<0||!M) return;
+  if(!autoOpen||ccSel<0||!M) return;
   actx.clearRect(0,0,AVW,AVH); actx.fillStyle="#0e1014"; actx.fillRect(0,0,AVW,AVH);
   /* musical step grid (mirror drawVel) */
   const tps=gridTps(), len=gridLen();
@@ -1694,11 +1777,11 @@ function ccLocalSet(tick,val){ if(!M.cc||M.cc.k!==ccSel) M.cc={k:ccSel,points:[]
   const i=M.cc.points.findIndex(p=>p.tick===tick); if(i>=0)M.cc.points[i].val=val; else M.cc.points.push({tick,val});
   M.cc.points.sort((a,b)=>a.tick-b.tick); }
 function ccLocalClear(tick){ if(M.cc&&M.cc.k===ccSel) M.cc.points=M.cc.points.filter(p=>p.tick!==tick); }
-function ccSetEmit(tick,val){ R.setParam(P+`t${M.sel.t}_cc_auto_set`,`${M.sel.c} ${ccSel} ${tick} ${val}`); afterEdit(); }
-function ccClearEmit(t1,t2){ R.setParam(P+`t${M.sel.t}_cc_auto_clear_range`,`${M.sel.c} ${ccSel} ${t1} ${t2==null?t1:t2}`); afterEdit(); }
+function ccSetEmit(tick,val){ R.setParam(P+`t${M.sel.t}_cc_auto_set`,`${ccClip()} ${ccSel} ${tick} ${val}`); afterEdit(); }
+function ccClearEmit(t1,t2){ R.setParam(P+`t${M.sel.t}_cc_auto_clear_range`,`${ccClip()} ${ccSel} ${t1} ${t2==null?t1:t2}`); afterEdit(); }
 let adrag=null, ccEmitT=0, ccLast=null;
 function localXYa(e){ const r=ac.getBoundingClientRect(); return [e.clientX-r.left,e.clientY-r.top]; }
-ac.addEventListener("pointerdown",e=>{ if(!M||ccSel<0||isDrum()) return; try{ac.setPointerCapture(e.pointerId);}catch(_){}
+ac.addEventListener("pointerdown",e=>{ if(!M||ccSel<0) return; try{ac.setPointerCapture(e.pointerId);}catch(_){}
   const [x,y]=localXYa(e); if(x<GUTTER) return; dragging=true;
   const erase=tool==="erase"||(e.pointerType==="mouse"&&(e.button===2||e.altKey));
   const hit=ccPointAt(x);
@@ -1753,7 +1836,7 @@ function refresh(){
   if(typeof R.resubscribe==="function"){ R.resubscribe(); return; }
   if(window.parent){ window.parent.postMessage({type:"subscribe"},"*"); }
   const keys=["rui_rev","rui_play","rui_sel","rui_clip","rui_glob","rui_scale","rui_index",
-              "rui_notes","rui_pfx","rui_lane","rui_dlanes","rui_dnotes"];
+              "rui_notes","rui_pfx","rui_lane","rui_dlanes","rui_dnotes","rui_cond"];
   Promise.all(keys.map(k=>R.getParam(P+k).then(v=>[P+k,v]).catch(()=>null)))
     .then(pairs=>{ const o={}; pairs.forEach(p=>{if(p&&p[1]!=null)o[p[0]]=p[1];}); applyParams(o); });
 }
