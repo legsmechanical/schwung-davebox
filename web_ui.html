@@ -398,7 +398,7 @@ function parseCc(s){ if(!s) return null; const [k,pts]=s.split("|");
   return {k:+k, points:(pts||"").split(",").filter(Boolean).map(p=>{const [t,v]=p.split(":").map(Number); return {tick:t,val:v};})}; }
 /* conductor/responder map: header "condTrk:condClip:lock" + 8 ";resp,oct,when"
  * groups (one per track). No conductor → "-1:-1:0" (no groups). */
-function parseCond(s){ if(!s) return {trk:-1};
+function parseCond(s){ if(!s) return {trk:-1, resp:[]};
   const [hdr,...g]=s.split(";"); const [trk,clip,lock]=hdr.split(":").map(Number);
   return {trk,clip,lock,resp:g.map(x=>{const a=x.split(",").map(Number); return {resp:a[0],oct:a[1],when:a[2]};})}; }
 function parseModel(){
@@ -602,7 +602,9 @@ function renderCondPanel(){
   }
   el.innerHTML=html;
   const wr=(suffix,val)=>{ R.setParam(P+`t${ct}_c${cc}_cond_${suffix}`,val); afterEdit(); pullSoon(); };
-  el.querySelector("#cdLock").onclick=()=>{ const nl=!M.cond.lock; M.cond.lock=nl?1:0;
+  el.querySelector("#cdLock").onclick=()=>{
+    if(document.activeElement && el.contains(document.activeElement)) return; // protect an in-progress octave edit
+    const nl=!M.cond.lock; M.cond.lock=nl?1:0;
     wr("lock",nl?"1":"0"); renderCondPanel(); };
   el.querySelectorAll(".kv[data-ti]").forEach(row=>{
     const ti=+row.dataset.ti, r=(M.cond.resp&&M.cond.resp[ti])||(M.cond.resp[ti]={resp:0,oct:0,when:0});
