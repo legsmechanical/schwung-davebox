@@ -49,12 +49,24 @@
            border-bottom:1px solid #000;padding:7px 10px}
   #session.collapsed{display:none}
   #grid{display:grid;gap:3px;align-items:stretch}
-  .strk{font:11px ui-monospace,monospace;font-weight:700;color:#0b0d11;text-align:center;
+  .strk{position:relative;font:11px ui-monospace,monospace;font-weight:700;color:#0b0d11;text-align:center;
         padding:4px 2px;border-radius:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
   .strk.sel{outline:2px solid var(--ink);outline-offset:-1px}
+  .strk.eff{opacity:.42}                 /* effectively silenced (muted, or solo elsewhere) */
   .strk .cind{font-weight:800;margin-left:2px}
   .strk .cind.cond{color:#0b0d11}
   .strk .cind.resp{color:#0b0d11;opacity:.65}
+  .strk .cind.tm{color:#7a0d0d}          /* muted "M" badge */
+  .strk .cind.ts{color:#0a5d12}          /* soloed "S" badge */
+  .strk-gear{position:absolute;left:1px;top:0;font-size:9px;line-height:1;opacity:.5;cursor:pointer;
+             padding:1px 2px;color:#0b0d11}
+  .strk-gear:hover{opacity:1}
+  /* per-track settings dropdown (route / MIDI channel) */
+  .trkgear{position:fixed;width:188px;background:var(--panel2);border:1px solid var(--ctl-br);
+    border-radius:var(--rad);box-shadow:0 12px 32px rgba(0,0,0,.55);padding:10px 12px;z-index:40}
+  .trkgear h4{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)}
+  .trkgear .tgrow{margin:8px 0}
+  .trkgear .tgrow span{display:block;font-size:11px;color:var(--dim);margin-bottom:3px}
   .scorner{font:10px ui-monospace,monospace;color:var(--faint);display:flex;align-items:center;justify-content:center}
   .slaunch{font:10px ui-monospace,monospace;color:var(--dim);background:#0b0d11;border:1px solid #262c36;
            border-radius:4px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:3px;padding:2px}
@@ -283,7 +295,7 @@ if (!window.schwungRemote) {
   [[0,0],[0,96],[0,192],[0,288]].forEach(([l,t])=>drum[0].hits.push({tick:t,vel:110,gate:24})); // kick
   [[2,96],[2,288]].forEach(([l,t])=>drum[2].hits.push({tick:t,vel:100,gate:24}));               // snare
   for(let t=0;t<384;t+=48) drum[6].hits.push({tick:t,vel:70,gate:24});                            // hat
-  const tracks=Array.from({length:8},(_,t)=>({pm:t===0?1:0, ac:0}));
+  const tracks=Array.from({length:8},(_,t)=>({pm:t===0?1:0, ac:0, mute:0, solo:0, route:t<4?1:0, chan:t+1}));
   // per-clip FX (melodic), 29 values matching the DSP rui_pfx order
   const PFXKEYS=["noteFX_octave","noteFX_offset","noteFX_gate","noteFX_velocity","quantize",
     "noteFX_random","noteFX_random_mode","noteFX_length_mode","harm_octaver","harm_interval1",
@@ -307,8 +319,9 @@ if (!window.schwungRemote) {
     const isDrum=tracks[sel.t].pm===1;
     KV["overtake_dsp:rui_index"]=tracks.map((tk,t)=>{
       const has=Array.from({length:16},(_,c)=> (c===0 && ((t===0&&drum.some(l=>l.hits.length))||(t===1&&mel.length)))?1:0).join("");
-      const route=t<4?1:0, chan=t+1;   /* mock: tracks 0-3 Move, 4-7 Schwung; ch = track# */
-      return tk.pm+":"+tk.ac+":-1:0:"+has+":"+route+":"+chan;
+      /* mock seeds route/chan on the track (0-3 Move, 4-7 Schwung; ch=track#) and
+       * carries mute/solo so the header state + gear dropdown preview in a browser */
+      return tk.pm+":"+tk.ac+":-1:0:"+has+":"+tk.route+":"+tk.chan+":"+(tk.mute?1:0)+":"+(tk.solo?1:0);
     }).join(";");
     if(isDrum){
       KV["overtake_dsp:rui_clip"]="16:24:0:0";
@@ -360,6 +373,11 @@ if (!window.schwungRemote) {
         if(cond.resp[a[0]]) cond.resp[a[0]][m[1]]=a[1]?1:0; rev++; rebuild(); return; }
       if(/_cond_oct$/.test(k)){ const a=String(v).split(/\s+/).map(Number);
         if(cond.resp[a[0]]) cond.resp[a[0]].oct=Math.max(-4,Math.min(4,a[1]|0)); rev++; rebuild(); return; }
+      /* track header gear / mute / solo (Change 1) — keep the preview header live */
+      if((m=k.match(/t(\d+)_(mute|solo)$/))){ tracks[+m[1]][m[2]]=+v?1:0; rev++; rebuild(); return; }
+      if((m=k.match(/t(\d+)_route$/))){ const r={schwung:0,move:1,external:2}[v];
+        if(r!=null) tracks[+m[1]].route=r; rev++; rebuild(); return; }
+      if((m=k.match(/t(\d+)_channel$/))){ tracks[+m[1]].chan=Math.max(1,Math.min(16,+v|0)); rev++; rebuild(); return; }
       if((m=k.match(/t(\d+)_c(\d+)_ruisel$/))){ sel.t=+m[1]; sel.c=+m[2];
         sel.lane=(v&&v[0]&&v[0]!=='-')?+v:-1; rev++; rebuild(); return; }
       if((m=k.match(/t(\d+)_l(\d+)_(note_\w+)$/))){      // drum lane op
@@ -441,15 +459,16 @@ function parseModel(){
   const [st,sc,sl]       = (get("rui_sel")||"0:0:-1").split(":").map(Number);
   const [cl,ct,cls,cd]   = (get("rui_clip")||"16:24:0:0").split(":").map(Number);
   const tracks = (get("rui_index")||"").split(";").map(seg=>{
-    /* pm:ac:qc:pl:<16 bits>[:route:chan]; tolerate old pm:ac:<bits> and the
-     * pre-routing pm:ac:qc:pl:<bits> form (route/chan optional). */
+    /* pm:ac:qc:pl:<16 bits>[:route:chan:mute:solo]; tolerate old pm:ac:<bits> and
+     * the pre-routing pm:ac:qc:pl:<bits> form (route/chan/mute/solo all optional). */
     const p=seg.split(":");
-    let pm,ac,qc,pl,bits,route,chan;
+    let pm,ac,qc,pl,bits,route,chan,mute,solo;
     if(p.length>=5){ pm=+p[0]||0; ac=+p[1]||0; qc=(p[2]===""||p[2]===undefined)?-1:+p[2]; pl=+p[3]?1:0; bits=p[4]||"";
-      route=p.length>5?+p[5]:undefined; chan=p.length>6?+p[6]:undefined; }
-    else { pm=+p[0]||0; ac=+p[1]||0; qc=-1; pl=0; bits=p[2]||""; }
+      route=p.length>5?+p[5]:undefined; chan=p.length>6?+p[6]:undefined;
+      mute=p.length>7?(+p[7]?1:0):0; solo=p.length>8?(+p[8]?1:0):0; }
+    else { pm=+p[0]||0; ac=+p[1]||0; qc=-1; pl=0; bits=p[2]||""; mute=0; solo=0; }
     const has=[]; for(let i=0;i<16;i++) has.push(bits[i]==="1");
-    return {pm,ac,qc,pl,has,route,chan};
+    return {pm,ac,qc,pl,has,route,chan,mute,solo};
   });
   const notes = (get("rui_notes")||"").split(";").filter(Boolean).map(tok=>{
     const [tick,pitch,vel,gate]=tok.split(":").map(Number); return {tick,pitch,vel,gate};
@@ -1128,6 +1147,7 @@ function renderSession(){
   const NT=M.tracks.length||8, NC=16;
   grid.style.gridTemplateColumns=`30px repeat(${NT},minmax(20px,1fr))`;
   let html=`<div class="scorner"></div>`;
+  const soloAny=M.tracks.some(x=>x.solo);
   M.tracks.forEach((trk,t)=>{
     /* header shows ROUTING: "1 - Mv Ch.3" (Move) / "5 - Schw Ch.5" (Schwung) /
      * "3 - Ext Ch.3"; falls back to mode+index on an older DSP w/o route data. */
@@ -1142,7 +1162,14 @@ function renderSession(){
       else if(trk.pm!==1 && M.cond.resp && M.cond.resp[t] && M.cond.resp[t].resp===1)
         cind=` <span class="cind resp" title="Responds to conductor">•</span>`;
     }
-    html+=`<div class="strk${t===M.sel.t?" sel":""}" data-t="${t}" style="background:${trackColor(t)}" title="${ttl}">${lbl}${cind}</div>`;
+    /* mute (click) / solo (right-click) state: badges + effective-silence dim.
+     * effectively silenced if muted, OR some track is soloed and this one isn't. */
+    const eff = trk.mute || (soloAny && !trk.solo);
+    const mind = (trk.mute?` <span class="cind tm" title="Muted">M</span>`:"")
+               + (trk.solo?` <span class="cind ts" title="Soloed">S</span>`:"");
+    html+=`<div class="strk${t===M.sel.t?" sel":""}${eff?" eff":""}" data-t="${t}" style="background:${trackColor(t)}" `+
+          `title="${ttl} · click=mute, right-click=solo">`+
+          `<span class="strk-gear" data-t="${t}" title="Track route / channel">⚙</span>${lbl}${cind}${mind}</div>`;
   });
   for(let c=0;c<NC;c++){
     html+=`<div class="slaunch" data-scene="${c}" title="Launch scene ${SCENE_LETTERS[c]}">▶${SCENE_LETTERS[c]}</div>`;
@@ -1156,7 +1183,19 @@ function renderSession(){
     });
   }
   grid.innerHTML=html;
-  grid.querySelectorAll(".strk").forEach(el=>el.onclick=()=>{const t=+el.dataset.t; selectClip(t,M.tracks[t].ac);});
+  /* track header: BODY click = mute, right-click = solo (selection stays on the
+   * clip cells below). The gear (stopPropagation) opens route/channel settings. */
+  grid.querySelectorAll(".strk").forEach(el=>{
+    const t=+el.dataset.t;
+    el.onclick=()=>{ const tr=M.tracks[t]; tr.mute=tr.mute?0:1;
+      R.setParam(P+`t${t}_mute`, tr.mute?"1":"0"); afterEdit(); renderSession(); pullSoon(); };
+    el.oncontextmenu=e=>{ e.preventDefault(); const tr=M.tracks[t]; tr.solo=tr.solo?0:1;
+      R.setParam(P+`t${t}_solo`, tr.solo?"1":"0"); afterEdit(); renderSession(); pullSoon(); };
+  });
+  grid.querySelectorAll(".strk-gear").forEach(el=>{
+    el.onclick=e=>{ e.stopPropagation(); openTrackGear(+el.dataset.t, el); };
+    el.oncontextmenu=e=>{ e.stopPropagation(); e.preventDefault(); };
+  });
   grid.querySelectorAll(".slaunch").forEach(el=>el.onclick=()=>launchScene(+el.dataset.scene));
   grid.querySelectorAll(".sclip").forEach(el=>{
     el.onclick=()=>selectClip(+el.dataset.t,+el.dataset.c);
@@ -1185,6 +1224,38 @@ function dropClip(src,dst,copy){
   M.tracks[dst.t].has[dst.c]=true; if(!copy) M.tracks[src.t].has[src.c]=false;
   afterEdit(); renderSession();
   setTimeout(()=>selectClip(dst.t,dst.c),160);
+}
+/* per-track settings dropdown (route + MIDI channel), anchored under the gear.
+ * Mirrors the global ⚙ popover's open/close model: outside-click / second-gear
+ * click closes; the gear's own click toggles. */
+let trackGearEl=null;
+function closeTrackGear(){ if(trackGearEl){ trackGearEl.remove(); trackGearEl=null;
+  document.removeEventListener("pointerdown",trackGearOutside,true); } }
+function trackGearOutside(e){ if(trackGearEl && !trackGearEl.contains(e.target) && !e.target.closest(".strk-gear")) closeTrackGear(); }
+function openTrackGear(t,anchor){
+  const wasOpen = trackGearEl && trackGearEl.dataset.t===String(t);
+  closeTrackGear();
+  if(wasOpen) return;                       /* second click on same gear → toggle closed */
+  const tr=M.tracks[t]; if(!tr) return;
+  const routeVal = tr.route===2?"external":tr.route===0?"schwung":"move";
+  const el=document.createElement("div"); el.className="trkgear"; el.dataset.t=String(t);
+  el.innerHTML=
+    `<h4>Track ${t+1}</h4>`+
+    `<div class="tgrow"><span>Route</span><select id="tgRoute" class="full">`+
+      `<option value="schwung">Schwung</option><option value="move">Move</option><option value="external">External</option>`+
+      `</select></div>`+
+    `<div class="tgrow"><span>MIDI Channel</span><select id="tgChan" class="full">`+
+      Array.from({length:16},(_,i)=>`<option value="${i+1}">${i+1}</option>`).join("")+`</select></div>`;
+  document.body.appendChild(el);
+  el.querySelector("#tgRoute").value=routeVal;
+  el.querySelector("#tgChan").value=String(tr.chan||1);
+  el.querySelector("#tgRoute").onchange=e=>{ R.setParam(P+`t${t}_route`, e.target.value); afterEdit(); pullSoon(); };
+  el.querySelector("#tgChan").onchange=e=>{ R.setParam(P+`t${t}_channel`, String(e.target.value)); afterEdit(); pullSoon(); };
+  const r=anchor.getBoundingClientRect();
+  el.style.left=Math.max(6,Math.min(window.innerWidth-194, r.left))+"px";
+  el.style.top=(r.bottom+4)+"px";
+  trackGearEl=el;
+  setTimeout(()=>document.addEventListener("pointerdown",trackGearOutside,true),0);
 }
 function selectClip(t,c){
   R.setParam(P+`t${t}_c${c}_ruisel`,"");
