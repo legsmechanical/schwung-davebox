@@ -73,3 +73,6 @@ docs/plans/
 # docs/superpowers/ = the Claude-Code plans + specs corpus.
 CLAUDE.md
 docs/superpowers/
+
+# brainstorming visual-companion artifacts
+.superpowers/
