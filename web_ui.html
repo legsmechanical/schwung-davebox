@@ -1335,8 +1335,11 @@ function setLoop(ls,len,commit){ ls=Math.max(0,Math.min(255,ls|0)); len=Math.max
   if(isDrum()){ if(M.laneInfo){ M.laneInfo.ls=ls; M.laneInfo.len=len; } } else { M.clip.ls=ls; M.clip.len=len; }
   clampScroll();
   /* automation focus: the brace edits the focused CC lane's loop instead of the clip's */
+  /* drum: All-Lanes mode sets every lane's loop (matches the drum panel's loop-start
+   * slider laneEmit(...,"all_lanes_loop_set")); single-lane writes the selected lane. */
   const key=(!isDrum()&&ccSel>=0)?`t${M.sel.t}_c${ccClip()}_k${ccSel}_cc_loop_set`
-    :isDrum()?`t${M.sel.t}_l${M.sel.lane}_loop_set`:`t${M.sel.t}_c${M.sel.c}_loop_set`;
+    :isDrum()?(allLanes?`t${M.sel.t}_all_lanes_loop_set`:`t${M.sel.t}_l${M.sel.lane}_loop_set`)
+    :`t${M.sel.t}_c${M.sel.c}_loop_set`;
   const n=now(); if(commit||n-loopEmitT>55){ loopEmitT=n; R.setParam(P+key,String(ls*65536+len)); afterEdit(); }
   if(commit) pullSoon(); }
 function maxEditTick(){ return displayTicks(); }   /* placement/clamp extent = drawn extent */
