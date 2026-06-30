@@ -1115,12 +1115,16 @@ document.getElementById("roll").addEventListener("wheel",e=>{
   if(e.shiftKey) zoomV(f); else zoomH(f);
 },{passive:false});
 /* adaptive poll: brisk while playing (live playhead), relaxed when stopped
- * (lighter SHM/device load). Self-scheduling so the cadence tracks transport. */
+ * (lighter SHM/device load). Self-scheduling so the cadence tracks transport.
+ * Paused entirely while the page is hidden (other browser tab / minimized) so
+ * the device isn't polled when nobody's looking — each poll is a full snapshot
+ * read on the DSP. Resumes with an immediate refresh when shown again. */
 (function poll(){
-  if(auto) refresh();
+  if(auto && !document.hidden) refresh();
   const playing = M && M.play && M.play.on;
-  setTimeout(poll, playing ? 350 : 1000);
+  setTimeout(poll, document.hidden ? 3000 : (playing ? 350 : 1000));
 })();
+document.addEventListener("visibilitychange",()=>{ if(!document.hidden){ suppressRefreshUntil=0; refresh(); } });
 
 refresh();
 /* first layout() at boot can see clientHeight 0 (pre-paint) → relayout after a
