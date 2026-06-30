@@ -1660,8 +1660,9 @@ function renderCcCtl(){
   el.querySelector("#ccClr").onclick=()=>{ R.setParam(P+`t${M.sel.t}_cc_auto_clear_k`,`${M.sel.c} ${ccSel}`);
     if(M.cc&&M.cc.k===ccSel) M.cc.points=[]; afterEdit(); pullSoon(); drawAuto(); };
 }
+const AVPAD=5;   /* top inset; ccVofY MUST use this so it stays the exact inverse of ccYofV */
 const ccYofV=v=>AVH-3-(Math.max(0,Math.min(127,v))/127)*(AVH-8);
-const ccVofY=y=>Math.max(0,Math.min(127,Math.round((1-(y-3)/(AVH-8))*127)));
+const ccVofY=y=>Math.max(0,Math.min(127,Math.round((1-(y-AVPAD)/(AVH-8))*127)));
 function drawAuto(){
   if(!autoOpen||isDrum()||ccSel<0||!M) return;
   actx.clearRect(0,0,AVW,AVH); actx.fillStyle="#0e1014"; actx.fillRect(0,0,AVW,AVH);
@@ -1703,10 +1704,10 @@ ac.addEventListener("pointerdown",e=>{ if(!M||ccSel<0||isDrum()) return; try{ac.
   const hit=ccPointAt(x);
   if(erase){ if(hit){ ccLocalClear(hit.tick); drawAuto(); ccClearEmit(hit.tick); pullSoon(); } adrag=null; return; }
   if(hit){ const ex=M.cc.points.find(p=>p.tick===hit.tick); adrag={tick:hit.tick}; ccLast={tick:hit.tick,val:ex?ex.val:0}; return; }
-  const tk=Math.max(0,snap(tickOfX(x),e.shiftKey)), v=ccVofY(y);
+  const tk=Math.max(0,Math.min(maxEditTick()-1,snap(tickOfX(x),e.shiftKey))), v=ccVofY(y);
   ccLocalSet(tk,v); drawAuto(); ccSetEmit(tk,v); adrag={tick:tk}; ccLast={tick:tk,val:v}; });
 ac.addEventListener("pointermove",e=>{ if(!adrag||!M||ccSel<0) return; const [x,y]=localXYa(e);
-  const nt=Math.max(0,snap(tickOfX(x),e.shiftKey)), nv=ccVofY(y);
+  const nt=Math.max(0,Math.min(maxEditTick()-1,snap(tickOfX(x),e.shiftKey))), nv=ccVofY(y);
   if(nt!==adrag.tick){ ccLocalClear(adrag.tick); ccClearEmit(adrag.tick); }
   ccLocalSet(nt,nv); adrag.tick=nt; ccLast={tick:nt,val:nv}; drawAuto();
   const n=now(); if(n-ccEmitT>55){ ccEmitT=n; ccSetEmit(nt,nv); } });
