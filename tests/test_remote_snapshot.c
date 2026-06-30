@@ -184,6 +184,52 @@ static void test_snapshot_cond_none(void) {
     hx_destroy(h);
 }
 
+/* rui_index track records must expose per-track mute/solo state so the remote UI
+ * can reflect live muted/soloed headers. Format becomes:
+ * pm:ac:qc:pl:<16bits>:route:chan:mute:solo */
+static void test_snapshot_index_mute_solo(void) {
+    hx_t *h = hx_create(NULL);
+    HX_ASSERT(h != NULL, "hx_create returned NULL");
+
+    hx_set_param(h, "t1_mute", "1");   /* mute track 1, clears solo */
+    hx_set_param(h, "t2_solo", "1");   /* solo track 2, clears mute */
+    hx_set_param(h, "t0_c0_ruisel", "");
+
+    char buf[16384];
+    int len = hx_get_param(h, "state", buf, (int)sizeof(buf));
+    HX_ASSERT(len > 0, "no state");
+
+    const char *idx = strstr(buf, "\"rui_index\":\"");
+    HX_ASSERT(idx != NULL, "missing rui_index");
+    idx += strlen("\"rui_index\":\"");
+
+    /* rui_index = "trk0_rec;trk1_rec;trk2_rec;..." — records separated by ';' */
+
+    /* advance to track 1 record */
+    const char *t1 = strchr(idx, ';');
+    HX_ASSERT(t1 != NULL, "rui_index missing track 1 separator");
+    t1++; /* start of track 1 record */
+    const char *t1_end = strchr(t1, ';');
+    HX_ASSERT(t1_end != NULL, "rui_index missing track 2 separator");
+    /* tail must be :1:0 (mute=1, solo=0) */
+    HX_ASSERT(t1_end - t1 > 4 &&
+              t1_end[-1] == '0' && t1_end[-2] == ':' &&
+              t1_end[-3] == '1' && t1_end[-4] == ':',
+              "track 1 mute=1 solo=0: rui_index tail must be :1:0");
+
+    /* advance to track 2 record */
+    const char *t2 = t1_end + 1;
+    const char *t2_end = strchr(t2, ';');
+    HX_ASSERT(t2_end != NULL, "rui_index missing track 3 separator");
+    /* tail must be :0:1 (mute=0, solo=1) */
+    HX_ASSERT(t2_end - t2 > 4 &&
+              t2_end[-1] == '1' && t2_end[-2] == ':' &&
+              t2_end[-3] == '0' && t2_end[-4] == ':',
+              "track 2 mute=0 solo=1: rui_index tail must be :0:1");
+
+    hx_destroy(h);
+}
+
 int main(void) {
     test_snapshot_has_selected_clip_notes();
     test_snapshot_selection_switches_clip();
@@ -195,6 +241,7 @@ int main(void) {
     test_snapshot_drum_cc_automation();
     test_snapshot_cond_present();
     test_snapshot_cond_none();
-    printf("PASS: remote snapshot (notes round-trip, selection switch, empty index, module_id probe, ccmeta, cc_focus, rui_cond)\n");
+    test_snapshot_index_mute_solo();
+    printf("PASS: remote snapshot (notes round-trip, selection switch, empty index, module_id probe, ccmeta, cc_focus, rui_cond, mute/solo)\n");
     return 0;
 }
