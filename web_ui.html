@@ -83,6 +83,32 @@
   #drumph{position:absolute;inset:0;display:none;flex-direction:column;gap:6px;
     align-items:center;justify-content:center;color:var(--dim);text-align:center;padding:20px;font-size:14px}
   #drumph b{color:var(--ink)}
+  /* ---------- stacked band headers (velocity / automation) ---------- */
+  .bandhdr{flex:0 0 auto;display:flex;align-items:center;gap:7px;padding:0 10px;height:21px;
+    background:var(--panel);border-top:1px solid #000;cursor:pointer;font-size:10.5px;
+    text-transform:uppercase;letter-spacing:.6px;color:var(--dim);user-select:none}
+  .bandhdr:hover{color:var(--ink);background:#1b1f26}
+  .bandhdr .tw{font-size:9px;color:var(--faint);width:9px;display:inline-block}
+  .bandhdr .bl{font-weight:600}
+  .bandhdr .bsum{margin-left:auto;color:var(--faint);font:11px ui-monospace,monospace;
+    text-transform:none;letter-spacing:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px}
+  #autowrap{flex:0 0 72px;border-top:1px solid #000;background:#0e1014;position:relative;overflow:hidden;touch-action:none}
+  #autocanvas{display:block;position:absolute;left:0;top:0;touch-action:none;cursor:crosshair}
+  #autopick{flex:0 0 auto;display:flex;gap:4px;padding:4px 6px 4px 8px;background:#0e1014;
+    border-top:1px solid #000;overflow-x:auto}
+  .ccslot{flex:0 0 auto;display:flex;align-items:center;gap:3px;padding:3px 8px;border-radius:var(--rad-sm);
+    background:var(--ctl);border:1px solid var(--ctl-br);color:var(--dim);font-size:11px;cursor:pointer;
+    font-variant-numeric:tabular-nums;white-space:nowrap}
+  .ccslot:hover{border-color:#48515f;color:var(--ink)}
+  .ccslot.sel{border-color:var(--accent);color:var(--accent);background:#13312f}
+  .ccslot.off{opacity:.5}
+  .ccslot .ccdot{width:5px;height:5px;border-radius:50%;background:var(--accent)}
+  .ccslot .ccv{color:var(--faint);font-size:10px}
+  #autoctl{display:none;gap:8px 12px;align-items:center;flex-wrap:wrap;padding:5px 8px;
+    background:#0e1014;border-top:1px solid #000}
+  #autoctl label{font-size:11.5px}
+  #autoctl .cclab{font:11px ui-monospace,monospace;color:var(--accent);font-weight:700}
+  #autoctl input,#autoctl select{padding:4px 6px;font-size:11.5px}
   /* ---------- inspector (accordion) ---------- */
   #side{flex:0 0 296px;background:var(--panel);border-left:1px solid #000;overflow:auto;padding:0}
   .sec{border-bottom:1px solid var(--line)}
@@ -191,7 +217,12 @@
           <div>Add a hit on the device, or pick a melodic track.</div>
         </div>
       </div>
+      <div class="bandhdr" id="velhdr" title="Show / hide the velocity lane"><span class="tw">▼</span><span class="bl">Velocity</span></div>
       <div id="velwrap"><canvas id="velcanvas"></canvas></div>
+      <div class="bandhdr" id="autohdr" title="Show / hide CC automation (melodic only)"><span class="tw">▶</span><span class="bl">Automation</span><span class="bsum" id="autohsum"></span></div>
+      <div id="autopick"></div>
+      <div id="autoctl"></div>
+      <div id="autowrap"><canvas id="autocanvas"></canvas></div>
       <div id="editbar">
         <div id="noteedit" class="ebgrp"></div>
         <div id="stepedit" class="ebgrp"></div>
@@ -230,6 +261,10 @@ if (!window.schwungRemote) {
     "delay_retrig","seq_arp_style","seq_arp_rate","seq_arp_octaves","seq_arp_gate","seq_arp_steps_mode",
     "seq_arp_retrigger","seq_arp_sync"];
   const pfx=[0,0,100,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,100,0,1,0]; // sensible defaults
+  /* mock CC automation: 8 knob lanes (knob 0 seeded with a little curve) + focus */
+  let ccFocus=-1;
+  const ccLanes={0:[[0,40],[96,90],[192,60],[288,110]]};
+  const CC_ASSIGN=[7,74,71,73,72,91,93,10];
   const KV={};
   function rebuild(){
     KV["overtake_dsp:rui_rev"]=String(rev);
@@ -247,10 +282,14 @@ if (!window.schwungRemote) {
       KV["overtake_dsp:rui_dnotes"]=drum.map((l,i)=>l.hits.length?i+"|"+l.hits.map(h=>h.tick+":"+h.vel+":"+h.gate).join(","):null)
                                  .filter(Boolean).join(";");
       KV["overtake_dsp:rui_notes"]="";
+      delete KV["overtake_dsp:rui_ccmeta"]; delete KV["overtake_dsp:rui_cc"];
     } else {
       KV["overtake_dsp:rui_clip"]=clipLen+":24:"+clipLs+":"+clipDir;
       KV["overtake_dsp:rui_notes"]=mel.map(n=>n.tick+":"+n.pitch+":"+n.vel+":"+n.gate+";").join("");
       KV["overtake_dsp:rui_pfx"]=pfx.join(":");
+      KV["overtake_dsp:rui_ccmeta"]=Array.from({length:8},(_,k)=>
+        [ CC_ASSIGN[k], 0, (ccLanes[k]&&ccLanes[k].length?1:0), 255, 255, 0,0,0,0 ].join(",")).join(";");
+      KV["overtake_dsp:rui_cc"]= ccFocus>=0 ? ccFocus+"|"+(ccLanes[ccFocus]||[]).map(p=>p[0]+":"+p[1]).join(",") : "";
       delete KV["overtake_dsp:rui_dlanes"]; delete KV["overtake_dsp:rui_dnotes"];
     }
   }
@@ -269,6 +308,14 @@ if (!window.schwungRemote) {
     getParam:k=>Promise.resolve(KV[k]!=null?KV[k]:""),
     setParam:(k,v)=>{
       let m;
+      /* CC automation (Task 1 keys) — keep the preview curve live */
+      if(/_cc_focus$/.test(k)){ ccFocus=+v; rev++; rebuild(); return; }
+      if(/_cc_auto_set$/.test(k)){ const a=String(v).split(/\s+/).map(Number); const kn=a[1],tk=a[2],vl=a[3];
+        const L=ccLanes[kn]||(ccLanes[kn]=[]); const i=L.findIndex(p=>p[0]===tk); if(i>=0)L[i][1]=vl; else L.push([tk,vl]);
+        L.sort((x,y)=>x[0]-y[0]); rev++; rebuild(); return; }
+      if(/_cc_auto_clear_range$/.test(k)){ const a=String(v).split(/\s+/).map(Number); const kn=a[1],t1=a[2],t2=a[3];
+        if(ccLanes[kn]) ccLanes[kn]=ccLanes[kn].filter(p=>p[0]<t1||p[0]>t2); rev++; rebuild(); return; }
+      if(/_cc_auto_clear_k$/.test(k)){ const a=String(v).split(/\s+/).map(Number); ccLanes[a[1]]=[]; rev++; rebuild(); return; }
       if((m=k.match(/t(\d+)_c(\d+)_ruisel$/))){ sel.t=+m[1]; sel.c=+m[2];
         sel.lane=(v&&v[0]&&v[0]!=='-')?+v:-1; rev++; rebuild(); return; }
       if((m=k.match(/t(\d+)_l(\d+)_(note_\w+)$/))){      // drum lane op
@@ -327,6 +374,14 @@ function launchScene(c){ R.setParam(P+"launch_scene", String(c)); afterEdit(); }
 function launchClip(t,c){ R.setParam(P+`t${t}_launch_clip`, String(c)); afterEdit(); }
 
 /* ---------- parse flat snapshot fields ---------- */
+/* CC automation meta: 8 knob groups joined by ";", each
+ * "assign,type,hasdata,rest,curval,ls,len,tps,restps" (rest/cur 255 = unset). */
+function parseCcMeta(s){ if(!s) return []; return s.split(";").map(g=>{
+  const a=g.split(",").map(Number);
+  return {assign:a[0],type:a[1],hasdata:!!a[2],rest:a[3],cur:a[4],ls:a[5],len:a[6],tps:a[7],restps:a[8]}; }); }
+/* focused knob's breakpoints: "k|tick:val,tick:val,..." (empty when no focus) */
+function parseCc(s){ if(!s) return null; const [k,pts]=s.split("|");
+  return {k:+k, points:(pts||"").split(",").filter(Boolean).map(p=>{const [t,v]=p.split(":").map(Number); return {tick:t,val:v};})}; }
 function parseModel(){
   const get = k => kv[P+k];
   if (get("rui_sel") == null) return null;
@@ -380,9 +435,11 @@ function parseModel(){
   draw_src.split(";").filter(Boolean).forEach(tok=>{
     const a=tok.split(":").map(Number); stepTrig[a[0]]={iter:a[1]|0,rand:a[2]|0,ratch:a[3]|0,nudge:a[4]|0};
   });
+  const ccmeta=parseCcMeta(get("rui_ccmeta")||"");
+  const cc=parseCc(get("rui_cc")||"");
   return {rev:+(get("rui_rev")||0), play:{on:pon,tick:ptick,bpm:pbpm},
           sel:{t:st,c:sc,lane:sl}, clip:{len:cl,tps:ct,ls:cls,dir:cd}, tracks, notes,
-          dlanes, dnotes, pfx, glob, scaleMask, laneInfo, stepTrig};
+          dlanes, dnotes, pfx, glob, scaleMask, laneInfo, stepTrig, ccmeta, cc};
 }
 const isDrum = ()=> M && M.tracks[M.sel.t] && M.tracks[M.sel.t].pm===1;
 
@@ -1015,7 +1072,7 @@ function dropClip(src,dst,copy){
 }
 function selectClip(t,c){
   R.setParam(P+`t${t}_c${c}_ruisel`,"");
-  selNote=null; selStep=-1; selDrum=null; allLanes=false;   /* new clip → drop selections + All-Lanes mode */
+  selNote=null; selStep=-1; selDrum=null; allLanes=false; ccSel=-1;   /* new clip → drop selections + All-Lanes + automation focus */
   if(M){ M.sel.t=t; M.sel.c=c; renderSession(); renderChrome(); }
   /* selection is not an edit — pull the newly-selected clip promptly */
   suppressRefreshUntil=0; setTimeout(refresh,30);
@@ -1033,6 +1090,15 @@ function selectClip(t,c){
  * mouse keeps right-click/alt delete + wheel-scroll + ctrl-wheel zoom. */
 const cv=document.getElementById("rollcanvas"), ctx=cv.getContext("2d");
 const vc=document.getElementById("velcanvas"), vctx=vc.getContext("2d");
+const ac=document.getElementById("autocanvas"), actx=ac.getContext("2d");
+let AVW=880, AVH=70;
+let ccSel=-1;                    /* focused automation lane (knob index) or -1 */
+/* collapsible band state (persisted like the accordion prefs, dbx_*Open) */
+let velOpen=true, autoOpen=false;
+try{ const v=localStorage.getItem("dbx_velOpen"); if(v!=null) velOpen=JSON.parse(v); }catch(e){}
+try{ const v=localStorage.getItem("dbx_autoOpen"); if(v!=null) autoOpen=JSON.parse(v); }catch(e){}
+function saveBands(){ try{ localStorage.setItem("dbx_velOpen",JSON.stringify(velOpen));
+  localStorage.setItem("dbx_autoOpen",JSON.stringify(autoOpen)); }catch(e){} }
 let selStep=-1;   /* selected step index for the step-param editor (or -1) */
 const NOTE_NAMES=["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
 const noteName=n=>NOTE_NAMES[((n%12)+12)%12]+(Math.floor(n/12)-1);
@@ -1081,7 +1147,9 @@ let loopEmitT=0;
 function setLoop(ls,len,commit){ ls=Math.max(0,Math.min(255,ls|0)); len=Math.max(1,len|0); if(ls+len>256) len=256-ls;
   if(isDrum()){ if(M.laneInfo){ M.laneInfo.ls=ls; M.laneInfo.len=len; } } else { M.clip.ls=ls; M.clip.len=len; }
   clampScroll();
-  const key=isDrum()?`t${M.sel.t}_l${M.sel.lane}_loop_set`:`t${M.sel.t}_c${M.sel.c}_loop_set`;
+  /* automation focus: the brace edits the focused CC lane's loop instead of the clip's */
+  const key=(!isDrum()&&ccSel>=0)?`t${M.sel.t}_c${M.sel.c}_k${ccSel}_cc_loop_set`
+    :isDrum()?`t${M.sel.t}_l${M.sel.lane}_loop_set`:`t${M.sel.t}_c${M.sel.c}_loop_set`;
   const n=now(); if(commit||n-loopEmitT>55){ loopEmitT=n; R.setParam(P+key,String(ls*65536+len)); afterEdit(); }
   if(commit) pullSoon(); }
 function maxEditTick(){ return displayTicks(); }   /* placement/clamp extent = drawn extent */
@@ -1127,6 +1195,10 @@ function layout(){
   VVW=Math.max(300,vw.clientWidth||VW); VVH=vw.clientHeight||56;
   vc.style.width=VVW+"px"; vc.style.height=VVH+"px"; vc.width=Math.round(VVW*dpr); vc.height=Math.round(VVH*dpr);
   vctx.setTransform(dpr,0,0,dpr,0,0);
+  const aw=document.getElementById("autowrap");
+  if(aw && aw.style.display!=="none" && aw.clientHeight>0){ AVW=Math.max(300,aw.clientWidth||VW); AVH=aw.clientHeight||70;
+    ac.style.width=AVW+"px"; ac.style.height=AVH+"px"; ac.width=Math.round(AVW*dpr); ac.height=Math.round(AVH*dpr);
+    actx.setTransform(dpr,0,0,dpr,0,0); }
   if(!M) return;
   /* on a fresh clip selection: fit the clip width and re-center on content */
   const ck=M.sel.t+":"+M.sel.c+":"+(isDrum()?"d":"m");
@@ -1171,6 +1243,7 @@ function draw(){
   ctx.beginPath(); ctx.moveTo(GUTTER+0.5,0); ctx.lineTo(GUTTER+0.5,VH);
   ctx.moveTo(0,RULER+0.5); ctx.lineTo(VW,RULER+0.5); ctx.stroke();
   drawVel();
+  drawAuto();
 }
 function drawPitchBodies(){ const [r0,r1]=visRows(), sk=(M.glob?M.glob.key:0)%12;
   for(let r=r0;r<=r1;r++){ const p=rowList[r], s=((p%12)+12)%12, blk=BLACK_KEY[s], y=yOfRow(r);
@@ -1302,7 +1375,7 @@ function drawGutterDrum(){ ctx.fillStyle="#171a20"; ctx.fillRect(0,RULER,GUTTER,
     if(ln&&(ln.mute||ln.solo)){ ctx.fillStyle=ln.solo?"#ffcf4d":"#e88"; ctx.fillText(ln.solo?"S":"M",GUTTER-10,y+ROWH/2); } }
   /* (step-band gutter + STEP label are painted by drawStepBand) */
 }
-function drawVel(){ vctx.clearRect(0,0,VVW,VVH); vctx.fillStyle="#0e1014"; vctx.fillRect(0,0,VVW,VVH);
+function drawVel(){ if(!velOpen) return; vctx.clearRect(0,0,VVW,VVH); vctx.fillStyle="#0e1014"; vctx.fillRect(0,0,VVW,VVH);
   vctx.fillStyle="#171a20"; vctx.fillRect(0,0,GUTTER,VVH);
   vctx.fillStyle="#5a606c"; vctx.font="9px ui-monospace,monospace"; vctx.textBaseline="middle"; vctx.fillText("VEL",6,VVH/2);
   if(!M) return; const drum=isDrum(), ac=rollAccent();
@@ -1521,6 +1594,127 @@ function vAdjust(mx,my){ const drum=isDrum();
   else { emit("note_vel",`${n.tick} ${n.pitch} ${vel}`); selNote={tick:n.tick,pitch:n.pitch}; }
   renderNoteEdit(); }
 
+/* ================= automation band (CC lanes, melodic-only) =================
+ * Mirrors the velocity strip: same x = tick→px via the shared ruler/zoom; y maps
+ * 0..127 over the band height. One focused lane at a time (ccSel) gated by
+ * tN_cC_cc_focus; the device streams that lane's breakpoints as rui_cc. Edits use
+ * the verified tN_cc_auto_* keys; the model is mutated optimistically (like notes)
+ * so the curve follows the gesture before the device round-trips. */
+function bandsApply(){
+  const drum=isDrum();
+  const vh=document.getElementById("velhdr"), vw=document.getElementById("velwrap");
+  if(vh) vh.querySelector(".tw").textContent=velOpen?"▼":"▶";
+  if(vw) vw.style.display=velOpen?"block":"none";
+  const ah=document.getElementById("autohdr"), ap=document.getElementById("autopick"),
+        actl=document.getElementById("autoctl"), aw=document.getElementById("autowrap");
+  if(ah){ ah.style.display=drum?"none":"flex"; ah.querySelector(".tw").textContent=autoOpen?"▼":"▶"; }
+  const show=autoOpen&&!drum;
+  if(ap) ap.style.display=show?"flex":"none";
+  if(actl) actl.style.display=(show&&ccSel>=0)?"flex":"none";
+  if(aw) aw.style.display=(show&&ccSel>=0)?"block":"none";
+}
+function ccLabel(m){ return m.type===1?"Pr":m.type===2?"Chn":("CC"+(m.assign|0)); }
+function renderCcPicker(){
+  const el=document.getElementById("autopick"); if(!el) return;
+  if(isDrum()||!autoOpen){ el.innerHTML=""; return; }
+  const meta=(M&&M.ccmeta)||[];
+  let html="";
+  for(let k=0;k<8;k++){ const m=meta[k]||{assign:0,type:0,hasdata:false,cur:255};
+    const assigned=(m.type|0)!==0||(m.assign|0)>0;
+    const cur=(m.cur!=null&&m.cur!==255)?String(m.cur):"";
+    html+=`<button class="ccslot${k===ccSel?" sel":""}${assigned?"":" off"}" data-k="${k}" title="Knob ${k+1} — ${ccLabel(m)}">`+
+      `<span class="ccn">${ccLabel(m)}</span>`+(m.hasdata?`<span class="ccdot"></span>`:"")+
+      (cur?`<span class="ccv">${cur}</span>`:"")+`</button>`; }
+  el.innerHTML=html;
+  el.querySelectorAll(".ccslot").forEach(b=>b.onclick=()=>focusCc(+b.dataset.k));
+  const hs=document.getElementById("autohsum");
+  if(hs) hs.textContent=(ccSel>=0)?ccLabel(meta[ccSel]||{assign:0,type:0}):"";
+}
+function focusCc(k){ if(!M) return; ccSel=(ccSel===k?-1:k);
+  R.setParam(P+`t${M.sel.t}_c${M.sel.c}_cc_focus`,String(ccSel)); afterEdit(); pullSoon();
+  renderCcPicker(); renderCcCtl(); bandsApply(); layout(); drawAuto(); }
+function renderCcCtl(){
+  const el=document.getElementById("autoctl"); if(!el) return;
+  /* don't clobber an in-progress edit of a control input (poll re-render) */
+  if(document.activeElement && document.activeElement.closest && document.activeElement.closest("#autoctl")) return;
+  if(isDrum()||!autoOpen||ccSel<0||!M){ el.innerHTML=""; el.style.display="none"; return; }
+  el.style.display="flex";
+  const m=(M.ccmeta&&M.ccmeta[ccSel])||{assign:0,type:0,rest:255};
+  const restv=(m.rest!=null&&m.rest!==255)?m.rest:"";
+  el.innerHTML=
+    `<span class="cclab">Lane ${ccSel+1}</span>`+
+    `<label>Type <select id="ccType"><option value="0"${(m.type|0)===0?" selected":""}>CC</option>`+
+      `<option value="1"${(m.type|0)===1?" selected":""}>ChPr</option>`+
+      `<option value="2"${(m.type|0)===2?" selected":""}>Chain</option></select></label>`+
+    `<label>CC# <input id="ccNum" type="number" min="0" max="127" value="${m.assign|0}" style="width:54px;text-align:right"></label>`+
+    `<label>Rest <input id="ccRest" type="number" min="0" max="127" placeholder="—" value="${restv}" style="width:54px;text-align:right"></label>`+
+    `<button class="sm danger" id="ccClr" title="Erase this lane's automation">Clear lane</button>`;
+  const assign=()=>{ const ty=+el.querySelector("#ccType").value,
+      cc=Math.max(0,Math.min(127,+el.querySelector("#ccNum").value|0));
+    R.setParam(P+`t${M.sel.t}_cc_type_assign`,`${ccSel} ${ty} ${cc}`); afterEdit(); pullSoon(); };
+  el.querySelector("#ccType").onchange=assign;
+  el.querySelector("#ccNum").onchange=assign;
+  el.querySelector("#ccRest").onchange=e=>{ const s=e.target.value;
+    const v=(s===""||s==null)?128:Math.max(0,Math.min(127,+s|0));
+    R.setParam(P+`t${M.sel.t}_cc_rest`,`${M.sel.c} ${ccSel} ${v}`); afterEdit(); pullSoon(); };
+  el.querySelector("#ccClr").onclick=()=>{ R.setParam(P+`t${M.sel.t}_cc_auto_clear_k`,`${M.sel.c} ${ccSel}`);
+    if(M.cc&&M.cc.k===ccSel) M.cc.points=[]; afterEdit(); pullSoon(); drawAuto(); };
+}
+const ccYofV=v=>AVH-3-(Math.max(0,Math.min(127,v))/127)*(AVH-8);
+const ccVofY=y=>Math.max(0,Math.min(127,Math.round((1-(y-3)/(AVH-8))*127)));
+function drawAuto(){
+  if(!autoOpen||isDrum()||ccSel<0||!M) return;
+  actx.clearRect(0,0,AVW,AVH); actx.fillStyle="#0e1014"; actx.fillRect(0,0,AVW,AVH);
+  /* musical step grid (mirror drawVel) */
+  const tps=gridTps(), len=gridLen();
+  for(let s=0;s<=len;s+=4){ const x=xOfTick(s*tps); if(x<GUTTER||x>AVW) continue;
+    actx.strokeStyle=(s%16===0)?"#262c36":"#1a1e25"; actx.beginPath(); actx.moveTo(x,0); actx.lineTo(x,AVH); actx.stroke(); }
+  const meta=(M.ccmeta&&M.ccmeta[ccSel])||{assign:0,type:0,rest:255}, accent=rollAccent();
+  /* resting-value baseline (dashed) */
+  if(meta.rest!=null&&meta.rest!==255){ const yr=ccYofV(meta.rest);
+    actx.strokeStyle="rgba(90,96,108,0.6)"; actx.setLineDash([4,4]); actx.beginPath();
+    actx.moveTo(GUTTER,yr); actx.lineTo(AVW,yr); actx.stroke(); actx.setLineDash([]); }
+  const pts=(M.cc&&M.cc.k===ccSel)?M.cc.points:[];
+  if(pts.length){ actx.strokeStyle=hexA(accent,0.9); actx.lineWidth=2; actx.beginPath();
+    pts.forEach((p,i)=>{ const x=xOfTick(p.tick), y=ccYofV(p.val); if(i===0)actx.moveTo(x,y); else actx.lineTo(x,y); });
+    actx.stroke();
+    pts.forEach(p=>{ const x=xOfTick(p.tick), y=ccYofV(p.val); if(x<GUTTER-5||x>AVW+5) return;
+      actx.fillStyle=accent; actx.beginPath(); actx.arc(x,y,4.5,0,7); actx.fill(); }); }
+  /* gutter label painted last (sits above the grid) */
+  actx.fillStyle="#171a20"; actx.fillRect(0,0,GUTTER,AVH);
+  actx.fillStyle="#5a606c"; actx.font="9px ui-monospace,monospace"; actx.textBaseline="middle";
+  actx.fillText(ccLabel(meta),6,AVH/2);
+}
+/* edit gestures (draw / drag / erase) — driven by the roll's tool state */
+function ccPointAt(mx){ if(!M.cc||M.cc.k!==ccSel) return null; let best=null,bd=1e9;
+  M.cc.points.forEach(p=>{ const d=Math.abs(xOfTick(p.tick)-mx); if(d<bd){bd=d;best=p;} });
+  return (best&&bd<=10)?best:null; }
+function ccLocalSet(tick,val){ if(!M.cc||M.cc.k!==ccSel) M.cc={k:ccSel,points:[]};
+  const i=M.cc.points.findIndex(p=>p.tick===tick); if(i>=0)M.cc.points[i].val=val; else M.cc.points.push({tick,val});
+  M.cc.points.sort((a,b)=>a.tick-b.tick); }
+function ccLocalClear(tick){ if(M.cc&&M.cc.k===ccSel) M.cc.points=M.cc.points.filter(p=>p.tick!==tick); }
+function ccSetEmit(tick,val){ R.setParam(P+`t${M.sel.t}_cc_auto_set`,`${M.sel.c} ${ccSel} ${tick} ${val}`); afterEdit(); }
+function ccClearEmit(t1,t2){ R.setParam(P+`t${M.sel.t}_cc_auto_clear_range`,`${M.sel.c} ${ccSel} ${t1} ${t2==null?t1:t2}`); afterEdit(); }
+let adrag=null, ccEmitT=0, ccLast=null;
+function localXYa(e){ const r=ac.getBoundingClientRect(); return [e.clientX-r.left,e.clientY-r.top]; }
+ac.addEventListener("pointerdown",e=>{ if(!M||ccSel<0||isDrum()) return; try{ac.setPointerCapture(e.pointerId);}catch(_){}
+  const [x,y]=localXYa(e); if(x<GUTTER) return; dragging=true;
+  const erase=tool==="erase"||(e.pointerType==="mouse"&&(e.button===2||e.altKey));
+  const hit=ccPointAt(x);
+  if(erase){ if(hit){ ccLocalClear(hit.tick); drawAuto(); ccClearEmit(hit.tick); pullSoon(); } adrag=null; return; }
+  if(hit){ const ex=M.cc.points.find(p=>p.tick===hit.tick); adrag={tick:hit.tick}; ccLast={tick:hit.tick,val:ex?ex.val:0}; return; }
+  const tk=Math.max(0,snap(tickOfX(x),e.shiftKey)), v=ccVofY(y);
+  ccLocalSet(tk,v); drawAuto(); ccSetEmit(tk,v); adrag={tick:tk}; ccLast={tick:tk,val:v}; });
+ac.addEventListener("pointermove",e=>{ if(!adrag||!M||ccSel<0) return; const [x,y]=localXYa(e);
+  const nt=Math.max(0,snap(tickOfX(x),e.shiftKey)), nv=ccVofY(y);
+  if(nt!==adrag.tick){ ccLocalClear(adrag.tick); ccClearEmit(adrag.tick); }
+  ccLocalSet(nt,nv); adrag.tick=nt; ccLast={tick:nt,val:nv}; drawAuto();
+  const n=now(); if(n-ccEmitT>55){ ccEmitT=n; ccSetEmit(nt,nv); } });
+function endAuto(e){ if(adrag){ if(ccLast) ccSetEmit(ccLast.tick,ccLast.val); adrag=null; ccLast=null; pullSoon(); }
+  dragging=false; try{ac.releasePointerCapture(e.pointerId);}catch(_){} }
+ac.addEventListener("pointerup",endAuto); ac.addEventListener("pointercancel",endAuto);
+ac.addEventListener("contextmenu",e=>e.preventDefault());
+
 /* ---------- apply incoming snapshot ---------- */
 let autoLaneKey="";   /* track which drum clip we auto-selected a lane for (fire once per clip) */
 let lastFoldSig="";   /* scale-aware + scale-mask signature; re-layout the roll when it changes */
@@ -1546,6 +1740,7 @@ function applyParams(params){
    * from the device (which may not bump rev), so an on melodic track ALWAYS folds. */
   const foldSig=(M.glob&&M.glob.scaleAware?1:0)+":"+(M.scaleMask?M.scaleMask.map(b=>b?1:0).join(""):"");
   renderChrome(); renderSession();
+  bandsApply(); renderCcPicker(); renderCcCtl();
   if(M.rev!==prevRev || selKey!==prevSel || foldSig!==lastFoldSig){ lastRev=M.rev; lastSelKey=selKey; lastFoldSig=foldSig;
     layout(); renderSidePanels(); }
   draw();
@@ -1582,6 +1777,11 @@ document.getElementById("snap").onchange=()=>{};
   st.classList.add("on");
   st.onclick=()=>{ sess.classList.toggle("collapsed"); st.classList.toggle("on",!sess.classList.contains("collapsed")); };
 })();
+/* collapsible velocity / automation band headers */
+document.getElementById("velhdr").onclick=()=>{ velOpen=!velOpen; saveBands(); bandsApply(); if(M){ layout(); draw(); } };
+document.getElementById("autohdr").onclick=()=>{ autoOpen=!autoOpen; saveBands(); bandsApply();
+  renderCcPicker(); renderCcCtl(); if(M){ layout(); draw(); } };
+bandsApply();   /* initial show/hide from persisted prefs (before first model) */
 document.getElementById("zxin").onclick=()=>zoomH(1.3);
 document.getElementById("zxout").onclick=()=>zoomH(1/1.3);
 document.getElementById("zyin").onclick=()=>zoomV(1.3);
