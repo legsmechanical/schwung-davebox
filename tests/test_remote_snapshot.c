@@ -102,6 +102,31 @@ static void test_snapshot_cc_focus_emits_breakpoints(void) {
     hx_destroy(h);
 }
 
+static void test_snapshot_cond_present(void) {
+    hx_t *h = hx_create(NULL);
+    HX_ASSERT(h != NULL, "hx_create returned NULL");
+    /* make track 2 the conductor, set responder fields on its active clip (clip 0) */
+    hx_set_param(h, "t2_convert_to_conduct", "");
+    hx_set_param(h, "t2_c0_cond_resp", "3 0");     /* track 3 not responding */
+    hx_set_param(h, "t2_c0_cond_oct",  "4 1");     /* track 4 +1 oct */
+    hx_set_param(h, "t2_c0_cond_lock", "1");
+    hx_set_param(h, "t1_c0_ruisel", "");           /* select any track */
+    char buf[16384];
+    hx_get_param(h, "state", buf, (int)sizeof(buf));
+    HX_ASSERT(strstr(buf, "\"rui_cond\":\"2:0:1;") != NULL, "condTrk/clip/lock header wrong");
+    hx_destroy(h);
+}
+
+static void test_snapshot_cond_none(void) {
+    hx_t *h = hx_create(NULL);
+    HX_ASSERT(h != NULL, "hx_create returned NULL");
+    hx_set_param(h, "t1_c0_ruisel", "");
+    char buf[16384];
+    hx_get_param(h, "state", buf, (int)sizeof(buf));
+    HX_ASSERT(strstr(buf, "\"rui_cond\":\"-1:") != NULL, "no-conductor short form wrong");
+    hx_destroy(h);
+}
+
 int main(void) {
     test_snapshot_has_selected_clip_notes();
     test_snapshot_selection_switches_clip();
@@ -109,6 +134,8 @@ int main(void) {
     test_module_id_probe();
     test_snapshot_ccmeta_present();
     test_snapshot_cc_focus_emits_breakpoints();
-    printf("PASS: remote snapshot (notes round-trip, selection switch, empty index, module_id probe, ccmeta, cc_focus)\n");
+    test_snapshot_cond_present();
+    test_snapshot_cond_none();
+    printf("PASS: remote snapshot (notes round-trip, selection switch, empty index, module_id probe, ccmeta, cc_focus, rui_cond)\n");
     return 0;
 }

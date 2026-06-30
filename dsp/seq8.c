@@ -9664,6 +9664,25 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
     }
     APP("\"");
 
+    /* rui_cond: conductor state — "condTrk:clip:lock;resp0:oct0:when0;...;respN:octN:whenN"
+     * Short form "-1:-1:0" when no conductor. Lets the remote badge responder
+     * tracks and expose the per-track responder/oct/when editor. */
+    APP(",\"rui_cond\":\"");
+    {
+        int ct = (int)inst->conductor_track;
+        if (ct >= 0 && ct < NUM_TRACKS) {
+            seq8_track_t *ctr = &inst->tracks[ct];
+            int cc_idx = (int)ctr->active_clip;
+            clip_t *ccl = &ctr->clips[cc_idx];
+            APP("%d:%d:%d", ct, cc_idx, (int)ccl->cond_lock);
+            for (int ti = 0; ti < NUM_TRACKS; ti++)
+                APP(";%d:%d:%d", (int)ccl->cond_resp[ti], (int)ccl->cond_oct[ti], (int)ccl->cond_when[ti]);
+        } else {
+            APP("-1:-1:0");
+        }
+    }
+    APP("\"");
+
     if (dclip) {
         /* drum: 32 lanes "note,has,mute,solo" for the active drum clip */
         APP(",\"rui_dlanes\":\"");
