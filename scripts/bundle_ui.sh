@@ -30,3 +30,10 @@ node_modules/.bin/esbuild ui/ui.js \
 lines=$(wc -l < dist/davebox/ui.js | tr -d ' ')
 bytes=$(wc -c < dist/davebox/ui.js | tr -d ' ')
 echo "Bundle: dist/davebox/ui.js (${lines} lines, ${bytes} bytes)"
+
+# Remote-UI page is a static single file; ship it on the JS-only deploy path too
+# (install.sh scp's dist/davebox/*). build.sh also copies it for full builds.
+if [ -f web_ui.html ]; then
+    cp web_ui.html dist/davebox/web_ui.html
+    echo "Copied: dist/davebox/web_ui.html ($(wc -c < web_ui.html | tr -d ' ') bytes)"
+fi

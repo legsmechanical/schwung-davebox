@@ -8,6 +8,15 @@ the section into a versioned heading at release time.
 
 ## [Unreleased]
 
+### Features
+- **Browser remote UI — edit your set from a phone, tablet, or laptop.** dAVEBOx now serves a full clip editor in a web browser (through the Schwung manager's Tool tab) over your network — no cables. It mirrors the loaded set and writes changes straight back to the hardware, so the two stay in sync.
+- **Piano-roll editor (melodic + drum).** Session grid (tracks × scenes) with clip launch/copy/clear/duplicate; a unified, touch-first roll with Draw/Select/Erase tools, marquee multi-select, per-note velocity/gate/nudge, off-grid editing, a musical bars/beats ruler, a draggable loop brace, and a resolution/zoom-aware layout.
+- **CC automation editor (melodic + drum).** A collapsible automation lane under the roll: pick one of the 8 CC lanes, draw/drag/erase breakpoints, set the resting value, assign CC# and type (CC / Schwung knob / Aftertouch), and set per-lane loop length.
+- **Conductor track support.** The conductor track is badged in the session grid with responder dots on the tracks that follow it, plus a per-clip responder panel (on/off, octave, Now/Next, Lock) when the conductor track is selected.
+- **Transport + live playhead.** Start/stop the transport from the browser; a smooth playhead glides in time with the hardware.
+- **Per-track controls on the header.** A ☰ menu on each track header opens Route (Schwung / Move / External) + MIDI channel; click a header to mute, right-click to solo (with live mute/solo badges).
+- **Edge zoom bars** on the roll — drag the top bar to zoom horizontally, the left bar to zoom vertically (the on-screen H/V buttons still work too).
+
 ## [1.0-beta.6] — 2026-06-25
 ### Features
 - **The AUTO bank is now fully functional on drum tracks.** Step LEDs show the automation gradient and a moving playhead, the per-knob automation graph rescales as you change loop lengths, and the pads stay playable while you edit — gray, with the active lane in your track colour and any lane that's sounding lit dimly, while the right 4×4 block stays dark (the pads play their drum sounds and no longer select lanes on this bank). Per-lane loop length (hold Loop + step buttons **or** the jog wheel), Shift + Step 15 double-and-fill, and the rest of the per-lane loop tools all target the automation lane, exactly like melodic tracks.

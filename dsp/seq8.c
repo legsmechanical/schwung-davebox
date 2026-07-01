@@ -748,6 +748,15 @@ typedef struct {
     seq8_track_t tracks[NUM_TRACKS];
     uint8_t      active_track;
 
+    /* Remote-UI (piano-roll) selection + change revision. The browser sets the
+     * snapshot target via tN_cC_ruisel; rui_rev bumps on any clip/param edit so
+     * the browser can cheaply detect device-side changes. lane = -1 for melodic. */
+    uint8_t  rui_sel_track;   /* 0..NUM_TRACKS-1 */
+    uint8_t  rui_sel_clip;    /* 0..NUM_CLIPS-1 */
+    int16_t  rui_sel_lane;    /* -1 melodic, 0..DRUM_LANES-1 drum */
+    int8_t   rui_cc_focus;   /* knob 0..7 whose CC breakpoints emit in rui_cc; -1 = none */
+    uint32_t rui_rev;         /* monotonic edit counter */
+
     /* Phase 1 / Bundle 2C-Rpt2: global Delete-held flag. JS pushes the
      * edge via a single `t0_delete_held` set_param on every Delete CC
      * edge (per-track-shaped key, but read here at instance level —
@@ -6394,6 +6403,156 @@ static int clip_insert_note(clip_t *cl, uint32_t tick, uint16_t gate,
     return idx;
 }
 
+/* ------------------------------------------------------------------ */
+/* Remote-UI note-centric editing helpers (piano roll).                 */
+/* These edit notes[] directly (the canonical playback model) and run   */
+/* only from set_param context, which the host drains at audio-buffer   */
+/* boundaries — never concurrent with render — so array rewrites are     */
+/* safe (same contract clip_migrate_to_notes already relies on).        */
+/* ------------------------------------------------------------------ */
+
+/* Bump the remote-UI revision so the browser notices device/remote edits. */
+static inline void rui_touch(seq8_instance_t *inst) { if (inst) inst->rui_rev++; }
+
+/* Find an active note by exact tick+pitch. Returns index or -1. */
+static int clip_find_note(clip_t *cl, uint32_t tick, uint8_t pitch) {
+    uint16_t i;
+    for (i = 0; i < cl->note_count; i++)
+        if (cl->notes[i].active && cl->notes[i].tick == tick && cl->notes[i].pitch == pitch)
+            return (int)i;
+    return -1;
+}
+
+/* Drop tombstoned (active==0) notes, packing survivors down. Reclaims slots
+ * so add/del/move churn from the piano roll never starves MAX_NOTES_PER_CLIP. */
+static void clip_compact_notes(clip_t *cl) {
+    uint16_t w = 0, r;
+    for (r = 0; r < cl->note_count; r++) {
+        if (!cl->notes[r].active) continue;
+        if (w != r) cl->notes[w] = cl->notes[r];
+        w++;
+    }
+    for (r = w; r < cl->note_count; r++) cl->notes[r].active = 0;
+    cl->note_count = w;
+    cl->occ_dirty = 1;
+}
+
+/* Apply one piano-roll note op to a melodic clip. op: a/d/m/r/v.
+ *   a tick pitch [vel] [gate]      add (deduped on tick+pitch)
+ *   d tick pitch                   delete (tombstone)
+ *   m oldtick oldpitch newtick newpitch   move (in place)
+ *   r tick pitch newgate           resize gate
+ *   v tick pitch newvel            set velocity
+ * Returns 1 if the clip changed. Clamps all inputs to the clip window. */
+static int clip_note_apply_op(clip_t *cl, char op, const char *args) {
+    uint32_t maxtick = (uint32_t)cl->length * cl->ticks_per_step;
+    if (maxtick == 0) maxtick = 1;
+    long a[4] = {0,0,0,0}; int na = 0; const char *p = args;
+    while (na < 4) {
+        while (*p == ' ') p++;
+        if (!*p || *p == ';') break;
+        a[na++] = my_atoi(p);
+        while (*p && *p != ' ' && *p != ';') p++;
+    }
+    switch (op) {
+    case 'a': {
+        if (na < 2) return 0;
+        uint32_t tick = (uint32_t)clamp_i((int)a[0], 0, (int)maxtick - 1);
+        uint8_t  pitch = (uint8_t)clamp_i((int)a[1], 0, 127);
+        uint8_t  vel   = (uint8_t)clamp_i(na > 2 ? (int)a[2] : SEQ_VEL, 1, 127);
+        uint16_t gate  = (uint16_t)clamp_i(na > 3 ? (int)a[3] : GATE_TICKS, 1, 65535);
+        if (clip_find_note(cl, tick, pitch) >= 0) return 0;   /* no duplicate */
+        return clip_insert_note(cl, tick, gate, pitch, vel) >= 0 ? 1 : 0;
+    }
+    case 'd': {
+        if (na < 2) return 0;
+        int idx = clip_find_note(cl, (uint32_t)a[0], (uint8_t)clamp_i((int)a[1], 0, 127));
+        if (idx < 0) return 0;
+        cl->notes[idx].active = 0; cl->occ_dirty = 1; return 1;
+    }
+    case 'm': {
+        if (na < 4) return 0;
+        int idx = clip_find_note(cl, (uint32_t)a[0], (uint8_t)clamp_i((int)a[1], 0, 127));
+        if (idx < 0) return 0;
+        cl->notes[idx].tick  = (uint32_t)clamp_i((int)a[2], 0, (int)maxtick - 1);
+        cl->notes[idx].pitch = (uint8_t)clamp_i((int)a[3], 0, 127);
+        cl->occ_dirty = 1; return 1;
+    }
+    case 'r': {
+        if (na < 3) return 0;
+        int idx = clip_find_note(cl, (uint32_t)a[0], (uint8_t)clamp_i((int)a[1], 0, 127));
+        if (idx < 0) return 0;
+        cl->notes[idx].gate = (uint16_t)clamp_i((int)a[2], 1, 65535); return 1;
+    }
+    case 'v': {
+        if (na < 3) return 0;
+        int idx = clip_find_note(cl, (uint32_t)a[0], (uint8_t)clamp_i((int)a[1], 0, 127));
+        if (idx < 0) return 0;
+        cl->notes[idx].vel = (uint8_t)clamp_i((int)a[2], 1, 127); return 1;
+    }
+    }
+    return 0;
+}
+
+/* Commit note edits: reclaim tombstones, re-derive the step/LED view, mark dirty. */
+static void clip_note_finalize(seq8_instance_t *inst, clip_t *cl) {
+    clip_compact_notes(cl);
+    clip_build_steps_from_notes(cl);
+    rui_touch(inst);
+    inst->state_dirty = 1;
+}
+
+/* Drum-lane note op for the remote piano roll. A lane is monophonic at a fixed
+ * pitch (lane_note), so ops key off tick only; pitch is forced to lane_note.
+ *   t tick [vel] [gate]   toggle a hit at tick (add if absent, else remove)
+ *   a tick [vel] [gate]   add (no-op if a hit already exists at tick)
+ *   d tick                delete the hit at tick
+ *   v tick vel            set velocity
+ *   r tick gate           set gate
+ *   m oldtick newtick      move in time
+ * Returns 1 if the lane changed. */
+static int lane_note_apply_op(clip_t *cl, uint8_t lane_note, char op, const char *args) {
+    uint32_t maxtick = (uint32_t)cl->length * cl->ticks_per_step;
+    if (maxtick == 0) maxtick = 1;
+    long a[3] = {0,0,0}; int na = 0; const char *p = args;
+    while (na < 3) {
+        while (*p == ' ') p++;
+        if (!*p || *p == ';') break;
+        a[na++] = my_atoi(p);
+        while (*p && *p != ' ' && *p != ';') p++;
+    }
+    if (na < 1) return 0;
+    uint32_t tick = (uint32_t)clamp_i((int)a[0], 0, (int)maxtick - 1);
+    int idx = -1; uint16_t i;
+    for (i = 0; i < cl->note_count; i++)
+        if (cl->notes[i].active && cl->notes[i].tick == tick) { idx = (int)i; break; }
+    switch (op) {
+    case 't':
+        if (idx >= 0) { cl->notes[idx].active = 0; cl->occ_dirty = 1; return 1; }
+        /* fall through to add */
+    case 'a': {
+        if (idx >= 0) return 0;
+        uint8_t  vel  = (uint8_t)clamp_i(na > 1 ? (int)a[1] : SEQ_VEL, 1, 127);
+        uint16_t gate = (uint16_t)clamp_i(na > 2 ? (int)a[2] : GATE_TICKS, 1, 65535);
+        return clip_insert_note(cl, tick, gate, lane_note, vel) >= 0 ? 1 : 0;
+    }
+    case 'd':
+        if (idx < 0) return 0;
+        cl->notes[idx].active = 0; cl->occ_dirty = 1; return 1;
+    case 'v':
+        if (idx < 0 || na < 2) return 0;
+        cl->notes[idx].vel = (uint8_t)clamp_i((int)a[1], 1, 127); return 1;
+    case 'r':
+        if (idx < 0 || na < 2) return 0;
+        cl->notes[idx].gate = (uint16_t)clamp_i((int)a[1], 1, 65535); return 1;
+    case 'm':
+        if (idx < 0 || na < 2) return 0;
+        cl->notes[idx].tick = (uint32_t)clamp_i((int)a[1], 0, (int)maxtick - 1);
+        cl->occ_dirty = 1; return 1;
+    }
+    return 0;
+}
+
 /* Distribute 'hits' evenly across 'len' steps; returns count placed (<= hits, <= len).
  * Positions written ascending to out[]. First hit always at step 0.
  * Integer Bresenham distribution (pos[i] = (i * len) / hits) — yields the same
@@ -6565,6 +6724,9 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     inst->sample_rate    = (g_host && g_host->sample_rate > 0)
                            ? (float)g_host->sample_rate : 44100.0f;
     inst->log_fp         = fopen(SEQ8_LOG_PATH, "a");
+
+    inst->rui_sel_lane  = -1;  /* remote-UI: melodic by default (calloc zeros the rest) */
+    inst->rui_cc_focus  = -1;  /* no CC lane focused initially */
 
     inst->pad_key      = 9;   /* A */
     inst->pad_scale    = 1;   /* Minor */
@@ -9340,6 +9502,260 @@ static int pfx_get(seq8_track_t *tr, const char *key, char *out, int out_len) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Remote-UI snapshot: a FLAT JSON object of string values for the      */
+/* browser piano roll. It MUST be flat-with-string-values because the   */
+/* schwung-manager explodes get_param("state") into top-level keys and  */
+/* drops any array/object/null field (remote_ui.go fetchAllParams) — so  */
+/* structured data is packed into delimited strings, not nested JSON.    */
+/* Selected-clip-scoped to stay well under 64KB. Native ints only.       */
+/* Read-only + side-effect free (does NOT touch state_dirty; davebox     */
+/* persistence uses the separate state_full path).                       */
+/*                                                                       */
+/* Field schema (each value is a string; the browser parses on ':' / ';'):*/
+/*   rui_rev   = "<rev>"                                                  */
+/*   rui_play  = "on:tick:bpm"                                           */
+/*   rui_sel   = "track:clip:lane"   (lane=-1 melodic)                   */
+/*   rui_clip  = "len:tps:loop_start:dir"   (selected clip)             */
+/*   rui_glob  = "key:scale:swing_amt:swing_res:launch_quant:scale_aware" */
+/*   rui_scale = 12 pitch-class in-scale bits (pc0..11 absolute)          */
+/*   rui_index = per-track "pm:ac:qc:pl:<16 has-bits>", joined by ';'     */
+/*   rui_notes = "tick:pitch:vel:gate;" list for the selected clip       */
+/* ------------------------------------------------------------------ */
+/* Emit sparse per-step trig conditions for one clip: "s:iter:rand:ratch:nudge;"
+ * for each step (within the loop length) that has any non-default value. nudge =
+ * the step's primary-note within-step tick offset. Returns the new cursor. */
+static int rui_emit_steps(char *out, int n, int out_len, clip_t *cl) {
+    #define APP2(...) do { if (n < out_len) n += snprintf(out + n, out_len - n, __VA_ARGS__); } while (0)
+    int L = cl->length; if (L > SEQ_STEPS) L = SEQ_STEPS;
+    for (int s = 0; s < L; s++) {
+        int it = cl->step_iter[s], rd = cl->step_random[s], rt = cl->step_ratchet[s];
+        int nudge = (cl->step_note_count[s] > 0) ? (int)cl->note_tick_offset[s][0] : 0;
+        if (it || rd || rt || nudge) APP2("%d:%d:%d:%d:%d;", s, it, rd, rt, nudge);
+    }
+    #undef APP2
+    return n;
+}
+
+static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
+    if (!inst || !out || out_len <= 0) return -1;
+    int t = inst->rui_sel_track; if (t < 0 || t >= NUM_TRACKS) t = 0;
+    int c = inst->rui_sel_clip;  if (c < 0 || c >= NUM_CLIPS)  c = 0;
+    seq8_track_t *tr = &inst->tracks[t];
+    int drum = (tr->pad_mode == PAD_MODE_DRUM);
+    /* CC automation is track-level, keyed by clip slot: melodic edits the selected
+     * clip (c); drum playback evaluates the active clip (active_clip). */
+    int cc_clip = drum ? (int)tr->active_clip : c;
+    if (cc_clip < 0 || cc_clip >= NUM_CLIPS) cc_clip = 0;
+    drum_clip_t *dclip = (drum && tr->drum_clips[tr->active_clip])
+                         ? tr->drum_clips[tr->active_clip] : NULL;
+    /* grid-reference clip: drum -> active drum clip lane 0; melodic -> selected clip.
+     * (Drum lane keys are active-clip-scoped, so the drum view shows the ACTIVE clip.) */
+    clip_t *gcl = dclip ? &dclip->lanes[0].clip : &tr->clips[c];
+
+    int n = 0;  /* cursor; snprintf returns intended length, so guard each append */
+    #define APP(...) do { if (n < out_len) n += snprintf(out + n, out_len - n, __VA_ARGS__); } while (0)
+
+    double bpm = (inst->tracks[0].pfx.cached_bpm > 0)
+                 ? inst->tracks[0].pfx.cached_bpm : (double)BPM_DEFAULT;
+    APP("{\"rui_rev\":\"%u\"", (unsigned)inst->rui_rev);
+    APP(",\"rui_play\":\"%d:%u:%d\"",
+        inst->playing ? 1 : 0, (unsigned)tr->current_clip_tick, (int)bpm);
+    APP(",\"rui_sel\":\"%d:%d:%d\"", t, c, (int)inst->rui_sel_lane);
+    APP(",\"rui_clip\":\"%d:%d:%d:%d\"",
+        (int)gcl->length, (int)gcl->ticks_per_step, (int)gcl->loop_start,
+        (int)gcl->playback_dir);
+    /* global params: key:scale:swing_amt:swing_res:launch_quant:scale_aware (bpm in rui_play) */
+    APP(",\"rui_glob\":\"%d:%d:%d:%d:%d:%d\"",
+        (int)inst->pad_key, (int)inst->pad_scale, (int)inst->swing_amt,
+        (int)inst->swing_res, (int)inst->launch_quant, (int)inst->scale_aware);
+    /* rui_scale: 12 pitch-class bits (pc 0..11 absolute, key applied) — which
+     * notes are in the current key+scale, so the piano roll can shade rows. */
+    APP(",\"rui_scale\":\"");
+    {
+        int sc = inst->pad_scale; if (sc < 0 || sc >= 14) sc = 0;
+        int kk = ((int)inst->pad_key) % 12; if (kk < 0) kk += 12;
+        int smask[12] = {0};
+        for (int d = 0; d < SCALE_SIZES[sc]; d++)
+            smask[(kk + SCALE_IVLS[sc][d]) % 12] = 1;
+        for (int pc = 0; pc < 12; pc++) APP("%d", smask[pc]);
+    }
+    APP("\"");
+
+    /* per-clip FX (melodic only): 29 values in a fixed order the browser mirrors —
+     * NOTE FX (8) | HARMZ (4) | MIDI DLY (10) | SEQ ARP (7). Edited via
+     * tN_cC_pfx_set "key value". Drum lanes carry their own (smaller) pfx — later. */
+    /* rui_pfx = 29 FX values. Melodic: the selected clip's pfx. Drum: the
+     * SELECTED LANE's pfx (each drum lane has its own pfx chain), so the browser
+     * can edit per-lane drum FX via tN_lL_pfx_set; empty if no lane selected. */
+    clip_pfx_params_t *pf = NULL;
+    if (!drum) pf = &gcl->pfx_params;
+    else if (dclip && inst->rui_sel_lane >= 0 && inst->rui_sel_lane < DRUM_LANES)
+        pf = &dclip->lanes[inst->rui_sel_lane].pfx_params;
+    if (pf) {
+        APP(",\"rui_pfx\":\"%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d\"",
+            pf->octave_shift, pf->note_offset, pf->gate_time, pf->velocity_offset, pf->quantize,
+            pf->note_random, pf->note_random_mode, (int)pf->note_length_mode,
+            pf->octaver, pf->harmonize_1, pf->harmonize_2, pf->harmonize_3,
+            pf->delay_time_idx, pf->delay_level, pf->repeat_times, pf->fb_velocity, pf->fb_note,
+            pf->fb_note_random, pf->fb_note_random_mode, pf->fb_gate_time, pf->fb_clock, pf->delay_retrig,
+            pf->seq_arp_style, pf->seq_arp_rate, pf->seq_arp_octaves, pf->seq_arp_gate,
+            pf->seq_arp_steps_mode, pf->seq_arp_retrigger, pf->seq_arp_sync);
+    } else {
+        APP(",\"rui_pfx\":\"\"");
+    }
+    /* rui_lane = selected drum lane's "len:tps:loop_start:dir" (per-lane settings) */
+    if (drum && dclip && inst->rui_sel_lane >= 0 && inst->rui_sel_lane < DRUM_LANES) {
+        clip_t *lc = &dclip->lanes[inst->rui_sel_lane].clip;
+        APP(",\"rui_lane\":\"%d:%d:%d:%d\"",
+            (int)lc->length, (int)lc->ticks_per_step, (int)lc->loop_start, (int)lc->playback_dir);
+    } else {
+        APP(",\"rui_lane\":\"\"");
+    }
+
+    /* rui_ccmeta: per knob "assign,type,hasdata,rest,curval,ls,len,tps,restps" x8.
+     * Emitted for melodic AND drum tracks (engine evaluates clip_cc_auto for both);
+     * keyed by cc_clip (selected clip melodic, active clip drum). */
+    APP(",\"rui_ccmeta\":\"");
+    {
+        cc_auto_t *ca = &tr->clip_cc_auto[cc_clip];
+        for (int k = 0; k < 8; k++) {
+            APP("%s%d,%d,%d,%d,%d,%d,%d,%d,%d", k ? ";" : "",
+                (int)tr->cc_assign[k], (int)tr->cc_type[k],
+                ca->count[k] > 0 ? 1 : 0, (int)ca->rest_val[k], (int)tr->cc_auto_cur_val[k],
+                (int)ca->lane_loop_start[k], (int)ca->lane_length[k],
+                (int)ca->lane_tps[k], (int)ca->lane_res_tps[k]);
+        }
+    }
+    APP("\"");
+
+    /* rui_cc: breakpoints "k|tick:val,tick:val" for the focused knob only.
+     * Emitted for melodic AND drum (keyed by cc_clip) when a knob is focused. */
+    APP(",\"rui_cc\":\"");
+    if (inst->rui_cc_focus >= 0 && inst->rui_cc_focus < 8) {
+        int k = inst->rui_cc_focus;
+        cc_auto_t *ca = &tr->clip_cc_auto[cc_clip];
+        APP("%d|", k);
+        for (int i = 0; i < (int)ca->count[k]; i++)
+            APP("%s%d:%d", i ? "," : "", (int)ca->ticks[k][i], (int)ca->vals[k][i]);
+    }
+    APP("\"");
+
+    /* per-step trig conditions (sparse "s:iter:rand:ratch:nudge;") for the step
+     * strip. rui_steps = selected MELODIC clip; rui_dsteps = selected drum LANE
+     * (drum step params are per-lane). Both always present (one empty per mode). */
+    APP(",\"rui_steps\":\"");
+    if (!drum) n = rui_emit_steps(out, n, out_len, gcl);
+    APP("\"");
+    APP(",\"rui_dsteps\":\"");
+    if (drum && dclip && inst->rui_sel_lane >= 0 && inst->rui_sel_lane < DRUM_LANES)
+        n = rui_emit_steps(out, n, out_len, &dclip->lanes[inst->rui_sel_lane].clip);
+    APP("\"");
+
+    /* per-track index: "pm:ac:qc:pl:<16 has-bits>:route:chan:mute:solo", tracks joined by ';'
+     * (pm=pad_mode, ac=active clip, qc=queued clip or -1, pl=clip playing,
+     * route=0 Schwung/1 Move/2 External, chan=1-based MIDI channel,
+     * mute/solo=0|1 live per-track state) — drives the session grid's
+     * playing/queued indicators + routing labels + mute/solo in track headers. */
+    APP(",\"rui_index\":\"");
+    for (int ti = 0; ti < NUM_TRACKS; ti++) {
+        seq8_track_t *trk = &inst->tracks[ti];
+        APP("%s%d:%d:%d:%d:", ti ? ";" : "", (int)trk->pad_mode, (int)trk->active_clip,
+            (int)trk->queued_clip, trk->clip_playing ? 1 : 0);
+        for (int ci = 0; ci < NUM_CLIPS; ci++) {
+            int has = 0;
+            if (trk->pad_mode == PAD_MODE_DRUM) {
+                /* drum: scan all lanes of the drum clip (NULL until first used) */
+                drum_clip_t *dc = trk->drum_clips[ci];
+                if (dc) {
+                    for (int l = 0; l < DRUM_LANES && !has; l++) {
+                        clip_t *lc = &dc->lanes[l].clip;
+                        for (uint16_t k = 0; k < lc->note_count; k++)
+                            if (lc->notes[k].active) { has = 1; break; }
+                    }
+                }
+            } else {
+                clip_t *cc = &trk->clips[ci];
+                for (uint16_t k = 0; k < cc->note_count; k++)
+                    if (cc->notes[k].active) { has = 1; break; }
+            }
+            APP("%d", has);
+        }
+        APP(":%d:%d:%d:%d", (int)trk->pfx.route, (int)trk->channel + 1,
+            (int)inst->mute[ti], (int)inst->solo[ti]);
+    }
+    APP("\"");
+
+    /* rui_cond: conductor state — "condTrk:clip:lock;resp0,oct0,when0;...;respN,octN,whenN"
+     * Short form "-1:-1:0" when no conductor. Lets the remote badge responder
+     * tracks and expose the per-track responder/oct/when editor. */
+    APP(",\"rui_cond\":\"");
+    {
+        int ct = (int)inst->conductor_track;
+        if (ct >= 0 && ct < NUM_TRACKS) {
+            seq8_track_t *ctr = &inst->tracks[ct];
+            int cc_idx = (int)ctr->active_clip;
+            clip_t *ccl = &ctr->clips[cc_idx];
+            APP("%d:%d:%d", ct, cc_idx, (int)ccl->cond_lock);
+            for (int ti = 0; ti < NUM_TRACKS; ti++)
+                APP(";%d,%d,%d", (int)ccl->cond_resp[ti], (int)ccl->cond_oct[ti], (int)ccl->cond_when[ti]);
+        } else {
+            APP("-1:-1:0");
+        }
+    }
+    APP("\"");
+
+    if (dclip) {
+        /* drum: 32 lanes "note,has,mute,solo" for the active drum clip */
+        APP(",\"rui_dlanes\":\"");
+        for (int l = 0; l < DRUM_LANES; l++) {
+            clip_t *lc = &dclip->lanes[l].clip;
+            int has = 0;
+            for (uint16_t k = 0; k < lc->note_count; k++)
+                if (lc->notes[k].active) { has = 1; break; }
+            int mu = (tr->drum_lane_mute >> l) & 1, so = (tr->drum_lane_solo >> l) & 1;
+            /* note,has,mute,solo,length,loop_start,tps — the loop fields let the remote
+             * UI draw each lane's [ls, ls+len) window for a per-lane overview. */
+            APP("%s%d,%d,%d,%d,%d,%d,%d", l ? ";" : "", (int)dclip->lanes[l].midi_note, has, mu, so,
+                (int)lc->length, (int)lc->loop_start,
+                (int)(lc->ticks_per_step ? lc->ticks_per_step : TICKS_PER_STEP));
+        }
+        APP("\"");
+        /* per-lane hits: "L|tick:vel:gate,tick:vel:gate;L|..." (non-empty lanes) */
+        APP(",\"rui_dnotes\":\"");
+        int firstlane = 1;
+        for (int l = 0; l < DRUM_LANES; l++) {
+            clip_t *lc = &dclip->lanes[l].clip;
+            int wrote = 0;
+            for (uint16_t k = 0; k < lc->note_count; k++) {
+                note_t *nt = &lc->notes[k];
+                if (!nt->active) continue;
+                if (!wrote) { APP("%s%d|%u:%d:%d", firstlane ? "" : ";", l,
+                                  (unsigned)nt->tick, (int)nt->vel, (int)nt->gate);
+                              firstlane = 0; wrote = 1; }
+                else APP(",%u:%d:%d", (unsigned)nt->tick, (int)nt->vel, (int)nt->gate);
+            }
+        }
+        APP("\"");
+        APP(",\"rui_notes\":\"\"");
+    } else {
+        /* melodic: selected clip notes */
+        APP(",\"rui_notes\":\"");
+        for (uint16_t k = 0; k < gcl->note_count; k++) {
+            note_t *nt = &gcl->notes[k];
+            if (!nt->active) continue;
+            APP("%u:%d:%d:%d;", (unsigned)nt->tick, (int)nt->pitch, (int)nt->vel, (int)nt->gate);
+        }
+        APP("\"");
+    }
+
+    APP("}");
+    #undef APP
+    if (n >= out_len) n = out_len - 1;
+    out[n] = '\0';
+    return n;
+}
+
+/* ------------------------------------------------------------------ */
 /* get_param                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -9353,6 +9769,47 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         int v = inst->solo_fallback_pending ? 1 : 0;
         inst->solo_fallback_pending = 0;
         return snprintf(out, out_len, "%d", v);
+    }
+
+    if (!strcmp(key, "state")) {
+        /* Remote-UI snapshot for the browser piano roll. This is the key the
+         * schwung-manager reads on subscribe (comp+":state"); davebox's own
+         * persistence uses state_full, so claiming "state" here is free. */
+        return seq8_remote_snapshot(inst, out, out_len);
+    }
+
+    if (!strcmp(key, "rui_rev")) {
+        /* Cheap monotonic edit counter, bumped by rui_touch() on every remote
+         * content edit (note/lane/length/dir/pfx) — NOT on mere clip selection.
+         * The on-device JS polls this each pollDSP cycle and re-syncs its clip
+         * grid + step view from DSP when it changes, so remote edits (new clips,
+         * added notes) become visible on-device without a local action. */
+        return snprintf(out, out_len, "%u", (unsigned)inst->rui_rev);
+    }
+
+    if (!strcmp(key, "rui_poll")) {
+        /* Cheap poll digest "rev:on:tick:bpm" — same values as the snapshot's
+         * rui_rev + rui_play, but with NO note/step serialization. The manager
+         * reads this every browser poll and only does the full get_param("state")
+         * read when rev changes (content edit); while playing it pushes just the
+         * playhead. Keeps idle/playing polls off the heavy snapshot path. */
+        int pt = inst->rui_sel_track; if (pt < 0 || pt >= NUM_TRACKS) pt = 0;
+        seq8_track_t *ptr = &inst->tracks[pt];
+        double pbpm = (inst->tracks[0].pfx.cached_bpm > 0)
+                      ? inst->tracks[0].pfx.cached_bpm : (double)BPM_DEFAULT;
+        return snprintf(out, out_len, "%u:%d:%u:%d",
+                        (unsigned)inst->rui_rev, inst->playing ? 1 : 0,
+                        (unsigned)ptr->current_clip_tick, (int)pbpm);
+    }
+
+    if (!strcmp(key, "module_id")) {
+        /* Remote-UI discovery probe. davebox runs as an overtake tool (no chain
+         * slot), so the schwung-manager can't find it via the per-slot
+         * "synth_module" key. Instead it probes "overtake_dsp:module_id" on the
+         * active overtake DSP; answering here opts davebox in to having its
+         * web_ui.html served. Any overtake tool that ships a web_ui.html and
+         * answers this key gets a remote UI — generic, no host C change. */
+        return snprintf(out, out_len, "davebox");
     }
 
     if (!strcmp(key, "state_full")) {

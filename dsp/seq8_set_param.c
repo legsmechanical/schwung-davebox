@@ -2229,6 +2229,76 @@ static void set_param(void *instance, const char *key, const char *val) {
             if (cidx >= NUM_CLIPS) return;
             clip_t *cl = &tr->clips[cidx];
 
+            /* tN_cC_ruisel "[lane]": select this clip as the remote-UI snapshot
+             * target. Optional arg = drum lane index (-1/absent = melodic). */
+            if (!strcmp(p, "_ruisel")) {
+                inst->rui_sel_track = (uint8_t)tidx;
+                inst->rui_sel_clip  = (uint8_t)cidx;
+                inst->rui_sel_lane  = (val && val[0] && val[0] != '-') ?
+                                          (int16_t)clamp_i(my_atoi(val), 0, DRUM_LANES - 1) : -1;
+                return;
+            }
+
+            /* tN_cC_cc_focus "<k>" — gate rui_cc to knob k (-1 = none); bump rev to force re-read. */
+            if (!strcmp(p, "_cc_focus")) {
+                int k = val ? my_atoi(val) : -1;
+                inst->rui_cc_focus = (k >= 0 && k < 8) ? (int8_t)k : -1;
+                rui_touch(inst);
+                return;
+            }
+
+            /* Remote-UI piano-roll note edits (melodic clip). Each writes notes[]
+             * directly then re-derives steps[] via clip_note_finalize. */
+            if (!strcmp(p, "_note_add"))    { if (clip_note_apply_op(cl, 'a', val)) clip_note_finalize(inst, cl); return; }
+            if (!strcmp(p, "_note_del"))    { if (clip_note_apply_op(cl, 'd', val)) clip_note_finalize(inst, cl); return; }
+            if (!strcmp(p, "_note_move"))   { if (clip_note_apply_op(cl, 'm', val)) clip_note_finalize(inst, cl); return; }
+            if (!strcmp(p, "_note_resize")) { if (clip_note_apply_op(cl, 'r', val)) clip_note_finalize(inst, cl); return; }
+            if (!strcmp(p, "_note_vel"))    { if (clip_note_apply_op(cl, 'v', val)) clip_note_finalize(inst, cl); return; }
+            if (!strcmp(p, "_notes_op")) {
+                /* batch: "<op> args; <op> args; ..." — one finalize for the lot */
+                const char *s = val; int changed = 0;
+                while (*s) {
+                    while (*s == ' ' || *s == ';') s++;
+                    if (!*s) break;
+                    char op = *s++;
+                    while (*s == ' ') s++;
+                    changed |= clip_note_apply_op(cl, op, s);
+                    while (*s && *s != ';') s++;   /* advance to next ';' */
+                }
+                if (changed) clip_note_finalize(inst, cl);
+                return;
+            }
+
+            /* tN_cC_resolution "idx" (0-5): change THIS clip's ticks_per_step and
+             * rescale its notes proportionally — remote-UI per-clip variant of
+             * clip_resolution (which only targets the active clip). */
+            if (!strcmp(p, "_resolution")) {
+                if (tr->recording) return;
+                int ridx = clamp_i(my_atoi(val), 0, 5);
+                uint16_t new_tps = TPS_VALUES[ridx];
+                uint16_t old_tps = cl->ticks_per_step;
+                if (new_tps == old_tps || old_tps == 0) return;
+                uint32_t gmax_res = (uint32_t)SEQ_STEPS * new_tps;
+                if (gmax_res > 65535) gmax_res = 65535;
+                for (uint16_t ni = 0; ni < cl->note_count; ni++) {
+                    note_t *n = &cl->notes[ni];
+                    n->tick = (uint32_t)((uint64_t)n->tick * new_tps / old_tps);
+                    uint32_t ng = (uint32_t)((uint64_t)n->gate * new_tps / old_tps);
+                    if (ng < 1) ng = 1;
+                    if (ng > gmax_res) ng = gmax_res;
+                    n->gate = (uint16_t)ng;
+                }
+                cl->ticks_per_step = new_tps;
+                if (cidx == tr->active_clip && old_tps > 0) {
+                    tr->tick_in_step = (uint32_t)((uint64_t)tr->tick_in_step * new_tps / old_tps);
+                    if (tr->tick_in_step >= new_tps) tr->tick_in_step = 0;
+                }
+                clip_build_steps_from_notes(cl);
+                rui_touch(inst);
+                inst->state_dirty = 1;
+                return;
+            }
+
             if (!strncmp(p, "_step_", 6)) {
                 const char *q = p + 6;
                 int sidx = 0;
@@ -2523,6 +2593,17 @@ static void set_param(void *instance, const char *key, const char *val) {
                 }
                 return;
             }
+            /* tN_cC_dir "0..3": per-clip playback direction (remote UI). Unlike the
+             * active-clip tN_clip_playback_dir sub, this targets the named clip. */
+            if (!strcmp(p, "_dir")) {
+                cl->playback_dir = (uint8_t)clamp_i(my_atoi(val), 0, 3);
+                cl->pp_dir_state = initial_pp_dir(cl->playback_dir);
+                if (cidx == (int)tr->active_clip) silence_track_from_set_param(inst, tr);
+                rui_touch(inst);
+                inst->state_dirty = 1;
+                return;
+            }
+
             if (!strncmp(p, "_length", 7) && p[7] == '\0') {
                 int max_len = SEQ_STEPS - (int)cl->loop_start;
                 if (max_len < 1) max_len = 1;
@@ -2545,6 +2626,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                     }
                 }
                 clip_migrate_to_notes(cl);
+                rui_touch(inst);
                 return;
             }
             if (!strncmp(p, "_loop_set", 9) && p[9] == '\0') {
@@ -2717,6 +2799,7 @@ static void set_param(void *instance, const char *key, const char *val) {
                 pfx_set(inst, tr, &cl->pfx_params, pfx_key, sp);
                 if ((int)tr->active_clip == cidx)
                     pfx_sync_from_clip(tr);
+                rui_touch(inst);
                 inst->state_dirty = 1;
                 return;
             }
@@ -3410,6 +3493,14 @@ static void set_param(void *instance, const char *key, const char *val) {
                 inst->state_dirty = 1;
                 return;
             }
+
+            /* Remote-UI drum-grid edits (monophonic lane; pitch = lane note). */
+            if (!strcmp(p2, "_note_toggle")) { if (lane_note_apply_op(dlc, dlane->midi_note, 't', val)) clip_note_finalize(inst, dlc); return; }
+            if (!strcmp(p2, "_note_add"))    { if (lane_note_apply_op(dlc, dlane->midi_note, 'a', val)) clip_note_finalize(inst, dlc); return; }
+            if (!strcmp(p2, "_note_del"))    { if (lane_note_apply_op(dlc, dlane->midi_note, 'd', val)) clip_note_finalize(inst, dlc); return; }
+            if (!strcmp(p2, "_note_vel"))    { if (lane_note_apply_op(dlc, dlane->midi_note, 'v', val)) clip_note_finalize(inst, dlc); return; }
+            if (!strcmp(p2, "_note_resize")) { if (lane_note_apply_op(dlc, dlane->midi_note, 'r', val)) clip_note_finalize(inst, dlc); return; }
+            if (!strcmp(p2, "_note_move"))   { if (lane_note_apply_op(dlc, dlane->midi_note, 'm', val)) clip_note_finalize(inst, dlc); return; }
             if (!strcmp(p2, "_mute")) {
                 uint32_t bit = 1u << (uint32_t)lane_idx;
                 if (my_atoi(val)) {
