@@ -621,7 +621,7 @@ const PERF_MOD_FULL_NAMES = [
  * S.perfRecalledSlot: which slot is active (-1 = none); preset bits are
  * copied into S.perfModsToggled on recall so mod pads can toggle them off.
  * Factory presets populate slots 0-7 (steps 1-8) at init. */
-const PERF_MOD_POPUP_TICKS = 80; /* ~500ms at ~160 ticks/s */
+const PERF_MOD_POPUP_TICKS = 47; /* ~500ms at 94Hz (was 80, assuming ~160 ticks/s) */
 
 /* View lock: double-tap Loop keeps Perf Mode alive after Loop is released.
  * Single tap while locked → unlock + stop loop. */
@@ -5630,11 +5630,13 @@ function restoreUiSidecar(applyDefaultsNow) {
             syncDrumLaneSteps(0, S.activeDrumLane[0] | 0);
         }
         if (applyDefaultsNow) {
-            S.pendingDefaultSetParams = [
+            /* push, not reassign — a reassignment would discard set_params
+             * already queued this init (audit js-tick-4). */
+            S.pendingDefaultSetParams.push(
                 { key: 'scale_aware', val: '1' },
                 { key: 'metro_vol',   val: '100' },
                 { key: 't0_pad_mode', val: String(PAD_MODE_DRUM) }
-            ];
+            );
         }
     }
 }
