@@ -12,6 +12,19 @@
  */
 
 import { S } from './ui_state.mjs';
+import { PAD_MODE_DRUM, NUM_STEPS } from './ui_constants.mjs';
+
+export function _clipIsEmpty(t, c) {
+    return (S.trackPadMode[t] === PAD_MODE_DRUM)
+        ? !S.drumClipNonEmpty[t][c]
+        : !S.clipNonEmpty[t][c];
+}
+
+export function clipHasContent(t, c) {
+    const s = S.clipSteps[t][c];
+    for (let i = 0; i < NUM_STEPS; i++) if (s[i]) return true;
+    return false;
+}
 
 /** Convert a padIdx (0-31) to drum lane index for the current lane page, or -1 if right half. */
 export function drumPadToLane(padIdx) {

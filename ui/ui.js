@@ -81,7 +81,7 @@ import {
 } from './ui_constants.mjs';
 
 import { S, CC_ASSIGN_DEFAULTS, PERF_FACTORY_PRESETS, conductorTrackIdx } from './ui_state.mjs';
-import { drumPadToLane, drumPadToVelZone, drumVelZoneToVelocity } from './ui_pure.mjs';
+import { drumPadToLane, drumPadToVelZone, drumVelZoneToVelocity, _clipIsEmpty, clipHasContent } from './ui_pure.mjs';
 import { saveState, writeSidecar, doClearSession, showActionPopup, uuidToStatePath, uuidToUiStatePath, readActiveSet, loadNameIndex, saveNameIndex, copyStateFiles, findInheritCandidates,
     SNAPSHOT_CAP, snapshotLabel, loadSnapshotManifest, commitSnapshot, applySnapshotToLive, dropSnapshots } from './ui_persistence.mjs';
 import { drawGlobalMenu } from './ui_dialogs.mjs';
@@ -1451,11 +1451,6 @@ function registerTapTempo(padNote) {
  * "empty" here). Used to gate implicit focused-clip auto-launch so a clip the
  * user intentionally left off is not re-activated by scrolling / transport
  * start. */
-function _clipIsEmpty(t, c) {
-    return (S.trackPadMode[t] === PAD_MODE_DRUM)
-        ? !S.drumClipNonEmpty[t][c]
-        : !S.clipNonEmpty[t][c];
-}
 function _focusedClipIsEmpty(t) {
     return _clipIsEmpty(t, S.trackActiveClip[t]);
 }
@@ -1995,13 +1990,6 @@ function drawXposeConfirm() {
     _btn(4,  bY, bW, mH, S.confirmXposeSel === 0, 'YES', 17);
     _btn(74, bY, bW, mH, S.confirmXposeSel === 1, 'NO',  20);
 }
-
-function clipHasContent(t, c) {
-    const s = S.clipSteps[t][c];
-    for (let i = 0; i < NUM_STEPS; i++) if (s[i]) return true;
-    return false;
-}
-
 
 /* PHASE-1: helper for the pad-dispatch mute condition. Modal sources:
  * - sessionView                 — pads launch clips

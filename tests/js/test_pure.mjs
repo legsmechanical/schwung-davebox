@@ -7,7 +7,9 @@
  * before each call to set up the read surface. ui_state.mjs imports only
  * ui_constants.mjs, so it loads cleanly under node via the tests/js harness. */
 import { S } from '../../ui/ui_state.mjs';
-import { drumPadToLane, drumPadToVelZone, drumVelZoneToVelocity } from '../../ui/ui_pure.mjs';
+import { drumPadToLane, drumPadToVelZone, drumVelZoneToVelocity,
+         _clipIsEmpty, clipHasContent } from '../../ui/ui_pure.mjs';
+import { PAD_MODE_DRUM } from '../../ui/ui_constants.mjs';
 
 let failed = 0;
 function eq(got, want, label) {
@@ -60,5 +62,32 @@ S.activeTrack = 1;
 S.drumLanePage[1] = 0;
 eq(drumPadToLane(0), 0, 'drumPadToLane 0 track1 page0');
 
+/* -- clipHasContent(t,c): true iff any of S.clipSteps[t][c][0..NUM_STEPS-1] is
+ *    truthy (ui.js:1998-2002). NUM_STEPS=256, arrays init all-0 -> false. --
+ *   all-zero clip           -> false
+ *   step 5 set to 1         -> true (found before end)
+ *   step 255 (last) set     -> true (loop reaches the final index) */
+eq(clipHasContent(0, 0), false, 'clipHasContent all-zero');
+S.clipSteps[0][0][5] = 1;
+eq(clipHasContent(0, 0), true, 'clipHasContent mid step');
+S.clipSteps[2][3][255] = 1;
+eq(clipHasContent(2, 3), true, 'clipHasContent last step');
+
+/* -- _clipIsEmpty(t,c) (ui.js:1453-1457): melodic track -> !S.clipNonEmpty[t][c];
+ *    drum track (trackPadMode==PAD_MODE_DRUM) -> !S.drumClipNonEmpty[t][c]. --
+ * Melodic branch (trackPadMode default 0): */
+S.trackPadMode[0] = 0;
+S.clipNonEmpty[0][0] = false;
+eq(_clipIsEmpty(0, 0), true, '_clipIsEmpty melodic empty');
+S.clipNonEmpty[0][0] = true;
+eq(_clipIsEmpty(0, 0), false, '_clipIsEmpty melodic non-empty');
+/* Drum branch selects the OTHER array (drumClipNonEmpty), ignoring clipNonEmpty: */
+S.trackPadMode[1] = PAD_MODE_DRUM;
+S.drumClipNonEmpty[1][2] = false;
+S.clipNonEmpty[1][2] = true;               /* proves the drum branch ignores this */
+eq(_clipIsEmpty(1, 2), true, '_clipIsEmpty drum empty (ignores clipNonEmpty)');
+S.drumClipNonEmpty[1][2] = true;
+eq(_clipIsEmpty(1, 2), false, '_clipIsEmpty drum non-empty');
+
 if (failed) process.exit(1);
-console.log('PASS: ui_pure drum helpers');
+console.log('PASS: ui_pure drum + clip helpers');
