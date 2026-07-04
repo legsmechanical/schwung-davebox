@@ -53,11 +53,17 @@ every structural move:
   serialized-state substrings (gates the Phase 4 `set_param` split). Note its
   scope limit: it does NOT verify each handler sets `state_dirty` itself.
 - `test_engine_goldens.c` + `tests/goldens/*.txt` — ordered MIDI captures for
-  6 deterministic scenarios (gates the Phase 3 engine split). **Golden
+  7 deterministic scenarios (gates the Phase 3 engine split), incl. `looper`
+  (global MIDI looper capture + replay, gates the Phase 3 `seq8_looper.c`
+  split). **Golden
   workflow:** regenerate ONLY when a behavior change is intended and approved:
   `UPDATE_GOLDENS=1 tests/run.sh`, then diff the goldens in the commit. Never
   hand-edit (exact compare incl. newlines). Line format:
   `kind cable|CIN status d1 d2`.
+- `test_bake_convert.c` — white-box characterization of the two destructive
+  clip rewrites: `bake_scene` loop-unroll + pfx velocity fold (gates the
+  Phase 2 `seq8_bake.c` split) and the melodic<->drum `convert` round-trip
+  (gates the Phase 2 `seq8_convert.c` split).
 - `test_padmap_contract.c` — the `tN_padmap` piggyback contract
   (active_track + dsp_inbound_enabled + 35-token payload incl. trailing
   pad_dispatch_muted / delete_held / corun_left_silent, each pinned at both
