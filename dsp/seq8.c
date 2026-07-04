@@ -11172,6 +11172,11 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                         for (_pp = 0; _pp < (int)_tr->play_pending_count; _pp++)
                             _tr->play_pending[_pp].ticks_remaining = 0;
                     }
+                    /* Drop stale ratchet sub-hits alongside the other queued-
+                     * engine drains — matches silence_track_notes_v2, which
+                     * clears them for the same "don't ghost-fire after a
+                     * position reset" reason (audit dsp-clock-1, defensive). */
+                    _tr->ratchet_pending_count = 0;
                     if (_tr->drum_clips[_tr->active_clip]) {
                         int _dl;
                         for (_dl = 0; _dl < DRUM_LANES; _dl++) {

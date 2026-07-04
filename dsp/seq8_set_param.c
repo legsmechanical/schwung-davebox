@@ -2249,7 +2249,13 @@ static void set_param(void *instance, const char *key, const char *val) {
         if (sub[0] == 'c' && sub[1] >= '0' && sub[1] <= '9') {
             int cidx = 0;
             const char *p = sub + 1;
-            while (*p >= '0' && *p <= '9') { cidx = cidx * 10 + (*p - '0'); p++; }
+            /* Cap while accumulating: a >=10-digit index would overflow int
+             * (negative -> clips[] OOB); keep consuming digits so p still
+             * lands on the subkey, the bound check below rejects it. */
+            while (*p >= '0' && *p <= '9') {
+                if (cidx < NUM_CLIPS) cidx = cidx * 10 + (*p - '0');
+                p++;
+            }
             if (cidx >= NUM_CLIPS) return;
             clip_t *cl = &tr->clips[cidx];
 
@@ -2605,7 +2611,12 @@ static void set_param(void *instance, const char *key, const char *val) {
                     if (cnt > 0) {
                         int i;
                         cl->step_note_count[sidx] = (uint8_t)cnt;
-                        for (i = 0; i < cnt; i++) cl->step_notes[sidx][i] = (uint8_t)notes[i];
+                        for (i = 0; i < cnt; i++) {
+                            cl->step_notes[sidx][i] = (uint8_t)notes[i];
+                            /* Reset sub-step offset too — a replaced note must
+                             * not inherit the previous note's InQ-Off timing. */
+                            cl->note_tick_offset[sidx][i] = 0;
+                        }
                         for (i = cnt; i < 8; i++) {
                             cl->step_notes[sidx][i] = 0;
                             cl->note_tick_offset[sidx][i] = 0;

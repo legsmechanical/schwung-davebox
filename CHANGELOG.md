@@ -9,6 +9,8 @@ the section into a versioned heading at release time.
 ## [Unreleased]
 
 ### Fixes
+- **Replacing a step's notes no longer inherits the old note's off-grid timing.** Editing a step's notes (chord entry, remote-UI edits) could leave the new notes carrying the replaced note's sub-step timing offset, making them sound slightly early or late. New notes now land exactly on the grid.
+- **Internal hardening.** Malformed clip-index parameters from the remote-UI write path are now rejected instead of corrupting memory; a few internal queues are cleared more defensively at the record count-in downbeat and at first-run setup; the performance-mod popup duration was recalibrated like the other timings.
 - **Knob LEDs refresh correctly when leaving the Schwung chain editor.** After exiting a Schwung chain-edit co-run, the knob ring LEDs kept the editor's colors until you turned a knob; they now repaint immediately on exit.
 - **Hold gestures and timed flashes recalibrated to the device's real speed.** Several UI timings were tuned to a mistaken internal clock rate and ran about twice as long as intended: holding Note/Session needed ~425 ms instead of ~200 ms (so momentary session peeks often latched instead of reverting), the count-in beat flash blinked at half rate with the metronome off, and a few notices/highlights lingered ~2× too long. The record count-in flash also assumed 120 BPM regardless of the set tempo; it now follows the actual tempo.
 - **Saved performance presets no longer vanish on reload.** Custom perf presets (slots 9–16) were silently lost when the module reloaded unless a preset slot happened to be active at save time. They now always survive reloads and set switches.
