@@ -5538,13 +5538,17 @@ function restoreUiSidecar(applyDefaultsNow) {
         if (us.v >= 2) {
             if (typeof us.pm === 'number') S.perfModsToggled = us.pm & 0xFFFFFF;
             S.perfLatchMode = us.lm === 1;
-            if (typeof us.rs === 'number' && us.rs >= 0 && us.rs < 16) {
+            if (typeof us.rs === 'number' && us.rs >= 0 && us.rs < 16)
                 S.perfRecalledSlot = us.rs;
-                if (Array.isArray(us.us)) {
-                    for (let _i = 0; _i < 8; _i++) {
-                        if (typeof us.us[_i] === 'number')
-                            S.perfSnapshots[8 + _i] = us.us[_i];
-                    }
+            /* User perf presets restore INDEPENDENTLY of the recalled slot:
+             * saving a preset never sets perfRecalledSlot (stays -1 unless
+             * one was recalled), so nesting this under the us.rs guard
+             * silently discarded slots 8-15 on reload — and the sidecar is
+             * their only persistence (audit js-modules-3). */
+            if (Array.isArray(us.us)) {
+                for (let _i = 0; _i < 8; _i++) {
+                    if (typeof us.us[_i] === 'number')
+                        S.perfSnapshots[8 + _i] = us.us[_i];
                 }
             }
             const _pm = S.perfModsToggled | S.perfModsHeld;

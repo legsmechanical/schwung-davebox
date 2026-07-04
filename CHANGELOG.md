@@ -9,6 +9,7 @@ the section into a versioned heading at release time.
 ## [Unreleased]
 
 ### Fixes
+- **Saved performance presets no longer vanish on reload.** Custom perf presets (slots 9–16) were silently lost when the module reloaded unless a preset slot happened to be active at save time. They now always survive reloads and set switches.
 - **Holding a drum step to inspect it no longer resets its velocity to 100.** Holding an occupied drum step to look at its Leng/Vel values and releasing without turning a knob silently rewrote the step's velocity to the default 100. The step's real values are now read correctly during the hold and are preserved on release.
 - **Fixed Ableton export (.ablbundle) — it was broken end-to-end.** Confirming an export threw an internal error before anything was written, and the "Apply Conductor?" YES/NO dialog could not be committed. Both were module-wiring bugs introduced with the split into JS modules; export works again.
 - **Removed a debug logger that could cause audio glitches during fast co-run drumming.** An internal pad diagnostic wrote to a log file from the real-time audio thread on every unmapped pad hit; under heavy drumming in Move co-run this risked audible dropouts. The investigation it supported is closed (no genuine pad drops were ever found), so it has been removed.
