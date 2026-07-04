@@ -34,7 +34,6 @@
 /* ------------------------------------------------------------------ */
 
 #define SEQ8_LOG_PATH           "/data/UserData/schwung/seq8.log"
-#define SEQ8_PAD_DROP_LOG_PATH  "/data/UserData/schwung/seq8-pad-drop.log"
 #define SEQ8_STATE_PATH_FALLBACK "/data/UserData/schwung/seq8-state.json"
 
 #define NUM_TRACKS          8
@@ -7255,27 +7254,12 @@ static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
     }
 
     if (pitch == 0xFF) {
-        /* Pad-drop diagnostic. Modal mutes (pad_dispatch_muted) deliberately
-         * push 0xFF and are excluded outright. Move co-run left-pad silence
-         * (corun_left_silent) ALSO pushes 0xFF deliberately — but the flag and
-         * the map travel in the same tN_padmap payload, so a coalesced co-run-
-         * EXIT repush leaves BOTH stale together (left pads silent = the real
-         * bug, flag still 1). Tag those as DROP_CORUN rather than suppressing,
-         * so the post-exit stale window stays visible: benign in-co-run presses
-         * read as DROP_CORUN with no perceived silence; a DROP_CORUN cluster
-         * right after exiting co-run, correlating with silence, IS the bug. A
-         * plain DROP is an UNexpected 0xFF outside co-run/mute. */
-        if (is_on && !inst->pad_dispatch_muted) {
-            FILE *_df = fopen(SEQ8_PAD_DROP_LOG_PATH, "a");
-            if (_df) {
-                fprintf(_df, "%s pad=%d t=%d map=0xFF enabled=%d active=%d\n",
-                        inst->corun_left_silent ? "DROP_CORUN" : "DROP",
-                        padIdx, (int)t, (int)inst->dsp_inbound_enabled,
-                        (int)inst->active_track);
-                fflush(_df);
-                fclose(_df);
-            }
-        }
+        /* Unmapped pad: modal mutes (pad_dispatch_muted) and Move co-run
+         * left-pad silence (corun_left_silent) both push 0xFF deliberately.
+         * The pad-drop file-logging diagnostic that lived here was retired
+         * 2026-07-03: two long captures were 100% benign DROP_CORUN, and
+         * per-event fopen/fflush/fclose on the RT SPI thread violates the
+         * RT-logging ban (audit dsp-rt-1). */
         return;
     }
 
