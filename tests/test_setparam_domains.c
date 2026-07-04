@@ -36,6 +36,8 @@ int main(void) {
          * through _set_notes via clip_migrate_to_notes. Keep this order. */
         { "t5_c0_step_0_toggle",     "88 70",     ":88:70:",                "clip/step melodic toggle" },
         { "t5_c0_step_0_gate",       "33",        ":88:70:33",              "clip/step gate" },
+        /* pitch 69 = the chord's TOP note, chosen as representative because
+         * it never appears in the blob before this write (62 could). */
         { "t5_c0_step_0_set_notes",  "62 65 69",  ":69:70:33",              "chord (_set_notes)" },
         /* drum lane note (t6 -> drum mode via lane write); pitch = DRUM_BASE_NOTE+lane = 36 */
         { "t6_l0_step_0_toggle",     "105",       "\"t6c0l0_n\":\"0:36:105:", "drum lane" },
@@ -56,7 +58,11 @@ int main(void) {
     int i, n;
     for (i = 0; i < (int)(sizeof(cases)/sizeof(cases[0])); i++) {
         hx_set_param(h, cases[i].key, cases[i].val);
-        hx_set_param(h, "bpm", "141");             /* re-dirty for state_full */
+        /* Re-dirty for state_full (it gates on state_dirty and clears it on
+         * read). Scope limit: because bpm re-dirties unconditionally, this
+         * test does NOT verify each handler sets state_dirty itself — the
+         * Phase 4 split must preserve those flags by inspection/diff. */
+        hx_set_param(h, "bpm", "141");
         n = hx_get_param(h, "state_full", blob, (int)sizeof(blob));
         HX_ASSERT(n > 0, "state_full empty");
         HX_ASSERT((size_t)n < sizeof(blob) - 1, "state_full at cap");
