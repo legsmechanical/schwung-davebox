@@ -68,7 +68,7 @@ static void test_bake(void) {
 }
 
 /* ---- CONVERT -------------------------------------------------------------- */
-/* Two distinct melodic pitches on t2 c0 (60@tick0, 64@tick96) round-trip
+/* Two distinct melodic pitches on t2 c0 (60@tick0, 64@tick96 = step 4 x 24 tps) round-trip
  * through drum and back. M->D routes each pitch to an ascending lane (retuning
  * lane midi_note to the pitch) and clears the source; D->M merges lanes back. */
 static void test_convert(void) {

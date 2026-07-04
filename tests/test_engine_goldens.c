@@ -211,7 +211,14 @@ static void scn_midi_delay(void) {
  * pass-through), live notes injected at fixed points between fixed render
  * counts, integer free-run clock (tick_delta/tick_threshold). The 8-tick
  * window fills after ~15 blocks (0.557 ticks/block at 120 BPM); 48 total blocks
- * cover the capture cycle plus ~2 replay cycles. */
+ * cover the capture cycle plus ~2 replay cycles.
+ *
+ * GOLDEN LINE 2 IS A GENUINE SPURIOUS NOTE-OFF, not a test bug: looper_arm's
+ * handler internally calls looper_stop() (seq8_set_param.c ~1158), which sets
+ * looper_pending_silence; that deferred flag drains on the first looper_tick
+ * AFTER the live note-on is already captured/sounding (seq8.c ~3004), so the
+ * safety-net sweep emits an extra off for pitch 60 right after line 1's on.
+ * Real, deterministic DSP behavior — a Phase 3 split must reproduce it too. */
 static void scn_looper(void) {
     hx_t *h = hx_create(NULL);
     HX_ASSERT(h, "looper create failed");
