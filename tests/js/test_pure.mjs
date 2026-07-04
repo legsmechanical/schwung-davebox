@@ -8,12 +8,18 @@
  * ui_constants.mjs, so it loads cleanly under node via the tests/js harness. */
 import { S } from '../../ui/ui_state.mjs';
 import { drumPadToLane, drumPadToVelZone, drumVelZoneToVelocity,
-         _clipIsEmpty, clipHasContent } from '../../ui/ui_pure.mjs';
+         _clipIsEmpty, clipHasContent,
+         bankCyclePos, scaleNudgeNote } from '../../ui/ui_pure.mjs';
 import { PAD_MODE_DRUM } from '../../ui/ui_constants.mjs';
 
 let failed = 0;
 function eq(got, want, label) {
     if (got !== want) { console.error(`FAIL: ${label}: got ${JSON.stringify(got)} want ${JSON.stringify(want)}`); failed = 1; }
+}
+function eqObj(got, want, label) {
+    if (JSON.stringify(got) !== JSON.stringify(want)) {
+        console.error(`FAIL: ${label}: got ${JSON.stringify(got)} want ${JSON.stringify(want)}`); failed = 1;
+    }
 }
 
 /* -- drumVelZoneToVelocity(zone) = Math.round((zone+1)*127/16) (ui.js:2309-2311) --
@@ -89,5 +95,46 @@ eq(_clipIsEmpty(1, 2), true, '_clipIsEmpty drum empty (ignores clipNonEmpty)');
 S.drumClipNonEmpty[1][2] = true;
 eq(_clipIsEmpty(1, 2), false, '_clipIsEmpty drum non-empty');
 
+/* -- bankCyclePos() (ui.js:104-110): melodic track -> {idx: clamp(activeBank,0,6),
+ *    count:7}; drum track -> i=BANK_CYCLE_DRUM.indexOf(activeBank) with
+ *    BANK_CYCLE_DRUM=[7,0,1,3,5,6], {idx: i<0?0:i, count:6}. Reads
+ *    S.trackPadMode[S.activeTrack] + S.activeBank. --
+ * Melodic branch (trackPadMode 0): */
+S.activeTrack = 0;
+S.trackPadMode[0] = 0;
+S.activeBank = 3;
+eqObj(bankCyclePos(), { idx: 3, count: 7 }, 'bankCyclePos melodic mid');
+S.activeBank = 9;                          /* clamp high -> 6 */
+eqObj(bankCyclePos(), { idx: 6, count: 7 }, 'bankCyclePos melodic clamp-high');
+S.activeBank = -2;                         /* clamp low -> 0 */
+eqObj(bankCyclePos(), { idx: 0, count: 7 }, 'bankCyclePos melodic clamp-low');
+/* Drum branch: indexOf into [7,0,1,3,5,6] */
+S.trackPadMode[0] = PAD_MODE_DRUM;
+S.activeBank = 7;                          /* indexOf(7) = 0 */
+eqObj(bankCyclePos(), { idx: 0, count: 6 }, 'bankCyclePos drum bank7');
+S.activeBank = 6;                          /* indexOf(6) = 5 */
+eqObj(bankCyclePos(), { idx: 5, count: 6 }, 'bankCyclePos drum bank6');
+S.activeBank = 2;                          /* indexOf(2) = -1 -> idx 0 */
+eqObj(bankCyclePos(), { idx: 0, count: 6 }, 'bankCyclePos drum not-in-cycle');
+
+/* -- scaleNudgeNote(note,dir,key,scale) (ui.js:651-661) --
+ * scaleAware OFF: clamp(note+dir,0,127), exactly 1 semitone per dir. */
+S.scaleAware = 0;
+eq(scaleNudgeNote(60, 1, 0, 0), 61, 'scaleNudge off up');
+eq(scaleNudgeNote(127, 1, 0, 0), 127, 'scaleNudge off clamp-high');
+eq(scaleNudgeNote(0, -1, 0, 0), 0, 'scaleNudge off clamp-low');
+/* scaleAware ON: walk in `dir` until candidate pc is in SCALE_INTERVALS[scale].
+ * scale 0 = Major [0,2,4,5,7,9,11], key 0:
+ *   60(C) up   -> 61 pc1 miss -> 62 pc2 hit          = 62 (D)
+ *   60(C) down -> 59 pc11 hit                         = 59 (B)
+ * key 2 (D major), 62(D) up: 63 pc(63-2=61%12=1) miss -> 64 pc2 hit = 64 (E)
+ * scale-aware but no in-scale before bounds -> clamp(note+dir):
+ *   127 up -> candidate 128 > 127, loop skipped -> clamp(128) = 127 */
+S.scaleAware = 1;
+eq(scaleNudgeNote(60, 1, 0, 0), 62, 'scaleNudge on up C->D');
+eq(scaleNudgeNote(60, -1, 0, 0), 59, 'scaleNudge on down C->B');
+eq(scaleNudgeNote(62, 1, 2, 0), 64, 'scaleNudge on key2 D->E');
+eq(scaleNudgeNote(127, 1, 0, 0), 127, 'scaleNudge on top clamp');
+
 if (failed) process.exit(1);
-console.log('PASS: ui_pure drum + clip helpers');
+console.log('PASS: ui_pure drum + clip + bank/scale helpers');

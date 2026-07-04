@@ -80,7 +80,11 @@ revert) before committing.
 ## JS pure-helper tests (`tests/js/`)
 
 Node-based unit pins for the pure helpers in `ui/ui_constants.mjs`
-(pre-Phase-1 `ui_pure.mjs` move). `tests/js/run.sh` bundles each
+(`test_constants.mjs`) and the pure(-read) helpers extracted to
+`ui/ui_pure.mjs` in Phase 1 (`test_pure.mjs`: drum pad/velzone,
+clip-content, bank-cycle, and scale-nudge helpers — pins hand-derived from
+the pre-move ui.js source, S read-surface set on the real imported `S`).
+`tests/js/run.sh` bundles each
 `test_*.mjs` via `tests/js/build.mjs` (esbuild JS API; a resolve plugin maps
 the on-device `/data/UserData/schwung/shared/constants.mjs` import to
 `tests/js/stubs/shared_constants.mjs`) and runs it under node. `tests/run.sh`
