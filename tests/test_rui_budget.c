@@ -47,10 +47,16 @@ static void test_rui_budget_realistic_dense(void) {
 
     HX_ASSERT(n > 0, "get_param state returned no data");
     HX_ASSERT(n < 65536, "snapshot hit the 64KB buffer cap (n >= 65536)");
-    /* headroom check: not just under the cap, but with real margin left —
-     * a future regression eating into this margin should show up here before
-     * it ever reaches the hard cap. */
-    HX_ASSERT(n < 65536 - 4096, "snapshot within 4KB of the buffer cap — not just under, but at the cap");
+    /* Size CANARY, not a contract: today's snapshot for this fixed scenario is
+     * ~2 KB; 8192 is ~4x slack. If a feature legitimately grows the snapshot,
+     * bump this number DELIBERATELY in the same commit — the point is that
+     * snapshot growth must be noticed, never silent (remote-ui-3 ceiling). */
+    HX_ASSERT(n < 8192, "snapshot canary: size grew past 4x baseline — bump deliberately if intended");
+    /* Density FLOOR: this scenario must serialize real content. If the drum
+     * allocation trigger or note serialization silently broke, the snapshot
+     * would go sparse and the strstr presence checks below would pass on
+     * empty fields — the floor makes density loss a failure. */
+    HX_ASSERT(n > 1000, "snapshot suspiciously small — realistic-dense content missing");
 
     HX_ASSERT(buf[n - 1] == '}', "snapshot not terminated by '}' — truncation is the failure mode being pinned");
 
