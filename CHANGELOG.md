@@ -8,6 +8,9 @@ the section into a versioned heading at release time.
 
 ## [Unreleased]
 
+### Fixes
+- **Fixed a crash when placing a Live Merge onto a scene row with an empty drum clip.** Committing a Live Merge capture (choosing the destination scene row) on a drum track could crash the whole device if that row's drum clip slot was empty (e.g. after copying an empty clip there). The empty slot is now allocated on the spot and the merge lands normally.
+
 ### Features
 - **Browser remote UI — edit your set from a phone, tablet, or laptop.** dAVEBOx now serves a full clip editor in a web browser (through the Schwung manager's Tool tab) over your network — no cables. It mirrors the loaded set and writes changes straight back to the hardware, so the two stay in sync.
 - **Piano-roll editor (melodic + drum).** Session grid (tracks × scenes) with clip launch/copy/clear/duplicate; a unified, touch-first roll with Draw/Select/Erase tools, marquee multi-select, per-note velocity/gate/nudge, off-grid editing, a musical bars/beats ruler, a draggable loop brace, and a resolution/zoom-aware layout.

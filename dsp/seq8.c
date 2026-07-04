@@ -2517,6 +2517,10 @@ static void merge_place(seq8_instance_t *inst, int row) {
         seq8_track_t *tr = &inst->tracks[t];
         int is_drum = tr->pad_mode == PAD_MODE_DRUM;
         if (is_drum) {
+            /* Empty slot — nullable (clip-copy of an empty source / state
+             * load leave it NULL); allocate before touching lanes. */
+            if (!tr->drum_clips[row]) drum_clips_alloc(inst, tr);
+            if (!tr->drum_clips[row]) { inst->merge_pending_count[t] = 0; continue; }
             /* Wipe lanes for this row, then size + fill from pending pitches. */
             int l;
             for (l = 0; l < DRUM_LANES; l++) {
