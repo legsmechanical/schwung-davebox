@@ -363,6 +363,10 @@ export const BANKS = [
 /* Conductor bank indices. Bank 0 (CLIP) is reused as the "Conduct" bank. */
 export const BANK_RESPONDER = 8, BANK_OCTAVE = 9, BANK_WHEN = 10;
 
+/* JS tick rate on device (~94 Hz measured). Older constants were calibrated
+ * against a mistaken 196 Hz assumption — derive new timings from this. */
+export const TICK_HZ = 94;
+
 export const ACTION_POPUP_TICKS = 49; /* ~520ms at 94Hz */
 export const POLL_INTERVAL = 4;
 export const CC_SCRATCH_PALETTE_BASE = 51;  /* 51-58: per-knob value brightness (knob LEDs) */

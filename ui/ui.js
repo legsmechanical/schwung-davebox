@@ -75,7 +75,7 @@ import {
     col4, col5, parseActionRaw, MCUFONT, pixelPrint, pixelPrintC,
     BANKS, ACTION_POPUP_TICKS, PAD_MODE_DRUM, PAD_MODE_MELODIC_SCALE, PAD_MODE_CONDUCT,
     BANK_RESPONDER, BANK_OCTAVE, BANK_WHEN,
-    POLL_INTERVAL, TAP_TEMPO_FLASH_TICKS, TAP_TEMPO_RESET_MS,
+    POLL_INTERVAL, TICK_HZ, TAP_TEMPO_FLASH_TICKS, TAP_TEMPO_RESET_MS,
     PARAM_LED_BANKS, STATE_VERSION,
     CC_GRADIENT_BASE, CC_GRADIENT_LEVELS, CC_GRADIENT_SCALARS
 } from './ui_constants.mjs';
@@ -706,9 +706,9 @@ const DRUM_FLASH_TICKS = 8; /* ~130ms pad flash duration after a drum hit */
 /* S.bankSelectTick: S.tickCount at last bank select, used for the State 3 timeout.
  * -1 = timeout not active. */
 const BANK_DISPLAY_TICKS = 94;  /* ~1000ms at 94Hz device tick rate (was 392 = ~4.2s; constant was miscalibrated for 196Hz) */
-const STRETCH_BLOCKED_TICKS = 294;  /* ~1500ms at 196Hz */
-const NO_NOTE_FLASH_TICKS = 118;     /* ~600ms at 196Hz */
-const KNOB_TURN_HIGHLIGHT_TICKS = 120;            /* ~600ms at 196Hz — highlight after turn without touch */
+const STRETCH_BLOCKED_TICKS = 141;  /* ~1500ms at 94Hz (was 294, calibrated for the mistaken 196Hz) */
+const NO_NOTE_FLASH_TICKS = 56;     /* ~600ms at 94Hz (was 118 @196Hz) */
+const KNOB_TURN_HIGHLIGHT_TICKS = 56;             /* ~600ms at 94Hz — highlight after turn without touch (was 120 @196Hz) */
 
 /* S.bankParams[track][bankIdx][knobIdx] = integer value (JS-authoritative).
  * Initialized from BANKS defaults; refreshed from DSP on bank select. */
@@ -808,7 +808,7 @@ const STEP_SAVE_FLASH_TICKS = 40;  /* ~200ms double-blink on step button LEDs af
 /* Tap Tempo screen state */
 
 /* Session overview overlay (hold CC 50) */
-const NOTE_SESSION_HOLD_TICKS = 40;  /* ~200ms at 196Hz */
+const NOTE_SESSION_HOLD_TICKS = 19;  /* ~200ms at 94Hz, matching STEP_HOLD_TICKS (was 40 @196Hz — a ~300ms hold misread as tap, latching momentary views) */
 
 /* Real-time recording state */
 
@@ -2623,6 +2623,13 @@ function resetPerClipBankParamsToDefault(t) {
 }
 
 function pollDSP() {
+    /* bpm mirror — MIDI handlers can't get_param (silently null there), so
+     * anything transport-side that needs tempo reads S.bpmMirror instead
+     * (audit js-input-3: count-in cadence fell back to 120 BPM). */
+    if (typeof host_module_get_param === 'function') {
+        const _bv = parseFloat(host_module_get_param('bpm'));
+        if (_bv > 0 && isFinite(_bv)) S.bpmMirror = _bv;
+    }
     /* Reconcile co-run state with SHM. The shim auto-clears co-run on user
      * Back press (framework exit gesture), so dAVEBOx may discover target=NONE
      * here without having driven the exit itself. Use the existing exit
@@ -8877,16 +8884,16 @@ function _onCC_transport(d1, d2) {
                 forceRedraw();
             } else if (!S.playing) {
             /* Stopped → DSP-side 1-bar count-in; transport+recording fire from render thread */
-            const rawBpm = typeof host_module_get_param === 'function'
-                ? parseFloat(host_module_get_param('bpm')) : 120;
-            const bpm = (rawBpm > 0 && isFinite(rawBpm)) ? rawBpm : 120;
+            /* MIDI-handler context: get_param is null here — use the tick-
+             * maintained mirror (audit js-input-3). */
+            const bpm = (S.bpmMirror > 0 && isFinite(S.bpmMirror)) ? S.bpmMirror : 120;
             S.recordArmed         = true;
             S.recordCountingIn    = true;
             S.recordArmedTrack    = S.activeTrack;
             S.recordBpm           = bpm;
             S.countInStartTick    = S.tickCount;
             S.countInBeatStartTick = S.tickCount;
-            S.countInQuarterTicks = Math.round(196 * 60 / bpm);
+            S.countInQuarterTicks = Math.round(TICK_HZ * 60 / bpm);
             S.pendingPrerollNotes       = [];
             S.pendingPrerollToggleQueue = [];
             if (typeof host_module_set_param === 'function')
@@ -8904,8 +8911,7 @@ function _onCC_transport(d1, d2) {
              *   Fixed (clip exists / length locked): record immediately at
              *     the current step — the existing clip grid is the meaningful
              *     frame. JS sends recording=1 (legacy). No blink. */
-            const rawBpmLive = typeof host_module_get_param === 'function'
-                ? parseFloat(host_module_get_param('bpm')) : 120;
+            const rawBpmLive = S.bpmMirror;   /* MIDI-handler context: get_param null (js-input-3) */
             const _at = S.activeTrack, _ac = S.trackActiveClip[_at];
             const _isDrum = S.trackPadMode[_at] === PAD_MODE_DRUM;
             const _adaptive = _isDrum

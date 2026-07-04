@@ -548,5 +548,6 @@ export const S = {
     stepSaveFlashStartTick: -1, /* tick when hold-save flash began */
     stepSaveFlashEndTick: -1,  /* step button LEDs double-blink through this tick after save */
     drumHeldReadPending: false, /* occupied drum step held: real vel/gate/etc. read deferred to tick (get_param null in MIDI context) */
+    bpmMirror: 120,            /* tempo mirror refreshed in pollDSP (tick context) — MIDI handlers read this, not get_param */
 
 };
