@@ -533,6 +533,16 @@ static void set_param(void *instance, const char *key, const char *val) {
                 _tr->tick_in_step       = 0;
                 _tr->note_active        = 0;
                 _tr->pfx.sample_counter = 0;
+                /* Re-peg queued ROUTE_MOVE events (note-offs kept above) to
+                 * fire immediately: their fire_at was pegged to the counter
+                 * we just zeroed — without this they'd never fire, stranding
+                 * stuck Move voices (mirrors the count-in exit re-peg). */
+                {
+                    play_fx_t *_fx = &_tr->pfx;
+                    int _ei;
+                    for (_ei = 0; _ei < _fx->event_count; _ei++)
+                        _fx->events[_ei].fire_at = 0;
+                }
                 if (_tr->drum_clips[_tr->active_clip]) {
                     int _dl;
                     for (_dl = 0; _dl < DRUM_LANES; _dl++) {
@@ -690,6 +700,14 @@ static void set_param(void *instance, const char *key, const char *val) {
                 }
                 tr->note_active        = 0;
                 tr->pfx.sample_counter = 0;
+                /* Re-peg queued ROUTE_MOVE events to fire immediately —
+                 * same stranding hazard as the restart branch above. */
+                {
+                    play_fx_t *_fx = &tr->pfx;
+                    int _ei;
+                    for (_ei = 0; _ei < _fx->event_count; _ei++)
+                        _fx->events[_ei].fire_at = 0;
+                }
                 if (tr->will_relaunch) {
                     tr->clip_playing      = 1;
                     tr->will_relaunch     = 0;

@@ -9,6 +9,7 @@ the section into a versioned heading at release time.
 ## [Unreleased]
 
 ### Fixes
+- **Fixed stuck Move voices after a transport restart.** Restarting playback (or Loop+Play page restart) while a Move-routed track had pending scheduled note-offs — MIDI Delay echoes, swing-deferred notes — could leave those notes hanging on the Move synth until the next stop or panic. Queued note-offs now fire immediately on restart.
 - **Fixed memory corruption when undoing or redoing a row cut.** Undo/redo after a scene-row cut could write past an internal buffer and corrupt the sequencer's state in memory. The bookkeeping string is now safely bounded.
 - **Fixed a crash when placing a Live Merge onto a scene row with an empty drum clip.** Committing a Live Merge capture (choosing the destination scene row) on a drum track could crash the whole device if that row's drum clip slot was empty (e.g. after copying an empty clip there). The empty slot is now allocated on the spot and the merge lands normally.
 
