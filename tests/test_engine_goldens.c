@@ -197,6 +197,39 @@ static void scn_midi_delay(void) {
     hx_destroy(h);
 }
 
+/* Scenario 7: looper — the global MIDI looper (dsp/seq8.c ~2769-3295), which
+ * the Phase 3 seq8_looper.c split must reproduce byte-for-byte. Track 1 is
+ * enrolled in the looper (t1_track_looper); looper_sync=0 makes looper_arm
+ * enter CAPTURING immediately (default sync=1 would wait for a bar boundary).
+ * A live pad note (pitch 60) is captured at loop pos 0, released a few ticks
+ * later, then the window wraps to LOOPING and replays the captured on/off every
+ * cycle. Capture emissions (live pass-through) and replay emissions are both
+ * ROUTE_MOVE inject (kind 2). Transport stays STOPPED: looper_tick runs on the
+ * free-running clock (seq8_stopped_*), same as track_arp — no play needed.
+ *
+ * RNG-free / deterministic: no perf_mods_active (perf_apply is a pure
+ * pass-through), live notes injected at fixed points between fixed render
+ * counts, integer free-run clock (tick_delta/tick_threshold). The 8-tick
+ * window fills after ~15 blocks (0.557 ticks/block at 120 BPM); 48 total blocks
+ * cover the capture cycle plus ~2 replay cycles. */
+static void scn_looper(void) {
+    hx_t *h = hx_create(NULL);
+    HX_ASSERT(h, "looper create failed");
+    hx_set_param(h, "t1_padmap", PADMAP_CHROMATIC); /* arm live input on track 1 */
+    hx_set_param(h, "t1_track_looper", "1");         /* enroll track 1 in the looper */
+    hx_set_param(h, "looper_sync", "0");             /* arm -> CAPTURING immediately */
+    hx_set_param(h, "looper_arm", "8");              /* 8-master-tick capture window */
+    uint8_t on[3]  = { 0x90, 68, 100 };  /* pad 0 -> pitch 60 */
+    uint8_t off[3] = { 0x80, 68, 0 };
+    hx_clear_capture(h);
+    hx_send_midi(h, on, 3, MOVE_MIDI_SOURCE_INTERNAL);  /* captured at pos 0 (+ live emit) */
+    hx_render(h, 4);                                     /* advance a few ticks */
+    hx_send_midi(h, off, 3, MOVE_MIDI_SOURCE_INTERNAL); /* captured mid-window (+ live emit) */
+    hx_render(h, 44);                                    /* wrap to LOOPING + replay cycles */
+    check_golden("looper");
+    hx_destroy(h);
+}
+
 int main(void) {
     scn_melodic_basic();
     scn_drum_basic();
@@ -204,6 +237,7 @@ int main(void) {
     scn_seq_arp();
     scn_track_arp();
     scn_midi_delay();
-    printf("PASS: engine emission goldens (melodic/drum/swing + seq_arp/track_arp/midi_delay)\n");
+    scn_looper();
+    printf("PASS: engine emission goldens (melodic/drum/swing + seq_arp/track_arp/midi_delay/looper)\n");
     return 0;
 }
