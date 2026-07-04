@@ -43,12 +43,14 @@ int main(void) {
     HX_ASSERT(h, "create failed");
     seq8_instance_t *inst = (seq8_instance_t *)h->inst;
 
-    /* --- Case 1: full realistic payload on track 3, corun token = 1 --- */
-    /* 32 pitches 60..91, pad_dispatch_muted=0, delete_held=0, corun_left_silent=1. */
+    /* --- Case 1: full realistic payload on track 3 --- */
+    /* 32 pitches 60..91; trailing tokens pinned pdm=1 dh=0 corun=1 (opposite
+     * polarities from case 2) so a bridge that dropped or reordered tokens
+     * 33-35 cannot pass by matching calloc defaults. */
     const char *payload1 =
         "60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 "
         "76 77 78 79 80 81 82 83 84 85 86 87 88 89 90 91 "
-        "0 0 1";
+        "1 0 1";  /* pdm dh corun */
 
     hx_set_param(h, "t3_padmap", payload1);
 
@@ -56,17 +58,17 @@ int main(void) {
     HX_ASSERT(inst->dsp_inbound_enabled == 1, "padmap did not enable inbound");
     HX_ASSERT(inst->pad_note_map[3][0]  == 60, "first pad pitch mismatch");
     HX_ASSERT(inst->pad_note_map[3][31] == 91, "last (32nd) pad pitch mismatch");
-    HX_ASSERT(inst->pad_dispatch_muted == 0, "pad_dispatch_muted should be clear");
-    HX_ASSERT(inst->delete_held == 0, "delete_held should be clear");
+    HX_ASSERT(inst->pad_dispatch_muted == 1, "pad_dispatch_muted not set by token 33");
+    HX_ASSERT(inst->delete_held == 0, "delete_held should be clear (token 34 = 0)");
     HX_ASSERT(inst->corun_left_silent == 1, "corun_left_silent not set by trailing token");
 
-    /* --- Case 2: mostly-0xFF payload, corun token = 0 --- */
-    /* All 32 pads unmapped (0xFF/255) except we still check first/last explicitly;
-     * pad_dispatch_muted=0, delete_held=0, corun_left_silent=0. */
+    /* --- Case 2: mostly-0xFF payload, opposite trailing polarities --- */
+    /* All 32 pads unmapped (0xFF/255); pdm=0, dh=1, corun=0 flips every
+     * trailing token relative to case 1, pinning all three positions. */
     const char *payload2 =
         "255 255 255 255 255 255 255 255 255 255 255 255 255 255 255 255 "
         "255 255 255 255 255 255 255 255 255 255 255 255 255 255 255 255 "
-        "0 0 0";
+        "0 1 0";  /* pdm dh corun */
 
     hx_set_param(h, "t3_padmap", payload2);
 
@@ -74,6 +76,8 @@ int main(void) {
     HX_ASSERT(inst->dsp_inbound_enabled == 1, "padmap (2nd push) did not keep inbound enabled");
     HX_ASSERT(inst->pad_note_map[3][0]  == 0xFF, "first pad should be unmapped sentinel (0xFF)");
     HX_ASSERT(inst->pad_note_map[3][31] == 0xFF, "last pad should be unmapped sentinel (0xFF)");
+    HX_ASSERT(inst->pad_dispatch_muted == 0, "pad_dispatch_muted not cleared by token 33 = 0");
+    HX_ASSERT(inst->delete_held == 1, "delete_held not set by token 34");
     HX_ASSERT(inst->corun_left_silent == 0, "corun_left_silent not cleared by trailing token 0");
 
     hx_destroy(h);
