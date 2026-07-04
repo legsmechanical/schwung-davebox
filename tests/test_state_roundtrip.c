@@ -25,6 +25,9 @@ int main(void) {
     HX_ASSERT(h, "create failed");
     seq8_instance_t *inst = (seq8_instance_t *)h->inst;
 
+    /* Each param below must round-trip through seq8_do_serialize — a field
+     * that isn't persisted won't be caught by the byte-compare, so verify
+     * new additions actually appear in the blob. */
     hx_set_param(h, "bpm", "137");
     hx_set_param(h, "key", "3");
     hx_set_param(h, "scale_aware", "1");
@@ -49,6 +52,9 @@ int main(void) {
     static char buf1[65536];
     int n1 = hx_get_param(h, "state_full", buf1, (int)sizeof(buf1));
     HX_ASSERT(n1 > 0, "first state_full empty");
+    /* Truncation must be a hard failure: at the cap both serializations
+     * would truncate identically and the compare would pass on a prefix. */
+    HX_ASSERT((size_t)n1 < sizeof(buf1) - 1, "state_full at buffer cap");
 
     char tmp[256];
     snprintf(tmp, sizeof(tmp), "/tmp/hx_rt_state_%d.json", (int)getpid());
