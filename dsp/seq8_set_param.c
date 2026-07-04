@@ -1924,13 +1924,16 @@ static void set_param(void *instance, const char *key, const char *val) {
             inst->drum_row_undo_valid = 0;
         }
         {
+            /* snprintf returns the INTENDED length — clamp _off or the size
+             * argument underflows once the buffer fills (16-clip row ops). */
+            const int _cap = (int)sizeof(inst->last_restore_info) - 1;
             int _i, _off = snprintf(inst->last_restore_info, sizeof(inst->last_restore_info), "m");
-            for (_i = 0; _i < (int)inst->redo_clip_count; _i++)
+            for (_i = 0; _i < (int)inst->redo_clip_count && _off < _cap; _i++)
                 _off += snprintf(inst->last_restore_info + _off, sizeof(inst->last_restore_info) - (size_t)_off,
                                  " %d %d", (int)inst->redo_clip_tracks[_i], (int)inst->redo_clip_indices[_i]);
             if (inst->drum_row_redo_valid) {
                 int _s;
-                for (_s = 0; _s < (int)inst->drum_row_redo_valid; _s++)
+                for (_s = 0; _s < (int)inst->drum_row_redo_valid && _off < _cap; _s++)
                     _off += snprintf(inst->last_restore_info + _off, sizeof(inst->last_restore_info) - (size_t)_off,
                                      " DR %d", (int)inst->drum_row_redo_clips[_s]);
             }
@@ -2043,13 +2046,16 @@ static void set_param(void *instance, const char *key, const char *val) {
             inst->drum_row_redo_valid = 0;
         }
         {
+            /* snprintf returns the INTENDED length — clamp _off or the size
+             * argument underflows once the buffer fills (16-clip row ops). */
+            const int _cap = (int)sizeof(inst->last_restore_info) - 1;
             int _i, _off = snprintf(inst->last_restore_info, sizeof(inst->last_restore_info), "m");
-            for (_i = 0; _i < (int)inst->undo_clip_count; _i++)
+            for (_i = 0; _i < (int)inst->undo_clip_count && _off < _cap; _i++)
                 _off += snprintf(inst->last_restore_info + _off, sizeof(inst->last_restore_info) - (size_t)_off,
                                  " %d %d", (int)inst->undo_clip_tracks[_i], (int)inst->undo_clip_indices[_i]);
             if (inst->drum_row_undo_valid) {
                 int _s;
-                for (_s = 0; _s < (int)inst->drum_row_undo_valid; _s++)
+                for (_s = 0; _s < (int)inst->drum_row_undo_valid && _off < _cap; _s++)
                     _off += snprintf(inst->last_restore_info + _off, sizeof(inst->last_restore_info) - (size_t)_off,
                                      " DR %d", (int)inst->drum_row_undo_clips[_s]);
             }
