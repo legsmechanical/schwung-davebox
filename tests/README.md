@@ -35,6 +35,53 @@ Create `tests/test_<name>.c`:
 
 `tests/run.sh` picks it up automatically.
 
+## Phase 0 characterization suite (refactor safety net)
+
+Added 2026-07-04 ahead of the modularity refactor (see
+`docs/superpowers/plans/2026-07-04-refactor-roadmap.md`). These tests pin
+CURRENT behavior — they gate the refactor phases and must stay green through
+every structural move:
+
+- `test_state_roundtrip.c` — populated v36 state serialize→load→re-serialize
+  byte-identical (gates the `seq8_state.c` split). Loads go into a FRESH
+  instance: the on-device `state_load` handler resets state before
+  `seq8_load_state`; an in-place reload double-appends note lanes by design.
+- `test_state_migration.c` + `tests/fixtures/` — v36-minimal defaults (with an
+  explicit fixture-read guard) and the v≠36 gate (`state_version_mismatch`,
+  nothing applied).
+- `test_setparam_domains.c` — one key per set_param domain, pinned via
+  serialized-state substrings (gates the Phase 4 `set_param` split). Note its
+  scope limit: it does NOT verify each handler sets `state_dirty` itself.
+- `test_engine_goldens.c` + `tests/goldens/*.txt` — ordered MIDI captures for
+  6 deterministic scenarios (gates the Phase 3 engine split). **Golden
+  workflow:** regenerate ONLY when a behavior change is intended and approved:
+  `UPDATE_GOLDENS=1 tests/run.sh`, then diff the goldens in the commit. Never
+  hand-edit (exact compare incl. newlines). Line format:
+  `kind cable|CIN status d1 d2`.
+- `test_padmap_contract.c` — the `tN_padmap` piggyback contract
+  (active_track + dsp_inbound_enabled + 35-token payload incl. trailing
+  pad_dispatch_muted / delete_held / corun_left_silent, each pinned at both
+  polarities). Phase 6's `ui_dsp_bridge.mjs` must preserve this exactly.
+- `test_rui_budget.c` — remote-UI snapshot well-formedness + size canary
+  (~4x baseline; bump deliberately on legitimate growth) + density floor.
+  The pathological >64 KB overflow (audit remote-ui-3) is parked; extend this
+  test when that fix lands.
+
+**Characterization discipline:** these tests pass immediately by definition —
+when adding one, prove it can fail (corrupt a value/golden, watch it fail,
+revert) before committing.
+
+## JS pure-helper tests (`tests/js/`)
+
+Node-based unit pins for the pure helpers in `ui/ui_constants.mjs`
+(pre-Phase-1 `ui_pure.mjs` move). `tests/js/run.sh` bundles each
+`test_*.mjs` via `tests/js/build.mjs` (esbuild JS API; a resolve plugin maps
+the on-device `/data/UserData/schwung/shared/constants.mjs` import to
+`tests/js/stubs/shared_constants.mjs`) and runs it under node. `tests/run.sh`
+runs this automatically when node is present (`JS: PASS/FAIL/SKIPPED` lines;
+folded into the exit code). This checks pure-function behavior only — QuickJS
+compatibility is covered by esbuild + on-device verification, not here.
+
 ## davebox gotchas for test authors
 
 - **Emitting MIDI:** `on_midi` ignores external MIDI (`source != 0`). To make the
