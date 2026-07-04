@@ -14,7 +14,9 @@
 import { S } from './ui_state.mjs';
 import { PAD_MODE_DRUM, NUM_STEPS } from './ui_constants.mjs';
 
-/* Live pad note input — isomorphic 4ths diatonic layout. */
+/* Live pad note input — isomorphic 4ths diatonic layout.
+ * EXPORTED for ui.js's computePadNoteMap (impure, moves in Phase 5) — do not
+ * un-export as an "unused externally" cleanup while that consumer remains. */
 export const SCALE_INTERVALS = [
     [0, 2, 4, 5, 7, 9, 11],        /*  0 Major           */
     [0, 2, 3, 5, 7, 8, 10],        /*  1 Minor           */

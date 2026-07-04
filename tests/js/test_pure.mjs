@@ -5,7 +5,11 @@
  *
  * S-reading helpers: the real imported `S` (from ui_state.mjs) is mutated
  * before each call to set up the read surface. ui_state.mjs imports only
- * ui_constants.mjs, so it loads cleanly under node via the tests/js harness. */
+ * ui_constants.mjs, so it loads cleanly under node via the tests/js harness.
+ *
+ * DISCIPLINE: S persists across blocks in this file (no teardown). Every new
+ * block MUST set ALL S fields its helper reads — inheriting a field another
+ * block happened to set is a silent false pass waiting to happen. */
 import { S } from '../../ui/ui_state.mjs';
 import { drumPadToLane, drumPadToVelZone, drumVelZoneToVelocity,
          _clipIsEmpty, clipHasContent,
