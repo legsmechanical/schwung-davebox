@@ -9,6 +9,7 @@ the section into a versioned heading at release time.
 ## [Unreleased]
 
 ### Fixes
+- **Holding a drum step to inspect it no longer resets its velocity to 100.** Holding an occupied drum step to look at its Leng/Vel values and releasing without turning a knob silently rewrote the step's velocity to the default 100. The step's real values are now read correctly during the hold and are preserved on release.
 - **Fixed Ableton export (.ablbundle) — it was broken end-to-end.** Confirming an export threw an internal error before anything was written, and the "Apply Conductor?" YES/NO dialog could not be committed. Both were module-wiring bugs introduced with the split into JS modules; export works again.
 - **Removed a debug logger that could cause audio glitches during fast co-run drumming.** An internal pad diagnostic wrote to a log file from the real-time audio thread on every unmapped pad hit; under heavy drumming in Move co-run this risked audible dropouts. The investigation it supported is closed (no genuine pad drops were ever found), so it has been removed.
 - **Fixed stuck Move voices after a transport restart.** Restarting playback (or Loop+Play page restart) while a Move-routed track had pending scheduled note-offs — MIDI Delay echoes, swing-deferred notes — could leave those notes hanging on the Move synth until the next stop or panic. Queued note-offs now fire immediately on restart.

@@ -6816,6 +6816,27 @@ function _tickImpl() {
                         S.stepEditRand  = rr !== null ? parseInt(rr, 10) : 0;
                         S.stepEditRatch = rx !== null ? parseInt(rx, 10) : 0;
                     }
+                } else if (S.drumHeldReadPending && typeof host_module_get_param === 'function') {
+                    /* Occupied drum step: the press handler couldn't read the
+                     * step's real vel/gate/nudge/iter/rand/ratch (get_param
+                     * null in MIDI context) — read them now from tick context
+                     * so inspect-only holds don't clobber velocity with the
+                     * placeholder 100 at release (audit js-input-2). */
+                    const t    = S.activeTrack;
+                    const lane = S.activeDrumLane[t];
+                    const rv = host_module_get_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_vel');
+                    const rg = host_module_get_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_gate');
+                    const rn = host_module_get_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_nudge');
+                    const ri = host_module_get_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_iter');
+                    const rr = host_module_get_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_rand');
+                    const rx = host_module_get_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_ratch');
+                    S.stepEditVel   = rv !== null ? parseInt(rv, 10) : S.stepEditVel;
+                    S.stepEditGate  = rg !== null ? parseInt(rg, 10) : S.stepEditGate;
+                    S.stepEditNudge = rn !== null ? parseInt(rn, 10) : S.stepEditNudge;
+                    S.stepEditIter  = ri !== null ? parseInt(ri, 10) : S.stepEditIter;
+                    S.stepEditRand  = rr !== null ? parseInt(rr, 10) : S.stepEditRand;
+                    S.stepEditRatch = rx !== null ? parseInt(rx, 10) : S.stepEditRatch;
+                    S.drumHeldReadPending = false;
                 }
                 S.screenDirty = true;
             } else if (!S.stepWasEmpty && S.heldStepNotes.length === 0) {
@@ -11734,26 +11755,22 @@ function _onStepButtons(d1, d2) {
             if (cur !== '0') {
                 S.stepWasEmpty  = false;
                 S.heldStepNotes = [S.drumLaneNote[t][lane]];
-                const rv = typeof host_module_get_param === 'function'
-                    ? host_module_get_param('t' + t + '_l' + lane + '_step_' + absStep + '_vel') : null;
-                const rg = typeof host_module_get_param === 'function'
-                    ? host_module_get_param('t' + t + '_l' + lane + '_step_' + absStep + '_gate') : null;
-                const rn = typeof host_module_get_param === 'function'
-                    ? host_module_get_param('t' + t + '_l' + lane + '_step_' + absStep + '_nudge') : null;
-                S.stepEditVel   = rv !== null ? parseInt(rv, 10) : 100;
-                S.stepEditGate  = rg !== null ? parseInt(rg, 10) : (S.drumLaneTPS[t] || 24);
-                S.stepEditNudge = rn !== null ? parseInt(rn, 10) : 0;
-                const ri = typeof host_module_get_param === 'function'
-                    ? host_module_get_param('t' + t + '_l' + lane + '_step_' + absStep + '_iter') : null;
-                const rr = typeof host_module_get_param === 'function'
-                    ? host_module_get_param('t' + t + '_l' + lane + '_step_' + absStep + '_rand') : null;
-                const rx = typeof host_module_get_param === 'function'
-                    ? host_module_get_param('t' + t + '_l' + lane + '_step_' + absStep + '_ratch') : null;
-                S.stepEditIter  = ri !== null ? parseInt(ri, 10) : 0;
-                S.stepEditRand  = rr !== null ? parseInt(rr, 10) : 0;
-                S.stepEditRatch = rx !== null ? parseInt(rx, 10) : 0;
+                /* Press runs in MIDI context where get_param returns null —
+                 * reading vel/gate/etc. here silently yielded the defaults
+                 * (vel=100) and the confirm-at-release write then clobbered
+                 * the step's real velocity (audit js-input-2). Defer the real
+                 * read to the tick hold-threshold block (mirrors melodic);
+                 * these are placeholders until it runs. */
+                S.drumHeldReadPending = true;
+                S.stepEditVel   = 100;
+                S.stepEditGate  = S.drumLaneTPS[t] || 24;
+                S.stepEditNudge = 0;
+                S.stepEditIter  = 0;
+                S.stepEditRand  = 0;
+                S.stepEditRatch = 0;
             } else {
                 S.stepWasEmpty  = true;
+                S.drumHeldReadPending = false;
                 S.heldStepNotes = [];
                 S.stepEditVel   = stepEntryVelocity(t, -1, true);
                 S.stepEditGate  = S.drumLaneTPS[t] || 24;
@@ -12088,11 +12105,17 @@ function _onPadRelease(status, d1, d2) {
                         drumDidReassign = true;
                     }
                 }
-                /* Confirm vel at release — ensures it sticks even if mid-hold send was coalesced */
-                if (!drumStepCleared && !drumDidReassign && S.heldStepNotes.length > 0) {
+                /* Confirm vel at release — ensures it sticks even if mid-hold send was
+                 * coalesced. Skipped while drumHeldReadPending: the real velocity was
+                 * never read (released before the tick hold-threshold block ran), so
+                 * S.stepEditVel is still the placeholder — writing it would clobber
+                 * the step's stored velocity (audit js-input-2). */
+                if (!drumStepCleared && !drumDidReassign && S.heldStepNotes.length > 0 &&
+                        !S.drumHeldReadPending) {
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_vel', String(S.stepEditVel));
                 }
+                S.drumHeldReadPending = false;
             } else {
             if (S.stepBtnPressedTick[btn] >= 0 && S.activeBank !== 6) {
                 /* Quick release within threshold — commit as tap toggle */

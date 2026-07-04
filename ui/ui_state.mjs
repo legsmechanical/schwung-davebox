@@ -547,5 +547,6 @@ export const S = {
     sessionStepHeldCtx: 0,     /* 1=perf preset, 2=mute snapshot */
     stepSaveFlashStartTick: -1, /* tick when hold-save flash began */
     stepSaveFlashEndTick: -1,  /* step button LEDs double-blink through this tick after save */
+    drumHeldReadPending: false, /* occupied drum step held: real vel/gate/etc. read deferred to tick (get_param null in MIDI context) */
 
 };
