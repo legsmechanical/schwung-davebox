@@ -9,6 +9,7 @@ the section into a versioned heading at release time.
 ## [Unreleased]
 
 ### Fixes
+- **Knob LEDs refresh correctly when leaving the Schwung chain editor.** After exiting a Schwung chain-edit co-run, the knob ring LEDs kept the editor's colors until you turned a knob; they now repaint immediately on exit.
 - **Hold gestures and timed flashes recalibrated to the device's real speed.** Several UI timings were tuned to a mistaken internal clock rate and ran about twice as long as intended: holding Note/Session needed ~425 ms instead of ~200 ms (so momentary session peeks often latched instead of reverting), the count-in beat flash blinked at half rate with the metronome off, and a few notices/highlights lingered ~2× too long. The record count-in flash also assumed 120 BPM regardless of the set tempo; it now follows the actual tempo.
 - **Saved performance presets no longer vanish on reload.** Custom perf presets (slots 9–16) were silently lost when the module reloaded unless a preset slot happened to be active at save time. They now always survive reloads and set switches.
 - **Holding a drum step to inspect it no longer resets its velocity to 100.** Holding an occupied drum step to look at its Leng/Vel values and releasing without turning a knob silently rewrote the step's velocity to the default 100. The step's real values are now read correctly during the hold and are preserved on release.

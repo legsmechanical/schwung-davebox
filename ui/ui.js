@@ -5408,6 +5408,11 @@ function exitSchwungCoRun() {
      * so forceRedraw below repaints with the right colors. */
     reapplyPalette();
     invalidateLEDCache();
+    /* Knob-ring LEDs (CC 71-78) need a forced re-emit: the chain editor drove
+     * them, and post-reapplyPalette the buttonCache is stale, so non-forced
+     * writes are dropped and they'd keep the editor's colors until a knob
+     * moves. Matches exitMoveNativeCoRun + CC-bank resume (audit js-display-1). */
+    S._forceKnobReemit = true;
     forceRedraw();
 }
 
