@@ -4,6 +4,8 @@
  * byte of these captures.
  *
  * Regenerate intentionally with UPDATE_GOLDENS=1 (diff before commit!).
+ * Never hand-edit a golden — the compare is exact including newlines.
+ * Line format: "kind cable|CIN status d1 d2" (all hex except kind).
  * Scenarios avoid rand/iter/ratchet/trig-cond steps — deterministic by design
  * (arp styles are Up=1, never Rnd 8/9).
  *
@@ -49,8 +51,10 @@ static void dump_capture(FILE *f) {
     int i;
     for (i = 0; i < hx_stub_event_count(); i++) {
         const hx_midi_event *e = hx_stub_event(i);
-        fprintf(f, "%d %02X %02X %02X\n", (int)e->kind,
-                e->bytes[1], e->bytes[2], e->bytes[3]);
+        /* bytes[0] (USB cable|CIN) included so a Phase 3 split that re-emits
+         * on a different cable fails, not just payload changes. */
+        fprintf(f, "%d %02X %02X %02X %02X\n", (int)e->kind,
+                e->bytes[0], e->bytes[1], e->bytes[2], e->bytes[3]);
     }
 }
 
@@ -71,8 +75,8 @@ static void check_golden(const char *name) {
         const hx_midi_event *e = hx_stub_event(i);
         char got[64];
         if (!e) { fprintf(stderr, "FAIL: %s: capture shorter than golden (line %d)\n", name, i + 1); exit(1); }
-        snprintf(got, sizeof(got), "%d %02X %02X %02X\n", (int)e->kind,
-                 e->bytes[1], e->bytes[2], e->bytes[3]);
+        snprintf(got, sizeof(got), "%d %02X %02X %02X %02X\n", (int)e->kind,
+                 e->bytes[0], e->bytes[1], e->bytes[2], e->bytes[3]);
         if (strcmp(want, got)) {
             fprintf(stderr, "FAIL: %s line %d: want %s got %s\n", name, i + 1, want, got);
             exit(1);
@@ -138,6 +142,8 @@ static void scn_swing_offbeat(void) {
     hx_set_param(h, "swing_amt", "60");
     hx_set_param(h, "t1_c0_step_0_toggle", "60 100");
     hx_set_param(h, "t1_c0_step_1_toggle", "62 100");
+    /* 250 blocks: only steps 0-1 carry notes; ample margin past both,
+     * well short of the bar wrap re-triggering step 0. */
     play_render_check(h, 1, 250, "swing_offbeat");
     hx_destroy(h);
 }
