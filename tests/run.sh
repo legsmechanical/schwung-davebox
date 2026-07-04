@@ -21,4 +21,17 @@ for t in tests/test_*.c; do
 done
 echo "---"
 echo "$pass passed, $fail failed"
-[ "$fail" -eq 0 ]
+
+js_fail=0
+if command -v node >/dev/null 2>&1; then
+    if tests/js/run.sh; then
+        echo "JS: PASS"
+    else
+        echo "JS: FAIL"
+        js_fail=1
+    fi
+else
+    echo "JS: SKIPPED (node not found)"
+fi
+
+[ "$fail" -eq 0 ] && [ "$js_fail" -eq 0 ]
