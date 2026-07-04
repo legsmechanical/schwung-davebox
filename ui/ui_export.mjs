@@ -17,7 +17,7 @@
  * from tick() (get_param-safe), matching the codebase's defer-to-tick idiom.
  */
 
-import { S } from './ui_state.mjs';
+import { S, conductorTrackIdx } from './ui_state.mjs';
 import { showActionPopup } from './ui_persistence.mjs';
 import { NUM_TRACKS, NUM_CLIPS, ACTION_POPUP_TICKS, PAD_MODE_CONDUCT } from './ui_constants.mjs';
 
@@ -475,8 +475,10 @@ function armExport() {
     showActionPopup('EXPORTING', '...');
 }
 
-/* "Apply Conductor?" stage commit (jog click). sel: 0=YES, 1=NO, 2=CANCEL. */
-function confirmExportCondClick() {
+/* "Apply Conductor?" stage commit (jog click). sel: 0=YES, 1=NO, 2=CANCEL.
+ * Exported: ui.js calls it from the jog-click handler (unexported it was
+ * tree-shaken out of the esbuild bundle — audit js-modules-2). */
+export function confirmExportCondClick() {
     if (S.confirmExportCondSel === 2) {       /* CANCEL: abort the whole export */
         S.confirmExportCondPhase = false;
         S.screenDirty            = true;

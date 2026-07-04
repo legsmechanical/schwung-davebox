@@ -80,14 +80,14 @@ import {
     CC_GRADIENT_BASE, CC_GRADIENT_LEVELS, CC_GRADIENT_SCALARS
 } from './ui_constants.mjs';
 
-import { S, CC_ASSIGN_DEFAULTS, PERF_FACTORY_PRESETS } from './ui_state.mjs';
+import { S, CC_ASSIGN_DEFAULTS, PERF_FACTORY_PRESETS, conductorTrackIdx } from './ui_state.mjs';
 import { saveState, writeSidecar, doClearSession, showActionPopup, uuidToStatePath, uuidToUiStatePath, readActiveSet, loadNameIndex, saveNameIndex, copyStateFiles, findInheritCandidates,
     SNAPSHOT_CAP, snapshotLabel, loadSnapshotManifest, commitSnapshot, applySnapshotToLive, dropSnapshots } from './ui_persistence.mjs';
 import { drawGlobalMenu } from './ui_dialogs.mjs';
 import { trackClipHasContent, sceneAllQueued, updateSceneMapLEDs } from './ui_scene.mjs';
 import { effectiveClip, updateStepLEDs, updateSessionLEDs, updateTrackLEDs, flashAtRate, drawPositionBar, invalidateLEDCache, paintCoRunSideButtons, trackColor, trackDimColor } from './ui_leds.mjs';
 import { SPLASH_FRAMES, SPLASH_COUNT, SPLASH_W, SPLASH_H, pickSplashIdx } from './ui_splash.mjs';
-import { requestExport, confirmExportStart, pollPendingExport } from './ui_export.mjs';
+import { requestExport, confirmExportStart, confirmExportCondClick, pollPendingExport } from './ui_export.mjs';
 
 /* ------------------------------------------------------------------ */
 /* Parameter bank definitions                                           */
@@ -1889,15 +1889,9 @@ function drawClearAutoMenu() {
 /* True when scene-baking at clipIdx should offer "Apply Conductor?":
  * a Conductor exists and its clip at clipIdx has at least one responder On for a
  * non-conductor melodic track (something there is to fold). */
-/* Conductor track index derived from pad_mode — the reliable source. The
- * S.conductorTrack mirror can be stale/-1 (flaky single-tick load readback), so
- * anything that must KNOW the conductor (not just "am I viewing it") derives it
- * here, the same way the banks key off S.trackPadMode. -1 = no conductor. */
-function conductorTrackIdx() {
-    let t;
-    for (t = 0; t < 8; t++) if (S.trackPadMode[t] === PAD_MODE_CONDUCT) return t;
-    return -1;
-}
+/* conductorTrackIdx moved to ui_state.mjs so ui_export.mjs can import it
+ * without an import cycle (it was an unbound global there — audit
+ * js-modules-1). Imported at the top of this file. */
 
 function sceneBakeHasConductor(clipIdx) {
     const ct = conductorTrackIdx();

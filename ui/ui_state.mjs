@@ -4,6 +4,18 @@
  * Read: S.varName   Write: S.varName = v  or  S.arr[i] = v
  */
 
+import { PAD_MODE_CONDUCT } from './ui_constants.mjs';
+
+/* Conductor track index derived from pad_mode — the reliable source. The
+ * S.conductorTrack mirror can be stale/-1 (flaky single-tick load readback), so
+ * anything that must KNOW the conductor (not just "am I viewing it") derives it
+ * here, the same way the banks key off S.trackPadMode. -1 = no conductor.
+ * Lives here (not ui.js) so ui_export.mjs can import it without a cycle. */
+export function conductorTrackIdx() {
+    let t;
+    for (t = 0; t < 8; t++) if (S.trackPadMode[t] === PAD_MODE_CONDUCT) return t;
+    return -1;
+}
 
 export const PERF_FACTORY_PRESETS = [
     /* bits: 0=Oct↑ 1=Oct↓ 2=Sc↑ 3=Sc↓ 4=5th 5=Triton 6=Drift 7=Storm
