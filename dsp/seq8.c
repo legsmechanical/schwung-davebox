@@ -6510,6 +6510,12 @@ static void cc_emit(seq8_track_t *tr, int k, uint8_t v) {
         pfx_send(&tr->pfx, (uint8_t)(0xB0 | ch), tr->cc_assign[k], v);
 }
 
+/* LOAD-BEARING SPACING: the blank-line layout around these cold-path includes
+ * is part of the phase-2 re-runnable gate — the split is proven correct by the
+ * preprocessed TU being byte-identical pre/post split (`clang -E -P` per
+ * dsp/CLAUDE.md). Adding/removing a blank line here (e.g. between the bake and
+ * convert includes, or before the reset_all_loop_cycles decl) shifts that output
+ * and silently breaks the gate. Do NOT "tidy" the spacing. */
 #include "seq8_bake.c"
 #include "seq8_convert.c"
 static void reset_all_loop_cycles(seq8_instance_t *inst);
