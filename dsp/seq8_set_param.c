@@ -447,12 +447,14 @@ typedef struct {
     const char      *sub;    /* key + 3 (past "tN_"), ditto */
 } sp_ctx_t;
 
-/* First Stage B handler: track-config tN_ keys. Included at FILE scope here
- * (not mid-function) so it can be a real static fn; placed just before
- * set_param so the file-scope helpers it calls (build_xpose_lut,
- * silence_muted_tracks, pfx_sync_from_clip, ...) are already visible. It is
- * dispatched from the tN_ block inside set_param. */
+/* Stage B handlers: track-config + cc-automation tN_ keys. Included at FILE
+ * scope here (not mid-function) so each can be a real static fn; placed just
+ * before set_param so the file-scope helpers they call (build_xpose_lut,
+ * silence_muted_tracks, pfx_sync_from_clip; cc_emit, cc_auto_set_point,
+ * cc_auto_clear_range, cc_auto_reset, undo_begin_single, ...) are already
+ * visible. Both are dispatched from the tN_ block inside set_param. */
 #include "setparam/sp_track_config.c"
+#include "setparam/sp_track_ccauto.c"
 
 /* ------------------------------------------------------------------ */
 /* set_param                                                            */
@@ -533,13 +535,12 @@ static void set_param(void *instance, const char *key, const char *val) {
  * start-of-line indentation collapse at the include entry. */
 #include "setparam/sp_track_config2.c"
 
-        /* CC PARAM bank set_params */
-/* LOAD-BEARING SPACING: function-body segment include (phase 4A). The
- * blank-line layout around this include is part of the byte-identity
- * gate (`clang -E -P` preprocessed TU identical pre/post split); do not
- * tidy. The segment file opens with `#line 1` to disarm clang's
- * start-of-line indentation collapse at the include entry. */
-#include "setparam/sp_track_ccauto.c"
+        /* CC PARAM bank set_params -- now a file-scope handler (phase 4B
+         * group 2), dispatched here reusing the existing cx. The intervening
+         * sp_track_clip / sp_track_config2 segments above are still raw
+         * mid-function includes and were verified not to mutate any ctx field
+         * (inst/val/tidx/tr/sub) on their fall-through path, so cx is current. */
+        if (sp_track_ccauto(&cx)) return;
 
         /* tN_lL_* — drum lane setters */
 /* LOAD-BEARING SPACING: function-body segment include (phase 4A). The
