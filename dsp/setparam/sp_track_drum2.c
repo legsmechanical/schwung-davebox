@@ -3,6 +3,8 @@
  * shares set_param's locals (inst, key, val) and the tN_ block's locals
  * (tidx, tr, sub); never compile or lint this file standalone.
  * Covers tN_ track keys: drum config, all-lanes transforms, drum perform/repeat/repeat2, drum record (drum_mute_all_clear ... drum_record_note_off)
+ * See also sp_track_drum.c (the tN_lL_* per-lane setters, incl. the nested
+ * lane step parser).
  *
  * LOAD-BEARING: the `#line 1` directive below resets clang's start-of-line
  * lexer state after this comment block; without it `clang -E -P` collapses

@@ -478,7 +478,10 @@ static void set_param(void *instance, const char *key, const char *val) {
  * blank-line layout around this include is part of the byte-identity
  * gate (`clang -E -P` preprocessed TU identical pre/post split); do not
  * tidy. The segment file opens with `#line 1` to disarm clang's
- * start-of-line indentation collapse at the include entry. */
+ * start-of-line indentation collapse at the include entry.
+ * NOTE: this segment OPENS the tN_ track block (the `if (key[0]=='t'...)`
+ * guard) and declares the block-locals tidx/sub/tr consumed by every
+ * sp_track_* include below; sp_track_misc.c closes the block. */
 #include "setparam/sp_track_config.c"
 
         /* tN_cM_step_S or tN_cM_length: clip data */
@@ -539,5 +542,8 @@ static void set_param(void *instance, const char *key, const char *val) {
  * before EOF (pristine trailing blank 6238). Spacing and the segment-file
  * head/tail are part of the phase-4A re-runnable gate -- the split is
  * proven by the preprocessed TU being byte-identical pre/post
- * (`clang -E -P`). Do not tidy. */
+ * (`clang -E -P`). Do not tidy.
+ * NOTE: this segment CLOSES the tN_ track block AND set_param itself --
+ * the final two closing braces live inside the segment file, and its
+ * pfx_set catch-all tail must remain the last tN_ handler. */
 #include "setparam/sp_track_misc.c"

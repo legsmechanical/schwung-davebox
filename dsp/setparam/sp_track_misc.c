@@ -5,6 +5,8 @@
  * Covers tN_ track keys clip_length ... lgto_apply plus the pfx_set
  * catch-all tail. NOTE: this file also closes the tN_ block and set_param
  * itself -- the final two closing braces live here.
+ * See also sp_track_clip.c (the per-clip tN_cC_* data block incl. the
+ * nested step parser).
  *
  * LOAD-BEARING: the `#line 1` directive below resets clang's start-of-line
  * lexer state after this comment block; without it `clang -E -P` collapses

@@ -3,6 +3,8 @@
  * shares set_param's locals (inst, key, val) and the tN_ block's locals
  * (tidx, tr, sub); never compile or lint this file standalone.
  * Covers tN_ track keys: clip_resolution, clip_resolution_zoom, pad_octave, pad_mode, convert_to_*, tarp_* (all), track_vel_override
+ * See also sp_track_config.c (xpose/launch_clip/stop_at_end/deactivate/mute/
+ * solo/channel/route/track_looper).
  *
  * LOAD-BEARING: the `#line 1` directive below resets clang's start-of-line
  * lexer state after this comment block; without it `clang -E -P` collapses

@@ -3,6 +3,8 @@
  * shares set_param's locals (inst, key, val) and the tN_ block's locals
  * (tidx, tr, sub); never compile or lint this file standalone.
  * Covers tN_ track keys: xpose_prev ... track_looper
+ * See also sp_track_config2.c (clip_resolution, pad_octave, pad_mode,
+ * convert_to_*, tarp_*, track_vel_override -- the other config-flavored keys).
  * This segment OPENS the tN_ track block: its first code line is the
  * `if (key[0]=='t' && ... )` guard, and it DECLARES the block-locals tidx,
  * sub, tr consumed by every sibling tN_ segment include that follows. Mirror

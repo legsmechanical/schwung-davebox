@@ -4,6 +4,8 @@
  * (tidx, tr, sub); never compile or lint this file standalone.
  * Covers tN_ track keys: tN_cC_* clip block (nested _step_ parser, note ops, loop window, CC-lane, _pfx_set, conductor fields, clears) -- the single sub[0]=='c' clip block; local cidx declared/used only within
  * This block declares and uses its own local `cidx` -- fully self-contained.
+ * See also sp_track_misc.c (active-clip-level keys: clip_length, playback
+ * dir, nudge, stretch, plus the pfx_set catch-all tail).
  *
  * LOAD-BEARING: the `#line 1` directive below resets clang's start-of-line
  * lexer state after this comment block; without it `clang -E -P` collapses
