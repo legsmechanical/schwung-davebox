@@ -1,23 +1,38 @@
-/* FUNCTION-BODY SEGMENT of set_param() -- included mid-function by
- * seq8_set_param.c; NOT a translation unit, not even a complete function;
- * shares set_param's locals (inst, key, val) and the tN_ block's locals
- * (tidx, tr, sub); never compile or lint this file standalone.
- * Covers tN_ track keys: tN_lL_* drum lane setters (lane setters, nested step parser, repeat-groove setters) -- the single sub[0]=='l' lane block
+/* FILE-SCOPE HANDLER for set_param()'s tN_lL_* drum-lane keys -- part of the
+ * seq8.c single translation unit; #included at FILE scope by
+ * seq8_set_param.c (immediately before set_param), NOT a standalone TU;
+ * never compile or lint this file on its own. Third Stage B handler
+ * (phase 4B group 3): the former mid-function segment is now a real
+ * static int sp_track_drum(sp_ctx_t *).
+ * Covers the single sub[0]=='l' drum-lane block: lane setters, the nested
+ * step parser, and the repeat-groove setters. Load-bearing preamble runs
+ * for every lane key: parses lane_idx from sub, and (because the Schwung
+ * host drops tN_pad_mode) allocates the drum clip on first lane write as
+ * the reliable drum-mode entry point.
  * See also sp_track_drum2.c (drum config, all-lanes transforms, drum
  * perform/repeat/repeat2, drum record -- the non-lane drum keys).
- *
- * LOAD-BEARING: the `#line 1` directive below resets clang's start-of-line
- * lexer state after this comment block; without it `clang -E -P` collapses
- * the first code line's indentation and the phase-4A byte-identity gate
- * fails (only the value 1 disarms it -- measured, Apple clang 16). Side
- * effect: diagnostics in this file number from 1 at the first code line.
- * Do not remove, reorder, or tidy. */
-#line 1
+ * Returns 1 when the key was a lane key (sub[0]=='l' + digit) -- the lane
+ * block CONSUMES it even if the sub-op is unknown, so unmatched tN_lL_*
+ * keys never leak to the pfx catch-all in sp_track_misc. Returns 0 only
+ * when sub is not a lane key, to fall through to the sibling tN_ handlers.
+ * The tN_ guard and the tidx/sub/tr locals live in the parent dispatcher
+ * now (seq8_set_param.c). */
+static int sp_track_drum(sp_ctx_t *cx) {
+    seq8_instance_t *inst = cx->inst;
+    const char *val = cx->val;
+    int tidx = cx->tidx;
+    seq8_track_t *tr = cx->tr;
+    const char *sub = cx->sub;
+
+    /* Body below kept at its Stage-A segment indentation (8 spaces) so it
+     * byte-diffs against the pre-conversion segment; reindent only in a
+     * dedicated cleanup pass after the group is device-blessed. */
+
         if (sub[0] == 'l' && sub[1] >= '0' && sub[1] <= '9') {
             int lane_idx = 0;
             const char *p2 = sub + 1;
             while (*p2 >= '0' && *p2 <= '9') { lane_idx = lane_idx * 10 + (*p2 - '0'); p2++; }
-            if (lane_idx < 0 || lane_idx >= DRUM_LANES) return;
+            if (lane_idx < 0 || lane_idx >= DRUM_LANES) return 1;
             /* Schwung host drops tN_pad_mode and tN_convert_to_drum, so
              * pad_mode may not be set on the DSP side when JS sends lane
              * writes. tN_lL_* keys are drum-only by construction (JS never
@@ -29,23 +44,23 @@
             }
             drum_clip_t *_dlc_guard = tr->drum_clips[tr->active_clip];
             if (!_dlc_guard) { drum_clips_alloc(inst, tr); _dlc_guard = tr->drum_clips[tr->active_clip]; }
-            if (!_dlc_guard) return;
+            if (!_dlc_guard) return 1;
             drum_lane_t *dlane = &_dlc_guard->lanes[lane_idx];
             clip_t      *dlc   = &dlane->clip;
 
             if (!strcmp(p2, "_lane_note")) {
                 dlane->midi_note = (uint8_t)clamp_i(my_atoi(val), 0, 127);
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
 
             /* Remote-UI drum-grid edits (monophonic lane; pitch = lane note). */
-            if (!strcmp(p2, "_note_toggle")) { if (lane_note_apply_op(dlc, dlane->midi_note, 't', val)) clip_note_finalize(inst, dlc); return; }
-            if (!strcmp(p2, "_note_add"))    { if (lane_note_apply_op(dlc, dlane->midi_note, 'a', val)) clip_note_finalize(inst, dlc); return; }
-            if (!strcmp(p2, "_note_del"))    { if (lane_note_apply_op(dlc, dlane->midi_note, 'd', val)) clip_note_finalize(inst, dlc); return; }
-            if (!strcmp(p2, "_note_vel"))    { if (lane_note_apply_op(dlc, dlane->midi_note, 'v', val)) clip_note_finalize(inst, dlc); return; }
-            if (!strcmp(p2, "_note_resize")) { if (lane_note_apply_op(dlc, dlane->midi_note, 'r', val)) clip_note_finalize(inst, dlc); return; }
-            if (!strcmp(p2, "_note_move"))   { if (lane_note_apply_op(dlc, dlane->midi_note, 'm', val)) clip_note_finalize(inst, dlc); return; }
+            if (!strcmp(p2, "_note_toggle")) { if (lane_note_apply_op(dlc, dlane->midi_note, 't', val)) clip_note_finalize(inst, dlc); return 1; }
+            if (!strcmp(p2, "_note_add"))    { if (lane_note_apply_op(dlc, dlane->midi_note, 'a', val)) clip_note_finalize(inst, dlc); return 1; }
+            if (!strcmp(p2, "_note_del"))    { if (lane_note_apply_op(dlc, dlane->midi_note, 'd', val)) clip_note_finalize(inst, dlc); return 1; }
+            if (!strcmp(p2, "_note_vel"))    { if (lane_note_apply_op(dlc, dlane->midi_note, 'v', val)) clip_note_finalize(inst, dlc); return 1; }
+            if (!strcmp(p2, "_note_resize")) { if (lane_note_apply_op(dlc, dlane->midi_note, 'r', val)) clip_note_finalize(inst, dlc); return 1; }
+            if (!strcmp(p2, "_note_move"))   { if (lane_note_apply_op(dlc, dlane->midi_note, 'm', val)) clip_note_finalize(inst, dlc); return 1; }
             if (!strcmp(p2, "_mute")) {
                 uint32_t bit = 1u << (uint32_t)lane_idx;
                 if (my_atoi(val)) {
@@ -55,7 +70,7 @@
                     tr->drum_lane_mute &= ~bit;
                 }
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
             if (!strcmp(p2, "_solo")) {
                 uint32_t bit = 1u << (uint32_t)lane_idx;
@@ -72,7 +87,7 @@
                     tr->drum_lane_solo &= ~bit;
                 }
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
             if (!strcmp(p2, "_clip_length")) {
                 int max_len = SEQ_STEPS - (int)dlc->loop_start;
@@ -92,7 +107,7 @@
                     drum_lane_anchor_playhead(inst, tr, lane_idx, dlc);
                 clip_migrate_to_notes(dlc);
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
             /* Playback direction for one drum lane's clip (v=35).
              * Mid-flight change keeps current playhead; pp_dir_state resets. */
@@ -101,13 +116,13 @@
                 dlc->pp_dir_state = initial_pp_dir(dlc->playback_dir);
                 silence_track_from_set_param(inst, tr);
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
             /* Playback style for one drum lane: 0=Step, 1=Audio. */
             if (!strcmp(p2, "_playback_audio_reverse")) {
                 dlc->playback_audio_reverse = (uint8_t)clamp_i(my_atoi(val), 0, 1);
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
             if (!strcmp(p2, "_loop_set")) {
                 /* tN_lL_loop_set "packed" — atomic loop window write for one drum lane. */
@@ -133,7 +148,7 @@
                     drum_lane_anchor_playhead(inst, tr, lane_idx, dlc);
                 clip_migrate_to_notes(dlc);
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
             if (!strcmp(p2, "_clear")) {
                 /* tN_lL_clear — wipe all steps in this drum lane.
@@ -155,7 +170,7 @@
                 memset(dlc->notes, 0, sizeof(dlc->notes));
                 dlc->occ_dirty = 1;
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
 
             if (!strcmp(p2, "_hard_reset")) {
@@ -179,7 +194,7 @@
                     tr->drum_repeat_nudge[lane_idx][_rs]     = 0;
                 }
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
 
             if (!strcmp(p2, "_loop_double_fill")) {
@@ -188,7 +203,7 @@
                 int i;
                 /* See melodic loop_double_fill: bounds check + copy source
                  * indices must respect loop_start>0. */
-                if (ls + len * 2 > SEQ_STEPS) return;
+                if (ls + len * 2 > SEQ_STEPS) return 1;
                 undo_begin_drum_clip(inst, tidx, (int)tr->active_clip);
                 for (i = 0; i < len; i++) {
                     int src = ls + i;
@@ -209,14 +224,14 @@
                 }
                 clip_migrate_to_notes(dlc);
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
 
             if (!strcmp(p2, "_clip_resolution")) {
                 int idx = clamp_i(my_atoi(val), 0, 5);
                 uint16_t new_tps = TPS_VALUES[idx];
                 uint16_t old_tps = dlc->ticks_per_step;
-                if (new_tps == old_tps) return;
+                if (new_tps == old_tps) return 1;
                 { uint32_t gmax_dr = (uint32_t)SEQ_STEPS * new_tps;
                   if (gmax_dr > 65535) gmax_dr = 65535;
                   uint16_t ni;
@@ -237,7 +252,7 @@
                     tr->drum_tick_in_step[lane_idx] = 0;
                 clip_build_steps_from_notes(dlc);
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
 
             if (!strcmp(p2, "_beat_stretch")) {
@@ -253,7 +268,7 @@
                 { int gmax_bs = SEQ_STEPS * dlc->ticks_per_step; if (gmax_bs > 65535) gmax_bs = 65535;
                   int off_clamp = dlc->ticks_per_step - 1;
                   if (dir == 1) {
-                      if (len * 2 > SEQ_STEPS) return;
+                      if (len * 2 > SEQ_STEPS) return 1;
                       new_len = len * 2;
                       for (i = len - 1; i >= 1; i--) {
                           int ng = (int)dlc->step_gate[i] * 2;
@@ -291,13 +306,13 @@
                       dlc->stretch_exp++;
                       tr->stretch_blocked = 0;
                   } else {
-                      if (len < 2) return;
+                      if (len < 2) return 1;
                       { uint8_t seen[SEQ_STEPS];
                         memset(seen, 0, sizeof(seen));
                         for (i = 0; i < len; i++) {
                             if (dlc->steps[i]) {
                                 int dst = i / 2;
-                                if (seen[dst]) { tr->stretch_blocked = 1; return; }
+                                if (seen[dst]) { tr->stretch_blocked = 1; return 1; }
                                 seen[dst] = 1;
                             }
                         }
@@ -369,13 +384,13 @@
                 dlc->active = (uint8_t)any;
                 clip_migrate_to_notes(dlc);
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
 
             if (!strcmp(p2, "_clock_shift")) {
                 int dir = my_atoi(val);
                 int len = (int)dlc->length;
-                if (len < 2) return;
+                if (len < 2) return 1;
                 uint8_t tmp_s, tmp_nc, tmp_ns[8], tmp_v;
                 uint16_t tmp_g;
                 int16_t tmp_toff[8];
@@ -426,15 +441,15 @@
                 }
                 clip_migrate_to_notes(dlc);
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
 
             if (!strcmp(p2, "_nudge")) {
                 int dir = my_atoi(val);
-                if (dir == 0) { dlc->nudge_pos = 0; inst->state_dirty = 1; return; }
-                if (dir != 1 && dir != -1) return;
+                if (dir == 0) { dlc->nudge_pos = 0; inst->state_dirty = 1; return 1; }
+                if (dir != 1 && dir != -1) return 1;
                 int len = (int)dlc->length;
-                if (len < 1) return;
+                if (len < 1) return 1;
                 int tps = (int)dlc->ticks_per_step;
                 int midpoint = tps / 2;
                 struct { int16_t dst, dst_off; uint8_t pitch, vel, active; uint16_t gate; } cross[512];
@@ -503,18 +518,18 @@
                 }
                 dlc->nudge_pos += (int16_t)dir;
                 clip_migrate_to_notes(dlc);
-                return;
+                return 1;
             }
 
             if (!strcmp(p2, "_clip_resolution_zoom")) {
-                if (tr->recording) return;
+                if (tr->recording) return 1;
                 int idx = clamp_i(my_atoi(val), 0, 5);
                 uint16_t new_tps = TPS_VALUES[idx];
                 uint16_t old_tps = dlc->ticks_per_step;
-                if (new_tps == old_tps) return;
+                if (new_tps == old_tps) return 1;
                 uint32_t old_ticks = (uint32_t)dlc->length * (uint32_t)old_tps;
                 uint32_t new_len32 = (old_ticks + (uint32_t)new_tps - 1) / (uint32_t)new_tps;
-                if (new_len32 > SEQ_STEPS) return;
+                if (new_len32 > SEQ_STEPS) return 1;
                 uint32_t abs_tick = (uint32_t)tr->drum_current_step[lane_idx] * (uint32_t)old_tps
                                   + tr->drum_tick_in_step[lane_idx];
                 dlc->ticks_per_step = new_tps;
@@ -531,7 +546,7 @@
                 }
                 clip_build_steps_from_notes(dlc);
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
 
             /* tN_lL_step_S_toggle  val="vel"
@@ -548,7 +563,7 @@
                     undo_begin_single(inst, tidx, (int)tr->active_clip);
                 drum_pfx_set(inst, tr, &dlane->pfx_params, &tr->drum_lane_pfx[lane_idx], pfx_key, sp);
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
             /* tN_lL_lgto_apply: destructive legato on this drum lane's clip.
              * Each note's gate becomes (next-active-tick − this-tick); last-
@@ -557,19 +572,19 @@
                 undo_begin_drum_clip(inst, tidx, (int)tr->active_clip);
                 apply_legato_to_clip(&dlane->clip);
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
             if (!strcmp(p2, "_pfx_reset")) {
                 undo_begin_single(inst, tidx, (int)tr->active_clip);
                 drum_pfx_set(inst, tr, &dlane->pfx_params, &tr->drum_lane_pfx[lane_idx], "pfx_reset", "1");
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
 
             /* tN_lL_copy_to "dstLane" — copy active clip's lane L to dstLane; preserve dst midi_note */
             if (!strcmp(p2, "_copy_to")) {
                 int dstLane = clamp_i(my_atoi(val), 0, DRUM_LANES - 1);
-                if (dstLane == lane_idx) return;
+                if (dstLane == lane_idx) return 1;
                 {
                     drum_lane_t *dst = &tr->drum_clips[(int)tr->active_clip]->lanes[dstLane];
                     uint8_t dst_midi_note = dst->midi_note;
@@ -601,13 +616,13 @@
                     memcpy(tr->drum_repeat_nudge[dstLane],     tr->drum_repeat_nudge[lane_idx],     8);
                     inst->state_dirty = 1;
                 }
-                return;
+                return 1;
             }
 
             /* tN_lL_cut_to "dstLane" — copy then clear src; atomic undo */
             if (!strcmp(p2, "_cut_to")) {
                 int dstLane = clamp_i(my_atoi(val), 0, DRUM_LANES - 1);
-                if (dstLane == lane_idx) return;
+                if (dstLane == lane_idx) return 1;
                 {
                     drum_lane_t *dst = &tr->drum_clips[(int)tr->active_clip]->lanes[dstLane];
                     uint8_t dst_midi_note = dst->midi_note;
@@ -645,7 +660,7 @@
                     dlane->midi_note = src_midi_note;
                     inst->state_dirty = 1;
                 }
-                return;
+                return 1;
             }
 
             /* tN_lL_euclid_stamp  val="prevN newN vel"
@@ -665,10 +680,10 @@
                 }
                 vel = clamp_i(vel, 1, 127);
                 int len = (int)dlc->length;
-                if (len <= 0) return;
+                if (len <= 0) return 1;
                 if (prevN < 0) prevN = 0; if (prevN > len) prevN = len;
                 if (newN  < 0) newN  = 0; if (newN  > len) newN  = len;
-                if (prevN == newN) return;
+                if (prevN == newN) return 1;
                 int old_pos[SEQ_STEPS], new_pos[SEQ_STEPS];
                 int no = bjorklund_positions(prevN, len, old_pos);
                 int nn = bjorklund_positions(newN,  len, new_pos);
@@ -716,14 +731,14 @@
                   dlc->active = (uint8_t)any; }
                 clip_migrate_to_notes(dlc);
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
 
             if (!strncmp(p2, "_step_", 6)) {
                 const char *q = p2 + 6;
                 int sidx = 0;
                 while (*q >= '0' && *q <= '9') { sidx = sidx * 10 + (*q++ - '0'); }
-                if (sidx < 0 || sidx >= SEQ_STEPS) return;
+                if (sidx < 0 || sidx >= SEQ_STEPS) return 1;
 
                 if (!strcmp(q, "_toggle")) {
                     int vel = clamp_i(my_atoi(val), 1, 127);
@@ -747,7 +762,7 @@
                       dlc->active = (uint8_t)any; }
                     clip_migrate_to_notes(dlc);
                     inst->state_dirty = 1;
-                    return;
+                    return 1;
                 }
                 if (!strcmp(q, "_clear")) {
                     dlc->steps[sidx]          = 0;
@@ -764,24 +779,24 @@
                     clip_migrate_to_notes(dlc);
                     pfx_note_off_imm(inst, tr, dlane->midi_note);
                     inst->state_dirty = 1;
-                    return;
+                    return 1;
                 }
                 if (!strcmp(q, "_vel")) {
-                    if (dlc->step_note_count[sidx] == 0) return;
+                    if (dlc->step_note_count[sidx] == 0) return 1;
                     dlc->step_vel[sidx] = (uint8_t)clamp_i(my_atoi(val), 0, 127);
                     clip_migrate_to_notes(dlc);
                     inst->state_dirty = 1;
-                    return;
+                    return 1;
                 }
                 if (!strcmp(q, "_gate")) {
-                    if (dlc->step_note_count[sidx] == 0) return;
+                    if (dlc->step_note_count[sidx] == 0) return 1;
                     dlc->step_gate[sidx] = (uint16_t)clamp_i(my_atoi(val), 1, 65535);
                     clip_migrate_to_notes(dlc);
                     inst->state_dirty = 1;
-                    return;
+                    return 1;
                 }
                 if (!strcmp(q, "_nudge")) {
-                    if (dlc->step_note_count[sidx] == 0) return;
+                    if (dlc->step_note_count[sidx] == 0) return 1;
                     { int tps_m1 = dlc->ticks_per_step - 1;
                     int new_val = clamp_i(my_atoi(val), -tps_m1, tps_m1);
                     int delta = new_val - (int)dlc->note_tick_offset[sidx][0];
@@ -792,7 +807,7 @@
                     } }
                     clip_migrate_to_notes(dlc);
                     inst->state_dirty = 1;
-                    return;
+                    return 1;
                 }
                 if (!strcmp(q, "_iter")) {
                     int raw = clamp_i(my_atoi(val), 0, 255);
@@ -802,22 +817,22 @@
                     }
                     dlc->step_iter[sidx] = (uint8_t)raw;
                     inst->state_dirty = 1;
-                    return;
+                    return 1;
                 }
                 if (!strcmp(q, "_rand")) {
                     dlc->step_random[sidx] = (uint8_t)clamp_i(my_atoi(val), 0, 100);
                     inst->state_dirty = 1;
-                    return;
+                    return 1;
                 }
                 if (!strcmp(q, "_ratch")) {
                     dlc->step_ratchet[sidx] = (uint8_t)clamp_i(my_atoi(val), 0, 4);
                     inst->state_dirty = 1;
-                    return;
+                    return 1;
                 }
                 if (!strcmp(q, "_reassign")) {
                     int dstStep = clamp_i(my_atoi(val), 0, (int)dlc->length - 1);
-                    if (dstStep == sidx) return;
-                    if (dlc->step_note_count[sidx] == 0) return;
+                    if (dstStep == sidx) return 1;
+                    if (dlc->step_note_count[sidx] == 0) return 1;
                     {
                         int tps_m1 = dlc->ticks_per_step - 1;
                         int offset_adjust = ((int)sidx - dstStep) * dlc->ticks_per_step;
@@ -870,13 +885,13 @@
                     }
                     clip_migrate_to_notes(dlc);
                     inst->state_dirty = 1;
-                    return;
+                    return 1;
                 }
                 if (!strcmp(q, "_copy_to")) {
                     /* tN_lL_step_S_copy_to — copy step data to dstStep; src unchanged */
                     int dstStep = clamp_i(my_atoi(val), 0, (int)dlc->length - 1);
-                    if (dstStep == sidx) return;
-                    if (dlc->step_note_count[sidx] == 0) return;
+                    if (dstStep == sidx) return 1;
+                    if (dlc->step_note_count[sidx] == 0) return 1;
                     memcpy(dlc->step_notes[dstStep], dlc->step_notes[sidx], 8);
                     memcpy(dlc->note_tick_offset[dstStep], dlc->note_tick_offset[sidx], 8 * sizeof(int16_t));
                     dlc->step_note_count[dstStep] = dlc->step_note_count[sidx];
@@ -893,7 +908,7 @@
                     }
                     clip_migrate_to_notes(dlc);
                     inst->state_dirty = 1;
-                    return;
+                    return 1;
                 }
             }
 
@@ -902,19 +917,19 @@
                 int step_r = clamp_i(my_atoi(val), 0, 7);
                 tr->drum_repeat_gate[lane_idx] ^= (uint8_t)(1u << step_r);
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
             /* tN_lL_repeat_gate_set "mask" — directly set gate bitmask 0-255 */
             if (!strcmp(p2, "_repeat_gate_set")) {
                 tr->drum_repeat_gate[lane_idx] = (uint8_t)clamp_i(my_atoi(val), 0, 255);
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
             /* tN_lL_repeat_gate_len "len" — set gate cycle length 1-8 */
             if (!strcmp(p2, "_repeat_gate_len")) {
                 tr->drum_repeat_gate_len[lane_idx] = (uint8_t)clamp_i(my_atoi(val), 1, 8);
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
             /* tN_lL_repeat_gate_and_len "mask len" — atomically set gate bitmask and cycle length */
             if (!strcmp(p2, "_repeat_gate_and_len")) {
@@ -922,7 +937,7 @@
                 tr->drum_repeat_gate[lane_idx]     = (uint8_t)clamp_i(my_atoi(val), 0, 255);
                 tr->drum_repeat_gate_len[lane_idx] = (uint8_t)clamp_i(sp_gl ? my_atoi(sp_gl + 1) : 8, 1, 8);
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
             /* tN_lL_repeat_vel_scale "step pct" — set velocity scaling 0-200 for step */
             if (!strcmp(p2, "_repeat_vel_scale")) {
@@ -935,7 +950,7 @@
                 int pct_r = clamp_i(my_atoi(sp_r), 0, 200);
                 tr->drum_repeat_vel_scale[lane_idx][step_r] = (uint8_t)pct_r;
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
             /* tN_lL_repeat_nudge "step pct" — set nudge -50..50 for step */
             if (!strcmp(p2, "_repeat_nudge")) {
@@ -948,7 +963,7 @@
                 int pct_r = clamp_i(my_atoi(sp_r), -50, 50);
                 tr->drum_repeat_nudge[lane_idx][step_r] = (int8_t)pct_r;
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
             /* tN_lL_repeat_defaults "step" — reset vel_scale and nudge to defaults (not gate) */
             if (!strcmp(p2, "_repeat_defaults")) {
@@ -956,7 +971,7 @@
                 tr->drum_repeat_vel_scale[lane_idx][step_r] = 100;
                 tr->drum_repeat_nudge[lane_idx][step_r]     = 0;
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
             /* tN_lL_repeat_groove_reset — reset all groove params for this lane */
             if (!strcmp(p2, "_repeat_groove_reset")) {
@@ -967,7 +982,10 @@
                     tr->drum_repeat_nudge[lane_idx][s]     = 0;
                 }}
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
-            return;
+            return 1;
         }
+
+    return 0;
+}
