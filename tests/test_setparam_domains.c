@@ -129,7 +129,7 @@ int main(void) {
         hx_set_param(h, "t7_c0_step_0_toggle", "55 111");
         hx_set_param(h, "bpm", "141");
         nn = hx_get_param(h, "state_full", b, (int)sizeof(b)); b[nn] = '\0';
-        HX_ASSERT(strstr(b, ":55:111:"), "setup: t0 note :55:111: not serialized");
+        HX_ASSERT(strstr(b, ":55:111:"), "setup: t7 note :55:111: not serialized");
         hx_set_param(h, "t0_xpose_apply", "0 1 2 1 1");
         HX_ASSERT(inst->xpose_preview_active == 0, "xpose_apply flag=1 clears preview");
         HX_ASSERT(inst->pad_key == 2 && inst->pad_scale == 1,

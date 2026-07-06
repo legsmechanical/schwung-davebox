@@ -428,8 +428,16 @@ static void follow_request_stop(seq8_instance_t *inst) {
 }
 
 /* Stage B dispatch context: one per set_param call, carries the parse
- * state shared by the sp_* handlers. Extend fields only as handlers
- * actually need them. */
+ * state shared by the sp_* handlers. Base fields inst/key/val are always
+ * present; tidx/tr/sub are the tN_-block extension. Add further fields
+ * only as a handler group actually needs them.
+ *
+ * Handler contract: return 1 if the key was consumed (the dispatcher then
+ * returns from set_param), 0 to fall through to later branches. The ctx is
+ * mutable via pointer: a handler may rewrite cx->val and re-dispatch before
+ * returning (the transport group's val="play" fall-through pattern).
+ * Build the ctx with DESIGNATED initializers only — fields will be added
+ * per group, and positional init would silently misassign. */
 typedef struct {
     seq8_instance_t *inst;
     const char      *key;
@@ -505,7 +513,8 @@ static void set_param(void *instance, const char *key, const char *val) {
         const char *sub = key + 3;
         seq8_track_t *tr = &inst->tracks[tidx];
 
-        sp_ctx_t cx = { inst, key, val, tidx, tr, sub };
+        sp_ctx_t cx = { .inst = inst, .key = key, .val = val,
+                        .tidx = tidx, .tr = tr, .sub = sub };
         if (sp_track_config(&cx)) return;
 
         /* tN_cM_step_S or tN_cM_length: clip data */

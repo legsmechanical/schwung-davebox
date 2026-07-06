@@ -17,6 +17,10 @@ static int sp_track_config(sp_ctx_t *cx) {
     seq8_track_t *tr = cx->tr;
     const char *sub = cx->sub;
 
+    /* Body below kept at its Stage-A segment indentation (8 spaces) so it
+     * byte-diffs against the pre-conversion segment; reindent only in a
+     * dedicated cleanup pass after the group is device-blessed. */
+
         /* --- Transpose all melodic clips on Key/Scale change ---
          * Global op (clips on all tracks); carried on a per-track key (t0_)
          * because Schwung drops new global set_param keys. tr is ignored. */
