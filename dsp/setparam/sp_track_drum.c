@@ -984,8 +984,8 @@ static int sp_track_drum(sp_ctx_t *cx) {
                 inst->state_dirty = 1;
                 return 1;
             }
-            return 1;
+            return 1;  /* lane key, unknown sub-op: CONSUME (never leak to pfx catch-all) */
         }
 
-    return 0;
+    return 0;  /* not a lane key: fall through to sibling tN_ handlers */
 }

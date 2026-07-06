@@ -510,8 +510,9 @@ static void set_param(void *instance, const char *key, const char *val) {
      * tidx/sub/tr consumed by every sp_track_* include below; sp_track_misc.c
      * still CLOSES the block (and set_param) at the tail. Handlers already
      * converted to real static fns (phase 4B, included at file scope above,
-     * dispatched below): sp_track_config (group 1), sp_track_ccauto (group 2).
-     * The OTHER sp_track_* files are still mid-function segments. */
+     * dispatched below): sp_track_config (group 1), sp_track_ccauto (group 2),
+     * sp_track_drum (group 3). The OTHER sp_track_* files are still
+     * mid-function segments. */
     if (key[0] == 't' && key[1] >= '0' && key[1] <= '7' && key[2] == '_') {
         int tidx = key[1] - '0';
         const char *sub = key + 3;
