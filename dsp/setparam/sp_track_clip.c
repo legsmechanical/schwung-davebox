@@ -429,7 +429,16 @@
                     }
                 }
                 clip_migrate_to_notes(cl);
-                rui_touch(inst);
+                /* No rui bump while this track is live-recording: the adaptive
+                 * record path grows/locks the clip through this key, and each
+                 * rev bump makes the on-device JS run a full syncClipsFromDsp
+                 * (~1,540 sequential get_params at one per SPI frame ≈ 4.3 s of
+                 * frozen UI — the 2026-07-06 record-disarm hang). A remote
+                 * length edit on a track that is actively recording loses its
+                 * rev bump too; accepted (recorded notes never bumped rev
+                 * either, so live takes are already rev-invisible until the
+                 * next edit). */
+                if (!tr->recording) rui_touch(inst);
                 return;
             }
             if (!strncmp(p, "_loop_set", 9) && p[9] == '\0') {
