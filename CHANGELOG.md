@@ -9,6 +9,7 @@ the section into a versioned heading at release time.
 ## [Unreleased]
 
 ### Fixes
+- **Releasing a held pad during a modal gesture (Shift shortcuts, session view, knob touch) no longer leaves the note hanging.** If you were holding a pad and then started a modal gesture, letting go of the pad could leave its note sounding until the next stop or panic. Held notes now always release on pad-up.
 - **Replacing a step's notes no longer inherits the old note's off-grid timing.** Editing a step's notes (chord entry, remote-UI edits) could leave the new notes carrying the replaced note's sub-step timing offset, making them sound slightly early or late. New notes now land exactly on the grid.
 - **Internal hardening.** Malformed clip-index parameters from the remote-UI write path are now rejected instead of corrupting memory; a few internal queues are cleared more defensively at the record count-in downbeat and at first-run setup; the performance-mod popup duration was recalibrated like the other timings.
 - **Knob LEDs refresh correctly when leaving the Schwung chain editor.** After exiting a Schwung chain-edit co-run, the knob ring LEDs kept the editor's colors until you turned a knob; they now repaint immediately on exit.

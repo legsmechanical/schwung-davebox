@@ -4527,9 +4527,20 @@ static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
         inst->pad_live_pitch[t][padIdx] = pitch;   /* remember for the matching release */
         live_note_on(inst, tr, pitch, (uint8_t)effective_vel(tr, (int)d2));
     } else {
-        if (inst->pad_dispatch_muted) return;
-        live_note_off(inst, tr, pitch);
-        inst->pad_live_pitch[t][padIdx] = 0xFF;    /* released */
+        /* pad_dispatch_muted gates NEW dispatch (the is_on branch above) and
+         * the drum/vel-zone classification, but a voice that was already
+         * started before the flag was set MUST still be released — else
+         * setting the flag mid-hold (modal gestures: Shift shortcuts, session
+         * view, knob touch) strands the note until panic/stop (audit
+         * dsp-midi-out-2). pad_live_pitch != 0xFF means live_note_on actually
+         * fired for this pad; if the press itself was suppressed by the flag,
+         * it stays 0xFF and there is nothing to release. When unmuted, keep the
+         * long-standing behavior of always releasing (idempotent for a pad
+         * with no live voice). */
+        if (!inst->pad_dispatch_muted || inst->pad_live_pitch[t][padIdx] != 0xFF) {
+            live_note_off(inst, tr, pitch);
+            inst->pad_live_pitch[t][padIdx] = 0xFF;    /* released */
+        }
     }
     inst->pad_source_scratch[t] = (uint8_t)PAD_SRC_NORMAL;
 }
