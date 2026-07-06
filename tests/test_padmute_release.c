@@ -109,6 +109,15 @@ static void scn_melodic(void) {
     HX_ASSERT(!seen_inject_note_on(61),
               "melodic: new note-on 61 must be suppressed while flag set");
 
+    /* The guard's subtlest branch: RELEASING a suppressed press must not emit
+     * a spurious note-off (pad_live_pitch stayed 0xFF, nothing is sounding —
+     * the pad_live_pitch != 0xFF sub-clause exists for exactly this). */
+    hx_clear_capture(h);
+    pad_off(h, 1);
+    hx_render(h, 8);
+    HX_ASSERT(!seen_inject_note_off(61),
+              "melodic: releasing a suppressed press must not emit a note-off");
+
     hx_destroy(h);
     printf("PASS: padmute_release melodic\n");
 }
