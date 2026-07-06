@@ -505,11 +505,10 @@ static void set_param(void *instance, const char *key, const char *val) {
     /* --- Track-prefixed params: tN_<subkey> --- */
     /* This parent code OPENS the tN_ track block and declares the block-locals
      * tidx/sub/tr consumed by every sp_track_* include below; sp_track_misc.c
-     * still CLOSES the block (and set_param) at the tail. The first handler,
-     * sp_track_config (track-config keys: xpose/launch/stop/deactivate/mute/
-     * solo/channel/route/track_looper), is a real static fn now (phase 4B) --
-     * included at file scope above and dispatched here; the remaining
-     * sp_track_* files are still mid-function segments. */
+     * still CLOSES the block (and set_param) at the tail. Handlers already
+     * converted to real static fns (phase 4B, included at file scope above,
+     * dispatched below): sp_track_config (group 1), sp_track_ccauto (group 2).
+     * The OTHER sp_track_* files are still mid-function segments. */
     if (key[0] == 't' && key[1] >= '0' && key[1] <= '7' && key[2] == '_') {
         int tidx = key[1] - '0';
         const char *sub = key + 3;
