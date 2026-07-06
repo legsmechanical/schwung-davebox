@@ -427,6 +427,25 @@ static void follow_request_stop(seq8_instance_t *inst) {
     }
 }
 
+/* Stage B dispatch context: one per set_param call, carries the parse
+ * state shared by the sp_* handlers. Extend fields only as handlers
+ * actually need them. */
+typedef struct {
+    seq8_instance_t *inst;
+    const char      *key;
+    const char      *val;
+    int              tidx;   /* tN_ track index, valid inside the tN_ block */
+    seq8_track_t    *tr;     /* &inst->tracks[tidx],  ditto */
+    const char      *sub;    /* key + 3 (past "tN_"), ditto */
+} sp_ctx_t;
+
+/* First Stage B handler: track-config tN_ keys. Included at FILE scope here
+ * (not mid-function) so it can be a real static fn; placed just before
+ * set_param so the file-scope helpers it calls (build_xpose_lut,
+ * silence_muted_tracks, pfx_sync_from_clip, ...) are already visible. It is
+ * dispatched from the tN_ block inside set_param. */
+#include "setparam/sp_track_config.c"
+
 /* ------------------------------------------------------------------ */
 /* set_param                                                            */
 /* ------------------------------------------------------------------ */
@@ -474,15 +493,20 @@ static void set_param(void *instance, const char *key, const char *val) {
 #include "setparam/sp_globals_edit.c"
 
     /* --- Track-prefixed params: tN_<subkey> --- */
-/* LOAD-BEARING SPACING: function-body segment include (phase 4A). The
- * blank-line layout around this include is part of the byte-identity
- * gate (`clang -E -P` preprocessed TU identical pre/post split); do not
- * tidy. The segment file opens with `#line 1` to disarm clang's
- * start-of-line indentation collapse at the include entry.
- * NOTE: this segment OPENS the tN_ track block (the `if (key[0]=='t'...)`
- * guard) and declares the block-locals tidx/sub/tr consumed by every
- * sp_track_* include below; sp_track_misc.c closes the block. */
-#include "setparam/sp_track_config.c"
+    /* This parent code OPENS the tN_ track block and declares the block-locals
+     * tidx/sub/tr consumed by every sp_track_* include below; sp_track_misc.c
+     * still CLOSES the block (and set_param) at the tail. The first handler,
+     * sp_track_config (track-config keys: xpose/launch/stop/deactivate/mute/
+     * solo/channel/route/track_looper), is a real static fn now (phase 4B) --
+     * included at file scope above and dispatched here; the remaining
+     * sp_track_* files are still mid-function segments. */
+    if (key[0] == 't' && key[1] >= '0' && key[1] <= '7' && key[2] == '_') {
+        int tidx = key[1] - '0';
+        const char *sub = key + 3;
+        seq8_track_t *tr = &inst->tracks[tidx];
+
+        sp_ctx_t cx = { inst, key, val, tidx, tr, sub };
+        if (sp_track_config(&cx)) return;
 
         /* tN_cM_step_S or tN_cM_length: clip data */
 /* LOAD-BEARING SPACING: function-body segment include (phase 4A). The

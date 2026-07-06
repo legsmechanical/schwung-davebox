@@ -1,28 +1,21 @@
-/* FUNCTION-BODY SEGMENT of set_param() -- included mid-function by
- * seq8_set_param.c; NOT a translation unit, not even a complete function;
- * shares set_param's locals (inst, key, val) and the tN_ block's locals
- * (tidx, tr, sub); never compile or lint this file standalone.
- * Covers tN_ track keys: xpose_prev ... track_looper
+/* FILE-SCOPE HANDLER for set_param()'s tN_ track-config keys -- part of the
+ * seq8.c single translation unit; #included at FILE scope by
+ * seq8_set_param.c (immediately before set_param), NOT a standalone TU;
+ * never compile or lint this file on its own. First Stage B handler
+ * (phase 4B): the former mid-function segment is now a real
+ * static int sp_track_config(sp_ctx_t *).
+ * Covers tN_ track keys: xpose_prev ... track_looper.
  * See also sp_track_config2.c (clip_resolution, pad_octave, pad_mode,
  * convert_to_*, tarp_*, track_vel_override -- the other config-flavored keys).
- * This segment OPENS the tN_ track block: its first code line is the
- * `if (key[0]=='t' && ... )` guard, and it DECLARES the block-locals tidx,
- * sub, tr consumed by every sibling tN_ segment include that follows. Mirror
- * of sp_track_misc.c, which closes this same block (and set_param) at the
- * tail. The blank line and section comment that precede the guard stay in
- * the parent above the include site (keeping code immediately after #line 1).
- *
- * LOAD-BEARING: the `#line 1` directive below resets clang's start-of-line
- * lexer state after this comment block; without it `clang -E -P` collapses
- * the first code line's indentation and the phase-4A byte-identity gate
- * fails (only the value 1 disarms it -- measured, Apple clang 16). Side
- * effect: diagnostics in this file number from 1 at the first code line.
- * Do not remove, reorder, or tidy. */
-#line 1
-    if (key[0] == 't' && key[1] >= '0' && key[1] <= '7' && key[2] == '_') {
-        int tidx = key[1] - '0';
-        const char *sub = key + 3;
-        seq8_track_t *tr = &inst->tracks[tidx];
+ * Returns 1 when it handled the key (caller returns), 0 to fall through to
+ * the sibling tN_ handlers. The tN_ guard and the tidx/sub/tr locals live in
+ * the parent dispatcher now (seq8_set_param.c). */
+static int sp_track_config(sp_ctx_t *cx) {
+    seq8_instance_t *inst = cx->inst;
+    const char *val = cx->val;
+    int tidx = cx->tidx;
+    seq8_track_t *tr = cx->tr;
+    const char *sub = cx->sub;
 
         /* --- Transpose all melodic clips on Key/Scale change ---
          * Global op (clips on all tracks); carried on a per-track key (t0_)
@@ -36,7 +29,7 @@
             inst->xpose_preview_key    = (uint8_t)clamp_i(nk, 0, 11);
             inst->xpose_preview_scale  = (uint8_t)clamp_i(ns, 0, 13);
             inst->xpose_preview_active = 1;
-            return;
+            return 1;
         }
         if (!strcmp(sub, "xpose_apply")) {
             /* "<oldK> <oldS> <newK> <newS> <flag>" — flag 1=commit, 0=cancel.
@@ -54,7 +47,7 @@
                 inst->pad_scale   = (uint8_t)ns;
                 inst->state_dirty = 1;
             }
-            return;
+            return 1;
         }
 
         /* tN_launch_clip: Now=immediate, quantized=queue at next boundary */
@@ -114,13 +107,13 @@
                     pfx_sync_from_clip(tr);
                 }
             }
-            return;
+            return 1;
         }
 
         /* tN_stop_at_end: arm track to stop at next 16-step page boundary */
         if (!strcmp(sub, "stop_at_end")) {
             tr->pending_page_stop = 1;
-            return;
+            return 1;
         }
 
         /* tN_deactivate: cancel all pending/playing state immediately */
@@ -132,7 +125,7 @@
             tr->record_armed        = 0;
             tr->step_dispatch_mask  = 0;
             tr->next_early_mask     = 0;
-            return;
+            return 1;
         }
 
         /* tN_mute: set mute state; setting mute clears solo on same track */
@@ -140,7 +133,7 @@
             inst->mute[tidx] = (val[0] == '1') ? 1 : 0;
             if (inst->mute[tidx]) inst->solo[tidx] = 0;
             silence_muted_tracks(inst);
-            return;
+            return 1;
         }
 
         /* tN_solo: set solo state; setting solo clears mute on same track.
@@ -148,17 +141,17 @@
          * emits no MIDI; soloing it would also wrongly silence every other
          * track). Mute stays functional. */
         if (!strcmp(sub, "solo")) {
-            if (tr->pad_mode == PAD_MODE_CONDUCT) return;
+            if (tr->pad_mode == PAD_MODE_CONDUCT) return 1;
             inst->solo[tidx] = (val[0] == '1') ? 1 : 0;
             if (inst->solo[tidx]) inst->mute[tidx] = 0;
             silence_muted_tracks(inst);
-            return;
+            return 1;
         }
 
         /* tN_channel: set MIDI channel for this track (1-indexed in, 0-indexed stored) */
         if (!strcmp(sub, "channel")) {
             tr->channel = (uint8_t)clamp_i(my_atoi(val) - 1, 0, 15);
-            return;
+            return 1;
         }
 
         /* tN_route: set MIDI routing for this track */
@@ -167,10 +160,10 @@
             if (!strcmp(val, "schwung"))      rt = ROUTE_SCHWUNG;
             else if (!strcmp(val, "move"))    rt = ROUTE_MOVE;
             else if (!strcmp(val, "external")) rt = ROUTE_EXTERNAL;
-            else return;
+            else return 1;
             tr->pfx.route = rt;
             { int _rl; for (_rl = 0; _rl < DRUM_LANES; _rl++) tr->drum_lane_pfx[_rl].route = rt; }
-            return;
+            return 1;
         }
 
         /* tN_track_looper: include/exclude this track from the global MIDI looper */
@@ -179,5 +172,8 @@
             tr->pfx.looper_on = lo;
             { int _ll; for (_ll = 0; _ll < DRUM_LANES; _ll++) tr->drum_lane_pfx[_ll].looper_on = lo; }
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
+
+    return 0;
+}
