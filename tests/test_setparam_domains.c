@@ -66,7 +66,33 @@
  * coverage for this group already lives in the table (t5_c0_step_0_toggle/_gate/
  * _set_notes, t7_c3_length, t7_c1_loop_set); the _length rui_rev freeze-fix
  * (`if (!tr->recording) rui_touch(inst);`) is pinned separately in
- * test_rui_rev.c and is NOT duplicated here. */
+ * test_rui_rev.c and is NOT duplicated here.
+ *
+ * Phase 4B group 5 prep: the sp_track_config2 group (clip_resolution[_zoom],
+ * pad_octave, pad_mode, convert_to_drum/_melodic, the full tarp_* run, and
+ * track_vel_override) is characterized as a SIXTH white-box block, LAST before
+ * hx_destroy. It runs on a DEDICATED track (t2): track 0 is the harness's default
+ * DRUM track, so t2 is used as a melodic track whose prior touches
+ * (channel/tvo/cc-auto/launch) don't intersect this group's keys and whose tarp
+ * state is pristine at block entry. The block forces t2's active_clip back to 0
+ * (an earlier immediate-launch left it at 5) so the active-clip resolution keys
+ * hit a clean clip. The block is self-contained: resolution/tarp/pad_octave pins
+ * run first (t2 stays melodic), then the TYPE-CONVERSION pins (pad_mode /
+ * convert_to_drum / convert_to_melodic, which flip t2's type + alloc/free
+ * drum_clips) run LAST so a type flip can't corrupt an earlier melodic pin.
+ * Nothing asserts t2 after this block, so the flips are collision-safe. Pins are
+ * a mix of direct struct reads (runtime-only fields: pad_octave,
+ * tarp_latch/reset/clear_latched runtime bits, drum_clips alloc state) and
+ * serialized-token asserts via state_full (the sparse tarp tokens
+ * t2_tast/tart/taoc/tagt/tasm/tasv3/tasi2/tasll/tasy/targ). Already-covered keys
+ * are NOT duplicated: tarp_on (t1_taon table row), track_vel_override (t2_tvo
+ * table row), convert_to_conduct's happy path (track-config block's Conductor-
+ * solo inertness). This block DOES add a distinct convert_to_conduct facet —
+ * the "another track already Conductor" early-return no-op — which REQUIRES the
+ * track-config block to have latched conductor_track to t5 first (chaining
+ * constraint: this block must run after that one). tarp_reset's retrigger quirk
+ * is pinned: arp_init_defaults sets retrigger=1 and tarp_reset does NOT re-clear
+ * it, so a post-reset tarp.retrigger reads 1 (NOT the tarp_init_defaults 0). */
 #include "harness.h"
 
 typedef struct { const char *key, *val, *expect_substr, *domain; } sp_case_t;
@@ -981,6 +1007,147 @@ int main(void) {
         }
     }
 
+    /* ---- Track-config2 white-box pins (Phase 4B group 5 prep). Run LAST:
+     * dedicated track t0 (melodic, active_clip 0, tarp at defaults). Melodic/tarp
+     * pins first; the type-conversion pins (which flip t0's type) run at the very
+     * end so nothing corrupts an earlier melodic pin. Requires the track-config
+     * block to have latched conductor_track to t5 (for the convert_to_conduct
+     * early-return no-op facet). ---- */
+    {
+        seq8_track_t *ct = &inst->tracks[2];
+        char b[65536]; int nn;
+
+        /* t2's prior touches (channel/tvo/cc-auto/launch) don't intersect this
+         * group's keys; its tarp state is pristine (untouched). Force active_clip
+         * to 0 (an earlier immediate-launch left it at 5) so the active-clip
+         * resolution keys operate on the clean clip 0. */
+        ct->active_clip = 0;
+        HX_ASSERT(ct->pad_mode == PAD_MODE_MELODIC_SCALE, "precondition: t2 melodic");
+        HX_ASSERT(ct->tarp_on == 0 && ct->tarp.style == 0 && ct->tarp.gate_pct == 100,
+                  "precondition: t2 tarp at defaults");
+        HX_ASSERT(ct->clips[0].ticks_per_step == 24, "precondition: t2 c0 default tps 24");
+        HX_ASSERT(inst->conductor_track == 5, "precondition: t5 is the latched Conductor");
+
+        /* clip_resolution (track-level, operates on active_clip): TPS change +
+         * proportional note rescale. Note at tick 48 gate 24 @tps24; idx2=tps48
+         * (factor x2) -> tick 96, gate 48. Guarded no-op while recording. */
+        hx_set_param(h, "t2_c0_note_add", "48 55 100 24");
+        HX_ASSERT(ct->clips[0].notes[0].tick == 48 && ct->clips[0].notes[0].gate == 24,
+                  "clip_resolution setup: note tick48 gate24 @tps24");
+        ct->recording = 1;
+        hx_set_param(h, "t2_clip_resolution", "3");   /* TPS_VALUES[3]=96 */
+        HX_ASSERT(ct->clips[0].ticks_per_step == 24 && ct->clips[0].notes[0].tick == 48,
+                  "clip_resolution: no-op while recording");
+        ct->recording = 0;
+        hx_set_param(h, "t2_clip_resolution", "2");   /* TPS_VALUES[2]=48 */
+        HX_ASSERT(ct->clips[0].ticks_per_step == 48, "clip_resolution: idx2 -> tps 48");
+        HX_ASSERT(ct->clips[0].notes[0].tick == 96, "clip_resolution: note tick 48->96 rescaled");
+        HX_ASSERT(ct->clips[0].notes[0].gate == 48, "clip_resolution: note gate 24->48 rescaled");
+
+        /* clip_resolution_zoom: preserves absolute time, recomputes length.
+         * length 8 @tps48 (=384t) -> ceil(384/96)=4 @tps96. */
+        hx_set_param(h, "t2_c0_length", "8");
+        HX_ASSERT(ct->clips[0].length == 8, "clip_resolution_zoom setup: length 8");
+        hx_set_param(h, "t2_clip_resolution_zoom", "3");   /* TPS_VALUES[3]=96 */
+        HX_ASSERT(ct->clips[0].ticks_per_step == 96, "clip_resolution_zoom: tps->96");
+        HX_ASSERT(ct->clips[0].length == 4, "clip_resolution_zoom: length 8@48 -> 4@96");
+
+        /* pad_octave: stored track field (NOT serialized), clamped 0..8. */
+        HX_ASSERT(ct->pad_octave == 3, "pad_octave precondition: default 3");
+        hx_set_param(h, "t2_pad_octave", "5");
+        HX_ASSERT(ct->pad_octave == 5, "pad_octave: ->5");
+        hx_set_param(h, "t2_pad_octave", "99");
+        HX_ASSERT(ct->pad_octave == 8, "pad_octave: high clamp to 8");
+
+        /* tarp_* run. Set scalar params, then verify sparse serialized tokens in
+         * one state_full read. tarp_style!=0 also drives tarp_on=1. */
+        hx_set_param(h, "t2_tarp_style", "5");
+        HX_ASSERT(ct->tarp.style == 5, "tarp_style: style->5");
+        HX_ASSERT(ct->tarp_on == 1, "tarp_style: non-zero style arms tarp_on");
+        hx_set_param(h, "t2_tarp_rate", "4");
+        HX_ASSERT(ct->tarp.rate_idx == 4, "tarp_rate: rate_idx->4");
+        hx_set_param(h, "t2_tarp_octaves", "-2");
+        HX_ASSERT(ct->tarp.octaves == -2, "tarp_octaves: ->-2");
+        hx_set_param(h, "t2_tarp_gate", "150");
+        HX_ASSERT(ct->tarp.gate_pct == 150, "tarp_gate: gate_pct->150");
+        hx_set_param(h, "t2_tarp_steps_mode", "2");
+        HX_ASSERT(ct->tarp.steps_mode == 2, "tarp_steps_mode: ->2");
+        hx_set_param(h, "t2_tarp_step_vel", "3 2");     /* "S L": step3 level2 */
+        HX_ASSERT(ct->tarp.step_vel[3] == 2, "tarp_step_vel: step3 level->2");
+        hx_set_param(h, "t2_tarp_step_int", "2 -5");    /* "S I": step2 interval -5 */
+        HX_ASSERT(ct->tarp.step_int[2] == -5, "tarp_step_int: step2 interval->-5");
+        hx_set_param(h, "t2_tarp_step_loop_len", "5");
+        HX_ASSERT(ct->tarp.step_loop_len == 5, "tarp_step_loop_len: ->5");
+        hx_set_param(h, "t2_tarp_sync", "0");
+        HX_ASSERT(ct->tarp_sync == 0, "tarp_sync: ->0");
+        hx_set_param(h, "t2_tarp_retrigger", "1");
+        HX_ASSERT(ct->tarp.retrigger == 1, "tarp_retrigger: ->1");
+        hx_set_param(h, "bpm", "141");
+        nn = hx_get_param(h, "state_full", b, (int)sizeof(b)); b[nn] = '\0';
+        HX_ASSERT(strstr(b, "\"t2_tast\":5"),  "tarp_style serialized token t2_tast:5");
+        HX_ASSERT(strstr(b, "\"t2_tart\":4"),  "tarp_rate serialized token t2_tart:4");
+        HX_ASSERT(strstr(b, "\"t2_taoc\":-2"), "tarp_octaves serialized token t2_taoc:-2");
+        HX_ASSERT(strstr(b, "\"t2_tagt\":150"),"tarp_gate serialized token t2_tagt:150");
+        HX_ASSERT(strstr(b, "\"t2_tasm\":2"),  "tarp_steps_mode serialized token t2_tasm:2");
+        HX_ASSERT(strstr(b, "\"t2_tasv3\":2"), "tarp_step_vel serialized token t2_tasv3:2");
+        HX_ASSERT(strstr(b, "\"t2_tasi2\":-5"),"tarp_step_int serialized token t2_tasi2:-5");
+        HX_ASSERT(strstr(b, "\"t2_tasll\":5"), "tarp_step_loop_len serialized token t2_tasll:5");
+        HX_ASSERT(strstr(b, "\"t2_tasy\":0"),  "tarp_sync serialized token t2_tasy:0");
+        HX_ASSERT(strstr(b, "\"t2_targ\":1"),  "tarp_retrigger serialized token t2_targ:1");
+
+        /* tarp_latch: track field; latch ON->OFF drops latched entries (RT held
+         * buffer, out of harness scope) — pin the observable flag both ways. */
+        hx_set_param(h, "t2_tarp_latch", "1");
+        HX_ASSERT(ct->tarp_latch == 1, "tarp_latch: ->1");
+        /* tarp_clear_latched: functionally latch-off compaction WITHOUT toggling
+         * the flag; RT held-buffer op, so the only observable is tarp_latch stays 1. */
+        hx_set_param(h, "t2_tarp_clear_latched", "1");
+        HX_ASSERT(ct->tarp_latch == 1, "tarp_clear_latched: leaves tarp_latch=1 (no toggle)");
+        hx_set_param(h, "t2_tarp_latch", "0");
+        HX_ASSERT(ct->tarp_latch == 0, "tarp_latch: ->0");
+
+        /* tarp_reset: full reset to defaults. Quirk: arp_init_defaults sets
+         * retrigger=1 and tarp_reset does NOT re-clear it, so retrigger reads 1
+         * (NOT the tarp_init_defaults 0). */
+        hx_set_param(h, "t2_tarp_reset", "1");
+        HX_ASSERT(ct->tarp.style == 0 && ct->tarp.rate_idx == 1 && ct->tarp.octaves == 0,
+                  "tarp_reset: style/rate/octaves -> defaults");
+        HX_ASSERT(ct->tarp.gate_pct == 100 && ct->tarp.steps_mode == 1,
+                  "tarp_reset: gate/steps_mode -> defaults");
+        HX_ASSERT(ct->tarp.step_vel[3] == 4 && ct->tarp.step_int[2] == 0 &&
+                  ct->tarp.step_loop_len == 8, "tarp_reset: step arrays -> defaults");
+        HX_ASSERT(ct->tarp_on == 0 && ct->tarp_latch == 0 && ct->tarp_sync == 1,
+                  "tarp_reset: tarp_on/latch->0, sync->1");
+        HX_ASSERT(ct->tarp.retrigger == 1, "tarp_reset: retrigger reads 1 (arp_init default, NOT re-cleared)");
+
+        /* ---- Type-conversion pins (LAST — they flip t0's type). ---- */
+
+        /* convert_to_conduct with ANOTHER track (t5) already the Conductor:
+         * early-return no-op (JS reads back conductor_track for the OLED msg). */
+        hx_set_param(h, "t2_convert_to_conduct", "1");
+        HX_ASSERT(ct->pad_mode == PAD_MODE_MELODIC_SCALE,
+                  "convert_to_conduct: no-op when another track already Conductor");
+        HX_ASSERT(inst->conductor_track == 5, "convert_to_conduct: conductor_track unchanged (still t5)");
+
+        /* pad_mode: 1=DRUM allocates drum_clips; 0=melodic frees them. */
+        hx_set_param(h, "t2_pad_mode", "1");
+        HX_ASSERT(ct->pad_mode == PAD_MODE_DRUM, "pad_mode: 1 -> DRUM");
+        HX_ASSERT(ct->drum_clips[0] != NULL && ct->drum_clips[NUM_CLIPS-1] != NULL,
+                  "pad_mode: DRUM allocates all drum_clips");
+        hx_set_param(h, "t2_pad_mode", "0");
+        HX_ASSERT(ct->pad_mode == PAD_MODE_MELODIC_SCALE, "pad_mode: 0 -> melodic");
+        HX_ASSERT(ct->drum_clips[0] == NULL, "pad_mode: melodic frees drum_clips");
+
+        /* convert_to_drum / convert_to_melodic: type flip + note translation
+         * (observable = pad_mode + drum_clips alloc state). */
+        hx_set_param(h, "t2_convert_to_drum", "1");
+        HX_ASSERT(ct->pad_mode == PAD_MODE_DRUM, "convert_to_drum: -> DRUM");
+        HX_ASSERT(ct->drum_clips[0] != NULL, "convert_to_drum: allocates drum_clips");
+        hx_set_param(h, "t2_convert_to_melodic", "1");
+        HX_ASSERT(ct->pad_mode == PAD_MODE_MELODIC_SCALE, "convert_to_melodic: -> melodic");
+        HX_ASSERT(ct->drum_clips[0] == NULL, "convert_to_melodic: frees drum_clips");
+    }
+
     hx_destroy(h);
     printf("PASS: set_param domain snapshot (%d domains + transport)\n", i);
     printf("PASS: track-config white-box pins "
@@ -996,5 +1163,10 @@ int main(void) {
            "(ruisel/cc_focus, note-ops, step-parser, resolution/dir, "
            "loop_set/length clamps, cc-lane sub-block, pfx_set, conductor fields, "
            "clear/clear_keep/hard_reset, at_clear, drum_clear/drum_reset)\n");
+    printf("PASS: track-config2 white-box pins "
+           "(clip_resolution/_zoom + recording guard, pad_octave clamp, tarp_* "
+           "full run + serialized tokens + reset retrigger quirk, "
+           "pad_mode/convert_to_drum/convert_to_melodic type flips, "
+           "convert_to_conduct another-Conductor no-op)\n");
     return 0;
 }
