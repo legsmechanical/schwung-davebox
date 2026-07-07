@@ -478,8 +478,10 @@ typedef struct {
 /* Globals handlers (phase 4B, dispatched ABOVE the tN_ block). Unlike the
  * tN_ handlers they use only inst/key/val (no tidx/tr/sub), matching top-level
  * global keys. Included at file scope like the tN_ handlers; order among the
- * file-scope includes is irrelevant (plain static fns). */
+ * file-scope includes is irrelevant (plain static fns):
+ * sp_globals_state (group 10), sp_globals_misc (group 11). */
 #include "setparam/sp_globals_state.c"
+#include "setparam/sp_globals_misc.c"
 
 /* ------------------------------------------------------------------ */
 /* set_param                                                            */
@@ -514,21 +516,18 @@ static void set_param(void *instance, const char *key, const char *val) {
      * this "cx unchanged" line must be revised — don't paste it blindly. */
     if (sp_globals_state(&cx)) return;
 
-    /* --- Scene launch (global): all tracks to clip M --- */
-    /* Global MIDI Looper: arm with capture length in master 96-PPQN ticks.
-     * Behavior depends on current state:
-     *   IDLE / ARMED / CAPTURING — drop in-flight state and re-arm fresh.
-     *   LOOPING — queue the new rate; transition fires at the next loop
-     *     boundary (in looper_tick) so the switch lands cleanly on the beat.
-     *   LOOPING with rate already equal to current — clear any pending queue
-     *     (this is the path used to "cancel" a queued switch when the user
-     *     releases a newer step button while still holding an older one). */
-/* LOAD-BEARING SPACING: function-body segment include (phase 4A). The
- * blank-line layout around this include is part of the byte-identity
- * gate (`clang -E -P` preprocessed TU identical pre/post split); do not
- * tidy. The segment file opens with `#line 1` to disarm clang's
- * start-of-line indentation collapse at the include entry. */
-#include "setparam/sp_globals_misc.c"
+    /* --- Looper / merge / bake / scene-launch / snapshots (global) --- now a
+     * file-scope GLOBALS handler (phase 4B group 11), dispatched here reusing
+     * the call-wide cx. Covers looper_arm/stop/retrigger/sync, merge_arm/stop/
+     * place_row/cancel, bake, bake_scene, perf_mods, launch_scene[_quant],
+     * mute_all_clear, snap_save/load/delete. It reads only inst/key/val;
+     * returns 1 on a matched key (we return), 0 to fall through. Dispatched
+     * after the state handler and before the edit segment, preserving the
+     * original branch order (transport -> state -> misc -> edit -> tN_). The
+     * state handler above returns 0 without mutating cx on fall-through, and the
+     * transport segment before it never touches cx, so cx is still
+     * {inst,key,val} here. */
+    if (sp_globals_misc(&cx)) return;
 
 /* LOAD-BEARING SPACING: function-body segment include (phase 4A). The
  * blank-line layout around this include is part of the byte-identity

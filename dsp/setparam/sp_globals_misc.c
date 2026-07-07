@@ -1,16 +1,24 @@
-/* FUNCTION-BODY SEGMENT of set_param() -- included mid-function by
- * seq8_set_param.c; NOT a translation unit, not even a complete function;
- * shares set_param's locals (inst, key, val); never compile or lint this
- * file standalone.
- * Covers GLOBAL-key branches: looper_arm, looper_stop, looper_retrigger, looper_sync, merge_arm, merge_stop, merge_place_row, merge_cancel, bake, bake_scene, perf_mods, launch_scene, launch_scene_quant, mute_all_clear, snap_save, snap_load, snap_delete
- *
- * LOAD-BEARING: the `#line 1` directive below resets clang's start-of-line
- * lexer state after this comment block; without it `clang -E -P` collapses
- * the first code line's indentation and the phase-4A byte-identity gate
- * fails (only the value 1 disarms it -- measured, Apple clang 16). Side
- * effect: diagnostics in this file number from 1 at the first code line.
- * Do not remove, reorder, or tidy. */
-#line 1
+/* FILE-SCOPE GLOBALS HANDLER for set_param()'s looper/merge/bake/scene keys --
+ * part of the seq8.c single translation unit; #included at FILE scope by
+ * seq8_set_param.c (before set_param), NOT a standalone TU; never compile or
+ * lint this file on its own. Globals handler (phase 4B group 11): dispatched
+ * BEFORE the tN_ block, so it uses only inst/key/val (never tidx/tr/sub --
+ * they aren't in scope at the globals dispatch point).
+ * Covers GLOBAL-key branches: looper_arm, looper_stop, looper_retrigger,
+ * looper_sync, merge_arm, merge_stop, merge_place_row, merge_cancel, bake,
+ * bake_scene, perf_mods, launch_scene, launch_scene_quant, mute_all_clear,
+ * snap_save, snap_load, snap_delete. Each is a top-level `strcmp(key,...)`
+ * branch. Returns 1 when it handled the key (caller returns from set_param),
+ * 0 to fall through to the remaining globals segments / the tN_ block. */
+static int sp_globals_misc(sp_ctx_t *cx) {
+    seq8_instance_t *inst = cx->inst;
+    const char *key = cx->key;
+    const char *val = cx->val;
+
+    /* Body below kept at its Stage-A segment indentation (4 spaces) so it
+     * byte-diffs against the pre-conversion segment; reindent only in a
+     * dedicated cleanup pass after the group is device-blessed. */
+
     if (!strcmp(key, "looper_arm")) {
         int t = clamp_i(my_atoi(val), 1, 65535);
         if (inst->looper_state == LOOPER_STATE_LOOPING) {
@@ -18,7 +26,7 @@
                 inst->looper_pending_rate_ticks = 0;
             else
                 inst->looper_pending_rate_ticks = (uint16_t)t;
-            return;
+            return 1;
         }
         looper_stop(inst);
         inst->looper_capture_ticks = (uint16_t)t;
@@ -28,11 +36,11 @@
         inst->looper_pos           = 0;
         inst->looper_event_count   = 0;
         inst->looper_play_idx      = 0;
-        return;
+        return 1;
     }
     if (!strcmp(key, "looper_stop")) {
         looper_stop(inst);
-        return;
+        return 1;
     }
     if (!strcmp(key, "looper_retrigger")) {
         /* Atomic stop + arm. Always re-captures fresh, regardless of current state.
@@ -46,11 +54,11 @@
         inst->looper_pos         = 0;
         inst->looper_event_count = 0;
         inst->looper_play_idx    = 0;
-        return;
+        return 1;
     }
     if (!strcmp(key, "looper_sync")) {
         inst->looper_sync = my_atoi(val) ? 1 : 0;
-        return;
+        return 1;
     }
     if (!strcmp(key, "merge_arm")) {
         /* Multi-track arm: capture all 8 tracks at once. Destination scene
@@ -65,25 +73,25 @@
         } else {
             inst->merge_state = MERGE_STATE_ARMED;
         }
-        return;
+        return 1;
     }
     if (!strcmp(key, "merge_stop")) {
         if (inst->merge_state == MERGE_STATE_CAPTURING)
             inst->merge_state = MERGE_STATE_STOPPING;
         else
             merge_finalize(inst);
-        return;
+        return 1;
     }
     if (!strcmp(key, "merge_place_row")) {
         merge_place(inst, my_atoi(val));
-        return;
+        return 1;
     }
     if (!strcmp(key, "merge_cancel")) {
         /* Discard any captured pending notes without writing to clips. */
         int t;
         for (t = 0; t < NUM_TRACKS; t++) inst->merge_pending_count[t] = 0;
         inst->merge_state = MERGE_STATE_IDLE;
-        return;
+        return 1;
     }
     if (!strcmp(key, "bake")) {
         /* val = "T C [M] [N] [L] [W]" — M: 0=melodic, 1=drum lane, 2=drum clip; N: loops 1/2/4; L: lane (mode 1); W: 1=wrap tails */
@@ -94,7 +102,7 @@
             else if (bm == 2) bake_drum_clip(inst, bt, bc, clamp_i(bn, 1, 4), bw ? 1 : 0);
             else              bake_clip(inst, bt, bc, clamp_i(bn, 1, 4), bw ? 1 : 0, 0); /* clip bake: never folds conductor */
         }
-        return;
+        return 1;
     }
     if (!strcmp(key, "bake_scene")) {
         /* val = "C N W [A]" — C: clip index, N: loop count (1/2/4), W: 1=wrap
@@ -130,11 +138,11 @@
             inst->state_dirty = 1;
             seq8_ilog(inst, "SEQ8 bake_scene");
         }
-        return;
+        return 1;
     }
     if (!strcmp(key, "perf_mods")) {
         inst->perf_mods_active = (uint32_t)(unsigned int)my_atoi(val);
-        return;
+        return 1;
     }
 
     if (!strcmp(key, "launch_scene")) {
@@ -173,7 +181,7 @@
             }
         }
         seq8_ilog(inst, "SEQ8 launch_scene");
-        return;
+        return 1;
     }
 
     if (!strcmp(key, "launch_scene_quant")) {
@@ -189,7 +197,7 @@
             inst->tracks[t].will_relaunch = 0;
         }
         seq8_ilog(inst, "SEQ8 launch_scene_quant");
-        return;
+        return 1;
     }
 
     if (!strcmp(key, "mute_all_clear")) {
@@ -198,7 +206,7 @@
             inst->mute[t] = 0;
             inst->solo[t] = 0;
         }
-        return;
+        return 1;
     }
 
     if (!strcmp(key, "snap_save")) {
@@ -207,7 +215,7 @@
         int n = 0, t, v;
         while (*p == ' ') p++;
         while (*p >= '0' && *p <= '9') n = n * 10 + (*p++ - '0');
-        if (n < 0 || n >= 16) return;
+        if (n < 0 || n >= 16) return 1;
         for (t = 0; t < NUM_TRACKS; t++) {
             while (*p == ' ') p++;
             v = 0;
@@ -227,12 +235,12 @@
             inst->snap_drum_eff_mute[n][t] = uv;
         }
         inst->snap_valid[n] = 1;
-        return;
+        return 1;
     }
 
     if (!strcmp(key, "snap_load")) {
         int n = my_atoi(val), t;
-        if (n < 0 || n >= 16 || !inst->snap_valid[n]) return;
+        if (n < 0 || n >= 16 || !inst->snap_valid[n]) return 1;
         for (t = 0; t < NUM_TRACKS; t++) {
             inst->mute[t] = inst->snap_mute[n][t];
             inst->solo[t] = inst->snap_solo[n][t];
@@ -240,13 +248,16 @@
             inst->tracks[t].drum_lane_solo = 0;
         }
         silence_muted_tracks(inst);
-        return;
+        return 1;
     }
 
     if (!strcmp(key, "snap_delete")) {
         int n = my_atoi(val);
-        if (n < 0 || n >= 16) return;
+        if (n < 0 || n >= 16) return 1;
         inst->snap_valid[n] = 0;
         inst->state_dirty = 1;
-        return;
+        return 1;
     }
+
+    return 0;
+}
