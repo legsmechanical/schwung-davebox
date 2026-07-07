@@ -169,6 +169,10 @@ int main(void) {
         { "t6_l2_mute",              "1",         "\"t6dlm\":4",            "drum lane mute" },
         { "t6_l3_repeat_gate_set",   "42",        "\"t6l3rg\":42",          "drum repeat gate" },
         { "t6_drum_repeat_sync",     "0",         "\"t6dsy\":0",            "drum repeat sync" },
+        /* diq (per-track drum input quantize) serializes to t%ddiq (sparse,
+         * omitted when 0); Phase 4B group 8 prep. On t6 (drum via the lane
+         * write above) so it never collides with the group-8 t0 block. */
+        { "t6_diq",                  "5",         "\"t6diq\":5",            "drum config (drum input quant)" },
         { "t7_c3_length",            "13",        "\"t7c3_len\":13",        "clip length" },
         /* loop window: packed = loop_start<<16 | length = 3*65536 + 8 = 196616 */
         { "t7_c1_loop_set",          "196616",    "\"t7c1_ls\":3",          "loop window (_loop_set)" },
@@ -1480,6 +1484,256 @@ int main(void) {
         inst->dsp_inbound_enabled = 0;   /* restore (padmap set it; no later blocks) */
     }
 
+    /* ---- Drum-config / all-lanes / drum-repeat white-box pins (Phase 4B group 8
+     * prep). Runs after the table (order-neutral; all white-box blocks run after
+     * the table in file order). Characterizes the sp_track_drum2 group — drum
+     * config scalars, the all_lanes_* fan-out transforms, the Rpt1/Rpt2 note-repeat
+     * engine state, and drum-record capture — on t0, the harness's pristine default
+     * DRUM track (create_instance forces track 0 to DRUM + allocates its 16 drum
+     * clips when no track loads as drum; the only prior t0 touches are the table's
+     * t0_xpose_*, and xpose_commit SKIPS drum tracks, so t0's active drum clip is
+     * untouched here). Nothing asserts t0 after this block, so its mutations are
+     * collision-safe. diq / drum_repeat_sync are serialized (t%ddiq / t%ddsy) and
+     * covered by the t6 table rows. delete_held is a GLOBAL inst flag — pinned both
+     * ways and RESTORED to 0 so it does not leak. Transport is stopped and
+     * dsp_inbound_enabled==0 (the live block restored it), so all_lanes playhead
+     * re-anchoring is inert and drum-record takes the STOCK capture path (base =
+     * drum_current_step/drum_tick_in_step, set white-box). The Rpt1/Rpt2 *firing*
+     * (drum_repeat_tick/drum_repeat2_tick) is RT/render-only and OUT OF SCOPE —
+     * only the engine state each setter writes is pinned. The all_lanes_* ops chain
+     * (each transforms the same 32 lanes of the active clip); per-lane transform
+     * SEMANTICS are already pinned in the group-3 block, so here we pin the FAN-OUT
+     * (a representative field on lane0 + lane31). ---- */
+    {
+        seq8_track_t *dt = &inst->tracks[0];
+        HX_ASSERT(dt->pad_mode == PAD_MODE_DRUM, "group8 precondition: t0 is the default DRUM track");
+        const int AC = dt->active_clip;
+        HX_ASSERT(dt->drum_clips[AC] != NULL, "group8 precondition: t0 active drum clip allocated");
+        drum_clip_t *dc = dt->drum_clips[AC];
+
+        /* --- drum config scalars --- */
+
+        /* drum_mute_all_clear: zeroes BOTH the lane mute and solo bitmasks. */
+        dt->drum_lane_mute = 0x2A; dt->drum_lane_solo = 0x15;
+        hx_set_param(h, "t0_drum_mute_all_clear", "1");
+        HX_ASSERT(dt->drum_lane_mute == 0 && dt->drum_lane_solo == 0,
+                  "drum_mute_all_clear: clears both lane mute + solo masks");
+
+        /* drum_lanes_qnt: fans NoteFX quantize out to all 32 lanes' pfx_params. */
+        hx_set_param(h, "t0_drum_lanes_qnt", "50");
+        HX_ASSERT(dc->lanes[0].pfx_params.quantize == 50 &&
+                  dc->lanes[DRUM_LANES-1].pfx_params.quantize == 50,
+                  "drum_lanes_qnt: quantize=50 fanned to lane0 + lane31");
+
+        /* active_drum_lane: stored track field, clamped 0..DRUM_LANES-1. */
+        hx_set_param(h, "t0_active_drum_lane", "7");
+        HX_ASSERT(dt->active_drum_lane == 7, "active_drum_lane: ->7");
+        hx_set_param(h, "t0_active_drum_lane", "99");
+        HX_ASSERT(dt->active_drum_lane == DRUM_LANES - 1, "active_drum_lane: high clamp to 31");
+
+        /* drum_lane_page: clamped 0..(DRUM_LANES+15)/16-1 (=1 for 32 lanes). */
+        hx_set_param(h, "t0_drum_lane_page", "1");
+        HX_ASSERT(dt->drum_lane_page == 1, "drum_lane_page: ->1");
+        hx_set_param(h, "t0_drum_lane_page", "99");
+        HX_ASSERT(dt->drum_lane_page == 1, "drum_lane_page: high clamp to 1");
+
+        /* drum_perform_mode: clamped 0..2 (0=NORMAL,1=Rpt1,2=Rpt2). */
+        hx_set_param(h, "t0_drum_perform_mode", "2");
+        HX_ASSERT(dt->drum_perform_mode == 2, "drum_perform_mode: ->2");
+        hx_set_param(h, "t0_drum_perform_mode", "99");
+        HX_ASSERT(dt->drum_perform_mode == 2, "drum_perform_mode: high clamp to 2");
+
+        /* delete_held: GLOBAL inst flag (0/1). Restored to 0 below (no leak). */
+        hx_set_param(h, "t0_delete_held", "1");
+        HX_ASSERT(inst->delete_held == 1, "delete_held: global flag ->1");
+        hx_set_param(h, "t0_delete_held", "0");
+        HX_ASSERT(inst->delete_held == 0, "delete_held: global flag ->0 (restored)");
+
+        /* --- all_lanes_* fan-out transforms (pin lane0 + lane31). --- */
+        {
+            clip_t *L0  = &dc->lanes[0].clip;
+            clip_t *L31 = &dc->lanes[DRUM_LANES-1].clip;
+
+            /* clip_resolution idx2 -> TPS_VALUES[2]=48 on all lanes. */
+            hx_set_param(h, "t0_all_lanes_clip_resolution", "2");
+            HX_ASSERT(L0->ticks_per_step == 48 && L31->ticks_per_step == 48,
+                      "all_lanes_clip_resolution: tps 48 fanned to lane0 + lane31");
+
+            /* playback_dir 3 (Pingpong-Backward) -> dir=3, pp_dir_state=-1 on all. */
+            hx_set_param(h, "t0_all_lanes_playback_dir", "3");
+            HX_ASSERT(L0->playback_dir == 3 && L31->playback_dir == 3,
+                      "all_lanes_playback_dir: dir=3 fanned out");
+            HX_ASSERT(L0->pp_dir_state == -1 && L31->pp_dir_state == -1,
+                      "all_lanes_playback_dir: pp_dir_state=-1 fanned out");
+
+            /* playback_audio_reverse 1 on all. */
+            hx_set_param(h, "t0_all_lanes_playback_audio_reverse", "1");
+            HX_ASSERT(L0->playback_audio_reverse == 1 && L31->playback_audio_reverse == 1,
+                      "all_lanes_playback_audio_reverse: fanned out");
+
+            /* length 16 on all (loop_start 0, max_len SEQ_STEPS). */
+            hx_set_param(h, "t0_all_lanes_length", "16");
+            HX_ASSERT(L0->length == 16 && L31->length == 16,
+                      "all_lanes_length: length=16 fanned out");
+
+            /* clock_shift dir=1 -> clock_shift_pos = (0+1)%16 = 1 on all. */
+            hx_set_param(h, "t0_all_lanes_clock_shift", "1");
+            HX_ASSERT(L0->clock_shift_pos == 1 && L31->clock_shift_pos == 1,
+                      "all_lanes_clock_shift: clock_shift_pos=1 fanned out");
+
+            /* nudge dir=1 -> nudge_pos+1; dir=0 -> resets nudge_pos. */
+            hx_set_param(h, "t0_all_lanes_nudge", "1");
+            HX_ASSERT(L0->nudge_pos == 1 && L31->nudge_pos == 1,
+                      "all_lanes_nudge: nudge_pos+1 fanned out");
+            hx_set_param(h, "t0_all_lanes_nudge", "0");
+            HX_ASSERT(L0->nudge_pos == 0 && L31->nudge_pos == 0,
+                      "all_lanes_nudge: dir=0 resets nudge_pos on all");
+
+            /* beat_stretch dir=1 (pre-flight OK: 16*2<=SEQ_STEPS): length 16->32,
+             * stretch_exp++, all_lanes_stretch_result=1. dir=-1: back to 16. */
+            int se0 = L0->stretch_exp;
+            hx_set_param(h, "t0_all_lanes_beat_stretch", "1");
+            HX_ASSERT(inst->all_lanes_stretch_result == 1,
+                      "all_lanes_beat_stretch: pre-flight passed (result=1)");
+            HX_ASSERT(L0->length == 32 && L31->length == 32,
+                      "all_lanes_beat_stretch: dir=1 length 16->32 fanned out");
+            HX_ASSERT(L0->stretch_exp == se0 + 1 && L31->stretch_exp == se0 + 1,
+                      "all_lanes_beat_stretch: stretch_exp++ fanned out");
+            hx_set_param(h, "t0_all_lanes_beat_stretch", "-1");
+            HX_ASSERT(L0->length == 16 && L31->length == 16,
+                      "all_lanes_beat_stretch: dir=-1 length 32->16 fanned out");
+
+            /* loop_set packed ls=2 len=4 = (2<<16)|4 = 131076 on all. */
+            hx_set_param(h, "t0_all_lanes_loop_set", "131076");
+            HX_ASSERT(L0->loop_start == 2 && L0->length == 4 &&
+                      L31->loop_start == 2 && L31->length == 4,
+                      "all_lanes_loop_set: ls=2 len=4 fanned out");
+
+            /* double_fill: length 4->8 on all (4*2<=SEQ_STEPS). */
+            hx_set_param(h, "t0_all_lanes_double_fill", "1");
+            HX_ASSERT(L0->length == 8 && L31->length == 8,
+                      "all_lanes_double_fill: length 4->8 fanned out");
+        }
+
+        /* --- Rpt1 note-repeat engine (drum_repeat_*). sync=0 first so the
+         * first-fire boundary snap is deterministic (pending=0; default sync=1). --- */
+        hx_set_param(h, "t0_drum_repeat_sync", "0");
+        hx_set_param(h, "t0_drum_repeat_start", "5 3 90");
+        HX_ASSERT(dt->drum_repeat_active == 1, "drum_repeat_start: active=1");
+        HX_ASSERT(dt->drum_repeat_lane == 5 && dt->drum_repeat_rate_idx == 3 &&
+                  dt->drum_repeat_vel == 90, "drum_repeat_start: lane/rate/vel latched");
+        HX_ASSERT(dt->drum_repeat_step == 0 && dt->drum_repeat_phase == 0,
+                  "drum_repeat_start: step/phase reset");
+        HX_ASSERT(dt->drum_repeat_pending == 0, "drum_repeat_start: sync=0 -> pending 0 (instant)");
+
+        hx_set_param(h, "t0_drum_repeat_vel", "77");
+        HX_ASSERT(dt->drum_repeat_vel == 77, "drum_repeat_vel: ->77");
+
+        hx_set_param(h, "t0_drum_repeat_lane", "8");
+        HX_ASSERT(dt->drum_repeat_lane == 8, "drum_repeat_lane: ->8");
+        HX_ASSERT(dt->drum_repeat_active == 1, "drum_repeat_lane: does not disturb active");
+
+        hx_set_param(h, "t0_drum_repeat_latched", "1");
+        HX_ASSERT(dt->drum_repeat_latched == 1, "drum_repeat_latched: ->1");
+
+        hx_set_param(h, "t0_drum_repeat_stop", "1");
+        HX_ASSERT(dt->drum_repeat_active == 0 && dt->drum_repeat_pending == 0 &&
+                  dt->drum_repeat_latched == 0, "drum_repeat_stop: clears active/pending/latched");
+
+        /* --- Rpt2 per-lane engine (drum_repeat2_*, bitmask over 32 lanes). --- */
+        hx_set_param(h, "t0_drum_repeat2_rate", "6 4");
+        HX_ASSERT(dt->drum_repeat2_rate_idx[6] == 4, "drum_repeat2_rate: lane6 rate_idx->4");
+
+        hx_set_param(h, "t0_drum_repeat2_lane_on", "6 88");
+        HX_ASSERT((dt->drum_repeat2_active >> 6) & 1, "drum_repeat2_lane_on: lane6 active bit set");
+        HX_ASSERT(!((dt->drum_repeat2_pending >> 6) & 1), "drum_repeat2_lane_on: sync=0 -> not pending");
+        HX_ASSERT(dt->drum_repeat2_vel[6] == 88, "drum_repeat2_lane_on: lane6 vel=88");
+        HX_ASSERT(dt->drum_repeat2_phase[6] == 0 && dt->drum_repeat2_step[6] == 0,
+                  "drum_repeat2_lane_on: lane6 phase/step reset");
+
+        hx_set_param(h, "t0_drum_repeat2_vel", "6 55");
+        HX_ASSERT(dt->drum_repeat2_vel[6] == 55, "drum_repeat2_vel: lane6 vel->55");
+
+        hx_set_param(h, "t0_drum_repeat2_lane_latched", "6 1");
+        HX_ASSERT((dt->drum_repeat2_latched_lanes >> 6) & 1, "drum_repeat2_lane_latched: 1-edge sets bit6");
+        hx_set_param(h, "t0_drum_repeat2_lane_latched", "6 0");
+        HX_ASSERT(!((dt->drum_repeat2_latched_lanes >> 6) & 1), "drum_repeat2_lane_latched: 0-edge clears bit6");
+
+        /* latch_held: ORs active|pending into latched; lane6 is active -> latched. */
+        hx_set_param(h, "t0_drum_repeat2_latch_held", "1");
+        HX_ASSERT((dt->drum_repeat2_latched_lanes >> 6) & 1,
+                  "drum_repeat2_latch_held: ORs active(lane6) into latched");
+
+        hx_set_param(h, "t0_drum_repeat2_lane_off", "6");
+        HX_ASSERT(!((dt->drum_repeat2_active >> 6) & 1) &&
+                  !((dt->drum_repeat2_pending >> 6) & 1) &&
+                  !((dt->drum_repeat2_latched_lanes >> 6) & 1),
+                  "drum_repeat2_lane_off: clears active+pending+latched bit6");
+
+        /* stop: clears ALL active/pending/latched. Re-arm lane7 first. */
+        hx_set_param(h, "t0_drum_repeat2_lane_on", "7 100");
+        hx_set_param(h, "t0_drum_repeat2_lane_latched", "7 1");
+        HX_ASSERT(dt->drum_repeat2_active != 0, "drum_repeat2_stop setup: lane7 armed");
+        hx_set_param(h, "t0_drum_repeat2_stop", "1");
+        HX_ASSERT(dt->drum_repeat2_active == 0 && dt->drum_repeat2_pending == 0 &&
+                  dt->drum_repeat2_latched_lanes == 0,
+                  "drum_repeat2_stop: clears all active/pending/latched");
+
+        /* --- drum_record_note_on / _off (stock path: dsp_inbound_enabled==0).
+         * Records onto the active drum clip's lane whose midi_note matches the
+         * pitch, at the lane's drum_current_step. Guarded on tr->recording. Uses
+         * the current in-window step (loop_start=2 after all_lanes_loop_set/
+         * double_fill; window [2,10)). Gate math is in TICKS_PER_STEP units,
+         * independent of the clip's tps. --- */
+        {
+            const int lane = 4;
+            clip_t *rc = &dc->lanes[lane].clip;
+            uint8_t mn = dc->lanes[lane].midi_note;   /* DRUM_BASE_NOTE + 4 = 40 */
+            uint16_t rstep = rc->loop_start;
+            char von[32], voff[32];
+            snprintf(von,  sizeof(von),  "%d 101", (int)mn);
+            snprintf(voff, sizeof(voff), "%d",     (int)mn);
+
+            /* _on guard: not recording -> dropped. */
+            dt->recording = 0; dt->drum_inp_quant = 0;
+            dt->drum_current_step[lane] = rstep; dt->drum_tick_in_step[lane] = 0;
+            uint8_t sc0 = rc->step_note_count[rstep];
+            hx_set_param(h, "t0_drum_record_note_on", von);
+            HX_ASSERT(rc->step_note_count[rstep] == sc0,
+                      "drum_record_note_on: no-op when not recording (guard)");
+
+            /* _on capture (stock path): base_step=loop_start(2), off=0 -> step 2. */
+            dt->recording = 1;
+            dt->drum_current_step[lane] = rstep; dt->drum_tick_in_step[lane] = 0;
+            hx_set_param(h, "t0_drum_record_note_on", von);
+            HX_ASSERT(rc->steps[rstep] == 1 && rc->step_note_count[rstep] == 1,
+                      "drum_record_note_on: step hit inserted at drum_current_step");
+            HX_ASSERT(rc->step_notes[rstep][0] == mn && rc->step_vel[rstep] == 101,
+                      "drum_record_note_on: lane note + vel captured");
+            HX_ASSERT(rc->step_gate[rstep] == GATE_TICKS,
+                      "drum_record_note_on: gate = GATE_TICKS pending close");
+            HX_ASSERT(dt->drum_rec_pending_active[lane] == 1,
+                      "drum_record_note_on: rec-pending armed for the lane");
+
+            /* _off guard: not recording -> gate unchanged. */
+            dt->recording = 0;
+            dt->drum_current_step[lane] = (uint16_t)(rstep + 2); dt->drum_tick_in_step[lane] = 0;
+            hx_set_param(h, "t0_drum_record_note_off", voff);
+            HX_ASSERT(rc->step_gate[rstep] == GATE_TICKS,
+                      "drum_record_note_off: no-op when not recording (guard)");
+
+            /* _off capture: off_tick=(rstep+2)*TPS, on_tick=rstep*TPS -> gate=2*TPS=48. */
+            dt->recording = 1;
+            hx_set_param(h, "t0_drum_record_note_off", voff);
+            HX_ASSERT(rc->step_gate[rstep] == 2 * TICKS_PER_STEP,
+                      "drum_record_note_off: gate = (off-on) = 2 steps = 48 ticks");
+            HX_ASSERT(dt->drum_rec_pending_active[lane] == 0,
+                      "drum_record_note_off: rec-pending consumed");
+
+            dt->recording = 0;   /* leave t0 non-recording */
+        }
+    }
+
     hx_destroy(h);
     printf("PASS: set_param domain snapshot (%d domains + transport)\n", i);
     printf("PASS: track-config white-box pins "
@@ -1509,5 +1763,12 @@ int main(void) {
            "(live_notes on/off/default-vel/batch emit + inbound-enabled guard, "
            "live_at poly/channel AT emit + last_poly_at_press, padmap carrier "
            "active_track/dsp_inbound/pad_note_map + trailing flags both polarities)\n");
+    printf("PASS: drum-config/all-lanes/repeat white-box pins "
+           "(mute_all_clear, lanes_qnt fan-out, active_drum_lane/lane_page/"
+           "perform_mode/delete_held, all_lanes_* fan-out transforms "
+           "(clip_resolution/playback_dir/audio_reverse/length/clock_shift/nudge/"
+           "beat_stretch/loop_set/double_fill), Rpt1 start/vel/lane/latched/stop, "
+           "Rpt2 rate/lane_on/vel/lane_latched/latch_held/lane_off/stop, "
+           "drum_record_note_on/off capture + both !recording guards)\n");
     return 0;
 }
