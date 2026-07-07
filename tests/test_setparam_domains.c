@@ -139,6 +139,20 @@
 
 typedef struct { const char *key, *val, *expect_substr, *domain; } sp_case_t;
 
+/* Phase 4B group 12 helper: factory-reset a clip then seed it with one
+ * distinctive step note (+ rebuilt notes[]), so the globals-edit ops
+ * (copy/cut/clear/undo/redo) have observable content to move around. */
+static void charz_seed_step(clip_t *cl, int step, int pitch, int vel, int len) {
+    clip_init(cl);
+    cl->length              = (uint16_t)len;
+    cl->steps[step]         = 1;
+    cl->step_note_count[step] = 1;
+    cl->step_notes[step][0] = (uint8_t)pitch;
+    cl->step_vel[step]      = (uint8_t)vel;
+    cl->active              = 1;
+    clip_migrate_to_notes(cl);
+}
+
 int main(void) {
     hx_t *h = hx_create(NULL);
     HX_ASSERT(h, "create failed");
@@ -2142,6 +2156,244 @@ int main(void) {
         }
     }
 
+    /* ---- Globals-EDIT white-box pins (Phase 4B group 12 prep). Runs after the
+     * table (order-neutral; all white-box blocks run after the table in file
+     * order) but INTENTIONALLY BEFORE the globals-STATE block below, for the same
+     * reason globals-misc does: that block's state_load pin RESETS the whole
+     * instance (transport/merge/per-track playback), which would clobber the
+     * undo/redo stack + clip content this block arms. Characterizes
+     * sp_globals_edit's 9 keys — clip/row copy+cut, drum-clip copy+cut, row_clear,
+     * and the undo/redo round-trips — all top-level strcmp(key,...) matches with
+     * NO track index, so they collide with nothing above. Pins are direct struct
+     * inspection of the clip_t step arrays (copy/cut MOVE content — memcpy'd step
+     * arrays are the robust observable; the serialized tokens are doubly sparse)
+     * plus the undo/redo valid-flag transitions + last_restore_info marker byte.
+     * OUT OF SCOPE: the RT side effects the handlers also fire — silence_track_
+     * notes_v2, pfx_note_off_imm, pfx_sync_from_clip, active-clip re-anchoring —
+     * are transport/render-thread observables, not off-device pinnable.
+     *
+     * ISOLATION: copy/cut/clear mutate MULTIPLE clips (row ops touch all 8 tracks
+     * at a column), so each concern uses a DEDICATED clip/row with distinct magic
+     * numbers, seeded fresh via charz_seed_step (mode-independent — these handlers
+     * operate on the tracks[t].clips[] melodic arrays regardless of pad_mode).
+     * Melodic ops run on t1/t2 (both melodic; t1's only prior touch was the
+     * recording block's clip 0, t2's the group-5 clip 0 — rows 4..15 pristine on
+     * both). Drum ops run on t3 (DRUM since the group-3 block, all 16 drum_clips
+     * allocated). Nothing asserts t1/t2/t3 clip content after this block. ---- */
+    {
+        /* ---- clip_copy "srcT srcC dstT dstC": dst gets src's step content +
+         * geometry + rebuilt notes[]; src is left intact (copy, not cut). ---- */
+        {
+            clip_t *src = &inst->tracks[1].clips[14];
+            clip_t *dst = &inst->tracks[1].clips[15];
+            charz_seed_step(src, 3, 64, 100, 11);
+            clip_init(dst);
+            HX_ASSERT(dst->active == 0, "clip_copy setup: dst starts empty");
+            hx_set_param(h, "clip_copy", "1 14 1 15");
+            HX_ASSERT(dst->steps[3] == 1 && dst->step_note_count[3] == 1 &&
+                      dst->step_notes[3][0] == 64 && dst->step_vel[3] == 100,
+                      "clip_copy: dst gets src step note");
+            HX_ASSERT(dst->length == 11 && dst->active == 1,
+                      "clip_copy: dst gets src length + active");
+            HX_ASSERT(dst->note_count >= 1, "clip_copy: dst notes[] rebuilt from steps");
+            HX_ASSERT(src->steps[3] == 1 && src->active == 1,
+                      "clip_copy: SRC unchanged (copy, not cut)");
+            /* same-src==dst early-return no-op: content untouched, no crash. */
+            hx_set_param(h, "clip_copy", "1 14 1 14");
+            HX_ASSERT(src->steps[3] == 1 && src->active == 1,
+                      "clip_copy: src==dst is an early-return no-op");
+        }
+
+        /* ---- clip_cut "srcT srcC dstT dstC": copy src->dst, then hard-reset
+         * src (clip_init). ---- */
+        {
+            clip_t *src = &inst->tracks[1].clips[12];
+            clip_t *dst = &inst->tracks[1].clips[13];
+            charz_seed_step(src, 5, 67, 90, 9);
+            clip_init(dst);
+            hx_set_param(h, "clip_cut", "1 12 1 13");
+            HX_ASSERT(dst->steps[5] == 1 && dst->step_notes[5][0] == 67 &&
+                      dst->step_vel[5] == 90, "clip_cut: dst gets src content");
+            HX_ASSERT(dst->length == 9 && dst->active == 1, "clip_cut: dst gets geometry");
+            HX_ASSERT(src->steps[5] == 0 && src->step_note_count[5] == 0 &&
+                      src->active == 0, "clip_cut: SRC emptied");
+        }
+
+        /* ---- row_copy "srcRow dstRow": copies every track's clip at srcRow to
+         * dstRow. Pin two representative melodic tracks (t1, t2); src row intact. ---- */
+        {
+            charz_seed_step(&inst->tracks[1].clips[10], 2, 60, 100, 8);
+            charz_seed_step(&inst->tracks[2].clips[10], 4, 62, 110, 8);
+            clip_init(&inst->tracks[1].clips[11]);
+            clip_init(&inst->tracks[2].clips[11]);
+            hx_set_param(h, "row_copy", "10 11");
+            HX_ASSERT(inst->tracks[1].clips[11].steps[2] == 1 &&
+                      inst->tracks[1].clips[11].step_notes[2][0] == 60,
+                      "row_copy: t1 dst-row clip got src content");
+            HX_ASSERT(inst->tracks[2].clips[11].steps[4] == 1 &&
+                      inst->tracks[2].clips[11].step_notes[4][0] == 62,
+                      "row_copy: t2 dst-row clip got src content");
+            HX_ASSERT(inst->tracks[1].clips[10].steps[2] == 1 &&
+                      inst->tracks[2].clips[10].steps[4] == 1,
+                      "row_copy: src row unchanged (copy)");
+        }
+
+        /* ---- row_cut "srcRow dstRow": copy row then hard-reset src row across
+         * all tracks. Pin two melodic tracks: dst populated, src emptied. ---- */
+        {
+            charz_seed_step(&inst->tracks[1].clips[8], 1, 55, 88, 7);
+            charz_seed_step(&inst->tracks[2].clips[8], 6, 57, 99, 7);
+            clip_init(&inst->tracks[1].clips[9]);
+            clip_init(&inst->tracks[2].clips[9]);
+            hx_set_param(h, "row_cut", "8 9");
+            HX_ASSERT(inst->tracks[1].clips[9].steps[1] == 1 &&
+                      inst->tracks[1].clips[9].step_notes[1][0] == 55,
+                      "row_cut: t1 dst-row got content");
+            HX_ASSERT(inst->tracks[2].clips[9].steps[6] == 1,
+                      "row_cut: t2 dst-row got content");
+            HX_ASSERT(inst->tracks[1].clips[8].steps[1] == 0 &&
+                      inst->tracks[1].clips[8].active == 0, "row_cut: t1 src-row emptied");
+            HX_ASSERT(inst->tracks[2].clips[8].steps[6] == 0 &&
+                      inst->tracks[2].clips[8].active == 0, "row_cut: t2 src-row emptied");
+        }
+
+        /* ---- row_clear "row": clears the scene row across all tracks. ---- */
+        {
+            charz_seed_step(&inst->tracks[1].clips[6], 0, 50, 100, 8);
+            charz_seed_step(&inst->tracks[2].clips[6], 7, 52, 100, 8);
+            hx_set_param(h, "row_clear", "6");
+            HX_ASSERT(inst->tracks[1].clips[6].steps[0] == 0 &&
+                      inst->tracks[1].clips[6].step_note_count[0] == 0 &&
+                      inst->tracks[1].clips[6].active == 0, "row_clear: t1 clip emptied");
+            HX_ASSERT(inst->tracks[1].clips[6].note_count == 0, "row_clear: t1 notes[] wiped");
+            HX_ASSERT(inst->tracks[2].clips[6].steps[7] == 0 &&
+                      inst->tracks[2].clips[6].active == 0, "row_clear: t2 clip emptied");
+        }
+
+        /* ---- drum_clip_copy "srcT srcC dstT dstC": copy all 32 lanes,
+         * preserving dst lane midi_notes. Uses t3's allocated drum_clips. ---- */
+        {
+            drum_clip_t *ds = inst->tracks[3].drum_clips[14];
+            drum_clip_t *dd = inst->tracks[3].drum_clips[15];
+            HX_ASSERT(ds && dd, "drum_clip_copy precondition: t3 drum_clips[14,15] allocated");
+            clip_t *dsl = &ds->lanes[6].clip;
+            clip_init(dsl);
+            dsl->steps[2] = 1; dsl->step_note_count[2] = 1;
+            dsl->step_notes[2][0] = ds->lanes[6].midi_note; dsl->step_vel[2] = 100;
+            dsl->active = 1; clip_migrate_to_notes(dsl);
+            uint8_t dd_note6 = dd->lanes[6].midi_note;
+            clip_init(&dd->lanes[6].clip);
+            hx_set_param(h, "drum_clip_copy", "3 14 3 15");
+            clip_t *ddl = &dd->lanes[6].clip;
+            HX_ASSERT(ddl->steps[2] == 1 && ddl->step_vel[2] == 100,
+                      "drum_clip_copy: dst lane6 gets src content");
+            HX_ASSERT(dd->lanes[6].midi_note == dd_note6,
+                      "drum_clip_copy: preserves dst lane midi_note");
+            HX_ASSERT(dsl->steps[2] == 1, "drum_clip_copy: SRC unchanged (copy)");
+        }
+
+        /* ---- drum_clip_cut "srcT srcC dstT dstC": copy all lanes then clear src. ---- */
+        {
+            drum_clip_t *cs = inst->tracks[3].drum_clips[12];
+            drum_clip_t *cd = inst->tracks[3].drum_clips[13];
+            HX_ASSERT(cs && cd, "drum_clip_cut precondition: t3 drum_clips[12,13] allocated");
+            clip_t *csl = &cs->lanes[8].clip;
+            clip_init(csl);
+            csl->steps[4] = 1; csl->step_note_count[4] = 1;
+            csl->step_notes[4][0] = cs->lanes[8].midi_note; csl->step_vel[4] = 120;
+            csl->active = 1; clip_migrate_to_notes(csl);
+            clip_init(&cd->lanes[8].clip);
+            hx_set_param(h, "drum_clip_cut", "3 12 3 13");
+            clip_t *cdl = &cd->lanes[8].clip;
+            HX_ASSERT(cdl->steps[4] == 1 && cdl->step_vel[4] == 120,
+                      "drum_clip_cut: dst lane8 gets src content");
+            HX_ASSERT(csl->steps[4] == 0 && csl->active == 0,
+                      "drum_clip_cut: SRC lane8 emptied");
+        }
+
+        /* ---- undo_restore / redo_restore MELODIC round-trip. A clip_cut arms an
+         * undo snapshot (undo_begin_clip_pair -> both src + dst captured PRE-cut).
+         * undo_restore reverts (src content back, dst empty); redo_restore
+         * re-applies the cut. Neither broadly resets the instance (unlike
+         * state_load) — they touch only the snapshotted clips + last_restore_info.
+         * The valid-flag ping-pong (undo<->redo) is pinned each direction. ---- */
+        {
+            clip_t *src = &inst->tracks[1].clips[4];
+            clip_t *dst = &inst->tracks[1].clips[5];
+            charz_seed_step(src, 2, 70, 100, 8);
+            clip_init(dst);
+            hx_set_param(h, "clip_cut", "1 4 1 5");
+            HX_ASSERT(dst->steps[2] == 1 && src->steps[2] == 0,
+                      "undo setup: post-cut dst has content, src empty");
+            HX_ASSERT(inst->undo_valid == 1, "undo setup: clip_cut armed a melodic undo snapshot");
+
+            hx_set_param(h, "undo_restore", "1");
+            HX_ASSERT(src->steps[2] == 1 && src->active == 1,
+                      "undo_restore: SRC content restored");
+            HX_ASSERT(dst->steps[2] == 0 && dst->active == 0,
+                      "undo_restore: DST reverted to empty");
+            HX_ASSERT(inst->undo_valid == 0 && inst->redo_valid == 1,
+                      "undo_restore: flips undo_valid->0, redo_valid->1");
+            HX_ASSERT(inst->last_restore_info[0] == 'm',
+                      "undo_restore: last_restore_info melodic 'm' marker (JS reads this)");
+
+            hx_set_param(h, "redo_restore", "1");
+            HX_ASSERT(dst->steps[2] == 1 && dst->active == 1,
+                      "redo_restore: DST re-populated (cut re-applied)");
+            HX_ASSERT(src->steps[2] == 0 && src->active == 0,
+                      "redo_restore: SRC re-emptied");
+            HX_ASSERT(inst->redo_valid == 0 && inst->undo_valid == 1,
+                      "redo_restore: flips redo_valid->0, undo_valid->1");
+        }
+
+        /* ---- undo_restore / redo_restore DRUM round-trip. drum_clip_copy arms a
+         * drum-clip undo snapshot (undo_begin_drum_clip -> DST lanes captured
+         * PRE-copy; sets drum_undo_valid=1, undo_valid=0). undo_restore checks
+         * drum_undo_valid FIRST, so it takes the drum branch: dst reverts to empty,
+         * marker byte becomes 'd'. redo re-applies. (The drum undo covers the DST
+         * clip only — the src-clear of a drum_clip_CUT is NOT in the snapshot; this
+         * uses drum_clip_COPY so the round-trip is clean.) ---- */
+        {
+            drum_clip_t *us = inst->tracks[3].drum_clips[10];
+            drum_clip_t *ud = inst->tracks[3].drum_clips[11];
+            HX_ASSERT(us && ud, "drum undo precondition: t3 drum_clips[10,11] allocated");
+            clip_t *usl = &us->lanes[3].clip;
+            clip_init(usl);
+            usl->steps[1] = 1; usl->step_note_count[1] = 1;
+            usl->step_notes[1][0] = us->lanes[3].midi_note; usl->step_vel[1] = 100;
+            usl->active = 1; clip_migrate_to_notes(usl);
+            clip_init(&ud->lanes[3].clip);
+            hx_set_param(h, "drum_clip_copy", "3 10 3 11");
+            clip_t *udl = &ud->lanes[3].clip;
+            HX_ASSERT(inst->drum_undo_valid == 1, "drum undo setup: drum_clip_copy armed drum undo");
+            HX_ASSERT(udl->steps[1] == 1, "drum undo setup: post-copy dst has content");
+
+            hx_set_param(h, "undo_restore", "1");
+            HX_ASSERT(udl->steps[1] == 0 && udl->active == 0,
+                      "undo_restore (drum): DST reverted to empty");
+            HX_ASSERT(inst->drum_undo_valid == 0 && inst->drum_redo_valid == 1,
+                      "undo_restore (drum): flips drum undo->redo");
+            HX_ASSERT(inst->last_restore_info[0] == 'd',
+                      "undo_restore (drum): last_restore_info 'd' marker");
+
+            hx_set_param(h, "redo_restore", "1");
+            HX_ASSERT(udl->steps[1] == 1, "redo_restore (drum): DST re-populated");
+            HX_ASSERT(inst->drum_redo_valid == 0 && inst->drum_undo_valid == 1,
+                      "redo_restore (drum): flips drum redo->undo");
+        }
+
+        /* ---- guard: undo_restore with NO valid undo is an early-return no-op.
+         * Force both undo flags invalid, drop a sentinel, confirm it survives. ---- */
+        {
+            inst->undo_valid = 0;
+            inst->drum_undo_valid = 0;
+            inst->tracks[1].clips[4].steps[0] = 1;   /* sentinel */
+            hx_set_param(h, "undo_restore", "1");
+            HX_ASSERT(inst->tracks[1].clips[4].steps[0] == 1,
+                      "undo_restore: no-op when neither undo valid (guard)");
+        }
+    }
+
     /* ---- Globals-STATE white-box pins (Phase 4B group 10 prep). Runs after
      * the table AND every other white-box block, in file order — it is
      * intentionally LAST because its state_load pin RESETS the whole instance
@@ -2311,5 +2563,9 @@ int main(void) {
            "(debug_log no-op, state_path store, save preview-clear + file "
            "write + version-mismatch guard, prune opendir-failed no-op, "
            "state_load path-build + instance reset + fallback)\n");
+    printf("PASS: globals-edit white-box pins "
+           "(clip copy/cut, row copy/cut, row_clear, drum-clip copy/cut, "
+           "undo/redo melodic + drum round-trips + last_restore_info marker, "
+           "no-valid-undo guard)\n");
     return 0;
 }
