@@ -1,25 +1,37 @@
-/* FUNCTION-BODY SEGMENT of set_param() -- included mid-function by
- * seq8_set_param.c; NOT a translation unit, not even a complete function;
- * shares set_param's locals (inst, key, val) and the tN_ block's locals
- * (tidx, tr, sub); never compile or lint this file standalone.
- * Covers tN_ track keys: clip_resolution, clip_resolution_zoom, pad_octave, pad_mode, convert_to_*, tarp_* (all), track_vel_override
+/* FILE-SCOPE HANDLER for set_param()'s tN_ clip-resolution / track-type /
+ * track-arp keys -- part of the seq8.c single translation unit; #included at
+ * FILE scope by seq8_set_param.c (immediately before set_param), NOT a
+ * standalone TU; never compile or lint this file on its own. Fifth Stage B
+ * handler (phase 4B group 5): the former mid-function segment is now a real
+ * static int sp_track_config2(sp_ctx_t *).
+ * Covers tN_ track keys: clip_resolution, clip_resolution_zoom, pad_octave,
+ * pad_mode, convert_to_drum, convert_to_melodic, convert_to_conduct, tarp_on,
+ * tarp_style, tarp_rate, tarp_octaves, tarp_gate, tarp_steps_mode,
+ * track_vel_override, tarp_step_vel, tarp_step_int, tarp_step_loop_len,
+ * tarp_reset, tarp_latch, tarp_clear_latched, tarp_sync, tarp_retrigger.
  * See also sp_track_config.c (xpose/launch_clip/stop_at_end/deactivate/mute/
- * solo/channel/route/track_looper).
- *
- * LOAD-BEARING: the `#line 1` directive below resets clang's start-of-line
- * lexer state after this comment block; without it `clang -E -P` collapses
- * the first code line's indentation and the phase-4A byte-identity gate
- * fails (only the value 1 disarms it -- measured, Apple clang 16). Side
- * effect: diagnostics in this file number from 1 at the first code line.
- * Do not remove, reorder, or tidy. */
-#line 1
+ * solo/channel/route/track_looper -- the other config-flavored keys).
+ * Returns 1 when it handled the key (caller returns), 0 to fall through to
+ * the sibling tN_ handlers. The tN_ guard and the tidx/sub/tr locals live in
+ * the parent dispatcher now (seq8_set_param.c). */
+static int sp_track_config2(sp_ctx_t *cx) {
+    seq8_instance_t *inst = cx->inst;
+    const char *val = cx->val;
+    int tidx = cx->tidx;
+    seq8_track_t *tr = cx->tr;
+    const char *sub = cx->sub;
+
+    /* Body below kept at its Stage-A segment indentation (8 spaces) so it
+     * byte-diffs against the pre-conversion segment; reindent only in a
+     * dedicated cleanup pass after the group is device-blessed. */
+
         if (!strcmp(sub, "clip_resolution")) {
-            if (tr->recording) return;
+            if (tr->recording) return 1;
             int idx = clamp_i(my_atoi(val), 0, 5);
             uint16_t new_tps = TPS_VALUES[idx];
             clip_t *cl = &tr->clips[tr->active_clip];
             uint16_t old_tps = cl->ticks_per_step;
-            if (new_tps == old_tps) return;
+            if (new_tps == old_tps) return 1;
             /* Rescale all notes proportionally */
             { uint32_t gmax_res = (uint32_t)SEQ_STEPS * new_tps;
               if (gmax_res > 65535) gmax_res = 65535;
@@ -41,19 +53,19 @@
             /* Rebuild step arrays from rescaled notes */
             clip_build_steps_from_notes(cl);
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "clip_resolution_zoom")) {
-            if (tr->recording) return;
+            if (tr->recording) return 1;
             int idx = clamp_i(my_atoi(val), 0, 5);
             uint16_t new_tps = TPS_VALUES[idx];
             clip_t *cl = &tr->clips[tr->active_clip];
             uint16_t old_tps = cl->ticks_per_step;
-            if (new_tps == old_tps) return;
+            if (new_tps == old_tps) return 1;
             uint32_t old_ticks = (uint32_t)cl->length * (uint32_t)old_tps;
             uint32_t new_len32 = (old_ticks + (uint32_t)new_tps - 1) / (uint32_t)new_tps;
-            if (new_len32 > SEQ_STEPS) return;
+            if (new_len32 > SEQ_STEPS) return 1;
             uint32_t abs_clip_tick = (uint32_t)tr->current_step * (uint32_t)old_tps + tr->tick_in_step;
             cl->ticks_per_step = new_tps;
             cl->length = (uint16_t)new_len32;
@@ -68,13 +80,13 @@
             }
             clip_build_steps_from_notes(cl);
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
 
         /* tN_pad_octave / tN_pad_mode */
         if (!strcmp(sub, "pad_octave")) {
             tr->pad_octave = (uint8_t)clamp_i(my_atoi(val), 0, 8);
-            return;
+            return 1;
         }
         if (!strcmp(sub, "pad_mode")) {
             uint8_t new_mode = (uint8_t)clamp_i(my_atoi(val), 0, 1);
@@ -84,7 +96,7 @@
                 drum_clips_free(tr);
             tr->pad_mode = new_mode;
             tarp_silence(inst, tr);
-            return;
+            return 1;
         }
         /* Track-type conversion: translate note content AND flip pad_mode
          * atomically (single set_param, no coalescing drop). Idempotent guards
@@ -92,7 +104,7 @@
         if (!strcmp(sub, "convert_to_drum")) {
             if (tr->pad_mode != PAD_MODE_DRUM)
                 convert_track_melodic_to_drum(inst, tidx);
-            return;
+            return 1;
         }
         if (!strcmp(sub, "convert_to_melodic")) {
             if (tr->pad_mode == PAD_MODE_DRUM)
@@ -104,18 +116,18 @@
                 inst->conductor_track = -1;
                 inst->state_dirty = 1;
             }
-            return;
+            return 1;
         }
         if (!strcmp(sub, "convert_to_conduct")) {
             if (inst->conductor_track >= 0 && inst->conductor_track != tidx) {
-                return; /* JS reads back conductor_track and shows the OLED message */
+                return 1; /* JS reads back conductor_track and shows the OLED message */
             }
             if (tr->pad_mode == PAD_MODE_CONDUCT)
-                return; /* idempotent: already the Conductor, redundant push is a no-op */
+                return 1; /* idempotent: already the Conductor, redundant push is a no-op */
             convert_track_to_conduct(inst, tidx);
             inst->conductor_track = (int8_t)tidx;
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
 
         /* TRACK ARP set_param handlers */
@@ -124,7 +136,7 @@
             if (tr->tarp_on && !_v) tarp_silence(inst, tr);
             tr->tarp_on = (uint8_t)_v;
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
         if (!strcmp(sub, "tarp_style")) {
             int _v = clamp_i(my_atoi(val), 0, 9);
@@ -136,36 +148,36 @@
             }
             tr->tarp.style = (uint8_t)_v;
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
         if (!strcmp(sub, "tarp_rate")) {
             int _v = clamp_i(my_atoi(val), 0, 9);
             tr->tarp.rate_idx = (uint8_t)_v;
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
         if (!strcmp(sub, "tarp_octaves")) {
             int _v = clamp_i(my_atoi(val), -4, 4);
             tr->tarp.octaves = (int8_t)_v;
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
         if (!strcmp(sub, "tarp_gate")) {
             int _v = clamp_i(my_atoi(val), 1, 200);
             tr->tarp.gate_pct = (uint16_t)_v;
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
         if (!strcmp(sub, "tarp_steps_mode")) {
             int _v = clamp_i(my_atoi(val), 0, 2);
             tr->tarp.steps_mode = (uint8_t)_v;
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
         if (!strcmp(sub, "track_vel_override")) {
             tr->track_vel_override = (uint8_t)clamp_i(my_atoi(val), 0, 127);
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
         if (!strcmp(sub, "tarp_step_vel")) {
             /* Format: "S L" — step index 0..7, level 0..4 */
@@ -175,11 +187,11 @@
             while (*p >= '0' && *p <= '9') { s = s * 10 + (*p - '0'); p++; }
             while (*p == ' ') p++;
             while (*p >= '0' && *p <= '9') { lv = lv * 10 + (*p - '0'); p++; }
-            if (s < 0 || s > 7) return;
+            if (s < 0 || s > 7) return 1;
             lv = clamp_i(lv, 0, 4);
             tr->tarp.step_vel[s] = (uint8_t)lv;
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
         if (!strcmp(sub, "tarp_step_int")) {
             /* Format: "S I" — step index 0..7, signed interval -24..+24 (scale degrees). */
@@ -191,16 +203,16 @@
             if (*p == '-') { sign = -1; p++; }
             else if (*p == '+') { p++; }
             while (*p >= '0' && *p <= '9') { iv = iv * 10 + (*p - '0'); p++; }
-            if (s < 0 || s > 7) return;
+            if (s < 0 || s > 7) return 1;
             iv = clamp_i(iv * sign, -24, 24);
             tr->tarp.step_int[s] = (int8_t)iv;
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
         if (!strcmp(sub, "tarp_step_loop_len")) {
             tr->tarp.step_loop_len = (uint8_t)clamp_i(my_atoi(val), 1, 8);
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
         if (!strcmp(sub, "tarp_reset")) {
             (void)val;
@@ -213,7 +225,7 @@
             tr->tarp_sync      = 1;
             tr->tarp_physical  = 0;
             inst->state_dirty  = 1;
-            return;
+            return 1;
         }
         if (!strcmp(sub, "tarp_latch")) {
             int _v = my_atoi(val) ? 1 : 0;
@@ -226,22 +238,25 @@
                 tarp_drop_latched(inst, tr);
             }
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
         if (!strcmp(sub, "tarp_clear_latched")) {
             /* User shortcut: drop latched (non-physical) entries from the held
              * buffer but keep tarp_latch=1. Functionally identical to the
              * latch-off compaction above, minus toggling tarp_latch. */
             tarp_drop_latched(inst, tr);
-            return;
+            return 1;
         }
         if (!strcmp(sub, "tarp_sync")) {
             tr->tarp_sync = (uint8_t)(my_atoi(val) ? 1 : 0);
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
         if (!strcmp(sub, "tarp_retrigger")) {
             tr->tarp.retrigger = (uint8_t)(my_atoi(val) ? 1 : 0);
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
+
+    return 0;
+}

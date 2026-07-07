@@ -448,19 +448,23 @@ typedef struct {
 } sp_ctx_t;
 
 /* Stage B handlers: track-config + cc-automation + drum-lane + per-clip tN_
- * keys. Included at FILE scope here (not mid-function) so each can be a real
- * static fn; placed just before set_param so the file-scope helpers they call
- * (build_xpose_lut, silence_muted_tracks, pfx_sync_from_clip; cc_emit,
- * cc_auto_set_point, cc_auto_clear_range, cc_auto_reset, undo_begin_single;
- * drum_clips_alloc, drum_pfx_set, drum_lane_note_off_imm, apply_legato_to_clip,
+ * keys + clip-resolution/track-type/track-arp keys. Included at FILE scope
+ * here (not mid-function) so each can be a real static fn; placed just before
+ * set_param so the file-scope helpers they call (build_xpose_lut,
+ * silence_muted_tracks, pfx_sync_from_clip; cc_emit, cc_auto_set_point,
+ * cc_auto_clear_range, cc_auto_reset, undo_begin_single; drum_clips_alloc,
+ * drum_pfx_set, drum_lane_note_off_imm, apply_legato_to_clip,
  * bjorklund_positions; clip_note_apply_op, clip_note_finalize,
  * clip_build_steps_from_notes, clip_migrate_to_notes, cc_auto_eval,
- * at_auto_reset, ...) are already visible. All are
+ * at_auto_reset; convert_track_melodic_to_drum, convert_track_drum_to_melodic,
+ * convert_track_to_conduct, drum_clips_free, tarp_silence, tarp_drop_latched,
+ * arp_silence, arp_init_defaults, ...) are already visible. All are
  * dispatched from the tN_ block inside set_param. */
 #include "setparam/sp_track_config.c"
 #include "setparam/sp_track_ccauto.c"
 #include "setparam/sp_track_drum.c"
 #include "setparam/sp_track_clip.c"
+#include "setparam/sp_track_config2.c"
 
 /* ------------------------------------------------------------------ */
 /* set_param                                                            */
@@ -514,7 +518,8 @@ static void set_param(void *instance, const char *key, const char *val) {
      * still CLOSES the block (and set_param) at the tail. Handlers already
      * converted to real static fns (phase 4B, included at file scope above,
      * dispatched below): sp_track_config (group 1), sp_track_ccauto (group 2),
-     * sp_track_drum (group 3), sp_track_clip (group 4). The OTHER sp_track_*
+     * sp_track_drum (group 3), sp_track_clip (group 4),
+     * sp_track_config2 (group 5). The OTHER sp_track_*
      * files are still mid-function segments. */
     if (key[0] == 't' && key[1] >= '0' && key[1] <= '7' && key[2] == '_') {
         int tidx = key[1] - '0';
@@ -535,31 +540,30 @@ static void set_param(void *instance, const char *key, const char *val) {
          * above and here mutates cx (comments only), so cx is current. */
         if (sp_track_clip(&cx)) return;
 
-        /* tN_clip_resolution — change per-clip ticks_per_step; rescale notes proportionally */
-/* LOAD-BEARING SPACING: function-body segment include (phase 4A). The
- * blank-line layout around this include is part of the byte-identity
- * gate (`clang -E -P` preprocessed TU identical pre/post split); do not
- * tidy. The segment file opens with `#line 1` to disarm clang's
- * start-of-line indentation collapse at the include entry. */
-#include "setparam/sp_track_config2.c"
+        /* tN_clip_resolution / clip_resolution_zoom, pad_octave, pad_mode,
+         * convert_to_*, tarp_*, track_vel_override -- now a file-scope handler
+         * (phase 4B group 5), dispatched here reusing the existing cx.
+         * Non-guarded run of strcmp branches like sp_track_config: returns 1 on
+         * match, 0 to fall through to the sibling tN_ handlers. sp_track_clip is
+         * a handler dispatched above (returns 0 without mutating cx on
+         * fall-through); nothing between it and here mutates cx (comments only),
+         * so cx is current. */
+        if (sp_track_config2(&cx)) return;
 
         /* CC PARAM bank set_params -- now a file-scope handler (phase 4B
-         * group 2), dispatched here reusing the existing cx. sp_track_clip is
-         * a handler dispatched above (returns 0 without mutating cx on
-         * fall-through); the intervening sp_track_config2 remains a raw
-         * mid-function include, verified not to mutate any ctx field
-         * (inst/val/tidx/tr/sub) on fall-through, so cx is current. */
+         * group 2), dispatched here reusing the existing cx. sp_track_clip and
+         * sp_track_config2 are handlers dispatched above (both return 0 without
+         * mutating cx on fall-through), so cx is current. */
         if (sp_track_ccauto(&cx)) return;
 
         /* tN_lL_* drum lane setters -- now a file-scope handler (phase 4B
          * group 3), dispatched here reusing the existing cx. The handler
          * self-checks sub[0]=='l' + digit and returns 0 when it isn't a lane
          * key; a lane key that matched but hit no sub-op is CONSUMED (returns
-         * 1) so it never leaks to the pfx catch-all. sp_track_clip is a
-         * handler dispatched above and sp_track_ccauto just above return 0
-         * without mutating cx on fall-through; the only raw include between
-         * (sp_track_config2) is verified not to mutate any ctx field
-         * (inst/val/tidx/tr/sub), so cx is current. */
+         * 1) so it never leaks to the pfx catch-all. sp_track_clip,
+         * sp_track_config2, and sp_track_ccauto are all handlers dispatched
+         * above that return 0 without mutating cx on fall-through, so cx is
+         * current. */
         if (sp_track_drum(&cx)) return;
 
 /* LOAD-BEARING SPACING: function-body segment include (phase 4A). The
