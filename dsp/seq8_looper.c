@@ -339,8 +339,12 @@ static void looper_tick(seq8_instance_t *inst) {
                         uint8_t tmp = pitches[lo]; pitches[lo] = pitches[hi2]; pitches[hi2] = tmp;
                         lo++; hi2--;
                     }
-                } else {
-                    /* Fisher-Yates shuffle seeded by cycle counter. */
+                } else if (nc > 1) {
+                    /* Fisher-Yates shuffle seeded by cycle counter.
+                     * Guard nc > 1: with nc==0, `i = nc - 1` would underflow
+                     * (uint16_t) to 65535 and write pitches[] out of bounds;
+                     * nc<=1 is a no-op anyway. Mirrors the backwards branch's
+                     * `nc > 0 ? nc - 1 : 0` guard above. */
                     uint32_t seed = inst->looper_cycle * 1664525u + 1013904223u;
                     uint16_t j;
                     for (i = nc - 1; i > 0; i--) {

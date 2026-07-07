@@ -9,6 +9,7 @@ the section into a versioned heading at release time.
 ## [Unreleased]
 
 ### Fixes
+- **Fixed a crash when a performance modifier was toggled on over an empty loop.** With the MIDI looper running over a loop cycle that held no note-ons (an empty capture, or only note-offs), toggling a pitch-reordering performance modifier like Shuffle could crash the unit. The modifier now safely does nothing when there are no notes to reorder.
 - **Live-recording into an empty melodic clip no longer freezes the unit.** While recording an adaptive take (empty clip growing as you play), the OLED, LEDs, and all inputs could freeze for ~4 seconds at every page-growth and again when disarming record — playback kept running. The clip-grow bookkeeping was misread as a remote-browser edit, triggering a very expensive full re-read of the whole session. Recording now stays fully responsive; browser piano-roll edits still refresh the device as before.
 - **Releasing a held pad during a modal gesture (Shift shortcuts, session view, knob touch) no longer leaves the note hanging.** If you were holding a pad and then started a modal gesture, letting go of the pad could leave its note sounding until the next stop or panic. Held notes now always release on pad-up.
 - **Replacing a step's notes no longer inherits the old note's off-grid timing.** Editing a step's notes (chord entry, remote-UI edits) could leave the new notes carrying the replaced note's sub-step timing offset, making them sound slightly early or late. New notes now land exactly on the grid.
