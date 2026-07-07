@@ -1,26 +1,32 @@
-/* FUNCTION-BODY SEGMENT of set_param() -- included mid-function by
- * seq8_set_param.c; NOT a translation unit, not even a complete function;
- * shares set_param's locals (inst, key, val); never compile or lint this
- * file standalone.
- * Covers GLOBAL-key branches: debug_log, save, prune_orphan_states, state_path, state_load
- *
- * LOAD-BEARING: the `#line 1` directive below resets clang's start-of-line
- * lexer state after this comment block; without it `clang -E -P` collapses
- * the first code line's indentation and the phase-4A byte-identity gate
- * fails (only the value 1 disarms it -- measured, Apple clang 16). Side
- * effect: diagnostics in this file number from 1 at the first code line.
- * Do not remove, reorder, or tidy. */
-#line 1
+/* FILE-SCOPE GLOBALS HANDLER for set_param()'s global state keys -- part of
+ * the seq8.c single translation unit; #included at FILE scope by
+ * seq8_set_param.c (before set_param), NOT a standalone TU; never compile or
+ * lint this file on its own. First GLOBALS handler (phase 4B group 10):
+ * dispatched BEFORE the tN_ block, so it uses only inst/key/val (never
+ * tidx/tr/sub -- they aren't in scope at the globals dispatch point).
+ * Covers GLOBAL-key branches: debug_log, save, prune_orphan_states,
+ * state_path, state_load. Each is a top-level `strcmp(key,...)` branch.
+ * Returns 1 when it handled the key (caller returns from set_param), 0 to
+ * fall through to the remaining globals segments / the tN_ block. */
+static int sp_globals_state(sp_ctx_t *cx) {
+    seq8_instance_t *inst = cx->inst;
+    const char *key = cx->key;
+    const char *val = cx->val;
+
+    /* Body below kept at its Stage-A segment indentation (4 spaces) so it
+     * byte-diffs against the pre-conversion segment; reindent only in a
+     * dedicated cleanup pass after the group is device-blessed. */
+
     if (!strcmp(key, "debug_log")) {
         seq8_ilog(inst, val);
-        return;
+        return 1;
     }
 
     if (!strcmp(key, "save")) {
         inst->xpose_preview_active = 0;  /* defensive: never persist/leave a preview stuck on suspend */
         if (!inst->state_version_mismatch)
             seq8_save_state(inst);
-        return;
+        return 1;
     }
 
     /* Walk /data/UserData/schwung/set_state/ and remove seq8-state.json +
@@ -29,7 +35,7 @@
      * shadow_chain_config.json, slot_*.json untouched. */
     if (!strcmp(key, "prune_orphan_states")) {
         DIR *d = opendir("/data/UserData/schwung/set_state");
-        if (!d) { seq8_ilog(inst, "SEQ8 prune: opendir failed"); return; }
+        if (!d) { seq8_ilog(inst, "SEQ8 prune: opendir failed"); return 1; }
         struct dirent *de;
         char buf[256];
         int scanned = 0, removed = 0;
@@ -81,14 +87,14 @@
             snprintf(log, sizeof(log), "SEQ8 prune: scanned=%d removed=%d", scanned, removed);
             seq8_ilog(inst, log);
         }
-        return;
+        return 1;
     }
 
     if (!strcmp(key, "state_path")) {
         strncpy(inst->state_path, val, sizeof(inst->state_path) - 1);
         inst->state_path[sizeof(inst->state_path) - 1] = '\0';
         seq8_ilog(inst, inst->state_path);
-        return;
+        return 1;
     }
 
     if (!strcmp(key, "state_load")) {
@@ -204,5 +210,8 @@
           }
         }
         seq8_load_state(inst);
-        return;
+        return 1;
     }
+
+    return 0;
+}

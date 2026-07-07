@@ -475,6 +475,12 @@ typedef struct {
 #include "setparam/sp_track_live.c"
 #include "setparam/sp_track_misc.c"
 
+/* Globals handlers (phase 4B, dispatched ABOVE the tN_ block). Unlike the
+ * tN_ handlers they use only inst/key/val (no tidx/tr/sub), matching top-level
+ * global keys. Included at file scope like the tN_ handlers; order among the
+ * file-scope includes is irrelevant (plain static fns). */
+#include "setparam/sp_globals_state.c"
+
 /* ------------------------------------------------------------------ */
 /* set_param                                                            */
 /* ------------------------------------------------------------------ */
@@ -482,6 +488,11 @@ typedef struct {
 static void set_param(void *instance, const char *key, const char *val) {
     seq8_instance_t *inst = (seq8_instance_t *)instance;
     if (!inst || !key || !val) return;
+
+    /* One dispatch context for the whole call. Globals handlers (dispatched
+     * before the tN_ block) read only inst/key/val; tidx/tr/sub are filled in
+     * inside the tN_ block. Designated init leaves tidx=0, tr=NULL, sub=NULL. */
+    sp_ctx_t cx = { .inst = inst, .key = key, .val = val };
 
 
     /* --- Transport (global) --- */
@@ -491,12 +502,15 @@ static void set_param(void *instance, const char *key, const char *val) {
  * tidy. The segment file opens with `#line 1` to disarm clang's
  * start-of-line indentation collapse at the include entry. */
 #include "setparam/sp_globals_transport.c"
-/* LOAD-BEARING SPACING: function-body segment include (phase 4A). The
- * blank-line layout around this include is part of the byte-identity
- * gate (`clang -E -P` preprocessed TU identical pre/post split); do not
- * tidy. The segment file opens with `#line 1` to disarm clang's
- * start-of-line indentation collapse at the include entry. */
-#include "setparam/sp_globals_state.c"
+    /* --- Global state keys (debug_log/save/prune_orphan_states/state_path/
+     * state_load) --- now a file-scope GLOBALS handler (phase 4B group 10),
+     * dispatched here reusing the call-wide cx. It reads only inst/key/val;
+     * returns 1 on a matched key (we return), 0 to fall through. Dispatched
+     * after the transport segment and before the misc segment, preserving the
+     * original branch order (transport -> state -> misc -> edit -> tN_). The
+     * transport segment above uses inst/key/val directly and never touches cx,
+     * so cx is still {inst,key,val} here. */
+    if (sp_globals_state(&cx)) return;
 
     /* --- Scene launch (global): all tracks to clip M --- */
     /* Global MIDI Looper: arm with capture length in master 96-PPQN ticks.
@@ -538,8 +552,12 @@ static void set_param(void *instance, const char *key, const char *val) {
         const char *sub = key + 3;
         seq8_track_t *tr = &inst->tracks[tidx];
 
-        sp_ctx_t cx = { .inst = inst, .key = key, .val = val,
-                        .tidx = tidx, .tr = tr, .sub = sub };
+        /* cx was built at the top of set_param with inst/key/val; fill in the
+         * tN_-block extension fields (the globals handlers dispatched above
+         * never read them). */
+        cx.tidx = tidx;
+        cx.tr   = tr;
+        cx.sub  = sub;
         if (sp_track_config(&cx)) return;
 
         /* tN_cC_* per-clip keys (note ops, nested _step_ parser, resolution,
