@@ -508,7 +508,7 @@ static void set_param(void *instance, const char *key, const char *val) {
      * state_load) --- now a file-scope GLOBALS handler (phase 4B group 10),
      * dispatched here reusing the call-wide cx. It reads only inst/key/val;
      * returns 1 on a matched key (we return), 0 to fall through. Dispatched
-     * after the transport segment and before the misc segment, preserving the
+     * after the transport segment and before the misc handler, preserving the
      * original branch order (transport -> state -> misc -> edit -> tN_). The
      * transport segment above uses inst/key/val directly and never touches cx,
      * so cx is still {inst,key,val} here. NOTE for whoever converts transport:
