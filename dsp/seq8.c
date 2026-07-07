@@ -3291,10 +3291,16 @@ static void pfx_apply_params(play_fx_t *fx, const clip_pfx_params_t *p) {
 
 static void pfx_sync_from_clip(seq8_track_t *tr) {
     if (tr->pad_mode == PAD_MODE_DRUM) {
-        int l;
-        for (l = 0; l < DRUM_LANES; l++)
-            drum_pfx_apply_params(&tr->drum_lane_pfx[l],
-                                  &tr->drum_clips[tr->active_clip]->lanes[l].pfx_params);
+        /* Drum clips are allocated lazily per-clip, so active_clip can point at
+         * an unallocated (NULL) slot; guard the deref, per dsp/CLAUDE.md's rule
+         * that every PAD_MODE_DRUM path also check tr->drum_clips[active_clip]. */
+        drum_clip_t *dc = tr->drum_clips[tr->active_clip];
+        if (dc) {
+            int l;
+            for (l = 0; l < DRUM_LANES; l++)
+                drum_pfx_apply_params(&tr->drum_lane_pfx[l],
+                                      &dc->lanes[l].pfx_params);
+        }
         return;
     }
     pfx_apply_params(&tr->pfx, &tr->clips[tr->active_clip].pfx_params);
