@@ -92,7 +92,26 @@
  * track-config block to have latched conductor_track to t5 first (chaining
  * constraint: this block must run after that one). tarp_reset's retrigger quirk
  * is pinned: arp_init_defaults sets retrigger=1 and tarp_reset does NOT re-clear
- * it, so a post-reset tarp.retrigger reads 1 (NOT 0). */
+ * it, so a post-reset tarp.retrigger reads 1 (NOT 0).
+ *
+ * Phase 4B group 6 prep: the sp_track_record group (recording arm/disarm,
+ * record_note_on, record_note_off) is characterized as a SEVENTH white-box
+ * block, LAST before hx_destroy. It runs on a DEDICATED track (t1): t1 is
+ * melodic and never given clip note data (earlier rows touched only its
+ * config — channel/looper/mute/solo/tarp/launch_clip), and nothing asserts
+ * t1 after this block, so its clip mutations are collision-safe. The block
+ * first RESETS t1's recording-relevant leftovers (tarp_on=1 from the table,
+ * queued_clip/active_clip=7 from the launch_clip preview) to a clean
+ * non-playing melodic baseline, then drives each arm branch by setting
+ * clip_playing/queued_clip directly. TICK-SOURCE: this suite never arms
+ * dsp_inbound via a tN_padmap push, so inst->dsp_inbound_enabled==0 and both
+ * record_note_on/off take the STOCK path (capture tick = tr->current_clip_tick,
+ * set white-box) — the on_midi press/release-slot path and the rv==2 adaptive
+ * defer (recording_pending_page/adaptive_arm, gated on transport+clip playing)
+ * are RT-only and pinned as out-of-scope. Pins are direct struct reads (flag
+ * transitions, notes[]/steps[] capture, note_t gate) — recording writes are
+ * sparse and RT-driven, so struct inspection pins the semantics far more
+ * robustly than the serialized token. */
 #include "harness.h"
 
 typedef struct { const char *key, *val, *expect_substr, *domain; } sp_case_t;
@@ -1148,6 +1167,146 @@ int main(void) {
         HX_ASSERT(ct->drum_clips[0] == NULL, "convert_to_melodic: frees drum_clips");
     }
 
+    /* ---- Recording white-box pins (Phase 4B group 6 prep). Run LAST:
+     * dedicated track t1 (melodic; only its config was touched earlier, no clip
+     * note data), reset to a clean non-playing baseline. STOCK tick path
+     * (dsp_inbound_enabled==0): record_note_on/off capture at current_clip_tick.
+     * All magic numbers distinct from every prior row/block. ---- */
+    {
+        seq8_track_t *rt = &inst->tracks[1];
+        const int TIDX = 1;
+        HX_ASSERT(inst->playing == 0, "recording block precondition: transport stopped");
+        HX_ASSERT(inst->dsp_inbound_enabled == 0,
+                  "recording block precondition: stock tick path (no padmap-armed inbound)");
+        HX_ASSERT(rt->pad_mode != PAD_MODE_DRUM, "recording block precondition: t1 melodic");
+        /* t1 carries leftovers: tarp_on=1 (table row), queued_clip/active_clip=7
+         * (launch_clip preview). Reset to a clean melodic non-recording baseline;
+         * this block owns t1 for the rest of the test. */
+        rt->recording = 0; rt->record_armed = 0;
+        rt->recording_pending_page = 0; rt->recording_adaptive_arm = 0;
+        rt->tarp_on = 0;
+        rt->drum_inp_quant = 0;
+        rt->queued_clip = -1;
+        rt->clip_playing = 0;
+        rt->active_clip = 0;
+        rt->rec_pending_count = 0;
+
+        /* --- recording arm: rv=1, clip NOT playing + no queued clip -> the
+         * final `else` branch: recording=1. The arm also (regardless of branch)
+         * clears the fresh-session masks: live_recorded_steps, the inbound
+         * press slots, and resets drum_last_rec_step to 0xFF. (undo_begin
+         * snapshot is taken on arm — not separately observable in-harness.) */
+        rt->live_recorded_steps[0] = 0xFF;
+        inst->on_midi_press_active[TIDX][40] = 1;
+        rt->drum_last_rec_step[0] = 0;
+        hx_set_param(h, "t1_recording", "1");
+        HX_ASSERT(rt->recording == 1, "recording=1: stopped clip + unqueued -> recording");
+        HX_ASSERT(rt->record_armed == 0, "recording=1: record_armed stays 0 in immediate branch");
+        HX_ASSERT(rt->live_recorded_steps[0] == 0, "recording arm: clears live_recorded_steps");
+        HX_ASSERT(inst->on_midi_press_active[TIDX][40] == 0, "recording arm: clears inbound press slots");
+        /* memset(..., 0xFF, ...) fills all bytes -> int16_t reads -1 (0xFFFF). */
+        HX_ASSERT(rt->drum_last_rec_step[0] == -1,
+                  "recording arm: resets drum_last_rec_step to 0xFF (all-bytes -> -1)");
+
+        /* --- recording arm: rv=1, queued_clip>=0 -> record_armed (NOT recording). */
+        rt->recording = 0; rt->record_armed = 0; rt->clip_playing = 0; rt->queued_clip = 3;
+        hx_set_param(h, "t1_recording", "1");
+        HX_ASSERT(rt->record_armed == 1, "recording=1: queued clip -> record_armed");
+        HX_ASSERT(rt->recording == 0, "recording=1: queued-arm leaves recording 0");
+
+        /* --- recording arm: rv=1, clip_playing (transport stopped) -> recording=1. */
+        rt->recording = 0; rt->record_armed = 0; rt->clip_playing = 1; rt->queued_clip = -1;
+        hx_set_param(h, "t1_recording", "1");
+        HX_ASSERT(rt->recording == 1, "recording=1: clip_playing (transport stopped) -> recording");
+
+        /* --- recording arm: rv=2 (adaptive). The defer-with-reset path is gated
+         * on (clip_playing && inst->playing && rv==2); transport is stopped here,
+         * so rv=2 falls through to the clip_playing immediate-arm branch. The
+         * recording_pending_page/recording_adaptive_arm defer is RT-only (needs a
+         * running transport) — OUT OF HARNESS SCOPE. */
+        rt->recording = 0; rt->clip_playing = 1; rt->queued_clip = -1;
+        rt->recording_pending_page = 0; rt->recording_adaptive_arm = 0;
+        hx_set_param(h, "t1_recording", "2");
+        HX_ASSERT(rt->recording == 1, "recording=2: transport stopped -> immediate arm (defer is RT-gated)");
+        HX_ASSERT(rt->recording_pending_page == 0 && rt->recording_adaptive_arm == 0,
+                  "recording=2: no adaptive defer while transport stopped");
+
+        /* --- recording disarm: rv=0 clears all arm flags AND cancels a pending
+         * count-in scheduled for THIS track (the "keeps recording after disarm"
+         * fix: count_in_ticks=0 when count_in_track==tidx). */
+        rt->recording = 1; rt->record_armed = 1;
+        rt->recording_pending_page = 1; rt->recording_adaptive_arm = 1;
+        inst->count_in_track = (uint8_t)TIDX; inst->count_in_ticks = 50;
+        hx_set_param(h, "t1_recording", "0");
+        HX_ASSERT(rt->recording == 0, "recording=0: disarm clears recording");
+        HX_ASSERT(rt->record_armed == 0, "recording=0: clears record_armed");
+        HX_ASSERT(rt->recording_pending_page == 0 && rt->recording_adaptive_arm == 0,
+                  "recording=0: clears adaptive-arm flags");
+        HX_ASSERT(inst->count_in_ticks == 0, "recording=0: cancels pending count-in for this track");
+
+        /* --- record_note_on guard: `if (!tr->recording) return;` -> dropped. */
+        {
+            clip_t *rc = &rt->clips[0];
+            uint16_t nc0 = rc->note_count;
+            rt->recording = 0;
+            rt->current_clip_tick = 48;
+            hx_set_param(h, "t1_record_note_on", "77 90");
+            HX_ASSERT(rc->note_count == nc0, "record_note_on: no-op when not recording (guard)");
+        }
+
+        /* --- record_note_on capture (stock path). Arm, set current_clip_tick,
+         * fire. Note lands in notes[] at that tick with vel + gate=GATE_TICKS,
+         * mirrored to steps[]. tick 48 @tps24 -> note_step=(48+12)/24=2. vel 101
+         * (deliberately != SEQ_VEL default 100 so a default-vel bug is caught). */
+        {
+            clip_t *rc = &rt->clips[0];
+            int qi, found = -1;
+            rt->recording = 1; rt->tarp_on = 0; rt->drum_inp_quant = 0;
+            rt->rec_pending_count = 0;
+            rt->current_clip_tick = 48;
+            hx_set_param(h, "t1_record_note_on", "72 101");
+            for (qi = 0; qi < (int)rc->note_count; qi++)
+                if (rc->notes[qi].active && rc->notes[qi].pitch == 72) found = qi;
+            HX_ASSERT(found >= 0, "record_note_on: note pitch72 inserted");
+            HX_ASSERT(rc->notes[found].tick == 48, "record_note_on: tick = current_clip_tick (48)");
+            HX_ASSERT(rc->notes[found].vel == 101, "record_note_on: vel = parsed 101");
+            HX_ASSERT(rc->notes[found].gate == GATE_TICKS, "record_note_on: gate = GATE_TICKS default");
+            /* step mirror at sidx 2 */
+            HX_ASSERT(rc->steps[2] == 1 && rc->step_note_count[2] == 1,
+                      "record_note_on: mirrored to steps[2]");
+            HX_ASSERT(rc->step_notes[2][0] == 72 && rc->step_vel[2] == 101,
+                      "record_note_on: step notes/vel mirrored");
+        }
+
+        /* --- record_note_off guard: `if (!tr->recording) return;`. */
+        {
+            clip_t *rc = &rt->clips[0];
+            rt->recording = 1; rt->rec_pending_count = 0;
+            rt->current_clip_tick = 24;
+            hx_set_param(h, "t1_record_note_on", "80 90");   /* on at tick 24 (sidx 1) */
+            {
+                int qi, f = -1;
+                for (qi = 0; qi < (int)rc->note_count; qi++)
+                    if (rc->notes[qi].active && rc->notes[qi].pitch == 80) f = qi;
+                HX_ASSERT(f >= 0 && rc->notes[f].gate == GATE_TICKS,
+                          "record_note_off setup: pitch80 on at gate=GATE_TICKS");
+                /* guard: disarm then off -> gate unchanged */
+                rt->recording = 0;
+                rt->current_clip_tick = 72;
+                hx_set_param(h, "t1_record_note_off", "80");
+                HX_ASSERT(rc->notes[f].gate == GATE_TICKS,
+                          "record_note_off: no-op when not recording (guard)");
+                /* --- record_note_off capture: gate = off_tick - on_tick = 72-24 = 48. */
+                rt->recording = 1;
+                hx_set_param(h, "t1_record_note_off", "80");
+                HX_ASSERT(rc->notes[f].gate == 48, "record_note_off: gate = off(72) - on(24) = 48");
+                /* step_gate mirror at note_step(24)=1 */
+                HX_ASSERT(rc->step_gate[1] == 48, "record_note_off: step_gate mirrored to 48");
+                HX_ASSERT(rt->rec_pending_count == 0, "record_note_off: rec_pending entry consumed");
+            }
+        }
+    }
+
     hx_destroy(h);
     printf("PASS: set_param domain snapshot (%d domains + transport)\n", i);
     printf("PASS: track-config white-box pins "
@@ -1168,5 +1327,10 @@ int main(void) {
            "full run + serialized tokens + reset retrigger quirk, "
            "pad_mode/convert_to_drum/convert_to_melodic type flips, "
            "convert_to_conduct another-Conductor no-op)\n");
+    printf("PASS: recording white-box pins "
+           "(arm rv=1 immediate/queued/clip-playing + rv=2 stopped-immediate, "
+           "arm session-mask clears, disarm flag clears + count-in cancel, "
+           "record_note_on capture + step mirror, record_note_off gate + "
+           "step_gate mirror, both !recording guards)\n");
     return 0;
 }
