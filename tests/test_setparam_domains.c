@@ -49,7 +49,24 @@
  * has an active note), so struct reads pin the semantics far more robustly. One
  * distinct lane per concern so nothing collides. Serialized-token coverage for
  * this group already lives in the table: t6_l0_step_0_toggle (lane-note token),
- * t6_l2_mute (t6dlm), t6_l3_repeat_gate_set (t6l3rg). */
+ * t6_l2_mute (t6dlm), t6_l3_repeat_gate_set (t6l3rg).
+ *
+ * Phase 4B group 4 prep: the tN_cC_* per-clip block (the single
+ * `if (sub[0]=='c' && digit)` clip block in sp_track_clip.c) is characterized
+ * as a FIFTH white-box block, LAST before hx_destroy. It runs on a dedicated
+ * MELODIC track (t4 — route/looper touched earlier but never given clip note
+ * data, and it stays melodic) plus t3 (already DRUM from the group-3 block, its
+ * drum_clips allocated) for the two drum-clip variants (_drum_clear /
+ * _drum_reset). Neither track is asserted after this block, so the magic
+ * clip/step/knob indices here are collision-safe. Pins are direct struct
+ * inspection (notes[]/steps[]/step arrays, clip_cc_auto[] lane fields, cond_
+ * fields, pfx_params, rui_sel_ / rui_cc_focus) rather than serialized tokens: per-clip
+ * note/step content is far more robustly pinned by reading the clip_t than by
+ * the sparse serialization. One distinct clip per concern. Serialized-token
+ * coverage for this group already lives in the table (t5_c0_step_0_toggle/_gate/
+ * _set_notes, t7_c3_length, t7_c1_loop_set); the _length rui_rev freeze-fix
+ * (`if (!tr->recording) rui_touch(inst);`) is pinned separately in
+ * test_rui_rev.c and is NOT duplicated here. */
 #include "harness.h"
 
 typedef struct { const char *key, *val, *expect_substr, *domain; } sp_case_t;
@@ -690,6 +707,280 @@ int main(void) {
         }
     }
 
+    /* ---- Per-clip white-box pins (Phase 4B group 4 prep). Run LAST:
+     * self-contained on a dedicated MELODIC track (t4) + the group-3 DRUM track
+     * (t3) for the drum-clip variants. Characterizes the whole tN_cC_* block —
+     * ruisel/cc_focus, remote-UI note ops, the nested _step_S_* parser, per-clip
+     * resolution/dir/loop_set/length clamps, the _kN_cc_* lane loop sub-block,
+     * pfx_set, conductor fields, and the three clears + at/drum clears. One
+     * distinct clip per concern so nothing collides. ---- */
+    {
+        seq8_track_t *mt = &inst->tracks[4];
+        HX_ASSERT(mt->pad_mode != PAD_MODE_DRUM, "precondition: t4 is melodic");
+
+        /* _ruisel "[lane]": select this clip as the remote-UI snapshot target;
+         * optional arg = drum lane (-1/absent = melodic). */
+        hx_set_param(h, "t4_c9_ruisel", "5");
+        HX_ASSERT(inst->rui_sel_track == 4 && inst->rui_sel_clip == 9 &&
+                  inst->rui_sel_lane == 5, "_ruisel: track/clip/lane stored");
+        hx_set_param(h, "t4_c9_ruisel", "-1");
+        HX_ASSERT(inst->rui_sel_lane == -1, "_ruisel: '-' arg => lane -1 (melodic)");
+
+        /* _cc_focus "<k>": gate rui_cc to knob k (-1 = none); k>=8 => -1. Bumps rev. */
+        {
+            uint32_t rev0 = inst->rui_rev;
+            hx_set_param(h, "t4_c9_cc_focus", "3");
+            HX_ASSERT(inst->rui_cc_focus == 3, "_cc_focus: knob 3 gated");
+            HX_ASSERT(inst->rui_rev == rev0 + 1, "_cc_focus: bumps rui_rev");
+            hx_set_param(h, "t4_c9_cc_focus", "99");
+            HX_ASSERT(inst->rui_cc_focus == -1, "_cc_focus: k>=8 => -1 (none)");
+        }
+
+        /* Remote-UI melodic note ops: notes[] keyed on (tick, pitch). */
+        {
+            clip_t *c1 = &mt->clips[1];
+            hx_set_param(h, "t4_c1_note_add", "0 60 77 20");
+            HX_ASSERT(c1->note_count == 1 && c1->notes[0].active, "_note_add: 1 note present");
+            HX_ASSERT(c1->notes[0].tick == 0 && c1->notes[0].pitch == 60 &&
+                      c1->notes[0].vel == 77 && c1->notes[0].gate == 20,
+                      "_note_add: tick0 pitch60 vel77 gate20");
+            hx_set_param(h, "t4_c1_note_vel", "0 60 99");
+            HX_ASSERT(c1->notes[0].vel == 99, "_note_vel: vel->99");
+            hx_set_param(h, "t4_c1_note_resize", "0 60 30");
+            HX_ASSERT(c1->notes[0].gate == 30, "_note_resize: gate->30");
+            hx_set_param(h, "t4_c1_note_move", "0 60 24 62");
+            HX_ASSERT(c1->notes[0].tick == 24 && c1->notes[0].pitch == 62,
+                      "_note_move: (tick0,pitch60)->(tick24,pitch62)");
+            hx_set_param(h, "t4_c1_note_del", "24 62");
+            HX_ASSERT(c1->note_count == 0, "_note_del: note removed (compacted)");
+        }
+
+        /* _notes_op batch: multi-op, one finalize for the lot. */
+        {
+            clip_t *c2 = &mt->clips[2];
+            hx_set_param(h, "t4_c2_notes_op", "a 0 60 100 24; a 12 64 90 24");
+            HX_ASSERT(c2->note_count == 2, "_notes_op: batch added 2 notes atomically");
+            {
+                int qi, f0 = 0, f12 = 0;
+                for (qi = 0; qi < (int)c2->note_count; qi++) {
+                    if (c2->notes[qi].tick == 0  && c2->notes[qi].pitch == 60) f0 = 1;
+                    if (c2->notes[qi].tick == 12 && c2->notes[qi].pitch == 64) f12 = 1;
+                }
+                HX_ASSERT(f0 && f12, "_notes_op: both notes present");
+            }
+        }
+
+        /* _resolution: TPS change rescales notes proportionally; NO-OP while the
+         * track is recording (guard `if (tr->recording) return;`). */
+        {
+            clip_t *c3 = &mt->clips[3];
+            hx_set_param(h, "t4_c3_note_add", "24 60 100 24");
+            HX_ASSERT(c3->ticks_per_step == 24 && c3->notes[0].tick == 24,
+                      "_resolution setup: default tps 24, note at tick 24");
+            mt->recording = 1;
+            hx_set_param(h, "t4_c3_resolution", "3");   /* TPS_VALUES[3]=96 */
+            HX_ASSERT(c3->ticks_per_step == 24 && c3->notes[0].tick == 24,
+                      "_resolution: no-op while recording");
+            mt->recording = 0;
+            hx_set_param(h, "t4_c3_resolution", "2");   /* TPS_VALUES[2]=48 */
+            HX_ASSERT(c3->ticks_per_step == 48, "_resolution: tps 24->48");
+            HX_ASSERT(c3->notes[0].tick == 48, "_resolution: note tick 24->48 rescaled");
+            HX_ASSERT(c3->notes[0].gate == 48, "_resolution: note gate 24->48 rescaled");
+        }
+
+        /* Nested _step_S_* parser (melodic clip variant): toggle/vel/gate/nudge/
+         * iter/rand/ratch/pitch/add/copy_to/reassign/clear. (_set_notes is
+         * table-covered on t5_c0_step_0_set_notes.) */
+        {
+            clip_t *c8 = &mt->clips[8];
+            hx_set_param(h, "t4_c8_step_3_toggle", "60 90");   /* "pitch [vel]" */
+            HX_ASSERT(c8->steps[3] == 1 && c8->step_note_count[3] == 1, "_step_toggle: step3 on");
+            HX_ASSERT(c8->step_notes[3][0] == 60 && c8->step_vel[3] == 90, "_step_toggle: pitch60 vel90");
+            HX_ASSERT(c8->active == 1, "_step_toggle: clip marked active");
+            hx_set_param(h, "t4_c8_step_3_vel", "55");
+            HX_ASSERT(c8->step_vel[3] == 55, "_step_vel: step3 vel->55");
+            hx_set_param(h, "t4_c8_step_3_gate", "40");
+            HX_ASSERT(c8->step_gate[3] == 40, "_step_gate: step3 gate->40");
+            hx_set_param(h, "t4_c8_step_3_nudge", "5");
+            HX_ASSERT(c8->note_tick_offset[3][0] == 5, "_step_nudge: offset->5");
+            hx_set_param(h, "t4_c8_step_3_iter", "33");   /* 0x21: len2 idx1 -> valid */
+            HX_ASSERT(c8->step_iter[3] == 33, "_step_iter: raw 33 stored");
+            hx_set_param(h, "t4_c8_step_3_rand", "50");
+            HX_ASSERT(c8->step_random[3] == 50, "_step_rand: 50");
+            hx_set_param(h, "t4_c8_step_3_ratch", "3");
+            HX_ASSERT(c8->step_ratchet[3] == 3, "_step_ratch: 3");
+            hx_set_param(h, "t4_c8_step_3_pitch", "5");
+            HX_ASSERT(c8->step_notes[3][0] == 65, "_step_pitch: +5 => 60->65");
+            hx_set_param(h, "t4_c8_step_5_add", "67 0 80");   /* "p offset vel" */
+            HX_ASSERT(c8->steps[5] == 1 && c8->step_note_count[5] == 1 &&
+                      c8->step_notes[5][0] == 67 && c8->step_vel[5] == 80, "_step_add: step5 note67 vel80");
+            hx_set_param(h, "t4_c8_step_3_copy_to", "7");
+            HX_ASSERT(c8->steps[7] == 1 && c8->step_note_count[7] == 1, "_step_copy_to: step7 populated");
+            HX_ASSERT(c8->step_notes[7][0] == 65 && c8->step_vel[7] == 55 &&
+                      c8->step_gate[7] == 40, "_step_copy_to: copies notes/vel/gate");
+            HX_ASSERT(c8->step_iter[7] == 33 && c8->step_ratchet[7] == 3, "_step_copy_to: copies trig conds");
+            HX_ASSERT(c8->step_note_count[3] == 1, "_step_copy_to: SRC step3 unchanged");
+            hx_set_param(h, "t4_c8_step_7_reassign", "11");
+            HX_ASSERT(c8->step_note_count[11] == 1 && c8->steps[11] == 1, "_step_reassign: moved to step11");
+            HX_ASSERT(c8->step_note_count[7] == 0 && c8->steps[7] == 0, "_step_reassign: SRC step7 cleared");
+            hx_set_param(h, "t4_c8_step_3_clear", "0");
+            HX_ASSERT(c8->steps[3] == 0 && c8->step_note_count[3] == 0, "_step_clear: step3 emptied");
+            HX_ASSERT(c8->step_iter[3] == 0 && c8->step_ratchet[3] == 0, "_step_clear: trig conds reset");
+        }
+
+        /* _dir: per-clip playback direction + pp_dir_state; on the ACTIVE clip
+         * (c0 == active_clip) also silences the track (side effect not
+         * separately observable in-harness — exercised, not asserted). */
+        {
+            clip_t *c0 = &mt->clips[0];
+            HX_ASSERT((int)mt->active_clip == 0, "precondition: t4 active_clip == 0");
+            hx_set_param(h, "t4_c0_dir", "3");   /* 3 = Pingpong-Backward */
+            HX_ASSERT(c0->playback_dir == 3, "_dir: playback_dir->3");
+            HX_ASSERT(c0->pp_dir_state == -1, "_dir: pp_dir_state initial -1 for dir 3");
+        }
+
+        /* _loop_set (melodic) packed decode + clamp; _length max-len clamp.
+         * (Serialized tokens are table-covered on t7; here pin the decode/clamp
+         * facets. The rui_rev freeze-fix is pinned in test_rui_rev.c.) */
+        {
+            clip_t *c15 = &mt->clips[15];
+            /* packed = loop_start<<16 | length = 3*65536 + 8 = 196616 */
+            hx_set_param(h, "t4_c15_loop_set", "196616");
+            HX_ASSERT(c15->loop_start == 3 && c15->length == 8, "_loop_set: packed decode ls=3 len=8");
+            /* ls+len > SEQ_STEPS clamps len to SEQ_STEPS-ls. ls=1, len=999 -> 255 */
+            hx_set_param(h, "t4_c15_loop_set", "66535");   /* (1<<16)|999 */
+            HX_ASSERT(c15->loop_start == 1 && c15->length == SEQ_STEPS - 1,
+                      "_loop_set: ls+len>SEQ_STEPS clamps len to SEQ_STEPS-ls");
+            /* _length clamps to max_len = SEQ_STEPS - loop_start (=255 here). */
+            hx_set_param(h, "t4_c15_length", "500");
+            HX_ASSERT(c15->length == SEQ_STEPS - 1, "_length: clamps to SEQ_STEPS - loop_start");
+        }
+
+        /* _kN_cc_* per-clip CC-lane loop sub-block: writes clip_cc_auto[cidx]'s
+         * lane_loop_start/lane_length/lane_tps/lane_res_tps (knob k). */
+        {
+            cc_auto_t *ca = &mt->clip_cc_auto[10];
+            hx_set_param(h, "t4_c10_k2_cc_loop_set", "196616");   /* ls=3 len=8 */
+            HX_ASSERT(ca->lane_loop_start[2] == 3 && ca->lane_length[2] == 8,
+                      "_k2_cc_loop_set: lane ls=3 len=8");
+            hx_set_param(h, "t4_c10_k2_cc_lane_length", "5");
+            HX_ASSERT(ca->lane_length[2] == 5, "_k2_cc_lane_length: ->5");
+            hx_set_param(h, "t4_c10_k2_cc_lane_tps", "48");       /* valid TPS */
+            HX_ASSERT(ca->lane_tps[2] == 48, "_k2_cc_lane_tps: 48 accepted");
+            hx_set_param(h, "t4_c10_k2_cc_lane_tps", "50");       /* invalid TPS -> 0 */
+            HX_ASSERT(ca->lane_tps[2] == 0, "_k2_cc_lane_tps: non-TPS value => 0");
+            hx_set_param(h, "t4_c10_k2_cc_lane_res_tps", "96");
+            HX_ASSERT(ca->lane_res_tps[2] == 96, "_k2_cc_lane_res_tps: 96");
+            hx_set_param(h, "t4_c10_k2_cc_lane_double_fill", "1"); /* len 5->10 (no points) */
+            HX_ASSERT(ca->lane_length[2] == 10, "_k2_cc_lane_double_fill: length 5->10");
+            hx_set_param(h, "t4_c10_k2_cc_lane_reset", "1");
+            HX_ASSERT(ca->lane_loop_start[2] == 0 && ca->lane_length[2] == 0 &&
+                      ca->lane_tps[2] == 0 && ca->lane_res_tps[2] == 0,
+                      "_k2_cc_lane_reset: all four lane fields zeroed");
+        }
+
+        /* _pfx_set: routes a pfx key to this clip's pfx_params (any clip). */
+        {
+            clip_t *c5 = &mt->clips[5];
+            HX_ASSERT(c5->pfx_params.gate_time == 100, "_pfx_set precondition: default gate_time 100");
+            hx_set_param(h, "t4_c5_pfx_set", "noteFX_gate 50");
+            HX_ASSERT(c5->pfx_params.gate_time == 50, "_pfx_set: gate_time->50 on named clip");
+        }
+
+        /* Conductor per-clip storage fields ("Phase 2: storage only"). Payload
+         * "<trackIdx> <value>" for the per-track banks; _cond_lock is a bare flag. */
+        {
+            clip_t *c6 = &mt->clips[6];
+            HX_ASSERT(c6->cond_resp[3] == 1, "_cond_resp precondition: default responder ON");
+            hx_set_param(h, "t4_c6_cond_resp", "3 0");
+            HX_ASSERT(c6->cond_resp[3] == 0, "_cond_resp: track3 responder OFF");
+            hx_set_param(h, "t4_c6_cond_lock", "1");
+            HX_ASSERT(c6->cond_lock == 1, "_cond_lock: ->1");
+            hx_set_param(h, "t4_c6_cond_oct", "2 3");
+            HX_ASSERT(c6->cond_oct[2] == 3, "_cond_oct: track2 octave +3");
+            hx_set_param(h, "t4_c6_cond_oct", "2 99");   /* clamp -4..4 */
+            HX_ASSERT(c6->cond_oct[2] == 4, "_cond_oct: clamps to +4");
+            hx_set_param(h, "t4_c6_cond_when", "5 1");
+            HX_ASSERT(c6->cond_when[5] == 1, "_cond_when: track5 Now(1)");
+        }
+
+        /* _clear vs _clear_keep vs _hard_reset: what each preserves/wipes. */
+        {
+            clip_t *c11 = &mt->clips[11];
+            hx_set_param(h, "t4_c11_step_2_toggle", "60 80");
+            hx_set_param(h, "t4_c11_loop_set", "196616");   /* ls=3 len=8 */
+            HX_ASSERT(c11->steps[2] == 1 && c11->length == 8 && c11->loop_start == 3,
+                      "_clear setup: note + loop window");
+            hx_set_param(h, "t4_c11_clear", "1");
+            HX_ASSERT(c11->steps[2] == 0 && c11->step_note_count[2] == 0 && c11->active == 0,
+                      "_clear: step data wiped");
+            HX_ASSERT(c11->note_count == 0, "_clear: notes[] wiped");
+            HX_ASSERT(c11->length == 8 && c11->loop_start == 3,
+                      "_clear: PRESERVES length + loop_start (vs hard_reset)");
+
+            clip_t *c12 = &mt->clips[12];
+            hx_set_param(h, "t4_c12_step_1_toggle", "62 70");
+            hx_set_param(h, "t4_c12_loop_set", "196616");
+            hx_set_param(h, "t4_c12_clear_keep", "1");
+            HX_ASSERT(c12->steps[1] == 0 && c12->note_count == 0, "_clear_keep: step/note data wiped");
+            HX_ASSERT(c12->length == 8 && c12->loop_start == 3, "_clear_keep: PRESERVES geometry");
+
+            clip_t *c13 = &mt->clips[13];
+            hx_set_param(h, "t4_c13_step_1_toggle", "64 70");
+            hx_set_param(h, "t4_c13_loop_set", "196616");   /* ls=3 len=8 */
+            HX_ASSERT(c13->length == 8 && c13->loop_start == 3, "_hard_reset setup: geometry set");
+            hx_set_param(h, "t4_c13_hard_reset", "1");
+            HX_ASSERT(c13->steps[1] == 0 && c13->active == 0, "_hard_reset: steps wiped");
+            HX_ASSERT(c13->length == SEQ_STEPS_DEFAULT && c13->loop_start == 0,
+                      "_hard_reset: factory-resets geometry (vs _clear)");
+            HX_ASSERT(c13->ticks_per_step == TICKS_PER_STEP, "_hard_reset: tps back to default");
+        }
+
+        /* _at_clear: wipes this clip's aftertouch automation (count + lane pitch). */
+        {
+            at_auto_t *at = &mt->clip_at_auto[14];
+            at->count[0] = 5; at->pitch[0] = 60;
+            hx_set_param(h, "t4_c14_at_clear", "1");
+            HX_ASSERT(at->count[0] == 0, "_at_clear: count zeroed");
+            HX_ASSERT(at->pitch[0] == AT_LANE_FREE, "_at_clear: lane pitch -> AT_LANE_FREE");
+        }
+
+        /* Drum-clip variants (_drum_clear / _drum_reset) — need a DRUM track with
+         * allocated drum_clips. Reuse t3 (DRUM from the group-3 block); set up a
+         * lane step directly via struct on non-active clips 7/8, then invoke. */
+        {
+            seq8_track_t *dt = &inst->tracks[3];
+            HX_ASSERT(dt->pad_mode == PAD_MODE_DRUM, "precondition: t3 is DRUM");
+            HX_ASSERT(dt->drum_clips[7] && dt->drum_clips[8], "precondition: t3 drum_clips[7,8] allocated");
+
+            /* _drum_clear "1"(keep): wipes all lane step data in clip C;
+             * midi_note / length / tps preserved. */
+            {
+                clip_t *lc = &dt->drum_clips[7]->lanes[3].clip;
+                uint8_t mn = dt->drum_clips[7]->lanes[3].midi_note;
+                lc->steps[2] = 1; lc->step_note_count[2] = 1; lc->step_notes[2][0] = mn;
+                lc->active = 1; lc->length = 9;
+                hx_set_param(h, "t3_c7_drum_clear", "1");
+                HX_ASSERT(lc->steps[2] == 0 && lc->step_note_count[2] == 0, "_drum_clear: lane steps wiped");
+                HX_ASSERT(lc->active == 0, "_drum_clear: lane deactivated");
+                HX_ASSERT(lc->length == 9, "_drum_clear: PRESERVES length");
+                HX_ASSERT(dt->drum_clips[7]->lanes[3].midi_note == mn, "_drum_clear: preserves midi_note");
+            }
+
+            /* _drum_reset: clip_init on each lane's clip_t (factory reset);
+             * midi_note preserved (sibling field). */
+            {
+                clip_t *lc = &dt->drum_clips[8]->lanes[3].clip;
+                dt->drum_clips[8]->lanes[3].midi_note = 99;
+                lc->steps[0] = 1; lc->active = 1; lc->length = 9;
+                hx_set_param(h, "t3_c8_drum_reset", "1");
+                HX_ASSERT(lc->steps[0] == 0 && lc->active == 0, "_drum_reset: lane steps wiped");
+                HX_ASSERT(lc->length == SEQ_STEPS_DEFAULT, "_drum_reset: length reset (clip_init)");
+                HX_ASSERT(dt->drum_clips[8]->lanes[3].midi_note == 99, "_drum_reset: preserves midi_note");
+            }
+        }
+    }
+
     hx_destroy(h);
     printf("PASS: set_param domain snapshot (%d domains + transport)\n", i);
     printf("PASS: track-config white-box pins "
@@ -701,5 +992,9 @@ int main(void) {
            "(alloc-trigger/lane_note, note-ops, step-parser, clip config, "
            "clear/hard_reset, double_fill/beat_stretch/clock_shift/nudge, "
            "pfx/lgto, copy_to/cut_to, euclid, mute/solo, repeat-groove, lane guard)\n");
+    printf("PASS: per-clip white-box pins "
+           "(ruisel/cc_focus, note-ops, step-parser, resolution/dir, "
+           "loop_set/length clamps, cc-lane sub-block, pfx_set, conductor fields, "
+           "clear/clear_keep/hard_reset, at_clear, drum_clear/drum_reset)\n");
     return 0;
 }
