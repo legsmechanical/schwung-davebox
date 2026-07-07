@@ -1735,6 +1735,148 @@ int main(void) {
         }
     }
 
+    /* ---- Melodic-clip-transform + pfx catch-all white-box pins (Phase 4B
+     * group 9 prep). Runs after the table (order-neutral; all white-box blocks
+     * run after the table in file order). The sp_track_misc group is the
+     * TERMINAL set_param segment: 8 active-melodic-clip transform branches
+     * (clip_length / clip_playback_dir / clip_playback_audio_reverse /
+     * clock_shift / nudge / beat_stretch / loop_double_fill / lgto_apply) THEN
+     * an UNCONDITIONAL pfx_set catch-all (any unmatched tN_ sub-key -> pfx_set
+     * on the active clip's pfx_params; preceded by an undo snapshot for the
+     * pfx_*_reset keys). These are BARE tN_ keys operating on
+     * tr->clips[active_clip] (NO cC prefix -- DISTINCT from sp_track_clip's
+     * tN_cC_* keys, which target an explicit clip). Runs on dedicated MELODIC
+     * track t7: the group-7 live block touched only t7's live/padmap paths +
+     * clip_cc_auto, never the clip_t note/step arrays (except c0 via xpose), so
+     * clips 1..9 are pristine. active_clip is struct-set per concern to a
+     * distinct clip, with distinct magic numbers, so nothing chains. Nothing
+     * asserts t7 after this block. OUT OF SCOPE (RT/transport): current_step /
+     * playhead re-anchoring after length/shift changes, and
+     * clip_playback_dir's silence_track_from_set_param side effect (transport
+     * stopped here -- exercised, not separately observable). ---- */
+    {
+        seq8_track_t *xt = &inst->tracks[7];
+        HX_ASSERT(xt->pad_mode == PAD_MODE_MELODIC_SCALE, "group9 precondition: t7 melodic");
+        /* t7 clips 0/1/3 are NOT pristine (table rows: c0 xpose note, c1
+         * loop_set -> loop_start 3, c3 length). Use only clips 2 + 4..13. */
+
+        /* clip_length: bare key (NO cC) operates on the ACTIVE clip; clamps to
+         * max_len = SEQ_STEPS - loop_start. DISTINCT from sp_track_clip's
+         * tN_cC_length (explicit clip + rui_touch): this one follows active_clip
+         * and does NOT rui_touch. */
+        {
+            uint32_t rev0 = inst->rui_rev;
+            xt->active_clip = 10;
+            hx_set_param(h, "t7_clip_length", "37");
+            HX_ASSERT(xt->clips[10].length == 37, "clip_length: active clip10 length->37");
+            HX_ASSERT(xt->clips[12].length != 37, "clip_length: non-active clip12 untouched (follows active_clip)");
+            HX_ASSERT(inst->rui_rev == rev0, "clip_length: does NOT rui_touch (vs tN_cC_length)");
+            hx_set_param(h, "t7_clip_length", "999");
+            HX_ASSERT(xt->clips[10].length == SEQ_STEPS, "clip_length: clamps to SEQ_STEPS - loop_start (loop_start 0)");
+        }
+
+        /* clip_playback_dir: dir 0..3 clamp + pp_dir_state = initial_pp_dir. */
+        xt->active_clip = 4;
+        hx_set_param(h, "t7_clip_playback_dir", "3");
+        HX_ASSERT(xt->clips[4].playback_dir == 3, "clip_playback_dir: dir->3");
+        HX_ASSERT(xt->clips[4].pp_dir_state == -1, "clip_playback_dir: pp_dir_state initial -1 for dir 3");
+        hx_set_param(h, "t7_clip_playback_dir", "99");
+        HX_ASSERT(xt->clips[4].playback_dir == 3, "clip_playback_dir: clamps 99->3");
+
+        /* clip_playback_audio_reverse: 0..1 clamp. */
+        xt->active_clip = 5;
+        hx_set_param(h, "t7_clip_playback_audio_reverse", "1");
+        HX_ASSERT(xt->clips[5].playback_audio_reverse == 1, "clip_playback_audio_reverse: ->1");
+        hx_set_param(h, "t7_clip_playback_audio_reverse", "9");
+        HX_ASSERT(xt->clips[5].playback_audio_reverse == 1, "clip_playback_audio_reverse: clamps 9->1");
+
+        /* clock_shift: dir=1 rotates step0->step1 (mirrors the drum-lane
+         * _clock_shift already pinned, but on the active melodic clip). */
+        {
+            clip_t *c6 = &xt->clips[6];
+            xt->active_clip = 6;
+            hx_set_param(h, "t7_c6_length", "4");
+            hx_set_param(h, "t7_c6_step_0_toggle", "60 100");
+            hx_set_param(h, "t7_clock_shift", "1");
+            HX_ASSERT(c6->steps[1] == 1 && c6->steps[0] == 0, "clock_shift: dir=1 rotates step0->step1");
+            HX_ASSERT(c6->clock_shift_pos == 1, "clock_shift: pos->1");
+        }
+
+        /* nudge: dir=1 offsets +1 (below midpoint tps/2=12, stays in-step);
+         * dir=0 resets nudge_pos. */
+        {
+            clip_t *c7 = &xt->clips[7];
+            xt->active_clip = 7;
+            hx_set_param(h, "t7_c7_step_0_toggle", "60 100");
+            hx_set_param(h, "t7_nudge", "1");
+            HX_ASSERT(c7->note_tick_offset[0][0] == 1, "nudge: dir=1 offset+1");
+            HX_ASSERT(c7->nudge_pos == 1, "nudge: pos+1");
+            hx_set_param(h, "t7_nudge", "0");
+            HX_ASSERT(c7->nudge_pos == 0, "nudge: dir=0 resets pos");
+        }
+
+        /* beat_stretch: dir=1 doubles length + stretch_exp++, dir=-1 back. */
+        {
+            clip_t *c8 = &xt->clips[8];
+            xt->active_clip = 8;
+            hx_set_param(h, "t7_c8_length", "4");
+            hx_set_param(h, "t7_c8_step_0_toggle", "60 100");
+            int se0 = c8->stretch_exp;
+            hx_set_param(h, "t7_beat_stretch", "1");
+            HX_ASSERT(c8->length == 8, "beat_stretch: dir=1 length 4->8");
+            HX_ASSERT(c8->stretch_exp == se0 + 1, "beat_stretch: stretch_exp++");
+            HX_ASSERT(c8->steps[0] == 1, "beat_stretch: step0 kept at index 0");
+            hx_set_param(h, "t7_beat_stretch", "-1");
+            HX_ASSERT(c8->length == 4, "beat_stretch: dir=-1 length 8->4");
+            HX_ASSERT(c8->stretch_exp == se0, "beat_stretch: stretch_exp-- back");
+        }
+
+        /* loop_double_fill: doubles the loop window, copying content forward. */
+        {
+            clip_t *c9 = &xt->clips[9];
+            xt->active_clip = 9;
+            hx_set_param(h, "t7_c9_length", "4");
+            hx_set_param(h, "t7_c9_step_0_toggle", "60 100");
+            hx_set_param(h, "t7_c9_step_1_toggle", "62 100");
+            hx_set_param(h, "t7_loop_double_fill", "1");
+            HX_ASSERT(c9->length == 8, "loop_double_fill: length 4->8");
+            HX_ASSERT(c9->steps[4] == 1 && c9->steps[5] == 1, "loop_double_fill: copies src into 2nd half");
+        }
+
+        /* lgto_apply: destructive legato — each note's gate becomes gap to next
+         * active note. Notes at steps 0 & 2 @tps24 -> step0 gate = 48. */
+        {
+            clip_t *c2 = &xt->clips[2];
+            xt->active_clip = 2;
+            hx_set_param(h, "t7_c2_step_0_toggle", "60 100");
+            hx_set_param(h, "t7_c2_step_2_toggle", "64 100");
+            hx_set_param(h, "t7_lgto_apply", "1");
+            HX_ASSERT(c2->step_gate[0] == 48, "lgto_apply: step0 gate = gap to next note (48 @tps24)");
+        }
+
+        /* pfx_set catch-all (CRITICAL for the group-9 conversion): the terminal
+         * segment ends in an UNCONDITIONAL pfx_set on the ACTIVE clip's
+         * pfx_params, so ANY unmatched tN_ sub-key is consumed there. Pin it
+         * with plain pfx keys that ONLY the catch-all handles (noteFX_octave,
+         * delay_level). The two pfx_*_reset keys hit the same catch-all after an
+         * undo snapshot (the braceless guard preceding pfx_set). */
+        {
+            clip_t *c13 = &xt->clips[13];
+            xt->active_clip = 13;
+            HX_ASSERT(c13->pfx_params.octave_shift == 0, "pfx catch-all precondition: default octave_shift 0");
+            hx_set_param(h, "t7_noteFX_octave", "3");
+            HX_ASSERT(c13->pfx_params.octave_shift == 3,
+                      "pfx_set catch-all: noteFX_octave routes to active clip pfx_params (->3)");
+            hx_set_param(h, "t7_delay_level", "88");
+            HX_ASSERT(c13->pfx_params.delay_level == 88,
+                      "pfx_set catch-all: delay_level routes to active clip pfx_params (->88)");
+            hx_set_param(h, "t7_pfx_noteFx_reset", "1");
+            HX_ASSERT(c13->pfx_params.octave_shift == 0, "pfx_noteFx_reset: octave_shift back to 0 (catch-all + undo)");
+            hx_set_param(h, "t7_pfx_delay_reset", "1");
+            HX_ASSERT(c13->pfx_params.delay_level == 0, "pfx_delay_reset: delay_level back to 0 (catch-all + undo)");
+        }
+    }
+
     hx_destroy(h);
     printf("PASS: set_param domain snapshot (%d domains + transport)\n", i);
     printf("PASS: track-config white-box pins "
@@ -1771,5 +1913,10 @@ int main(void) {
            "beat_stretch/loop_set/double_fill), Rpt1 start/vel/lane/latched/stop, "
            "Rpt2 rate/lane_on/vel/lane_latched/latch_held/lane_off/stop, "
            "drum_record_note_on/off capture + both !recording guards)\n");
+    printf("PASS: melodic-clip-transform + pfx catch-all white-box pins "
+           "(clip_length active-clip clamp + no-rui_touch, playback_dir/"
+           "audio_reverse clamps, clock_shift, nudge, beat_stretch, "
+           "loop_double_fill, lgto_apply, pfx_set catch-all routing + "
+           "pfx_noteFx_reset/pfx_delay_reset)\n");
     return 0;
 }
