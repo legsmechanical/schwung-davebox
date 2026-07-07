@@ -1,16 +1,23 @@
-/* FUNCTION-BODY SEGMENT of set_param() -- included mid-function by
- * seq8_set_param.c; NOT a translation unit, not even a complete function;
- * shares set_param's locals (inst, key, val) and the tN_ block's locals
- * (tidx, tr, sub); never compile or lint this file standalone.
- * Covers tN_ track keys: recording, record_note_on, record_note_off
- *
- * LOAD-BEARING: the `#line 1` directive below resets clang's start-of-line
- * lexer state after this comment block; without it `clang -E -P` collapses
- * the first code line's indentation and the phase-4A byte-identity gate
- * fails (only the value 1 disarms it -- measured, Apple clang 16). Side
- * effect: diagnostics in this file number from 1 at the first code line.
- * Do not remove, reorder, or tidy. */
-#line 1
+/* FILE-SCOPE HANDLER for set_param()'s tN_ recording keys -- part of the
+ * seq8.c single translation unit; #included at FILE scope by seq8_set_param.c
+ * (immediately before set_param), NOT a standalone TU; never compile or lint
+ * this file on its own. Sixth Stage B handler (phase 4B group 6): the former
+ * mid-function segment is now a real static int sp_track_record(sp_ctx_t *).
+ * Covers tN_ track keys: recording, record_note_on, record_note_off.
+ * Returns 1 when it handled the key (caller returns), 0 to fall through to
+ * the sibling tN_ handlers. The tN_ guard and the tidx/sub/tr locals live in
+ * the parent dispatcher now (seq8_set_param.c). */
+static int sp_track_record(sp_ctx_t *cx) {
+    seq8_instance_t *inst = cx->inst;
+    const char *val = cx->val;
+    int tidx = cx->tidx;
+    seq8_track_t *tr = cx->tr;
+    const char *sub = cx->sub;
+
+    /* Body below kept at its Stage-A segment indentation (8 spaces) so it
+     * byte-diffs against the pre-conversion segment; reindent only in a
+     * dedicated cleanup pass after the group is device-blessed. */
+
         if (!strcmp(sub, "recording")) {
             int rv = my_atoi(val);
             if (rv) {
@@ -82,7 +89,7 @@
                  * (the "keeps recording after disarm" bug). */
                 if ((int)inst->count_in_track == tidx) inst->count_in_ticks = 0;
             }
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "record_note_on")) {
@@ -91,12 +98,12 @@
              * PHASE-1: per-pitch tick comes from on_midi_press_tick slots (audio-thread
              * single-buffer precision); fallback is current_clip_tick at handler arrival
              * (stock-Schwung path, no slot snapshot). */
-            if (!tr->recording) return;
+            if (!tr->recording) return 1;
             clip_t *cl = &tr->clips[tr->active_clip];
 
             uint16_t tps = cl->ticks_per_step;
             uint32_t clip_ticks = (uint32_t)cl->length * tps;
-            if (clip_ticks == 0) return;
+            if (clip_ticks == 0) return 1;
             /* current_clip_tick is already window-anchored in
              * [loop_start*tps, (loop_start+length)*tps); modulo by
              * clip_ticks would collapse it to [0, clip_ticks) and
@@ -227,7 +234,7 @@
                 if (tr->pfx.route == ROUTE_MOVE && !inst->dsp_inbound_enabled)
                     live_note_on(inst, tr, (uint8_t)pitch, (uint8_t)vel);
             }
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "record_note_off")) {
@@ -235,12 +242,12 @@
              * JS batches simultaneous chord releases into one call.
              * PHASE-1: per-pitch off_tick comes from on_midi_release_tick slot
              * (audio-thread); fallback is current_clip_tick. */
-            if (!tr->recording) return;
+            if (!tr->recording) return 1;
             clip_t *cl = &tr->clips[tr->active_clip];
 
             uint16_t tps = cl->ticks_per_step;
             uint32_t clip_ticks = (uint32_t)cl->length * tps;
-            if (clip_ticks == 0) return;
+            if (clip_ticks == 0) return 1;
             /* Window-anchored: see record_note_on. */
             uint32_t fallback_off_tick = tr->current_clip_tick;
 
@@ -328,5 +335,8 @@
                 if (tr->pfx.route == ROUTE_MOVE && !inst->dsp_inbound_enabled)
                     live_note_off(inst, tr, (uint8_t)pitch);
             }
-            return;
+            return 1;
         }
+
+    return 0;
+}

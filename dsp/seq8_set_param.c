@@ -458,13 +458,16 @@ typedef struct {
  * clip_build_steps_from_notes, clip_migrate_to_notes, cc_auto_eval,
  * at_auto_reset; convert_track_melodic_to_drum, convert_track_drum_to_melodic,
  * convert_track_to_conduct, drum_clips_free, tarp_silence, tarp_drop_latched,
- * arp_silence, arp_init_defaults, ...) are already visible. All are
- * dispatched from the tN_ block inside set_param. */
+ * arp_silence, arp_init_defaults; undo_begin_drum_clip, finalize_pending_notes,
+ * clip_clear_suppress, clip_insert_note, effective_vel, note_step,
+ * clip_in_reverse_motion, live_note_on, live_note_off, ...) are already
+ * visible. All are dispatched from the tN_ block inside set_param. */
 #include "setparam/sp_track_config.c"
 #include "setparam/sp_track_ccauto.c"
 #include "setparam/sp_track_drum.c"
 #include "setparam/sp_track_clip.c"
 #include "setparam/sp_track_config2.c"
+#include "setparam/sp_track_record.c"
 
 /* ------------------------------------------------------------------ */
 /* set_param                                                            */
@@ -519,8 +522,8 @@ static void set_param(void *instance, const char *key, const char *val) {
      * converted to real static fns (phase 4B, included at file scope above,
      * dispatched below): sp_track_config (group 1), sp_track_ccauto (group 2),
      * sp_track_drum (group 3), sp_track_clip (group 4),
-     * sp_track_config2 (group 5). The OTHER sp_track_*
-     * files are still mid-function segments. */
+     * sp_track_config2 (group 5), sp_track_record (group 6). The OTHER
+     * sp_track_* files are still mid-function segments. */
     if (key[0] == 't' && key[1] >= '0' && key[1] <= '7' && key[2] == '_') {
         int tidx = key[1] - '0';
         const char *sub = key + 3;
@@ -566,12 +569,14 @@ static void set_param(void *instance, const char *key, const char *val) {
          * current. */
         if (sp_track_drum(&cx)) return;
 
-/* LOAD-BEARING SPACING: function-body segment include (phase 4A). The
- * blank-line layout around this include is part of the byte-identity
- * gate (`clang -E -P` preprocessed TU identical pre/post split); do not
- * tidy. The segment file opens with `#line 1` to disarm clang's
- * start-of-line indentation collapse at the include entry. */
-#include "setparam/sp_track_record.c"
+        /* tN_recording / record_note_on / record_note_off -- now a file-scope
+         * handler (phase 4B group 6), dispatched here reusing the existing cx.
+         * Non-guarded run of strcmp branches like sp_track_config: returns 1 on
+         * match, 0 to fall through to the sibling tN_ handlers. sp_track_clip,
+         * sp_track_config2, sp_track_ccauto, and sp_track_drum are all handlers
+         * dispatched above that return 0 without mutating cx on fall-through,
+         * so cx is current. */
+        if (sp_track_record(&cx)) return;
 
 /* LOAD-BEARING SPACING: function-body segment include (phase 4A). The
  * blank-line layout around this include is part of the byte-identity
