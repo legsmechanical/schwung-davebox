@@ -468,6 +468,7 @@ typedef struct {
 #include "setparam/sp_track_clip.c"
 #include "setparam/sp_track_config2.c"
 #include "setparam/sp_track_record.c"
+#include "setparam/sp_track_live.c"
 
 /* ------------------------------------------------------------------ */
 /* set_param                                                            */
@@ -522,7 +523,8 @@ static void set_param(void *instance, const char *key, const char *val) {
      * converted to real static fns (phase 4B, included at file scope above,
      * dispatched below): sp_track_config (group 1), sp_track_ccauto (group 2),
      * sp_track_drum (group 3), sp_track_clip (group 4),
-     * sp_track_config2 (group 5), sp_track_record (group 6). The OTHER
+     * sp_track_config2 (group 5), sp_track_record (group 6),
+     * sp_track_live (group 7). The OTHER
      * sp_track_* files are still mid-function segments. */
     if (key[0] == 't' && key[1] >= '0' && key[1] <= '7' && key[2] == '_') {
         int tidx = key[1] - '0';
@@ -585,12 +587,16 @@ static void set_param(void *instance, const char *key, const char *val) {
  * start-of-line indentation collapse at the include entry. */
 #include "setparam/sp_track_drum2.c"
 
-/* LOAD-BEARING SPACING: function-body segment include (phase 4A). The
- * blank-line layout around this include is part of the byte-identity
- * gate (`clang -E -P` preprocessed TU identical pre/post split); do not
- * tidy. The segment file opens with `#line 1` to disarm clang's
- * start-of-line indentation collapse at the include entry. */
-#include "setparam/sp_track_live.c"
+        /* tN_live_notes / live_at / padmap -- now a file-scope handler
+         * (phase 4B group 7), dispatched here reusing the existing cx.
+         * Non-guarded run of strcmp branches like sp_track_record: returns 1
+         * on match, 0 to fall through to the sibling tN_ handlers. padmap's
+         * global-carrier writes (active_track, dsp_inbound_enabled,
+         * pad_note_map) move verbatim. The sp_track_drum2 segment above is a
+         * raw mid-function region that only reads inst/val/tidx/tr/sub (member
+         * writes, no local reassignment) and returns on every branch, so cx is
+         * current here. */
+        if (sp_track_live(&cx)) return;
 
 /* LOAD-BEARING SPACING: the blank line above this include (pristine 5863)
  * stays here in the parent, and exactly one blank line follows the include

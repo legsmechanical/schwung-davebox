@@ -1,16 +1,24 @@
-/* FUNCTION-BODY SEGMENT of set_param() -- included mid-function by
- * seq8_set_param.c; NOT a translation unit, not even a complete function;
- * shares set_param's locals (inst, key, val) and the tN_ block's locals
- * (tidx, tr, sub); never compile or lint this file standalone.
- * Covers tN_ track keys: live_notes, live_at, padmap
- *
- * LOAD-BEARING: the `#line 1` directive below resets clang's start-of-line
- * lexer state after this comment block; without it `clang -E -P` collapses
- * the first code line's indentation and the phase-4A byte-identity gate
- * fails (only the value 1 disarms it -- measured, Apple clang 16). Side
- * effect: diagnostics in this file number from 1 at the first code line.
- * Do not remove, reorder, or tidy. */
-#line 1
+/* FILE-SCOPE HANDLER for set_param()'s tN_ live-monitoring keys -- part of
+ * the seq8.c single translation unit; #included at FILE scope by
+ * seq8_set_param.c (immediately before set_param), NOT a standalone TU; never
+ * compile or lint this file on its own. Seventh Stage B handler (phase 4B
+ * group 7): the former mid-function segment is now a real static int
+ * sp_track_live(sp_ctx_t *).
+ * Covers tN_ track keys: live_notes, live_at, padmap.
+ * Returns 1 when it handled the key (caller returns), 0 to fall through to
+ * the sibling tN_ handlers. The tN_ guard and the tidx/sub/tr locals live in
+ * the parent dispatcher now (seq8_set_param.c). */
+static int sp_track_live(sp_ctx_t *cx) {
+    seq8_instance_t *inst = cx->inst;
+    const char *val = cx->val;
+    int tidx = cx->tidx;
+    seq8_track_t *tr = cx->tr;
+    const char *sub = cx->sub;
+
+    /* Body below kept at its Stage-A segment indentation (8 spaces) so it
+     * byte-diffs against the pre-conversion segment; reindent only in a
+     * dedicated cleanup pass after the group is device-blessed. */
+
         if (!strcmp(sub, "live_notes")) {
             /* tN_live_notes "off p ... on p v ... [off p|on p v]..."
              * Batched live note events processed left-to-right. JS queues all
@@ -27,7 +35,7 @@
              * fallback for when the padmap push didn't reach DSP (the
              * sentinel exists but on_midi can't dispatch without a valid
              * pad_note_map). */
-            if (inst->dsp_inbound_enabled) return;
+            if (inst->dsp_inbound_enabled) return 1;
             const char *sp = val;
             while (*sp) {
                 while (*sp == ' ') sp++;
@@ -54,7 +62,7 @@
                     live_note_off(inst, tr, (uint8_t)pitch);
                 }
             }
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "live_at")) {
@@ -126,7 +134,7 @@
                     inst->state_dirty = 1;
                 }
             }
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "padmap")) {
@@ -193,5 +201,8 @@
                 while (*sp >= '0' && *sp <= '9') { cls = cls * 10 + (*sp++ - '0'); }
                 inst->corun_left_silent = (cls != 0) ? 1 : 0;
             }
-            return;
+            return 1;
         }
+
+    return 0;
+}
