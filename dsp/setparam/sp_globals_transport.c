@@ -1,16 +1,29 @@
-/* FUNCTION-BODY SEGMENT of set_param() -- included mid-function by
- * seq8_set_param.c; NOT a translation unit, not even a complete function;
- * shares set_param's locals (inst, key, val); never compile or lint this
- * file standalone.
- * Covers GLOBAL-key branches: transport, record_count_in, record_count_in_cancel, metro_on, metro_vol, active_track, clock_follow_on, clock_send_on, bpm, key, scale, scale_aware, inp_quant, swing_amt, swing_res, midi_in_channel, launch_quant
- *
- * LOAD-BEARING: the `#line 1` directive below resets clang's start-of-line
- * lexer state after this comment block; without it `clang -E -P` collapses
- * the first code line's indentation and the phase-4A byte-identity gate
- * fails (only the value 1 disarms it -- measured, Apple clang 16). Side
- * effect: diagnostics in this file number from 1 at the first code line.
- * Do not remove, reorder, or tidy. */
-#line 1
+/* FILE-SCOPE GLOBALS HANDLER for set_param()'s transport / tempo / tonality /
+ * metronome / clock / count-in global keys -- part of the seq8.c single
+ * translation unit; #included at FILE scope by seq8_set_param.c (before
+ * set_param), NOT a standalone TU; never compile or lint this file on its own.
+ * Globals handler (phase 4B group 13, THE FINAL group): dispatched BEFORE the
+ * tN_ block, so it uses only inst/key/val (never tidx/tr/sub -- they aren't in
+ * scope at the globals dispatch point).
+ * Covers GLOBAL-key branches: transport, record_count_in,
+ * record_count_in_cancel, metro_on, metro_vol, active_track, clock_follow_on,
+ * clock_send_on, bpm, key, scale, scale_aware, inp_quant, swing_amt, swing_res,
+ * midi_in_channel, launch_quant. Each is a top-level `strcmp(key,...)` branch.
+ * Returns 1 when it handled the key (caller returns from set_param), 0 to fall
+ * through to the tN_ block.
+ * NOTE: the transport play_focus `val="play"` rewrite (below) reassigns the
+ * unpacked LOCAL `val` copy only -- cx->val is never mutated, so downstream
+ * handlers dispatched after this one (there are none among the globals; the
+ * tN_ block follows) are unaffected. Do not write back to cx->val. */
+static int sp_globals_transport(sp_ctx_t *cx) {
+    seq8_instance_t *inst = cx->inst;
+    const char *key = cx->key;
+    const char *val = cx->val;
+
+    /* Body below kept at its Stage-A segment indentation (4 spaces) so it
+     * byte-diffs against the pre-conversion segment; reindent only in a
+     * dedicated cleanup pass after the group is device-blessed. */
+
     if (!strcmp(key, "transport")) {
         /* play_focus:T:C — same as "play" but ARM the focused track's
          * clip to launch on this transport-start: sets will_relaunch=1
@@ -61,7 +74,7 @@
             if (inst->clock_follow_on) {
                 if (inst->ext_transport_running) ext_transport_start(inst);
                 else follow_request_start(inst, 1);
-                return;
+                return 1;
             }
             /* Atomic stop+play: silence + finalize as in stop, then reset positions
              * + replay as in play. Single set_param avoids coalescing flakiness. */
@@ -144,11 +157,11 @@
             if (inst->clock_follow_on) {
                 if (inst->ext_transport_running) ext_transport_start(inst);
                 else follow_request_start(inst, 1);
-                return;
+                return 1;
             }
             int at = 0, page = 0, lane = -1;
             int parsed = sscanf(val + 11, "%d:%d:%d", &at, &page, &lane);
-            if (parsed < 2) { return; }
+            if (parsed < 2) { return 1; }
             if (at < 0) at = 0; if (at >= NUM_TRACKS) at = NUM_TRACKS - 1;
             if (page < 0) page = 0;
 
@@ -339,7 +352,7 @@
             }
             seq8_ilog(inst, "SEQ8 transport: deactivate_all");
         }
-        return;
+        return 1;
     }
 
     /* --- DSP-side count-in --- */
@@ -370,34 +383,34 @@
          * launches. If Move never responds, the start-timeout falls back to an
          * internal start so the arm can't hang. */
         if (inst->clock_follow_on) follow_request_start(inst, 2);
-        return;
+        return 1;
     }
     if (!strcmp(key, "record_count_in_cancel")) {
         inst->count_in_ticks = 0;
-        return;
+        return 1;
     }
 
     /* --- Metronome --- */
     if (!strcmp(key, "metro_on")) {
         inst->metro_on = (uint8_t)clamp_i(my_atoi(val), 0, 3);
         inst->state_dirty = 1;
-        return;
+        return 1;
     }
     if (!strcmp(key, "metro_vol")) {
         inst->metro_vol = (uint8_t)clamp_i(my_atoi(val), 0, 150);
         inst->state_dirty = 1;
-        return;
+        return 1;
     }
 
     /* --- Active track --- */
     if (!strcmp(key, "active_track")) {
         inst->active_track = (uint8_t)clamp_i(my_atoi(val), 0, NUM_TRACKS - 1);
-        return;
+        return 1;
     }
 
     if (!strcmp(key, "clock_follow_on")) {
         uint8_t on = (uint8_t)(my_atoi(val) ? 1 : 0);
-        if (on == inst->clock_follow_on) { inst->state_dirty = 1; return; }
+        if (on == inst->clock_follow_on) { inst->state_dirty = 1; return 1; }
         inst->clock_follow_on = on;
         /* Reset follow bookkeeping on every toggle so a stale view of Move's
          * transport / a half-finished inject can't leak across mode changes. */
@@ -417,7 +430,7 @@
         /* Flush anything ringing so toggling mid-transport never hangs a note. */
         if (inst->playing || inst->count_in_ticks > 0) ext_transport_stop(inst);
         inst->state_dirty = 1;
-        return;
+        return 1;
     }
 
     /* Clock OUT: db emits realtime to external gear when free-running (master).
@@ -426,15 +439,15 @@
     if (!strcmp(key, "clock_send_on")) {
         inst->clock_send_on = (uint8_t)(my_atoi(val) ? 1 : 0);
         inst->state_dirty = 1;
-        return;
+        return 1;
     }
 
     if (!strcmp(key, "bpm")) {
         /* Tempo is read-only (EXT) while following — Move owns it. Ignore writes
          * (UI also hides the control), but never error. */
-        if (inst->clock_follow_on) return;
+        if (inst->clock_follow_on) return 1;
         double bpm = (double)my_atoi(val);
-        if (bpm < 40.0 || bpm > 250.0) return;
+        if (bpm < 40.0 || bpm > 250.0) return 1;
         inst->tick_delta = (uint32_t)((double)MOVE_FRAMES_PER_BLOCK * bpm * (double)PPQN);
         int tb, tbl;
         for (tb = 0; tb < NUM_TRACKS; tb++) {
@@ -443,44 +456,44 @@
                 inst->tracks[tb].drum_lane_pfx[tbl].cached_bpm = bpm;
         }
         inst->state_dirty = 1;
-        return;
+        return 1;
     }
 
     /* --- Global pad tonality --- */
     if (!strcmp(key, "key")) {
         inst->pad_key = (uint8_t)clamp_i(my_atoi(val), 0, 11);
         inst->state_dirty = 1;
-        return;
+        return 1;
     }
     if (!strcmp(key, "scale")) {
         inst->pad_scale = (uint8_t)clamp_i(my_atoi(val), 0, 13);
         inst->state_dirty = 1;
-        return;
+        return 1;
     }
     if (!strcmp(key, "scale_aware")) {
         inst->scale_aware = my_atoi(val) ? 1 : 0;
         inst->state_dirty = 1;
-        return;
+        return 1;
     }
     if (!strcmp(key, "inp_quant")) {
         inst->inp_quant = my_atoi(val) ? 1 : 0;
         inst->state_dirty = 1;
-        return;
+        return 1;
     }
     if (!strcmp(key, "swing_amt")) {
         inst->swing_amt = (uint8_t)clamp_i(my_atoi(val), 0, 100);
         inst->state_dirty = 1;
-        return;
+        return 1;
     }
     if (!strcmp(key, "swing_res")) {
         inst->swing_res = (uint8_t)clamp_i(my_atoi(val), 0, 1);
         inst->state_dirty = 1;
-        return;
+        return 1;
     }
     if (!strcmp(key, "midi_in_channel")) {
         inst->midi_in_channel = (uint8_t)clamp_i(my_atoi(val), 0, 16);
         inst->state_dirty = 1;
-        return;
+        return 1;
     }
     if (!strcmp(key, "launch_quant")) {
         uint8_t old_q = inst->launch_quant;
@@ -513,5 +526,8 @@
             }
         }
         inst->state_dirty = 1;
-        return;
+        return 1;
     }
+
+    return 0;
+}

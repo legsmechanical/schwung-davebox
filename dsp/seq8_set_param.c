@@ -480,10 +480,11 @@ typedef struct {
  * global keys. Included at file scope like the tN_ handlers; order among the
  * file-scope includes is irrelevant (plain static fns):
  * sp_globals_state (group 10), sp_globals_misc (group 11),
- * sp_globals_edit (group 12). */
+ * sp_globals_edit (group 12), sp_globals_transport (group 13). */
 #include "setparam/sp_globals_state.c"
 #include "setparam/sp_globals_misc.c"
 #include "setparam/sp_globals_edit.c"
+#include "setparam/sp_globals_transport.c"
 
 /* ------------------------------------------------------------------ */
 /* set_param                                                            */
@@ -499,23 +500,24 @@ static void set_param(void *instance, const char *key, const char *val) {
     sp_ctx_t cx = { .inst = inst, .key = key, .val = val };
 
 
-    /* --- Transport (global) --- */
-/* LOAD-BEARING SPACING: function-body segment include (phase 4A). The
- * blank-line layout around this include is part of the byte-identity
- * gate (`clang -E -P` preprocessed TU identical pre/post split); do not
- * tidy. The segment file opens with `#line 1` to disarm clang's
- * start-of-line indentation collapse at the include entry. */
-#include "setparam/sp_globals_transport.c"
+    /* --- Transport / tempo / tonality / metro / clock / count-in (global) ---
+     * now a file-scope GLOBALS handler (phase 4B group 13, THE FINAL group),
+     * dispatched here reusing the call-wide cx. It reads only inst/key/val;
+     * returns 1 on a matched key (we return), 0 to fall through. This is the
+     * FIRST dispatch, so cx is fresh {inst,key,val}. The transport branch's
+     * play_focus `val="play"` rewrite reassigns only the handler's unpacked
+     * LOCAL val copy -- cx->val is never mutated -- so cx is still
+     * {inst,key,val} entering the state dispatch below. */
+    if (sp_globals_transport(&cx)) return;
+
     /* --- Global state keys (debug_log/save/prune_orphan_states/state_path/
      * state_load) --- now a file-scope GLOBALS handler (phase 4B group 10),
      * dispatched here reusing the call-wide cx. It reads only inst/key/val;
      * returns 1 on a matched key (we return), 0 to fall through. Dispatched
-     * after the transport segment and before the misc handler, preserving the
+     * after the transport handler and before the misc handler, preserving the
      * original branch order (transport -> state -> misc -> edit -> tN_). The
-     * transport segment above uses inst/key/val directly and never touches cx,
-     * so cx is still {inst,key,val} here. NOTE for whoever converts transport:
-     * its `val="play"` fall-through MUTATES val, so once transport is a handler
-     * this "cx unchanged" line must be revised — don't paste it blindly. */
+     * transport handler above reassigns only its own local val copy (cx->val is
+     * never mutated), so cx is still {inst,key,val} here. */
     if (sp_globals_state(&cx)) return;
 
     /* --- Looper / merge / bake / scene-launch / snapshots (global) --- now a
@@ -538,11 +540,12 @@ static void set_param(void *instance, const char *key, const char *val) {
      * reads only inst/key/val; returns 1 on a matched key (we return), 0 to
      * fall through. Dispatched after the misc handler and before the tN_ block,
      * preserving the original branch order (transport -> state -> misc -> edit
-     * -> tN_). The state + misc handlers above return 0
-     * without mutating cx on fall-through, and the transport segment before
-     * them never touches cx, so cx is still {inst,key,val} here. Only
-     * sp_globals_transport remains a raw function-body segment (converted last,
-     * group 13). */
+     * -> tN_). The transport + state + misc handlers above all return 0 without
+     * mutating cx on fall-through (transport reassigns only its own local val
+     * copy), so cx is still {inst,key,val} here. ALL 13 setparam files (9 tN_ +
+     * 4 globals) are now file-scope sp_ctx_t handlers -- NONE remain a raw
+     * function-body segment; set_param's body is just the ctx build + this
+     * dispatch chain + the tN_ block prologue. Stage B complete. */
     if (sp_globals_edit(&cx)) return;
 
     /* --- Track-prefixed params: tN_<subkey> --- */
