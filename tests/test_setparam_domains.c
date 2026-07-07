@@ -112,7 +112,29 @@
  * are RT-only and pinned as out-of-scope. Pins are direct struct reads (flag
  * transitions, notes[]/steps[] capture, note_t gate) — recording writes are
  * sparse and RT-driven, so struct inspection pins the semantics far more
- * robustly than the serialized token. */
+ * robustly than the serialized token.
+ *
+ * Phase 4B group 7 prep: the sp_track_live group (live_notes, live_at, padmap)
+ * is characterized as an EIGHTH white-box block (all white-box blocks run after
+ * the table, in file order; this is currently the last). It runs on a DEDICATED
+ * track (t7): melodic, default ROUTE_SCHWUNG -> HX_MIDI_INTERNAL capture, channel
+ * 7 (tr->channel == track index) -- the same known-emitting track the cc-auto
+ * block used, and nothing asserts t7 after this block, so its live sends are
+ * collision-safe. ORDER inside the block is load-bearing: live_notes/live_at run
+ * FIRST while inst->dsp_inbound_enabled==0, because the padmap push sets
+ * dsp_inbound_enabled=1 and live_notes early-returns whenever that flag is set
+ * (the on_midi audio-thread path already dispatched) -- that guard is itself
+ * pinned. padmap (the platform global-carrier: the Schwung host drops NEW global
+ * keys, so active_track + dsp_inbound_enabled ride the per-track push) runs LAST,
+ * and dsp_inbound_enabled is restored to 0 at block end for cleanliness (no later
+ * blocks depend on it, but this keeps the file honest). Pins are a mix of MIDI
+ * capture-buffer scans (live_notes note-on/off + default-vel + batch emit,
+ * live_at poly/channel AT emit) and direct struct reads (last_poly_at_press,
+ * active_track/dsp_inbound_enabled/pad_note_map + trailing pad_dispatch_muted/
+ * delete_held/corun_left_silent). OUT OF SCOPE: live_at recording-into-clip
+ * (recording=0 here) and the arp/tarp AT fan-out (arp/tarp style 0) are RT/config
+ * paths -- the immediate live send is the off-device observable; the padmap
+ * carrier's full two-polarity contract also lives in test_padmap_contract.c. */
 #include "harness.h"
 
 typedef struct { const char *key, *val, *expect_substr, *domain; } sp_case_t;
@@ -1308,6 +1330,156 @@ int main(void) {
         }
     }
 
+    /* ---- Live-monitoring white-box pins (Phase 4B group 7 prep). Runs after the
+     * table (currently the last white-box block). The sp_track_live group
+     * (live_notes, live_at, padmap) on dedicated track t7 (melodic, default
+     * ROUTE_SCHWUNG -> HX_MIDI_INTERNAL capture, channel 7). ORDER is load-bearing:
+     * live_notes/live_at run FIRST (while dsp_inbound_enabled==0), because the
+     * padmap push sets dsp_inbound_enabled=1 and live_notes early-returns whenever
+     * that flag is set (guard pinned below); padmap runs LAST, then
+     * dsp_inbound_enabled is restored to 0. ---- */
+    {
+        seq8_track_t *lt = &inst->tracks[7];
+        const int TIDX = 7;
+        HX_ASSERT(inst->dsp_inbound_enabled == 0,
+                  "live block precondition: inbound disabled (live_notes reachable)");
+        HX_ASSERT(lt->pad_mode == PAD_MODE_MELODIC_SCALE, "live block precondition: t7 melodic");
+        HX_ASSERT(lt->tarp_on == 0 && lt->pfx.arp.style == 0,
+                  "live block precondition: t7 no arp (single-note emit)");
+        HX_ASSERT(lt->channel == 7, "live block precondition: t7 channel 7");
+        lt->pfx.looper_on = 0;   /* deterministic pass-through emit (no looper capture) */
+
+        /* live_notes "on <p> [v]": immediate note-on through pfx_note_on ->
+         * INTERNAL 0x9<ch> p v. */
+        hx_clear_capture(h);
+        hx_set_param(h, "t7_live_notes", "on 64 100");
+        {
+            int j, found = 0;
+            for (j = 0; j < hx_stub_event_count(); j++) {
+                const hx_midi_event *e = hx_stub_event(j);
+                if (e->kind == HX_MIDI_INTERNAL && e->bytes[1] == (0x90 | 7) &&
+                    e->bytes[2] == 64 && e->bytes[3] == 100) found = 1;
+            }
+            HX_ASSERT(found, "live_notes on: emits note-on 0x97 64 100 on internal route");
+        }
+
+        /* live_notes "off <p>": note-off 0x8<ch> p 0. Chains on the on above
+         * (pfx_note_off_imm no-ops on a note that was never sounding). */
+        hx_clear_capture(h);
+        hx_set_param(h, "t7_live_notes", "off 64");
+        {
+            int j, found = 0;
+            for (j = 0; j < hx_stub_event_count(); j++) {
+                const hx_midi_event *e = hx_stub_event(j);
+                if (e->kind == HX_MIDI_INTERNAL && e->bytes[1] == (0x80 | 7) &&
+                    e->bytes[2] == 64) found = 1;
+            }
+            HX_ASSERT(found, "live_notes off: emits note-off 0x87 64 (chains on prior on)");
+        }
+
+        /* live_notes default velocity: "on <p>" with no vel uses SEQ_VEL. */
+        hx_clear_capture(h);
+        hx_set_param(h, "t7_live_notes", "on 62");
+        {
+            int j, found = 0;
+            for (j = 0; j < hx_stub_event_count(); j++) {
+                const hx_midi_event *e = hx_stub_event(j);
+                if (e->kind == HX_MIDI_INTERNAL && e->bytes[1] == (0x90 | 7) &&
+                    e->bytes[2] == 62 && e->bytes[3] == SEQ_VEL) found = 1;
+            }
+            HX_ASSERT(found, "live_notes on (no vel): emits at SEQ_VEL default");
+        }
+        hx_set_param(h, "t7_live_notes", "off 62");   /* release (refcount clean) */
+
+        /* live_notes batch: multiple events left-to-right in one payload. */
+        hx_clear_capture(h);
+        hx_set_param(h, "t7_live_notes", "on 70 55 on 72 66");
+        {
+            int j, f70 = 0, f72 = 0;
+            for (j = 0; j < hx_stub_event_count(); j++) {
+                const hx_midi_event *e = hx_stub_event(j);
+                if (e->kind == HX_MIDI_INTERNAL && e->bytes[1] == (0x90 | 7)) {
+                    if (e->bytes[2] == 70 && e->bytes[3] == 55) f70 = 1;
+                    if (e->bytes[2] == 72 && e->bytes[3] == 66) f72 = 1;
+                }
+            }
+            HX_ASSERT(f70 && f72, "live_notes batch: both note-ons emitted from one payload");
+        }
+        hx_set_param(h, "t7_live_notes", "off 70 off 72");   /* release */
+
+        /* live_notes guard: dsp_inbound_enabled=1 -> whole handler early-returns
+         * (on_midi already dispatched on the audio thread), so NO fallback emit.
+         * This is the padmap<->live_notes chaining constraint the group-7
+         * conversion must preserve. */
+        inst->dsp_inbound_enabled = 1;
+        hx_clear_capture(h);
+        hx_set_param(h, "t7_live_notes", "on 80 90");
+        HX_ASSERT(hx_stub_event_count() == 0, "live_notes: inbound-enabled -> early return, no emit");
+        inst->dsp_inbound_enabled = 0;
+
+        /* live_at poly (mode 1): pfx_send 0xA<ch> pitch press; stores
+         * last_poly_at_press for arp replay. */
+        hx_clear_capture(h);
+        hx_set_param(h, "t7_live_at", "64 90 1");
+        {
+            int j, found = 0;
+            for (j = 0; j < hx_stub_event_count(); j++) {
+                const hx_midi_event *e = hx_stub_event(j);
+                if (e->kind == HX_MIDI_INTERNAL && e->bytes[1] == (0xA0 | 7) &&
+                    e->bytes[2] == 64 && e->bytes[3] == 90) found = 1;
+            }
+            HX_ASSERT(found, "live_at poly: emits poly AT 0xA7 64 90");
+        }
+        HX_ASSERT(lt->last_poly_at_press == 90, "live_at poly: stores last_poly_at_press=90");
+
+        /* live_at channel (mode 2): pfx_send 0xD<ch> press 0; clears
+         * last_poly_at_press (channel mode needs no arp replay). */
+        hx_clear_capture(h);
+        hx_set_param(h, "t7_live_at", "60 77 2");
+        {
+            int j, found = 0;
+            for (j = 0; j < hx_stub_event_count(); j++) {
+                const hx_midi_event *e = hx_stub_event(j);
+                if (e->kind == HX_MIDI_INTERNAL && e->bytes[1] == (0xD0 | 7) &&
+                    e->bytes[2] == 77 && e->bytes[3] == 0) found = 1;
+            }
+            HX_ASSERT(found, "live_at channel: emits channel AT 0xD7 77 0");
+        }
+        HX_ASSERT(lt->last_poly_at_press == 0, "live_at channel: clears last_poly_at_press");
+
+        /* padmap: the platform global-carrier. 32 pad pitches -> pad_note_map[7][],
+         * then active_track + dsp_inbound_enabled set unconditionally, then trailing
+         * pad_dispatch_muted / delete_held / corun_left_silent. Pitches 40..71 +
+         * trailing "1 0 1" (full two-polarity contract also in
+         * test_padmap_contract.c; pinned here so the group-7 conversion is
+         * behavior-gated by this suite). */
+        hx_set_param(h, "t7_padmap",
+            "40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 "
+            "56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 "
+            "1 0 1");
+        HX_ASSERT(inst->active_track == 7, "padmap: sets active_track = tidx (7)");
+        HX_ASSERT(inst->dsp_inbound_enabled == 1, "padmap: enables dsp_inbound (carrier)");
+        HX_ASSERT(inst->pad_note_map[TIDX][0] == 40, "padmap: pad_note_map[7][0]=40");
+        HX_ASSERT(inst->pad_note_map[TIDX][31] == 71, "padmap: pad_note_map[7][31]=71");
+        HX_ASSERT(inst->pad_dispatch_muted == 1, "padmap: token 33 -> pad_dispatch_muted=1");
+        HX_ASSERT(inst->delete_held == 0, "padmap: token 34 -> delete_held=0");
+        HX_ASSERT(inst->corun_left_silent == 1, "padmap: token 35 -> corun_left_silent=1");
+
+        /* second push, opposite trailing polarities + 0xFF sentinels: pins each
+         * trailing token independently and the unmapped 0xFF sentinel. */
+        hx_set_param(h, "t7_padmap",
+            "255 255 255 255 255 255 255 255 255 255 255 255 255 255 255 255 "
+            "255 255 255 255 255 255 255 255 255 255 255 255 255 255 255 255 "
+            "0 1 0");
+        HX_ASSERT(inst->pad_note_map[TIDX][0] == 0xFF, "padmap: 255 -> 0xFF sentinel");
+        HX_ASSERT(inst->pad_note_map[TIDX][31] == 0xFF, "padmap: last pad 0xFF sentinel");
+        HX_ASSERT(inst->pad_dispatch_muted == 0, "padmap: token 33 -> pad_dispatch_muted=0");
+        HX_ASSERT(inst->delete_held == 1, "padmap: token 34 -> delete_held=1");
+        HX_ASSERT(inst->corun_left_silent == 0, "padmap: token 35 -> corun_left_silent=0");
+
+        inst->dsp_inbound_enabled = 0;   /* restore (padmap set it; no later blocks) */
+    }
+
     hx_destroy(h);
     printf("PASS: set_param domain snapshot (%d domains + transport)\n", i);
     printf("PASS: track-config white-box pins "
@@ -1333,5 +1505,9 @@ int main(void) {
            "arm session-mask clears, disarm flag clears + count-in cancel, "
            "record_note_on capture + step mirror, record_note_off gate + "
            "step_gate mirror, both !recording guards)\n");
+    printf("PASS: live-monitoring white-box pins "
+           "(live_notes on/off/default-vel/batch emit + inbound-enabled guard, "
+           "live_at poly/channel AT emit + last_poly_at_press, padmap carrier "
+           "active_track/dsp_inbound/pad_note_map + trailing flags both polarities)\n");
     return 0;
 }
