@@ -1877,6 +1877,125 @@ int main(void) {
         }
     }
 
+    /* ---- Globals-STATE white-box pins (Phase 4B group 10 prep). Runs after
+     * the table AND every other white-box block, in file order — it is
+     * intentionally LAST because its state_load pin RESETS the whole instance
+     * (playing/merge/per-track playback + recording + clips), which would
+     * corrupt any assertion that ran afterward. Nothing asserts `inst` after
+     * this block, so the reset is collision-safe. This group is I/O-heavy: the
+     * 5 keys are debug_log, save, prune_orphan_states, state_path, state_load.
+     * seq8_save_state / seq8_load_state use real libc fopen (NOT stubbed), so
+     * `save`'s file write IS drivable via a temp path; the on-device /data/...
+     * paths that state_load constructs and that prune_orphan_states scans do
+     * not exist off-device, so those file operations no-op in-harness and are
+     * noted OUT-OF-SCOPE-IN-STUB (the real load round-trip lives in
+     * test_state_roundtrip.c). These keys are top-level strcmp(key,...) matches
+     * with no track index, so they collide with nothing above. ---- */
+    {
+        const char *SAVE_TMP = "/tmp/davebox_charz_gstate_save_5731.json";
+
+        /* debug_log: the logging outlier — its ONLY effect is seq8_ilog(inst,val).
+         * OUT-OF-SCOPE-IN-STUB: seq8_ilog is a no-op off-device (inst->log_fp is
+         * NULL because SEQ8_LOG_PATH's /data dir can't be opened; and it writes
+         * to inst->log_fp, not host->log, so the stub capture never sees it).
+         * Pin the observable contract: reachable, mutates NO instance state,
+         * returns cleanly (reaching the next line proves no crash). */
+        {
+            uint8_t xp0 = inst->xpose_preview_active, pl0 = inst->playing;
+            hx_set_param(h, "debug_log", "SEQ8_CHARZ_DBGLOG_9271");
+            HX_ASSERT(inst->xpose_preview_active == xp0 && inst->playing == pl0,
+                      "debug_log: pure no-op, mutates no instance state");
+        }
+
+        /* state_path: strncpy into inst->state_path[256], NUL-terminated. */
+        hx_set_param(h, "state_path", "/tmp/charz_state_path_4471.json");
+        HX_ASSERT(!strcmp(inst->state_path, "/tmp/charz_state_path_4471.json"),
+                  "state_path: stored path verbatim");
+
+        /* save: (1) ALWAYS clears xpose_preview_active (defensive, both branches);
+         * (2) when NOT version-mismatched, seq8_save_state serializes to
+         * inst->state_path via real fopen — observable by reading the file back;
+         * (3) the version-mismatch guard skips the write but still clears the
+         * preview flag. */
+        remove(SAVE_TMP);
+        strncpy(inst->state_path, SAVE_TMP, sizeof(inst->state_path) - 1);
+        inst->state_path[sizeof(inst->state_path) - 1] = '\0';
+        inst->state_version_mismatch = 0;
+        inst->xpose_preview_active = 1;
+        hx_set_param(h, "save", "1");
+        HX_ASSERT(inst->xpose_preview_active == 0,
+                  "save: always clears xpose_preview_active");
+        {
+            FILE *rf = fopen(SAVE_TMP, "r");
+            HX_ASSERT(rf, "save: wrote state file to inst->state_path");
+            char fbuf[4096]; size_t fn = rf ? fread(fbuf, 1, sizeof(fbuf) - 1, rf) : 0;
+            if (rf) fclose(rf);
+            fbuf[fn] = '\0';
+            HX_ASSERT(fn > 0 && strstr(fbuf, "\"v\":36"),
+                      "save: serialized v36 blob written to file");
+        }
+        /* version-mismatch guard: skips the write but still clears preview. */
+        remove(SAVE_TMP);
+        inst->state_version_mismatch = 1;
+        inst->xpose_preview_active = 1;
+        hx_set_param(h, "save", "1");
+        HX_ASSERT(inst->xpose_preview_active == 0,
+                  "save: clears preview even when version-mismatched");
+        {
+            FILE *rf = fopen(SAVE_TMP, "r");
+            HX_ASSERT(!rf, "save: version-mismatch skips the file write");
+            if (rf) fclose(rf);
+        }
+        inst->state_version_mismatch = 0;   /* restore for state_load below */
+
+        /* prune_orphan_states: scans /data/UserData/schwung/set_state and unlinks
+         * orphaned seq8-*.json. OUT-OF-SCOPE-IN-STUB: that device dir tree does
+         * not exist off-device, so opendir fails and the handler takes its
+         * clean early-return branch (opendir fails -> seq8_ilog + return). The
+         * log line is not observable (seq8_ilog no-op, see debug_log above), so
+         * pin the reachable contract: it mutates NO instance state and returns
+         * without crashing (reaching the next line proves no crash). */
+        {
+            char sp0[256]; strncpy(sp0, inst->state_path, sizeof(sp0));
+            hx_set_param(h, "prune_orphan_states", "1");
+            HX_ASSERT(!strcmp(inst->state_path, sp0),
+                      "prune_orphan_states: opendir-failed branch, returns cleanly + no instance mutation");
+        }
+
+        /* state_load: (1) builds inst->state_path from the UUID val (non-empty ->
+         * per-set path; empty -> SEQ8_STATE_PATH_FALLBACK); (2) RESETS the whole
+         * instance (transport/merge/per-track playback+recording) BEFORE calling
+         * seq8_load_state. The conversion MUST preserve that reset. Arm
+         * distinctive pre-reset state, then confirm it was cleared.
+         * OUT-OF-SCOPE-IN-STUB: seq8_load_state itself no-ops here because the
+         * constructed /data/... path does not exist off-device (fopen fails ->
+         * silent return); the real load round-trip is pinned in
+         * test_state_roundtrip.c. */
+        inst->playing              = 1;
+        inst->count_in_ticks       = 99;
+        inst->merge_state          = 1;   /* any non-IDLE value */
+        inst->tracks[0].recording  = 1;
+        inst->tracks[0].current_step = 5;
+        inst->tracks[0].queued_clip  = 3;
+        hx_set_param(h, "state_load", "abcdef01-2345-6789-abcd-ef0123456789");
+        HX_ASSERT(!strcmp(inst->state_path,
+                  "/data/UserData/schwung/set_state/"
+                  "abcdef01-2345-6789-abcd-ef0123456789/seq8-state.json"),
+                  "state_load: builds per-set path from UUID val");
+        HX_ASSERT(inst->playing == 0, "state_load: resets playing");
+        HX_ASSERT(inst->count_in_ticks == 0, "state_load: resets count_in_ticks");
+        HX_ASSERT(inst->merge_state == MERGE_STATE_IDLE, "state_load: resets merge_state");
+        HX_ASSERT(inst->tracks[0].recording == 0, "state_load: resets per-track recording");
+        HX_ASSERT(inst->tracks[0].current_step == 0, "state_load: resets per-track current_step");
+        HX_ASSERT(inst->tracks[0].queued_clip == -1, "state_load: resets per-track queued_clip to -1");
+        /* empty val -> fallback path. */
+        hx_set_param(h, "state_load", "");
+        HX_ASSERT(!strcmp(inst->state_path, SEQ8_STATE_PATH_FALLBACK),
+                  "state_load: empty val -> SEQ8_STATE_PATH_FALLBACK");
+
+        remove(SAVE_TMP);
+    }
+
     hx_destroy(h);
     printf("PASS: set_param domain snapshot (%d domains + transport)\n", i);
     printf("PASS: track-config white-box pins "
@@ -1918,5 +2037,9 @@ int main(void) {
            "audio_reverse clamps, clock_shift, nudge, beat_stretch, "
            "loop_double_fill, lgto_apply, pfx_set catch-all routing + "
            "pfx_noteFx_reset/pfx_delay_reset)\n");
+    printf("PASS: globals-state white-box pins "
+           "(debug_log no-op, state_path store, save preview-clear + file "
+           "write + version-mismatch guard, prune opendir-failed no-op, "
+           "state_load path-build + instance reset + fallback)\n");
     return 0;
 }
