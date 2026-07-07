@@ -92,7 +92,7 @@
  * track-config block to have latched conductor_track to t5 first (chaining
  * constraint: this block must run after that one). tarp_reset's retrigger quirk
  * is pinned: arp_init_defaults sets retrigger=1 and tarp_reset does NOT re-clear
- * it, so a post-reset tarp.retrigger reads 1 (NOT the tarp_init_defaults 0). */
+ * it, so a post-reset tarp.retrigger reads 1 (NOT 0). */
 #include "harness.h"
 
 typedef struct { const char *key, *val, *expect_substr, *domain; } sp_case_t;
@@ -1008,8 +1008,8 @@ int main(void) {
     }
 
     /* ---- Track-config2 white-box pins (Phase 4B group 5 prep). Run LAST:
-     * dedicated track t0 (melodic, active_clip 0, tarp at defaults). Melodic/tarp
-     * pins first; the type-conversion pins (which flip t0's type) run at the very
+     * dedicated track t2 (melodic, active_clip 0, tarp at defaults). Melodic/tarp
+     * pins first; the type-conversion pins (which flip t2's type) run at the very
      * end so nothing corrupts an earlier melodic pin. Requires the track-config
      * block to have latched conductor_track to t5 (for the convert_to_conduct
      * early-return no-op facet). ---- */
@@ -1108,7 +1108,7 @@ int main(void) {
 
         /* tarp_reset: full reset to defaults. Quirk: arp_init_defaults sets
          * retrigger=1 and tarp_reset does NOT re-clear it, so retrigger reads 1
-         * (NOT the tarp_init_defaults 0). */
+         * (NOT 0). */
         hx_set_param(h, "t2_tarp_reset", "1");
         HX_ASSERT(ct->tarp.style == 0 && ct->tarp.rate_idx == 1 && ct->tarp.octaves == 0,
                   "tarp_reset: style/rate/octaves -> defaults");
@@ -1120,7 +1120,7 @@ int main(void) {
                   "tarp_reset: tarp_on/latch->0, sync->1");
         HX_ASSERT(ct->tarp.retrigger == 1, "tarp_reset: retrigger reads 1 (arp_init default, NOT re-cleared)");
 
-        /* ---- Type-conversion pins (LAST — they flip t0's type). ---- */
+        /* ---- Type-conversion pins (LAST — they flip t2's type). ---- */
 
         /* convert_to_conduct with ANOTHER track (t5) already the Conductor:
          * early-return no-op (JS reads back conductor_track for the OLED msg). */
