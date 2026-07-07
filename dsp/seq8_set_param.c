@@ -529,8 +529,8 @@ static void set_param(void *instance, const char *key, const char *val) {
      * after the state handler and before the edit handler, preserving the
      * original branch order (transport -> state -> misc -> edit -> tN_). The
      * state handler above returns 0 without mutating cx on fall-through, and the
-     * transport segment before it never touches cx, so cx is still
-     * {inst,key,val} here. */
+     * transport handler before it reassigns only its own local val copy
+     * (cx->val is never mutated), so cx is still {inst,key,val} here. */
     if (sp_globals_misc(&cx)) return;
 
     /* --- Clip/row copy/cut/clear + undo/redo (global) --- now a file-scope
