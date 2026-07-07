@@ -449,7 +449,9 @@ typedef struct {
 
 /* Stage B handlers: track-config + cc-automation + drum-lane + per-clip tN_
  * keys + clip-resolution/track-type/track-arp keys + record keys + drum
- * config/all-lanes-transform/drum-repeat/drum-record keys. Included at FILE scope
+ * config/all-lanes-transform/drum-repeat/drum-record keys + melodic-clip-
+ * transform (length/dir/stretch/nudge/legato) and the pfx_set catch-all keys.
+ * Included at FILE scope
  * here (not mid-function) so each can be a real static fn; placed just before
  * set_param so the file-scope helpers they call (build_xpose_lut,
  * silence_muted_tracks, pfx_sync_from_clip; cc_emit, cc_auto_set_point,

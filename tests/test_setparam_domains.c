@@ -1746,9 +1746,9 @@ int main(void) {
      * pfx_*_reset keys). These are BARE tN_ keys operating on
      * tr->clips[active_clip] (NO cC prefix -- DISTINCT from sp_track_clip's
      * tN_cC_* keys, which target an explicit clip). Runs on dedicated MELODIC
-     * track t7: the group-7 live block touched only t7's live/padmap paths +
-     * clip_cc_auto, never the clip_t note/step arrays (except c0 via xpose), so
-     * clips 1..9 are pristine. active_clip is struct-set per concern to a
+     * track t7: t7's prior touches were the group-2 cc-auto block (clip_cc_auto
+     * lanes) and the group-7 live block (live/padmap paths) — never the clip_t
+     * note/step arrays (except c0 via xpose), so clips 1..9 are pristine. active_clip is struct-set per concern to a
      * distinct clip, with distinct magic numbers, so nothing chains. Nothing
      * asserts t7 after this block. OUT OF SCOPE (RT/transport): current_step /
      * playhead re-anchoring after length/shift changes, and
