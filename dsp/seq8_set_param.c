@@ -526,8 +526,8 @@ static void set_param(void *instance, const char *key, const char *val) {
      * dispatched below): sp_track_config (group 1), sp_track_ccauto (group 2),
      * sp_track_drum (group 3), sp_track_clip (group 4),
      * sp_track_config2 (group 5), sp_track_record (group 6),
-     * sp_track_live (group 7), sp_track_drum2 (group 8). The OTHER
-     * sp_track_* files are still mid-function segments. */
+     * sp_track_live (group 7), sp_track_drum2 (group 8). The one remaining
+     * sp_track_* file (sp_track_misc) is still a mid-function segment. */
     if (key[0] == 't' && key[1] >= '0' && key[1] <= '7' && key[2] == '_') {
         int tidx = key[1] - '0';
         const char *sub = key + 3;

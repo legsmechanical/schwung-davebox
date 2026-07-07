@@ -1722,7 +1722,8 @@ int main(void) {
             HX_ASSERT(rc->step_gate[rstep] == GATE_TICKS,
                       "drum_record_note_off: no-op when not recording (guard)");
 
-            /* _off capture: off_tick=(rstep+2)*TPS, on_tick=rstep*TPS -> gate=2*TPS=48. */
+            /* _off capture: off_tick=(rstep+2)*TICKS_PER_STEP, on_tick=rstep*TICKS_PER_STEP
+             * -> gate=2*TICKS_PER_STEP=48 (drum gate math is in TICKS_PER_STEP, not clip tps). */
             dt->recording = 1;
             hx_set_param(h, "t0_drum_record_note_off", voff);
             HX_ASSERT(rc->step_gate[rstep] == 2 * TICKS_PER_STEP,
