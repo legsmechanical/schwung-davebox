@@ -448,7 +448,8 @@ typedef struct {
 } sp_ctx_t;
 
 /* Stage B handlers: track-config + cc-automation + drum-lane + per-clip tN_
- * keys + clip-resolution/track-type/track-arp keys. Included at FILE scope
+ * keys + clip-resolution/track-type/track-arp keys + record keys + drum
+ * config/all-lanes-transform/drum-repeat/drum-record keys. Included at FILE scope
  * here (not mid-function) so each can be a real static fn; placed just before
  * set_param so the file-scope helpers they call (build_xpose_lut,
  * silence_muted_tracks, pfx_sync_from_clip; cc_emit, cc_auto_set_point,
@@ -468,6 +469,7 @@ typedef struct {
 #include "setparam/sp_track_clip.c"
 #include "setparam/sp_track_config2.c"
 #include "setparam/sp_track_record.c"
+#include "setparam/sp_track_drum2.c"
 #include "setparam/sp_track_live.c"
 
 /* ------------------------------------------------------------------ */
@@ -524,7 +526,7 @@ static void set_param(void *instance, const char *key, const char *val) {
      * dispatched below): sp_track_config (group 1), sp_track_ccauto (group 2),
      * sp_track_drum (group 3), sp_track_clip (group 4),
      * sp_track_config2 (group 5), sp_track_record (group 6),
-     * sp_track_live (group 7). The OTHER
+     * sp_track_live (group 7), sp_track_drum2 (group 8). The OTHER
      * sp_track_* files are still mid-function segments. */
     if (key[0] == 't' && key[1] >= '0' && key[1] <= '7' && key[2] == '_') {
         int tidx = key[1] - '0';
@@ -580,22 +582,24 @@ static void set_param(void *instance, const char *key, const char *val) {
          * so cx is current. */
         if (sp_track_record(&cx)) return;
 
-/* LOAD-BEARING SPACING: function-body segment include (phase 4A). The
- * blank-line layout around this include is part of the byte-identity
- * gate (`clang -E -P` preprocessed TU identical pre/post split); do not
- * tidy. The segment file opens with `#line 1` to disarm clang's
- * start-of-line indentation collapse at the include entry. */
-#include "setparam/sp_track_drum2.c"
+        /* tN_ drum config / all-lanes transforms / drum-repeat+repeat2 /
+         * drum-record keys -- now a file-scope handler (phase 4B group 8),
+         * dispatched here reusing the existing cx. Non-guarded run of strcmp
+         * branches like sp_track_record: returns 1 on match, 0 to fall through
+         * to the sibling tN_ handlers. inst-global writes (all_lanes_stretch_result,
+         * delete_held, state_dirty) and the drum_repeat*_internal delegations
+         * move verbatim. sp_track_record above returns 0 without mutating cx on
+         * fall-through, so cx is current. */
+        if (sp_track_drum2(&cx)) return;
 
         /* tN_live_notes / live_at / padmap -- now a file-scope handler
          * (phase 4B group 7), dispatched here reusing the existing cx.
          * Non-guarded run of strcmp branches like sp_track_record: returns 1
          * on match, 0 to fall through to the sibling tN_ handlers. padmap's
          * global-carrier writes (active_track, dsp_inbound_enabled,
-         * pad_note_map) move verbatim. The sp_track_drum2 segment above is a
-         * raw mid-function region that only reads inst/val/tidx/tr/sub (member
-         * writes, no local reassignment) and returns on every branch, so cx is
-         * current here. */
+         * pad_note_map) move verbatim. sp_track_drum2 above is a handler
+         * dispatched here that returns 0 without mutating cx on fall-through,
+         * so cx is current. */
         if (sp_track_live(&cx)) return;
 
 /* LOAD-BEARING SPACING: the blank line above this include (pristine 5863)

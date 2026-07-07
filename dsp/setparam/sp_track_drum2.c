@@ -1,52 +1,60 @@
-/* FUNCTION-BODY SEGMENT of set_param() -- included mid-function by
- * seq8_set_param.c; NOT a translation unit, not even a complete function;
- * shares set_param's locals (inst, key, val) and the tN_ block's locals
- * (tidx, tr, sub); never compile or lint this file standalone.
- * Covers tN_ track keys: drum config, all-lanes transforms, drum perform/repeat/repeat2, drum record (drum_mute_all_clear ... drum_record_note_off)
- * See also sp_track_drum.c (the tN_lL_* per-lane setters, incl. the nested
- * lane step parser).
- *
- * LOAD-BEARING: the `#line 1` directive below resets clang's start-of-line
- * lexer state after this comment block; without it `clang -E -P` collapses
- * the first code line's indentation and the phase-4A byte-identity gate
- * fails (only the value 1 disarms it -- measured, Apple clang 16). Side
- * effect: diagnostics in this file number from 1 at the first code line.
- * Do not remove, reorder, or tidy. */
-#line 1
+/* FILE-SCOPE HANDLER for set_param()'s tN_ drum keys -- part of the seq8.c
+ * single translation unit; #included at FILE scope by seq8_set_param.c
+ * (immediately before set_param), NOT a standalone TU; never compile or lint
+ * this file on its own. Eighth Stage B handler (phase 4B group 8): the former
+ * mid-function segment is now a real static int sp_track_drum2(sp_ctx_t *).
+ * Covers tN_ track keys: drum config, all-lanes transforms, drum
+ * perform/repeat/repeat2, drum record (drum_mute_all_clear ...
+ * drum_record_note_off). See also sp_track_drum.c (the tN_lL_* per-lane
+ * setters, incl. the nested lane step parser).
+ * Returns 1 when it handled the key (caller returns), 0 to fall through to
+ * the sibling tN_ handlers. The tN_ guard and the tidx/sub/tr locals live in
+ * the parent dispatcher now (seq8_set_param.c). */
+static int sp_track_drum2(sp_ctx_t *cx) {
+    seq8_instance_t *inst = cx->inst;
+    const char *val = cx->val;
+    int tidx = cx->tidx;
+    seq8_track_t *tr = cx->tr;
+    const char *sub = cx->sub;
+
+    /* Body below kept at its Stage-A segment indentation (8 spaces) so it
+     * byte-diffs against the pre-conversion segment; reindent only in a
+     * dedicated cleanup pass after the group is device-blessed. */
+
         if (!strcmp(sub, "drum_mute_all_clear")) {
             /* tN_drum_mute_all_clear: unmute and unsolo all drum lanes. */
             tr->drum_lane_mute = 0;
             tr->drum_lane_solo = 0;
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "diq")) {
             /* tN_diq "value" — per-track drum input quantize: 0=Off, 1-8 = index into DRUM_INQ_TICKS */
             tr->drum_inp_quant = (uint8_t)clamp_i(my_atoi(val), 0, 8);
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "drum_repeat_sync")) {
             /* tN_drum_repeat_sync "value" — per-track drum repeat sync: 0=Off, 1=On */
             tr->drum_repeat_sync = (uint8_t)clamp_i(my_atoi(val), 0, 1);
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "drum_lanes_qnt")) {
             /* tN_drum_lanes_qnt "value" — set NoteFX quantize on all 32 lanes of active drum clip. */
             int v = clamp_i(my_atoi(val), 0, 100);
             drum_clip_t *dc = tr->drum_clips[tr->active_clip];
-            if (!dc) return;
+            if (!dc) return 1;
             int l;
             for (l = 0; l < DRUM_LANES; l++) {
                 dc->lanes[l].pfx_params.quantize = v;
                 drum_pfx_apply_params(&tr->drum_lane_pfx[l], &dc->lanes[l].pfx_params);
             }
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "all_lanes_clip_resolution")) {
@@ -54,7 +62,7 @@
             int idx = clamp_i(my_atoi(val), 0, 5);
             uint16_t new_tps = TPS_VALUES[idx];
             drum_clip_t *dc_ar = tr->drum_clips[tr->active_clip];
-            if (!dc_ar) return;
+            if (!dc_ar) return 1;
             int l_ar;
             for (l_ar = 0; l_ar < DRUM_LANES; l_ar++) {
                 clip_t *dlc = &dc_ar->lanes[l_ar].clip;
@@ -81,14 +89,14 @@
                 clip_build_steps_from_notes(dlc);
             }
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "all_lanes_playback_dir")) {
             /* tN_all_lanes_playback_dir "value" — set playback direction on all 32 drum lanes. */
             int v = clamp_i(my_atoi(val), 0, 3);
             drum_clip_t *dc_ad = tr->drum_clips[tr->active_clip];
-            if (!dc_ad) return;
+            if (!dc_ad) return 1;
             int l_ad;
             for (l_ad = 0; l_ad < DRUM_LANES; l_ad++) {
                 dc_ad->lanes[l_ad].clip.playback_dir = (uint8_t)v;
@@ -96,20 +104,20 @@
             }
             silence_track_from_set_param(inst, tr);
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "all_lanes_playback_audio_reverse")) {
             /* tN_all_lanes_playback_audio_reverse "value" — set audio reverse on all 32 drum lanes. */
             int v = clamp_i(my_atoi(val), 0, 1);
             drum_clip_t *dc_av = tr->drum_clips[tr->active_clip];
-            if (!dc_av) return;
+            if (!dc_av) return 1;
             int l_av;
             for (l_av = 0; l_av < DRUM_LANES; l_av++) {
                 dc_av->lanes[l_av].clip.playback_audio_reverse = (uint8_t)v;
             }
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "all_lanes_beat_stretch")) {
@@ -117,16 +125,16 @@
              * Pre-flight: if ANY lane is blocked, no-op entirely and set result=-1. */
             int dir = my_atoi(val);
             drum_clip_t *dc_al = tr->drum_clips[tr->active_clip];
-            if (!dc_al) return;
+            if (!dc_al) return 1;
             int l_al;
             /* Pre-flight: check all lanes before modifying any */
             for (l_al = 0; l_al < DRUM_LANES; l_al++) {
                 clip_t *dlc_pf = &dc_al->lanes[l_al].clip;
                 int len_pf = (int)dlc_pf->length;
                 if (dir == 1) {
-                    if (len_pf * 2 > SEQ_STEPS) { inst->all_lanes_stretch_result = -1; return; }
+                    if (len_pf * 2 > SEQ_STEPS) { inst->all_lanes_stretch_result = -1; return 1; }
                 } else {
-                    if (len_pf < 2) { inst->all_lanes_stretch_result = -1; return; }
+                    if (len_pf < 2) { inst->all_lanes_stretch_result = -1; return 1; }
                     /* Check note collision: two active steps would map to same compressed slot */
                     int i_pf;
                     uint8_t seen_pf[SEQ_STEPS];
@@ -134,7 +142,7 @@
                     for (i_pf = 0; i_pf < len_pf; i_pf++) {
                         if (dlc_pf->steps[i_pf]) {
                             int dst_pf = i_pf / 2;
-                            if (seen_pf[dst_pf]) { inst->all_lanes_stretch_result = -1; return; }
+                            if (seen_pf[dst_pf]) { inst->all_lanes_stretch_result = -1; return 1; }
                             seen_pf[dst_pf] = 1;
                         }
                     }
@@ -284,14 +292,14 @@
                 }
             }
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "all_lanes_clock_shift")) {
             /* tN_all_lanes_clock_shift "dir" — rotate all 32 drum lanes by one step. */
             int dir = my_atoi(val);
             drum_clip_t *dc_al = tr->drum_clips[tr->active_clip];
-            if (!dc_al) return;
+            if (!dc_al) return 1;
             int l_al;
             for (l_al = 0; l_al < DRUM_LANES; l_al++) {
                 clip_t *dlc = &dc_al->lanes[l_al].clip;
@@ -348,14 +356,14 @@
                 clip_migrate_to_notes(dlc);
             }
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "all_lanes_nudge")) {
             /* tN_all_lanes_nudge "dir" — nudge all 32 drum lanes; dir=0 resets nudge_pos. */
             int dir = my_atoi(val);
             drum_clip_t *dc_al = tr->drum_clips[tr->active_clip];
-            if (!dc_al) return;
+            if (!dc_al) return 1;
             int l_al;
             for (l_al = 0; l_al < DRUM_LANES; l_al++) {
                 clip_t *dlc = &dc_al->lanes[l_al].clip;
@@ -433,7 +441,7 @@
                 clip_migrate_to_notes(dlc);
             }
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "all_lanes_length")) {
@@ -442,7 +450,7 @@
              * global tick during playback so cross-lane phase stays in sync. */
             int reqlen = my_atoi(val);
             drum_clip_t *dc_al = tr->drum_clips[tr->active_clip];
-            if (!dc_al) return;
+            if (!dc_al) return 1;
             int l_al;
             for (l_al = 0; l_al < DRUM_LANES; l_al++) {
                 clip_t *dlc = &dc_al->lanes[l_al].clip;
@@ -459,7 +467,7 @@
                 clip_migrate_to_notes(dlc);
             }
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "all_lanes_loop_set")) {
@@ -477,7 +485,7 @@
             if (ls > SEQ_STEPS - 1) ls = SEQ_STEPS - 1;
             if (ls + len > SEQ_STEPS) len = SEQ_STEPS - ls;
             drum_clip_t *dc_al = tr->drum_clips[tr->active_clip];
-            if (!dc_al) return;
+            if (!dc_al) return 1;
             int l_al;
             for (l_al = 0; l_al < DRUM_LANES; l_al++) {
                 clip_t *dlc = &dc_al->lanes[l_al].clip;
@@ -492,13 +500,13 @@
                 clip_migrate_to_notes(dlc);
             }
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "all_lanes_double_fill")) {
             /* tN_all_lanes_double_fill — double-and-fill all 32 drum lanes. */
             drum_clip_t *dc_al = tr->drum_clips[tr->active_clip];
-            if (!dc_al) return;
+            if (!dc_al) return 1;
             int l_al, i;
             undo_begin_drum_clip(inst, tidx, (int)tr->active_clip);
             for (l_al = 0; l_al < DRUM_LANES; l_al++) {
@@ -523,7 +531,7 @@
                 clip_migrate_to_notes(dlc);
             }
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "active_drum_lane")) {
@@ -532,7 +540,7 @@
              * Read by on_midi.drum_pad_event for vel-pad preview. */
             int lane_adl = atoi(val);
             tr->active_drum_lane = (uint8_t)clamp_i(lane_adl, 0, DRUM_LANES - 1);
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "delete_held")) {
@@ -545,7 +553,7 @@
              * reads inst->delete_held to bail before classifying;
              * mirrors JS's "bail on Delete-held" pad-handler branches. */
             inst->delete_held = (uint8_t)(my_atoi(val) ? 1 : 0);
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "drum_lane_page")) {
@@ -557,7 +565,7 @@
              * restore). */
             int page_dlp = atoi(val);
             tr->drum_lane_page = (uint8_t)clamp_i(page_dlp, 0, (DRUM_LANES + 15) / 16 - 1);
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "drum_perform_mode")) {
@@ -568,7 +576,7 @@
              * right-pad classifier to JS (Bundle 2C will move it). */
             int mode_dpm = atoi(val);
             tr->drum_perform_mode = (uint8_t)clamp_i(mode_dpm, 0, 2);
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "drum_repeat_start")) {
@@ -589,25 +597,25 @@
                 while (*sp >= '0' && *sp <= '9') { vel_r = vel_r * 10 + (*sp++ - '0'); }
             }
             drum_repeat_start_internal(inst, tr, lane_r, rate_r, vel_r);
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "drum_repeat_vel")) {
             /* tN_drum_repeat_vel "vel" — update repeat velocity from pad pressure */
             tr->drum_repeat_vel = (uint8_t)clamp_i(my_atoi(val), 1, 127);
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "drum_repeat_stop")) {
             /* tN_drum_repeat_stop — deactivate repeat; also clears latch mirror */
             drum_repeat_stop_internal(tr);
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "drum_repeat_lane")) {
             /* tN_drum_repeat_lane "lane" — switch active lane without resetting phase/step */
             drum_repeat_lane_internal(tr, my_atoi(val));
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "drum_repeat_latched")) {
@@ -620,7 +628,7 @@
              * audio thread, avoiding the JS-tick race that would otherwise
              * fire one extra repeat at fast rates. */
             tr->drum_repeat_latched = (uint8_t)(my_atoi(val) ? 1 : 0);
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "drum_repeat2_lane_on")) {
@@ -638,13 +646,13 @@
                 while (*sp >= '0' && *sp <= '9') { vel_r = vel_r * 10 + (*sp++ - '0'); }
             }
             drum_repeat2_lane_on_internal(inst, tr, lane_r, vel_r);
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "drum_repeat2_lane_off")) {
             /* tN_drum_repeat2_lane_off "lane" — remove lane from active+pending+latched bitmasks */
             drum_repeat2_lane_off_internal(tr, my_atoi(val));
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "drum_repeat2_rate")) {
@@ -657,7 +665,7 @@
             int rate_r = 0;
             while (*sp >= '0' && *sp <= '9') { rate_r = rate_r * 10 + (*sp++ - '0'); }
             drum_repeat2_rate_internal(tr, lane_r, rate_r);
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "drum_repeat2_latch_held")) {
@@ -669,7 +677,7 @@
              * of InQ boundary state. */
             tr->drum_repeat2_latched_lanes |= tr->drum_repeat2_active;
             tr->drum_repeat2_latched_lanes |= tr->drum_repeat2_pending;
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "drum_repeat2_lane_latched")) {
@@ -692,7 +700,7 @@
                 tr->drum_repeat2_latched_lanes |=  (1u << (unsigned)lane_r);
             else
                 tr->drum_repeat2_latched_lanes &= ~(1u << (unsigned)lane_r);
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "drum_repeat2_stop")) {
@@ -701,7 +709,7 @@
             tr->drum_repeat2_active        = 0;
             tr->drum_repeat2_pending       = 0;
             tr->drum_repeat2_latched_lanes = 0;
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "drum_repeat2_vel")) {
@@ -718,7 +726,7 @@
                 while (*sp >= '0' && *sp <= '9') { vel_r = vel_r * 10 + (*sp++ - '0'); }
             }
             tr->drum_repeat2_vel[lane_r] = (uint8_t)clamp_i(vel_r, 1, 127);
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "drum_record_note_on")) {
@@ -730,11 +738,11 @@
              * inserts a step hit at that lane's current playback position.
              * Gate initially GATE_TICKS; updated to actual hold time on
              * drum_record_note_off. */
-            if (!tr->recording) return;
+            if (!tr->recording) return 1;
             {
                 int ac = (int)tr->active_clip;
                 drum_clip_t *dc = tr->drum_clips[ac];
-                if (!dc) return;
+                if (!dc) return 1;
                 const char *sp = val;
                 while (*sp) {
                     while (*sp == ' ') sp++;
@@ -850,7 +858,7 @@
                     }
                 }
             }
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "drum_record_note_off")) {
@@ -859,11 +867,11 @@
              * one call. Each pitch closes the gate for the last
              * drum_record_note_on on the matching lane, computing actual hold
              * duration from elapsed render ticks. */
-            if (!tr->recording) return;
+            if (!tr->recording) return 1;
             {
                 int ac2    = (int)tr->active_clip;
                 drum_clip_t *dc2 = tr->drum_clips[ac2];
-                if (!dc2) return;
+                if (!dc2) return 1;
                 const char *sp2 = val;
                 while (*sp2) {
                     while (*sp2 == ' ') sp2++;
@@ -904,5 +912,7 @@
                     }
                 }
             }
-            return;
+            return 1;
         }
+    return 0;
+}
