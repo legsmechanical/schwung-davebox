@@ -823,7 +823,7 @@ static int sp_track_clip(sp_ctx_t *cx) {
                 inst->state_dirty = 1;
                 return 1;
             }
-            return 1;
+            return 1;  /* clip key, unknown sub-op: CONSUME (never leak to pfx catch-all) */
         }
 
     return 0;  /* not a clip key: fall through to sibling tN_ handlers */
