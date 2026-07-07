@@ -1,19 +1,34 @@
-/* FUNCTION-BODY SEGMENT of set_param() -- included mid-function by
- * seq8_set_param.c; NOT a translation unit, not even a complete function;
- * shares set_param's locals (inst, key, val) and the tN_ block's locals
- * (tidx, tr, sub); never compile or lint this file standalone.
- * Covers tN_ track keys: tN_cC_* clip block (nested _step_ parser, note ops, loop window, CC-lane, _pfx_set, conductor fields, clears) -- the single sub[0]=='c' clip block; local cidx declared/used only within
+/* FILE-SCOPE HANDLER for set_param()'s tN_cC_* per-clip keys -- part of the
+ * seq8.c single translation unit; #included at FILE scope by
+ * seq8_set_param.c (immediately before set_param), NOT a standalone TU;
+ * never compile or lint this file on its own. Fourth Stage B handler
+ * (phase 4B group 4): the former mid-function segment is now a real
+ * static int sp_track_clip(sp_ctx_t *).
+ * Covers the single sub[0]=='c' clip block: remote-UI note ops, the nested
+ * _step_ parser, per-clip resolution, playback dir, loop window, CC-lane
+ * (_k0.._k7) setters, _pfx_set, conductor fields, and the clears/resets.
  * This block declares and uses its own local `cidx` -- fully self-contained.
  * See also sp_track_misc.c (active-clip-level keys: clip_length, playback
  * dir, nudge, stretch, plus the pfx_set catch-all tail).
- *
- * LOAD-BEARING: the `#line 1` directive below resets clang's start-of-line
- * lexer state after this comment block; without it `clang -E -P` collapses
- * the first code line's indentation and the phase-4A byte-identity gate
- * fails (only the value 1 disarms it -- measured, Apple clang 16). Side
- * effect: diagnostics in this file number from 1 at the first code line.
- * Do not remove, reorder, or tidy. */
-#line 1
+ * Returns 1 when the key was a clip key (sub[0]=='c' + digit) -- the clip
+ * block CONSUMES it even if the sub-op is unknown, so unmatched tN_cC_*
+ * keys never leak to the pfx catch-all in sp_track_misc. Returns 0 only
+ * when sub is not a clip key, to fall through to the sibling tN_ handlers.
+ * Carries the _length rui_rev freeze-fix verbatim (the
+ * `if (!tr->recording) rui_touch(inst);` guard, pinned by test_rui_rev).
+ * The tN_ guard and the tidx/sub/tr locals live in the parent dispatcher
+ * now (seq8_set_param.c). */
+static int sp_track_clip(sp_ctx_t *cx) {
+    seq8_instance_t *inst = cx->inst;
+    const char *val = cx->val;
+    int tidx = cx->tidx;
+    seq8_track_t *tr = cx->tr;
+    const char *sub = cx->sub;
+
+    /* Body below kept at its Stage-A segment indentation (8 spaces) so it
+     * byte-diffs against the pre-conversion segment; reindent only in a
+     * dedicated cleanup pass after the group is device-blessed. */
+
         if (sub[0] == 'c' && sub[1] >= '0' && sub[1] <= '9') {
             int cidx = 0;
             const char *p = sub + 1;
@@ -24,7 +39,7 @@
                 if (cidx < NUM_CLIPS) cidx = cidx * 10 + (*p - '0');
                 p++;
             }
-            if (cidx >= NUM_CLIPS) return;
+            if (cidx >= NUM_CLIPS) return 1;
             clip_t *cl = &tr->clips[cidx];
 
             /* tN_cC_ruisel "[lane]": select this clip as the remote-UI snapshot
@@ -34,7 +49,7 @@
                 inst->rui_sel_clip  = (uint8_t)cidx;
                 inst->rui_sel_lane  = (val && val[0] && val[0] != '-') ?
                                           (int16_t)clamp_i(my_atoi(val), 0, DRUM_LANES - 1) : -1;
-                return;
+                return 1;
             }
 
             /* tN_cC_cc_focus "<k>" — gate rui_cc to knob k (-1 = none); bump rev to force re-read. */
@@ -42,16 +57,16 @@
                 int k = val ? my_atoi(val) : -1;
                 inst->rui_cc_focus = (k >= 0 && k < 8) ? (int8_t)k : -1;
                 rui_touch(inst);
-                return;
+                return 1;
             }
 
             /* Remote-UI piano-roll note edits (melodic clip). Each writes notes[]
              * directly then re-derives steps[] via clip_note_finalize. */
-            if (!strcmp(p, "_note_add"))    { if (clip_note_apply_op(cl, 'a', val)) clip_note_finalize(inst, cl); return; }
-            if (!strcmp(p, "_note_del"))    { if (clip_note_apply_op(cl, 'd', val)) clip_note_finalize(inst, cl); return; }
-            if (!strcmp(p, "_note_move"))   { if (clip_note_apply_op(cl, 'm', val)) clip_note_finalize(inst, cl); return; }
-            if (!strcmp(p, "_note_resize")) { if (clip_note_apply_op(cl, 'r', val)) clip_note_finalize(inst, cl); return; }
-            if (!strcmp(p, "_note_vel"))    { if (clip_note_apply_op(cl, 'v', val)) clip_note_finalize(inst, cl); return; }
+            if (!strcmp(p, "_note_add"))    { if (clip_note_apply_op(cl, 'a', val)) clip_note_finalize(inst, cl); return 1; }
+            if (!strcmp(p, "_note_del"))    { if (clip_note_apply_op(cl, 'd', val)) clip_note_finalize(inst, cl); return 1; }
+            if (!strcmp(p, "_note_move"))   { if (clip_note_apply_op(cl, 'm', val)) clip_note_finalize(inst, cl); return 1; }
+            if (!strcmp(p, "_note_resize")) { if (clip_note_apply_op(cl, 'r', val)) clip_note_finalize(inst, cl); return 1; }
+            if (!strcmp(p, "_note_vel"))    { if (clip_note_apply_op(cl, 'v', val)) clip_note_finalize(inst, cl); return 1; }
             if (!strcmp(p, "_notes_op")) {
                 /* batch: "<op> args; <op> args; ..." — one finalize for the lot */
                 const char *s = val; int changed = 0;
@@ -64,18 +79,18 @@
                     while (*s && *s != ';') s++;   /* advance to next ';' */
                 }
                 if (changed) clip_note_finalize(inst, cl);
-                return;
+                return 1;
             }
 
             /* tN_cC_resolution "idx" (0-5): change THIS clip's ticks_per_step and
              * rescale its notes proportionally — remote-UI per-clip variant of
              * clip_resolution (which only targets the active clip). */
             if (!strcmp(p, "_resolution")) {
-                if (tr->recording) return;
+                if (tr->recording) return 1;
                 int ridx = clamp_i(my_atoi(val), 0, 5);
                 uint16_t new_tps = TPS_VALUES[ridx];
                 uint16_t old_tps = cl->ticks_per_step;
-                if (new_tps == old_tps || old_tps == 0) return;
+                if (new_tps == old_tps || old_tps == 0) return 1;
                 uint32_t gmax_res = (uint32_t)SEQ_STEPS * new_tps;
                 if (gmax_res > 65535) gmax_res = 65535;
                 for (uint16_t ni = 0; ni < cl->note_count; ni++) {
@@ -94,14 +109,14 @@
                 clip_build_steps_from_notes(cl);
                 rui_touch(inst);
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
 
             if (!strncmp(p, "_step_", 6)) {
                 const char *q = p + 6;
                 int sidx = 0;
                 while (*q >= '0' && *q <= '9') { sidx = sidx * 10 + (*q++ - '0'); }
-                if (sidx < 0 || sidx >= SEQ_STEPS) return;
+                if (sidx < 0 || sidx >= SEQ_STEPS) return 1;
 
                 if (!strcmp(q, "_toggle")) {
                     /* tN_cC_step_S_toggle val="note [velocity [0..127]]"
@@ -146,7 +161,7 @@
                         cl->active = (uint8_t)any;
                     }
                     clip_migrate_to_notes(cl);
-                    return;
+                    return 1;
                 }
 
                 if (!strcmp(q, "_add")) {
@@ -194,7 +209,7 @@
                         if (tr->recording) LRS_SET(tr, sidx);
                         clip_migrate_to_notes(cl);
                     }
-                    return;
+                    return 1;
                 }
 
                 if (!strcmp(q, "_clear")) {
@@ -215,25 +230,25 @@
                         cl->active = (uint8_t)any;
                     }
                     clip_migrate_to_notes(cl);
-                    return;
+                    return 1;
                 }
                 if (!strcmp(q, "_vel")) {
-                    if (cl->step_note_count[sidx] == 0) return;
+                    if (cl->step_note_count[sidx] == 0) return 1;
                     cl->step_vel[sidx] = (uint8_t)clamp_i(my_atoi(val), 0, 127);
                     clip_migrate_to_notes(cl);
                     if (!tr->recording) inst->state_dirty = 1;
-                    return;
+                    return 1;
                 }
                 if (!strcmp(q, "_gate")) {
-                    if (cl->step_note_count[sidx] == 0) return;
+                    if (cl->step_note_count[sidx] == 0) return 1;
                     { int gmax = SEQ_STEPS * cl->ticks_per_step; if (gmax > 65535) gmax = 65535;
                     cl->step_gate[sidx] = (uint16_t)clamp_i(my_atoi(val), 1, gmax); }
                     clip_migrate_to_notes(cl);
                     if (!tr->recording) inst->state_dirty = 1;
-                    return;
+                    return 1;
                 }
                 if (!strcmp(q, "_nudge")) {
-                    if (cl->step_note_count[sidx] == 0) return;
+                    if (cl->step_note_count[sidx] == 0) return 1;
                     { int tps_m1 = cl->ticks_per_step - 1;
                     int new_val = clamp_i(my_atoi(val), -tps_m1, tps_m1);
                     int delta = new_val - (int)cl->note_tick_offset[sidx][0];
@@ -244,7 +259,7 @@
                     } }
                     clip_migrate_to_notes(cl);
                     if (!tr->recording) inst->state_dirty = 1;
-                    return;
+                    return 1;
                 }
                 if (!strcmp(q, "_iter")) {
                     /* val: 0 = default, else (cycle_len<<4) | cycle_idx */
@@ -255,25 +270,25 @@
                     }
                     cl->step_iter[sidx] = (uint8_t)raw;
                     if (!tr->recording) inst->state_dirty = 1;
-                    return;
+                    return 1;
                 }
                 if (!strcmp(q, "_rand")) {
                     cl->step_random[sidx] = (uint8_t)clamp_i(my_atoi(val), 0, 100);
                     if (!tr->recording) inst->state_dirty = 1;
-                    return;
+                    return 1;
                 }
                 if (!strcmp(q, "_ratch")) {
                     cl->step_ratchet[sidx] = (uint8_t)clamp_i(my_atoi(val), 0, 4);
                     if (!tr->recording) inst->state_dirty = 1;
-                    return;
+                    return 1;
                 }
                 if (!strcmp(q, "_reassign")) {
                     /* Move notes from step sidx to dstStep, adjusting offsets.
                      * If dstStep is empty: simple move. If occupied: merge; dst notes
                      * take precedence (duplicate pitches from src are dropped). */
                     int dstStep = clamp_i(my_atoi(val), 0, (int)cl->length - 1);
-                    if (dstStep == sidx) return;
-                    if (cl->step_note_count[sidx] == 0) return;
+                    if (dstStep == sidx) return 1;
+                    if (cl->step_note_count[sidx] == 0) return 1;
                     {
                         int tps_m1 = cl->ticks_per_step - 1;
                         int offset_adjust = ((int)sidx - dstStep) * cl->ticks_per_step;
@@ -329,13 +344,13 @@
                     }
                     clip_migrate_to_notes(cl);
                     if (!tr->recording) inst->state_dirty = 1;
-                    return;
+                    return 1;
                 }
                 if (!strcmp(q, "_copy_to")) {
                     /* tN_cC_step_S_copy_to — copy all step data to dstStep (overwrite); src unchanged */
                     int dstStep = clamp_i(my_atoi(val), 0, (int)cl->length - 1);
-                    if (dstStep == sidx) return;
-                    if (cl->step_note_count[sidx] == 0) return;
+                    if (dstStep == sidx) return 1;
+                    if (cl->step_note_count[sidx] == 0) return 1;
                     undo_begin_single(inst, tidx, cidx);
                     memcpy(cl->step_notes[dstStep], cl->step_notes[sidx], 8);
                     memcpy(cl->note_tick_offset[dstStep], cl->note_tick_offset[sidx], 8 * sizeof(int16_t));
@@ -353,20 +368,20 @@
                     }
                     clip_migrate_to_notes(cl);
                     inst->state_dirty = 1;
-                    return;
+                    return 1;
                 }
                 if (!strcmp(q, "_pitch")) {
-                    if (!cl->steps[sidx]) return;
+                    if (!cl->steps[sidx]) return 1;
                     int delta = my_atoi(val), n;
                     for (n = 0; n < (int)cl->step_note_count[sidx]; n++)
                         cl->step_notes[sidx][n] = (uint8_t)clamp_i(
                             (int)cl->step_notes[sidx][n] + delta, 0, 127);
                     clip_migrate_to_notes(cl);
                     if (!tr->recording) inst->state_dirty = 1;
-                    return;
+                    return 1;
                 }
                 if (!strcmp(q, "_set_notes")) {
-                    if (!cl->steps[sidx]) return;
+                    if (!cl->steps[sidx]) return 1;
                     int notes[8], cnt = 0;
                     const char *np = val;
                     while (*np && cnt < 8) {
@@ -392,9 +407,9 @@
                         clip_migrate_to_notes(cl);
                         if (!tr->recording) inst->state_dirty = 1;
                     }
-                    return;
+                    return 1;
                 }
-                return;
+                return 1;
             }
             /* tN_cC_dir "0..3": per-clip playback direction (remote UI). Unlike the
              * active-clip tN_clip_playback_dir sub, this targets the named clip. */
@@ -404,7 +419,7 @@
                 if (cidx == (int)tr->active_clip) silence_track_from_set_param(inst, tr);
                 rui_touch(inst);
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
 
             if (!strncmp(p, "_length", 7) && p[7] == '\0') {
@@ -439,7 +454,7 @@
                  * either, so live takes are already rev-invisible until the
                  * next edit). */
                 if (!tr->recording) rui_touch(inst);
-                return;
+                return 1;
             }
             if (!strncmp(p, "_loop_set", 9) && p[9] == '\0') {
                 /* tN_cC_loop_set "packed" — atomic loop window write.
@@ -474,7 +489,7 @@
                 }
                 clip_migrate_to_notes(cl);
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
             if (p[0] == '_' && p[1] == 'k' && p[2] >= '0' && p[2] <= '7') {
                 int _kidx = p[2] - '0';
@@ -493,7 +508,7 @@
                     _ca->lane_loop_start[_kidx] = (uint16_t)ls;
                     _ca->lane_length[_kidx] = (uint16_t)len;
                     inst->state_dirty = 1;
-                    return;
+                    return 1;
                 }
                 if (!strcmp(p + 3, "_cc_lane_length")) {
                     int len = (int)strtol(val, NULL, 10);
@@ -502,7 +517,7 @@
                     if (len > 0 && (int)ls + len > SEQ_STEPS) len = SEQ_STEPS - (int)ls;
                     _ca->lane_length[_kidx] = (uint16_t)len;
                     inst->state_dirty = 1;
-                    return;
+                    return 1;
                 }
                 if (!strcmp(p + 3, "_cc_lane_tps")) {
                     int tps_val = (int)strtol(val, NULL, 10);
@@ -515,7 +530,7 @@
                         _ca->lane_tps[_kidx] = valid ? (uint16_t)tps_val : 0;
                     }
                     inst->state_dirty = 1;
-                    return;
+                    return 1;
                 }
                 if (!strcmp(p + 3, "_cc_lane_res_tps")) {
                     int tps_val = (int)strtol(val, NULL, 10);
@@ -528,7 +543,7 @@
                         _ca->lane_res_tps[_kidx] = valid ? (uint16_t)tps_val : 0;
                     }
                     inst->state_dirty = 1;
-                    return;
+                    return 1;
                 }
                 if (!strcmp(p + 3, "_cc_lane_reset")) {
                     undo_begin_single(inst, tidx, cidx);
@@ -537,7 +552,7 @@
                     _ca->lane_tps[_kidx] = 0;
                     _ca->lane_res_tps[_kidx] = 0;
                     inst->state_dirty = 1;
-                    return;
+                    return 1;
                 }
                 if (!strcmp(p + 3, "_cc_lane_double_fill")) {
                     undo_begin_single(inst, tidx, cidx);
@@ -547,7 +562,7 @@
                                    ? _ca->lane_tps[_kidx] : cl->ticks_per_step;
                     uint32_t _half_ticks = (uint32_t)_old_len * _ltps;
                     uint16_t _new_len = (uint16_t)(_old_len * 2);
-                    if (_new_len > SEQ_STEPS) return;
+                    if (_new_len > SEQ_STEPS) return 1;
                     int _n = (int)_ca->count[_kidx];
                     /* Add seam point at the boundary: evaluate what the loop
                      * would produce at the last tick of the first half, so the
@@ -596,7 +611,7 @@
                     }
                     _ca->lane_length[_kidx] = _new_len;
                     inst->state_dirty = 1;
-                    return;
+                    return 1;
                 }
             }
             if (!strncmp(p, "_pfx_set", 8) && p[8] == '\0') {
@@ -613,7 +628,7 @@
                     pfx_sync_from_clip(tr);
                 rui_touch(inst);
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
             /* Conductor per-clip control banks. Payload "<trackIdx> <value>".
              * Phase 2: storage only — no transposition behavior yet. */
@@ -625,12 +640,12 @@
                 if (ti >= 0 && ti < NUM_TRACKS)
                     cl->cond_resp[ti] = (uint8_t)(vv ? 1 : 0);
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
             if (!strcmp(p, "_cond_lock")) {
                 cl->cond_lock = (uint8_t)(my_atoi(val) ? 1 : 0);
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
             if (!strcmp(p, "_cond_oct")) {
                 int ti = my_atoi(val);
@@ -640,7 +655,7 @@
                 if (ti >= 0 && ti < NUM_TRACKS)
                     cl->cond_oct[ti] = (int8_t)clamp_i(vv, -4, 4);
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
             if (!strcmp(p, "_cond_when")) {
                 int ti = my_atoi(val);
@@ -650,7 +665,7 @@
                 if (ti >= 0 && ti < NUM_TRACKS)
                     cl->cond_when[ti] = (uint8_t)(vv ? 1 : 0);
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
             if (!strncmp(p, "_clear", 6) && p[6] == '\0') {
                 /* tN_cC_clear — wipe step data in clip.
@@ -690,7 +705,7 @@
                     tr->queued_clip = -1;
                 }
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
             if (!strncmp(p, "_clear_keep", 11) && p[11] == '\0') {
                 /* tN_cC_clear_keep — wipe step data, preserve playback state.
@@ -726,7 +741,7 @@
                     "Z3 _clear_keep DONE t%d c%d nc_after=%u rec=%d",
                     tidx, cidx, (unsigned)cl->note_count, (int)tr->recording);
                   seq8_ilog(inst, _zb); }
-                return;
+                return 1;
             }
             if (!strncmp(p, "_hard_reset", 11) && p[11] == '\0') {
                 /* tN_cC_hard_reset — full factory reset: undo snapshot, silence, clip_init */
@@ -741,7 +756,7 @@
                 tr->recording = 0;
                 if (tr->queued_clip == cidx) tr->queued_clip = -1;
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
             if (!strncmp(p, "_at_clear", 9) && p[9] == '\0') {
                 /* tN_cC_at_clear — wipe this clip's pad-pressure aftertouch automation. */
@@ -749,7 +764,7 @@
                 at_auto_reset(&tr->clip_at_auto[cidx]);
                 memset(tr->at_last_sent, 0xFF, AT_MAX_LANES);
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
             if (!strncmp(p, "_drum_clear", 11) && p[11] == '\0') {
                 /* tN_cC_drum_clear val="0"=deactivate|"1"=keep transport
@@ -757,7 +772,7 @@
                 int keep = my_atoi(val);
                 int l, s;
                 drum_clip_t *dc = tr->drum_clips[cidx];
-                if (!dc) return;
+                if (!dc) return 1;
                 for (l = 0; l < DRUM_LANES; l++) {
                     clip_t *lc = &dc->lanes[l].clip;
                     for (s = 0; s < SEQ_STEPS; s++) {
@@ -784,14 +799,14 @@
                     tr->rec_pending_count = 0;
                 }
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
             if (!strncmp(p, "_drum_reset", 11) && p[11] == '\0') {
                 /* tN_cC_drum_reset — factory reset all lanes in clip C
                  * clip_init on each lane's clip_t; midi_note preserved (sibling field in drum_lane_t) */
                 int l;
                 drum_clip_t *dc = tr->drum_clips[cidx];
-                if (!dc) return;
+                if (!dc) return 1;
                 silence_track_notes_v2(inst, tr);
                 for (l = 0; l < DRUM_LANES; l++) {
                     clip_init(&dc->lanes[l].clip);
@@ -806,7 +821,10 @@
                 }
                 if (tr->queued_clip == cidx) tr->queued_clip = -1;
                 inst->state_dirty = 1;
-                return;
+                return 1;
             }
-            return;
+            return 1;
         }
+
+    return 0;  /* not a clip key: fall through to sibling tN_ handlers */
+}

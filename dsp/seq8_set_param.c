@@ -447,17 +447,20 @@ typedef struct {
     const char      *sub;    /* key + 3 (past "tN_"), ditto */
 } sp_ctx_t;
 
-/* Stage B handlers: track-config + cc-automation + drum-lane tN_ keys.
- * Included at FILE scope here (not mid-function) so each can be a real static
- * fn; placed just before set_param so the file-scope helpers they call
+/* Stage B handlers: track-config + cc-automation + drum-lane + per-clip tN_
+ * keys. Included at FILE scope here (not mid-function) so each can be a real
+ * static fn; placed just before set_param so the file-scope helpers they call
  * (build_xpose_lut, silence_muted_tracks, pfx_sync_from_clip; cc_emit,
  * cc_auto_set_point, cc_auto_clear_range, cc_auto_reset, undo_begin_single;
  * drum_clips_alloc, drum_pfx_set, drum_lane_note_off_imm, apply_legato_to_clip,
- * bjorklund_positions, ...) are already visible. All are dispatched from the
- * tN_ block inside set_param. */
+ * bjorklund_positions; clip_note_apply_op, clip_note_finalize,
+ * clip_build_steps_from_notes, clip_migrate_to_notes, cc_auto_eval,
+ * cc_auto_set_point, at_auto_reset, ...) are already visible. All are
+ * dispatched from the tN_ block inside set_param. */
 #include "setparam/sp_track_config.c"
 #include "setparam/sp_track_ccauto.c"
 #include "setparam/sp_track_drum.c"
+#include "setparam/sp_track_clip.c"
 
 /* ------------------------------------------------------------------ */
 /* set_param                                                            */
@@ -511,8 +514,8 @@ static void set_param(void *instance, const char *key, const char *val) {
      * still CLOSES the block (and set_param) at the tail. Handlers already
      * converted to real static fns (phase 4B, included at file scope above,
      * dispatched below): sp_track_config (group 1), sp_track_ccauto (group 2),
-     * sp_track_drum (group 3). The OTHER sp_track_* files are still
-     * mid-function segments. */
+     * sp_track_drum (group 3), sp_track_clip (group 4). The OTHER sp_track_*
+     * files are still mid-function segments. */
     if (key[0] == 't' && key[1] >= '0' && key[1] <= '7' && key[2] == '_') {
         int tidx = key[1] - '0';
         const char *sub = key + 3;
@@ -522,13 +525,15 @@ static void set_param(void *instance, const char *key, const char *val) {
                         .tidx = tidx, .tr = tr, .sub = sub };
         if (sp_track_config(&cx)) return;
 
-        /* tN_cM_step_S or tN_cM_length: clip data */
-/* LOAD-BEARING SPACING: function-body segment include (phase 4A). The
- * blank-line layout around this include is part of the byte-identity
- * gate (`clang -E -P` preprocessed TU identical pre/post split); do not
- * tidy. The segment file opens with `#line 1` to disarm clang's
- * start-of-line indentation collapse at the include entry. */
-#include "setparam/sp_track_clip.c"
+        /* tN_cC_* per-clip keys (note ops, nested _step_ parser, resolution,
+         * dir, loop window, CC-lane, _pfx_set, conductor fields, clears) --
+         * now a file-scope handler (phase 4B group 4), dispatched here reusing
+         * the existing cx. The handler self-guards sub[0]=='c' + digit and
+         * CONSUMES the whole block (returns 1 even for an unknown sub-op, so a
+         * tN_cC_ key never leaks to the pfx catch-all); returns 0 only when
+         * sub is not a clip key. Nothing between the sp_track_config dispatch
+         * above and here mutates cx (comments only), so cx is current. */
+        if (sp_track_clip(&cx)) return;
 
         /* tN_clip_resolution — change per-clip ticks_per_step; rescale notes proportionally */
 /* LOAD-BEARING SPACING: function-body segment include (phase 4A). The
