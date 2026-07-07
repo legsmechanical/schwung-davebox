@@ -471,6 +471,7 @@ typedef struct {
 #include "setparam/sp_track_record.c"
 #include "setparam/sp_track_drum2.c"
 #include "setparam/sp_track_live.c"
+#include "setparam/sp_track_misc.c"
 
 /* ------------------------------------------------------------------ */
 /* set_param                                                            */
@@ -520,14 +521,16 @@ static void set_param(void *instance, const char *key, const char *val) {
 
     /* --- Track-prefixed params: tN_<subkey> --- */
     /* This parent code OPENS the tN_ track block and declares the block-locals
-     * tidx/sub/tr consumed by every sp_track_* include below; sp_track_misc.c
-     * still CLOSES the block (and set_param) at the tail. Handlers already
-     * converted to real static fns (phase 4B, included at file scope above,
-     * dispatched below): sp_track_config (group 1), sp_track_ccauto (group 2),
+     * tidx/sub/tr consumed by every sp_track_* handler dispatched below; the
+     * parent also CLOSES the block (and set_param) at the tail -- the final two
+     * braces live at the sp_track_misc dispatch site (they used to live inside
+     * that segment). All nine sp_track_* files are now real static fns
+     * (phase 4B, included at file scope above, dispatched below):
+     * sp_track_config (group 1), sp_track_ccauto (group 2),
      * sp_track_drum (group 3), sp_track_clip (group 4),
      * sp_track_config2 (group 5), sp_track_record (group 6),
-     * sp_track_live (group 7), sp_track_drum2 (group 8). The one remaining
-     * sp_track_* file (sp_track_misc) is still a mid-function segment. */
+     * sp_track_live (group 7), sp_track_drum2 (group 8),
+     * sp_track_misc (group 9, the terminal catch-all). */
     if (key[0] == 't' && key[1] >= '0' && key[1] <= '7' && key[2] == '_') {
         int tidx = key[1] - '0';
         const char *sub = key + 3;
@@ -602,13 +605,16 @@ static void set_param(void *instance, const char *key, const char *val) {
          * so cx is current. */
         if (sp_track_live(&cx)) return;
 
-/* LOAD-BEARING SPACING: the blank line above this include (pristine 5863)
- * stays here in the parent, and exactly one blank line follows the include
- * before EOF (pristine trailing blank 6238). Spacing and the segment-file
- * head/tail are part of the phase-4A re-runnable gate -- the split is
- * proven by the preprocessed TU being byte-identical pre/post
- * (`clang -E -P`). Do not tidy.
- * NOTE: this segment CLOSES the tN_ track block AND set_param itself --
- * the final two closing braces live inside the segment file, and its
- * pfx_set catch-all tail must remain the last tN_ handler. */
-#include "setparam/sp_track_misc.c"
+        /* tN_ melodic-clip transforms (clip_length, clip_playback_dir,
+         * clock_shift, nudge, beat_stretch, loop_double_fill, lgto_apply) plus
+         * the unconditional pfx_set catch-all -- now a file-scope handler
+         * (phase 4B group 9), dispatched here reusing the existing cx.
+         * TERMINAL handler: its pfx_set catch-all consumes EVERY tN_ key that
+         * reaches this far, so it always returns 1 (never falls through).
+         * sp_track_live above returns 0 without mutating cx on fall-through, so
+         * cx is current. The two closing braces below (the tN_ block's `}` and
+         * set_param's `}`) used to live at this segment's tail and now live
+         * here in the parent. */
+        if (sp_track_misc(&cx)) return;
+    }
+}

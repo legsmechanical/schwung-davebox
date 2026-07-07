@@ -1,21 +1,29 @@
-/* FUNCTION-BODY SEGMENT of set_param() -- included mid-function by
- * seq8_set_param.c; NOT a translation unit, not even a complete function;
- * shares set_param's locals (inst, key, val) and the tN_ block's locals
- * (tidx, tr, sub); never compile or lint this file standalone.
- * Covers tN_ track keys clip_length ... lgto_apply plus the pfx_set
- * catch-all tail. NOTE: this file also closes the tN_ block and set_param
- * itself -- the final two closing braces live here.
- * See also sp_track_clip.c (the per-clip tN_cC_* data block incl. the
- * nested step parser).
- *
- * LOAD-BEARING: the `#line 1` directive below resets clang's start-of-line
- * lexer state after this comment block; without it `clang -E -P` collapses
- * the first code line's indentation and the phase-4A byte-identity gate
- * fails (only the value 1 disarms it -- measured, Apple clang 16). Side
- * effect: diagnostics in this file number from 1 at the first code line.
- * The gate passing byte-identical proves the region expands no __LINE__.
- * Do not remove, reorder, or tidy. */
-#line 1
+/* FILE-SCOPE HANDLER for set_param()'s tN_ misc keys -- part of the seq8.c
+ * single translation unit; #included at FILE scope by seq8_set_param.c
+ * (immediately before set_param), NOT a standalone TU; never compile or lint
+ * this file on its own. Ninth (final tN_) Stage B handler (phase 4B group 9):
+ * the former mid-function segment is now a real static int
+ * sp_track_misc(sp_ctx_t *).
+ * Covers the melodic-clip transforms tN_ clip_length ... lgto_apply plus the
+ * pfx_set catch-all tail. See also sp_track_clip.c (the per-clip tN_cC_* data
+ * block incl. the nested step parser).
+ * TERMINAL tN_ handler: the unconditional pfx_set catch-all at the tail
+ * consumes EVERY tN_ key that reaches this far, so this handler ALWAYS
+ * returns 1 -- there is no fall-through path and no `return 0`. The two
+ * closing braces that used to live at this segment's tail (the tN_ block's
+ * `}` and set_param's `}`) now live in the parent dispatcher
+ * (seq8_set_param.c) at the dispatch site. */
+static int sp_track_misc(sp_ctx_t *cx) {
+    seq8_instance_t *inst = cx->inst;
+    const char *val = cx->val;
+    int tidx = cx->tidx;
+    seq8_track_t *tr = cx->tr;
+    const char *sub = cx->sub;
+
+    /* Body below kept at its Stage-A segment indentation (8 spaces) so it
+     * byte-diffs against the pre-conversion segment; reindent only in a
+     * dedicated cleanup pass after the group is device-blessed. */
+
         if (!strcmp(sub, "clip_length")) {
             clip_t *cl = &tr->clips[tr->active_clip];
             int max_len = SEQ_STEPS - (int)cl->loop_start;
@@ -26,7 +34,7 @@
                 if (tr->current_step < cl->loop_start || tr->current_step >= _le)
                     tr->current_step = cl->loop_start;
             }
-            return;
+            return 1;
         }
 
         /* Playback direction for active melodic clip (v=35).
@@ -39,7 +47,7 @@
             cl->pp_dir_state = initial_pp_dir(cl->playback_dir);
             silence_track_from_set_param(inst, tr);
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
         /* Playback style for active melodic clip: 0=Step, 1=Audio (note-on at
          * note's end when playhead is in reverse motion). */
@@ -47,14 +55,14 @@
             clip_t *cl = &tr->clips[tr->active_clip];
             cl->playback_audio_reverse = (uint8_t)clamp_i(my_atoi(val), 0, 1);
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "clock_shift")) {
             int dir = my_atoi(val);
             clip_t *cl = &tr->clips[tr->active_clip];
             int len = (int)cl->length;
-            if (len < 2) return;
+            if (len < 2) return 1;
             uint8_t tmp_s, tmp_nc, tmp_ns[8], tmp_v;
             uint16_t tmp_g;
             int16_t tmp_toff[8];
@@ -103,16 +111,16 @@
             for (i = 0; i < len; i++) if (cl->steps[i]) { any = 1; break; }
             cl->active = (uint8_t)any;
             clip_migrate_to_notes(cl);
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "nudge")) {
             int dir = my_atoi(val);
-            if (dir == 0) { tr->clips[tr->active_clip].nudge_pos = 0; return; }
-            if (dir != 1 && dir != -1) return;
+            if (dir == 0) { tr->clips[tr->active_clip].nudge_pos = 0; return 1; }
+            if (dir != 1 && dir != -1) return 1;
             clip_t *cl = &tr->clips[tr->active_clip];
             int len = (int)cl->length;
-            if (len < 1) return;
+            if (len < 1) return 1;
             int tps = (int)cl->ticks_per_step;
             int midpoint = tps / 2;
             /* crossing notes bounded at notes[] capacity; dst_off preserves absolute timing */
@@ -184,7 +192,7 @@
             }
             cl->nudge_pos += (int16_t)dir;
             clip_migrate_to_notes(cl);
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "beat_stretch")) {
@@ -204,7 +212,7 @@
 
             if (dir == 1) {
                 /* EXPAND x2: clamp if doubling would exceed 256 steps */
-                if (len * 2 > SEQ_STEPS) { return; }
+                if (len * 2 > SEQ_STEPS) { return 1; }
                 new_len = len * 2;
                 for (i = len - 1; i >= 1; i--) {
                     int ng = (int)cl->step_gate[i] * 2;
@@ -246,7 +254,7 @@
             } else {
                 /* COMPRESS /2: dry-run collision check — abort entirely if any two
                  * active steps would map to the same destination position. */
-                if (len < 2) return;
+                if (len < 2) return 1;
                 {
                     uint8_t seen[SEQ_STEPS];
                     memset(seen, 0, sizeof(seen));
@@ -255,7 +263,7 @@
                             int dst = i / 2;
                             if (seen[dst]) {
                                 tr->stretch_blocked = 1;
-                                return;
+                                return 1;
                             }
                             seen[dst] = 1;
                         }
@@ -332,7 +340,7 @@
             cl->active = (uint8_t)any;
             clip_migrate_to_notes(cl);
 
-            return;
+            return 1;
         }
 
         if (!strcmp(sub, "loop_double_fill")) {
@@ -343,7 +351,7 @@
             /* Doubling the loop window must fit inside storage from loop_start.
              * Old check `len*2 > SEQ_STEPS` ignored loop_start; with ls>0 it
              * would accept doublings that overflow the storage extent. */
-            if (ls + len * 2 > SEQ_STEPS) return;
+            if (ls + len * 2 > SEQ_STEPS) return 1;
             undo_begin_single(inst, tidx, (int)tr->active_clip);
             /* Copy the loop window forward by `len` steps so the doubled window
              * [ls, ls+len*2) holds two copies of the original content. Old
@@ -367,7 +375,7 @@
             }
             clip_migrate_to_notes(cl);
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
 
         /* tN_lgto_apply: destructive legato on the active clip. Each note's
@@ -378,7 +386,7 @@
             apply_legato_to_clip(&tr->clips[tr->active_clip]);
             pfx_sync_from_clip(tr);
             inst->state_dirty = 1;
-            return;
+            return 1;
         }
 
         /* Snapshot before pfx reset commands */
@@ -387,6 +395,5 @@
             undo_begin_single(inst, tidx, (int)tr->active_clip);
         /* All play effects params */
         pfx_set(inst, tr, &tr->clips[tr->active_clip].pfx_params, sub, val);
-        return;
-    }
+        return 1;
 }
