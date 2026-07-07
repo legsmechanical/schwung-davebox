@@ -38,8 +38,8 @@
  *
  * Phase 4B group 3 prep: the tN_lL_* drum-lane group (35 lane sub-keys + the
  * nested _step_S_* parser + the drum-alloc-on-first-lane-write trigger) is
- * characterized as a FOURTH white-box block, LAST before hx_destroy. It runs
- * entirely on track 3 — melodic until the block's first lane write flips it to
+ * characterized as a FOURTH white-box block (all white-box blocks run after
+ * the table, in file order). It runs entirely on track 3 — melodic until the block's first lane write flips it to
  * DRUM (the platform-critical allocation trigger: the Schwung host drops
  * tN_pad_mode / tN_convert_to_drum, so the first tN_lL_* key IS drum-mode entry
  * + drum_clips_alloc). t3 is never asserted after this block, so converting it
@@ -53,8 +53,8 @@
  *
  * Phase 4B group 4 prep: the tN_cC_* per-clip block (the single
  * `if (sub[0]=='c' && digit)` clip block in sp_track_clip.c) is characterized
- * as a FIFTH white-box block, LAST before hx_destroy. It runs on a dedicated
- * MELODIC track (t4 — route/looper touched earlier but never given clip note
+ * as a FIFTH white-box block (blocks run after the table, in file order). It
+ * runs on a dedicated MELODIC track (t4 — route/looper touched earlier but never given clip note
  * data, and it stays melodic) plus t3 (already DRUM from the group-3 block, its
  * drum_clips allocated) for the two drum-clip variants (_drum_clear /
  * _drum_reset). Neither track is asserted after this block, so the magic
@@ -70,8 +70,8 @@
  *
  * Phase 4B group 5 prep: the sp_track_config2 group (clip_resolution[_zoom],
  * pad_octave, pad_mode, convert_to_drum/_melodic, the full tarp_* run, and
- * track_vel_override) is characterized as a SIXTH white-box block, LAST before
- * hx_destroy. It runs on a DEDICATED track (t2): track 0 is the harness's default
+ * track_vel_override) is characterized as a SIXTH white-box block (blocks run
+ * after the table, in file order). It runs on a DEDICATED track (t2): track 0 is the harness's default
  * DRUM track, so t2 is used as a melodic track whose prior touches
  * (channel/tvo/cc-auto/launch) don't intersect this group's keys and whose tarp
  * state is pristine at block entry. The block forces t2's active_clip back to 0
@@ -96,7 +96,8 @@
  *
  * Phase 4B group 6 prep: the sp_track_record group (recording arm/disarm,
  * record_note_on, record_note_off) is characterized as a SEVENTH white-box
- * block, LAST before hx_destroy. It runs on a DEDICATED track (t1): t1 is
+ * block (currently the last; all white-box blocks run after the table, in file
+ * order). It runs on a DEDICATED track (t1): t1 is
  * melodic and never given clip note data (earlier rows touched only its
  * config — channel/looper/mute/solo/tarp/launch_clip), and nothing asserts
  * t1 after this block, so its clip mutations are collision-safe. The block
@@ -322,7 +323,7 @@ int main(void) {
     hx_set_param(h, "t5_solo", "1");
     HX_ASSERT(inst->solo[5] == 0, "solo must be inert on a Conductor track");
 
-    /* ---- CC-auto group white-box pins (Phase 4B group 2 prep). Run LAST:
+    /* ---- CC-auto group white-box pins (Phase 4B group 2 prep). Runs after the table:
      * these are self-contained (own track/clip/knob magic numbers) and some
      * emit MIDI, so they clear/inspect the capture buffer and must not run
      * before rows that assert on captured MIDI. Track 7 is melodic + default
@@ -467,7 +468,7 @@ int main(void) {
         }
     }
 
-    /* ---- Drum-lane white-box pins (Phase 4B group 3 prep). Run LAST:
+    /* ---- Drum-lane white-box pins (Phase 4B group 3 prep). Runs after the table:
      * self-contained on a dedicated drum track (t3, melodic until this block's
      * first lane write flips it), so nothing else asserts on it afterward.
      * Characterizes the whole tN_lL_* lane group — head lane-parse +
@@ -752,7 +753,7 @@ int main(void) {
         }
     }
 
-    /* ---- Per-clip white-box pins (Phase 4B group 4 prep). Run LAST:
+    /* ---- Per-clip white-box pins (Phase 4B group 4 prep). Runs after the table:
      * self-contained on a dedicated MELODIC track (t4) + the group-3 DRUM track
      * (t3) for the drum-clip variants. Characterizes the whole tN_cC_* block —
      * ruisel/cc_focus, remote-UI note ops, the nested _step_S_* parser, per-clip
@@ -1026,7 +1027,7 @@ int main(void) {
         }
     }
 
-    /* ---- Track-config2 white-box pins (Phase 4B group 5 prep). Run LAST:
+    /* ---- Track-config2 white-box pins (Phase 4B group 5 prep). Runs after the table:
      * dedicated track t2 (melodic, active_clip 0, tarp at defaults). Melodic/tarp
      * pins first; the type-conversion pins (which flip t2's type) run at the very
      * end so nothing corrupts an earlier melodic pin. Requires the track-config
@@ -1167,7 +1168,7 @@ int main(void) {
         HX_ASSERT(ct->drum_clips[0] == NULL, "convert_to_melodic: frees drum_clips");
     }
 
-    /* ---- Recording white-box pins (Phase 4B group 6 prep). Run LAST:
+    /* ---- Recording white-box pins (Phase 4B group 6 prep). Runs after the table:
      * dedicated track t1 (melodic; only its config was touched earlier, no clip
      * note data), reset to a clean non-playing baseline. STOCK tick path
      * (dsp_inbound_enabled==0): record_note_on/off capture at current_clip_tick.
