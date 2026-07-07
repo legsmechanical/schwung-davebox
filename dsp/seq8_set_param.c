@@ -447,7 +447,7 @@ typedef struct {
     const char      *sub;    /* key + 3 (past "tN_"), ditto */
 } sp_ctx_t;
 
-/* Stage B handlers: track-config + cc-automation + drum-lane + per-clip tN_
+/* Stage B tN_ handlers: track-config + cc-automation + drum-lane + per-clip tN_
  * keys + clip-resolution/track-type/track-arp keys + record keys + drum
  * config/all-lanes-transform/drum-repeat/drum-record keys + melodic-clip-
  * transform (length/dir/stretch/nudge/legato) and the pfx_set catch-all keys.
@@ -509,7 +509,9 @@ static void set_param(void *instance, const char *key, const char *val) {
      * after the transport segment and before the misc segment, preserving the
      * original branch order (transport -> state -> misc -> edit -> tN_). The
      * transport segment above uses inst/key/val directly and never touches cx,
-     * so cx is still {inst,key,val} here. */
+     * so cx is still {inst,key,val} here. NOTE for whoever converts transport:
+     * its `val="play"` fall-through MUTATES val, so once transport is a handler
+     * this "cx unchanged" line must be revised — don't paste it blindly. */
     if (sp_globals_state(&cx)) return;
 
     /* --- Scene launch (global): all tracks to clip M --- */
