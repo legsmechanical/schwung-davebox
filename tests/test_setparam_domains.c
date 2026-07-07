@@ -134,7 +134,31 @@
  * delete_held/corun_left_silent). OUT OF SCOPE: live_at recording-into-clip
  * (recording=0 here) and the arp/tarp AT fan-out (arp/tarp style 0) are RT/config
  * paths -- the immediate live send is the off-device observable; the padmap
- * carrier's full two-polarity contract also lives in test_padmap_contract.c. */
+ * carrier's full two-polarity contract also lives in test_padmap_contract.c.
+ *
+ * Phase 4B group 13 prep (THE FINAL group): sp_globals_transport's 17 keys.
+ * GLOBALS shape — every branch is a top-level strcmp(key,...) with NO track
+ * index/sub-op, each returns, and the handler falls through (returns 0) on
+ * no-match. Split two ways: the clean serialized-token scalars (scale,
+ * scale_aware, inp_quant, midi_in_channel, metro_on, swing_res) are TABLE rows
+ * next to the existing bpm/swing_amt/key/metro_vol globals; the runtime /
+ * state-machine keys are a white-box block placed LAST-but-one, immediately
+ * BEFORE the globals-STATE block (same reason globals-misc/-edit sit there:
+ * this block mutates inst->playing + all-track playback, and only the
+ * globals-STATE state_load reset runs after it, so nothing downstream is
+ * corrupted). That block pins: transport "play_focus:T:C" (arms the focus
+ * track then falls through to play — the val="play" LOCAL rewrite), transport
+ * "restart" (atomic stop+play, global positions reset, playing=1),
+ * record_count_in / record_count_in_cancel (1-bar count-in schedule/clear),
+ * active_track (runtime field, NOT serialized), clock_follow_on (flag +
+ * follow-bookkeeping reset + same-value no-op early return) / clock_send_on,
+ * and launch_quant (clamp + "lq" token + switch-to-Now-while-playing fires
+ * queued clips). transport play/stop is already the white-box pin at the top
+ * of main(); it is not duplicated. OUT OF SCOPE: the clock-follow branches of
+ * every transport op (follow_request_start/stop instead of ext_transport_*)
+ * and the mid-transport flush inside clock_follow_on are RT/host-sync paths —
+ * only the observable playing/flag transitions are pinned, with clock_follow_on
+ * forced to 0 so the ext_transport path (the off-device observable) runs. */
 #include "harness.h"
 
 typedef struct { const char *key, *val, *expect_substr, *domain; } sp_case_t;
@@ -170,6 +194,20 @@ int main(void) {
         { "swing_amt",               "37",        "\"_swa\":37",            "swing" },
         { "key",                     "5",         "\"key\":5",              "tonality" },
         { "metro_vol",               "66",        "\"metro_vol\":66",       "metronome" },
+        /* Globals-transport serialized-token keys (Phase 4B group 13 prep).
+         * All top-level strcmp(key) globals, order-independent, distinct
+         * magic numbers. scale parallels the existing "key" row; the rest are
+         * clean scalar->token maps. metro_on serializes only when != default 1
+         * (=>2); swing_res only when != 0 (=>1). scale_aware/inp_quant/
+         * midi_in_channel serialize unconditionally. The runtime/state-machine
+         * transport keys (play_focus/restart, count-in, active_track, clock
+         * follow/send, launch_quant) are pinned white-box below. */
+        { "scale",                   "9",         "\"scale\":9",            "tonality (scale)" },
+        { "scale_aware",             "1",         "\"saw\":1",              "tonality (scale_aware)" },
+        { "inp_quant",               "1",         "\"iq\":1",               "input quantize" },
+        { "midi_in_channel",         "9",         "\"mic\":9",              "midi in channel" },
+        { "metro_on",                "2",         "\"metro_on\":2",         "metronome (metro_on)" },
+        { "swing_res",               "1",         "\"_swr\":1",             "swing (swing_res)" },
         /* melodic step edit -> step gate -> chord: chained on t5 c0 step0.
          * step_vel=70 (from toggle), gate=33 (from _gate) both persist
          * through _set_notes via clip_migrate_to_notes. Keep this order. */
@@ -2394,6 +2432,156 @@ int main(void) {
         }
     }
 
+    /* ---- Globals-TRANSPORT white-box pins (Phase 4B group 13 prep -- THE
+     * FINAL group). Runs after the table but INTENTIONALLY BEFORE the
+     * globals-STATE block below, for the same reason globals-misc/-edit sit
+     * there: these keys mutate inst->playing + all-track playback (restart /
+     * play_focus / launch_quant-to-Now), and only the globals-STATE state_load
+     * reset runs after -- so nothing downstream is corrupted. Characterizes the
+     * runtime / state-machine keys of sp_globals_transport that are NOT plain
+     * serialized-token scalars (those are TABLE rows above): transport
+     * "play_focus:T:C" + "restart", record_count_in / record_count_in_cancel,
+     * active_track, clock_follow_on / clock_send_on, launch_quant. transport
+     * "play"/"stop" is already the white-box pin at the top of main() -- not
+     * duplicated here.
+     *
+     * ISOLATION: these mutate global transport + per-track playback, so the
+     * block runs on the SHARED `h`/inst but is DELIBERATELY placed right before
+     * globals-STATE -- whose state_load pin resets the whole instance -- so
+     * these transport/playback mutations are wiped before anything else could
+     * observe them (and globals-STATE seeds its own fields, depending on none of
+     * these). NB: a fresh hx_create throwaway is NOT usable here -- hx_create
+     * holds a single static hx_t (see test_state_roundtrip.c), so a second call
+     * aliases the same struct and would strand `h` on a destroyed instance.
+     * Distinct magic numbers throughout; pins are order-neutral within the block.
+     *
+     * clock_follow_on is forced to 0 wherever a transport op is exercised so the
+     * ext_transport_* path (the off-device observable: it flips inst->playing +
+     * per-track flags synchronously) runs, NOT the follow_request_* host-sync
+     * path. OUT OF SCOPE: every op's clock-follow branch (follow_request_start/
+     * stop instead of ext_transport_*), record_count_in's follow_request_start(2)
+     * lead-in, and clock_follow_on's mid-transport ext flush -- all RT/host-sync
+     * observables, not off-device pinnable. ---- */
+    {
+        inst->clock_follow_on = 0;   /* force the ext_transport (observable) path */
+
+        /* transport "play_focus:T:C": while stopped, ARM the focus track's clip
+         * (active_clip=C, queued_clip=-1, will_relaunch=1) then rewrite the LOCAL
+         * val to "play" and fall through into the normal play path. The play path
+         * (ext_transport_start) consumes will_relaunch -> clip_playing=1,
+         * will_relaunch=0. So the end-state observables are: focus track's
+         * active_clip==C, queued_clip==-1, clip_playing==1 (proves will_relaunch
+         * was armed and consumed by the fall-through), and inst->playing==1
+         * (proves the val="play" rewrite reached the play path). */
+        {
+            inst->playing = 0;                    /* the arm only runs while stopped */
+            inst->tracks[3].will_relaunch = 0;
+            inst->tracks[3].clip_playing  = 0;
+            hx_set_param(h, "transport", "play_focus:3:5");
+            HX_ASSERT(inst->tracks[3].active_clip == 5,
+                      "play_focus: focus track active_clip armed to C");
+            HX_ASSERT(inst->tracks[3].queued_clip == -1,
+                      "play_focus: focus track queued_clip cleared");
+            HX_ASSERT(inst->tracks[3].clip_playing == 1,
+                      "play_focus: will_relaunch armed then consumed by play path (clip_playing=1)");
+            HX_ASSERT(inst->playing == 1,
+                      "play_focus: val=\"play\" rewrite fell through to play (playing=1)");
+        }
+
+        /* transport "restart": atomic stop+play. With clock_follow_on=0 it resets
+         * the global playhead (global_tick / tick_accum / master_tick_in_step /
+         * arp_master_tick / count_in_ticks all to 0) and sets playing=1. Arm
+         * distinctive non-zero positions first, then confirm the reset. */
+        {
+            inst->global_tick         = 4242;
+            inst->tick_accum          = 131;
+            inst->master_tick_in_step = 17;
+            inst->arp_master_tick     = 909;
+            inst->count_in_ticks      = 77;
+            hx_set_param(h, "transport", "restart");
+            HX_ASSERT(inst->global_tick == 0,         "restart: global_tick reset");
+            HX_ASSERT(inst->tick_accum == 0,          "restart: tick_accum reset");
+            HX_ASSERT(inst->master_tick_in_step == 0, "restart: master_tick_in_step reset");
+            HX_ASSERT(inst->arp_master_tick == 0,     "restart: arp_master_tick reset");
+            HX_ASSERT(inst->count_in_ticks == 0,      "restart: count_in_ticks reset");
+            HX_ASSERT(inst->playing == 1,             "restart: playing=1");
+        }
+
+        /* record_count_in "T": schedules a 1-bar count-in for track T --
+         * count_in_track=T and count_in_ticks=4*PPQN (>0). (undo_begin_* +
+         * inbound-slot clears also fire; the schedule is the observable.) */
+        {
+            hx_set_param(h, "record_count_in", "4");
+            HX_ASSERT(inst->count_in_track == 4, "record_count_in: count_in_track=T");
+            HX_ASSERT(inst->count_in_ticks == 4 * PPQN,
+                      "record_count_in: schedules 1 bar (4*PPQN ticks)");
+            /* record_count_in_cancel: clears the schedule (count_in_ticks=0). */
+            hx_set_param(h, "record_count_in_cancel", "1");
+            HX_ASSERT(inst->count_in_ticks == 0,
+                      "record_count_in_cancel: count_in_ticks cleared");
+        }
+
+        /* active_track: runtime field (NOT serialized), clamped to [0,NUM_TRACKS-1]. */
+        {
+            hx_set_param(h, "active_track", "5");
+            HX_ASSERT(inst->active_track == 5, "active_track: stored");
+            hx_set_param(h, "active_track", "99");
+            HX_ASSERT(inst->active_track == NUM_TRACKS - 1, "active_track: clamped high");
+        }
+
+        /* clock_follow_on: flag both polarities. The same-value write is an
+         * early-return no-op (sets state_dirty but does NOT reset the follow
+         * bookkeeping); a CHANGED value resets the bookkeeping (ext_tick_pending
+         * et al). Pin both: seed ext_tick_pending, confirm a same-value write
+         * leaves it intact, then a changed write clears it. */
+        {
+            inst->clock_follow_on = 1;
+            inst->ext_tick_pending = 33;
+            hx_set_param(h, "clock_follow_on", "1");   /* same value -> no-op early return */
+            HX_ASSERT(inst->clock_follow_on == 1,
+                      "clock_follow_on: same-value stays on");
+            HX_ASSERT(inst->ext_tick_pending == 33,
+                      "clock_follow_on: same-value no-op does NOT reset follow bookkeeping");
+            hx_set_param(h, "clock_follow_on", "0");   /* changed -> reset bookkeeping */
+            HX_ASSERT(inst->clock_follow_on == 0, "clock_follow_on: toggled off");
+            HX_ASSERT(inst->ext_tick_pending == 0,
+                      "clock_follow_on: changed value resets follow bookkeeping");
+        }
+
+        /* clock_send_on: clock-OUT flag, both polarities (my_atoi != 0). */
+        {
+            hx_set_param(h, "clock_send_on", "1");
+            HX_ASSERT(inst->clock_send_on == 1, "clock_send_on: on");
+            hx_set_param(h, "clock_send_on", "0");
+            HX_ASSERT(inst->clock_send_on == 0, "clock_send_on: off");
+        }
+
+        /* launch_quant: clamped to [0,5]. Switching to Now (0) WHILE PLAYING
+         * fires every track's queued clip immediately (active_clip<-queued_clip,
+         * queued_clip=-1, clip_playing=1). Pin clamp first (stopped, no fire),
+         * then the switch-to-Now fan-out. */
+        {
+            inst->playing = 0;
+            hx_set_param(h, "launch_quant", "3");
+            HX_ASSERT(inst->launch_quant == 3, "launch_quant: stored");
+            hx_set_param(h, "launch_quant", "99");
+            HX_ASSERT(inst->launch_quant == 5, "launch_quant: clamped high");
+            /* switch-to-Now-while-playing: launch_quant is 5 (!=0) from the clamp
+             * above; arm a queued clip on a melodic track + playing, then set 0. */
+            inst->playing = 1;
+            inst->tracks[2].queued_clip = 4;
+            inst->tracks[2].clip_playing = 0;
+            hx_set_param(h, "launch_quant", "0");
+            HX_ASSERT(inst->launch_quant == 0, "launch_quant: switched to Now");
+            HX_ASSERT(inst->tracks[2].active_clip == 4,
+                      "launch_quant Now: queued clip promoted to active");
+            HX_ASSERT(inst->tracks[2].queued_clip == -1,
+                      "launch_quant Now: queued_clip cleared after fire");
+            HX_ASSERT(inst->tracks[2].clip_playing == 1,
+                      "launch_quant Now: fired clip is now playing");
+        }
+    }
+
     /* ---- Globals-STATE white-box pins (Phase 4B group 10 prep). Runs after
      * the table AND every other white-box block, in file order — it is
      * intentionally LAST because its state_load pin RESETS the whole instance
@@ -2567,5 +2755,10 @@ int main(void) {
            "(clip copy/cut, row copy/cut, row_clear, drum-clip copy/cut, "
            "undo/redo melodic + drum round-trips + last_restore_info marker, "
            "no-valid-undo guard)\n");
+    printf("PASS: globals-transport white-box pins "
+           "(play_focus arm+play-fallthrough, restart playhead reset, "
+           "record_count_in schedule/cancel, active_track clamp, clock_follow_on "
+           "both polarities + same-value no-op, clock_send_on, launch_quant clamp "
+           "+ switch-to-Now queued-clip fire)\n");
     return 0;
 }
