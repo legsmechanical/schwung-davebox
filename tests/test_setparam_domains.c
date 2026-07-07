@@ -1877,6 +1877,271 @@ int main(void) {
         }
     }
 
+    /* ---- Globals-MISC white-box pins (Phase 4B group 11 prep). Runs after the
+     * table (order-neutral; all white-box blocks run after the table in file
+     * order) but INTENTIONALLY BEFORE the globals-STATE block below: that block's
+     * state_load pin RESETS the whole instance (transport/merge/per-track
+     * playback), which would clobber the looper/merge/launch state this block
+     * arms. Characterizes sp_globals_misc's 17 keys — three subsystems plus
+     * standalone keys — all top-level strcmp(key,...) matches with NO track index,
+     * so they collide with nothing above. These are state-machine transitions
+     * (very pinnable) and clip mutations; the RT capture/playback (looper_tick)
+     * and bake-firing (offline pfx-chain apply) paths are noted OUT-OF-SCOPE and
+     * covered elsewhere (looper replay: test_engine_goldens.c "looper"; bake
+     * loop-unroll/vel-fold: test_bake_convert.c). Distinct magic numbers per key.
+     * mute_all_clear (the GLOBAL one) is pinned here; the per-track
+     * t0_drum_mute_all_clear pinned in the group-8 block is a DIFFERENT key. ---- */
+    {
+        /* ---- LOOPER state machine (looper_arm/stop/retrigger/sync). The global
+         * MIDI looper capture/replay (looper_tick, perf_apply) is RT/render-only
+         * and OUT OF SCOPE — only the set_param state transitions are pinned. The
+         * looper is pristine here (nothing touched it in this TU). ---- */
+
+        /* looper_sync: truthy flag. Default is 1 (set in create_instance). */
+        hx_set_param(h, "looper_sync", "0");
+        HX_ASSERT(inst->looper_sync == 0, "looper_sync: 0 -> off");
+        hx_set_param(h, "looper_sync", "5");
+        HX_ASSERT(inst->looper_sync == 1, "looper_sync: nonzero -> on (truthy)");
+
+        /* looper_arm from IDLE, sync=0 -> CAPTURING immediately; clamps ticks
+         * 1..65535; zeroes the capture cursors. */
+        hx_set_param(h, "looper_sync", "0");
+        hx_set_param(h, "looper_arm", "8");
+        HX_ASSERT(inst->looper_state == LOOPER_STATE_CAPTURING, "looper_arm sync=0: -> CAPTURING");
+        HX_ASSERT(inst->looper_capture_ticks == 8, "looper_arm: capture_ticks=8");
+        HX_ASSERT(inst->looper_pos == 0 && inst->looper_event_count == 0 &&
+                  inst->looper_play_idx == 0, "looper_arm: cursors zeroed");
+        /* clamp low: 0 -> 1 */
+        hx_set_param(h, "looper_arm", "0");
+        HX_ASSERT(inst->looper_capture_ticks == 1, "looper_arm: 0 clamps to 1 tick");
+
+        /* looper_arm from IDLE, sync=1 -> ARMED (waits for clock boundary). */
+        hx_set_param(h, "looper_stop", "1");
+        HX_ASSERT(inst->looper_state == LOOPER_STATE_IDLE, "looper_stop: -> IDLE");
+        HX_ASSERT(inst->looper_capture_ticks == 0, "looper_stop: capture_ticks cleared");
+        hx_set_param(h, "looper_sync", "1");
+        hx_set_param(h, "looper_arm", "16");
+        HX_ASSERT(inst->looper_state == LOOPER_STATE_ARMED, "looper_arm sync=1: -> ARMED");
+        HX_ASSERT(inst->looper_capture_ticks == 16, "looper_arm: capture_ticks=16");
+
+        /* looper_arm while already LOOPING: does NOT re-arm; stages a pending
+         * rate change instead. Same-length request -> pending=0 (cancel); a
+         * different length -> pending=new. State stays LOOPING throughout. */
+        inst->looper_state = LOOPER_STATE_LOOPING;
+        inst->looper_capture_ticks = 16;
+        inst->looper_pending_rate_ticks = 0;
+        hx_set_param(h, "looper_arm", "16");   /* == current capture length */
+        HX_ASSERT(inst->looper_state == LOOPER_STATE_LOOPING, "looper_arm LOOPING: state unchanged");
+        HX_ASSERT(inst->looper_pending_rate_ticks == 0, "looper_arm LOOPING: same-length -> pending=0");
+        hx_set_param(h, "looper_arm", "24");   /* != current capture length */
+        HX_ASSERT(inst->looper_state == LOOPER_STATE_LOOPING, "looper_arm LOOPING: still LOOPING");
+        HX_ASSERT(inst->looper_pending_rate_ticks == 24, "looper_arm LOOPING: new-length -> pending=24");
+
+        /* looper_retrigger: atomic stop+arm, ALWAYS re-captures fresh regardless
+         * of state (even from LOOPING). sync=0 here -> CAPTURING. */
+        inst->looper_state = LOOPER_STATE_LOOPING;
+        hx_set_param(h, "looper_sync", "0");
+        hx_set_param(h, "looper_retrigger", "12");
+        HX_ASSERT(inst->looper_state == LOOPER_STATE_CAPTURING, "looper_retrigger: re-arms from LOOPING -> CAPTURING");
+        HX_ASSERT(inst->looper_capture_ticks == 12, "looper_retrigger: capture_ticks=12");
+        HX_ASSERT(inst->looper_pos == 0 && inst->looper_event_count == 0,
+                  "looper_retrigger: cursors zeroed");
+        hx_set_param(h, "looper_stop", "1");   /* leave looper IDLE */
+
+        /* ---- MERGE (live-merge) state machine (merge_arm/stop/place_row/cancel).
+         * merge_arm captures all 8 tracks; the RT capture (looper_capture in
+         * on_midi / merge_tick) is OUT OF SCOPE — only the set_param transitions
+         * are pinned. Transport is stopped here, so merge_arm goes to ARMED (the
+         * playing + master_tick_in_step==0 immediate-CAPTURING branch is RT). ---- */
+        hx_set_param(h, "transport", "stop");
+        HX_ASSERT(inst->playing == 0, "merge precondition: transport stopped");
+
+        /* merge_arm: clears all pending counts, sets merge_tps=TICKS_PER_STEP,
+         * stopped -> ARMED. */
+        inst->merge_pending_count[0] = 7;   /* dirty it to prove the clear */
+        hx_set_param(h, "merge_arm", "1");
+        HX_ASSERT(inst->merge_state == MERGE_STATE_ARMED, "merge_arm (stopped): -> ARMED");
+        HX_ASSERT(inst->merge_tps == (uint32_t)TICKS_PER_STEP, "merge_arm: merge_tps=TICKS_PER_STEP");
+        HX_ASSERT(inst->merge_pending_count[0] == 0, "merge_arm: pending counts cleared");
+
+        /* merge_cancel: discards pending, -> IDLE. */
+        inst->merge_pending_count[2] = 4;
+        hx_set_param(h, "merge_cancel", "1");
+        HX_ASSERT(inst->merge_state == MERGE_STATE_IDLE, "merge_cancel: -> IDLE");
+        HX_ASSERT(inst->merge_pending_count[2] == 0, "merge_cancel: pending discarded");
+
+        /* merge_stop from ARMED -> merge_finalize -> IDLE (no capture to close). */
+        hx_set_param(h, "merge_arm", "1");
+        HX_ASSERT(inst->merge_state == MERGE_STATE_ARMED, "merge_stop setup: ARMED");
+        hx_set_param(h, "merge_stop", "1");
+        HX_ASSERT(inst->merge_state == MERGE_STATE_IDLE, "merge_stop from ARMED: finalize -> IDLE");
+
+        /* merge_stop from CAPTURING -> STOPPING (defers finalize to a page
+         * boundary in render; the transition itself is the observable). */
+        inst->merge_state = MERGE_STATE_CAPTURING;
+        hx_set_param(h, "merge_stop", "1");
+        HX_ASSERT(inst->merge_state == MERGE_STATE_STOPPING, "merge_stop from CAPTURING: -> STOPPING");
+
+        /* merge_place_row: commits captured pending notes to the chosen scene row,
+         * then -> IDLE. Only acts in CAPTURED state (guarded). Set up a CAPTURED
+         * merge with one pending note on melodic t4, place it into clip 12. */
+        {
+            const int MT = 4, MROW = 12;
+            inst->merge_state = MERGE_STATE_CAPTURED;
+            inst->merge_tps   = (uint32_t)TICKS_PER_STEP;
+            inst->merge_end_abs = 4u * TICKS_PER_STEP;      /* -> steps=4 */
+            inst->merge_pending_count[MT] = 1;
+            inst->merge_pending[MT][0].pitch      = 65;
+            inst->merge_pending[MT][0].tick_at_on = 0;
+            inst->merge_pending[MT][0].vel        = 100;
+            inst->merge_pending[MT][0].gate       = 12;
+            HX_ASSERT(inst->tracks[MT].pad_mode != PAD_MODE_DRUM, "merge_place setup: t4 melodic");
+            hx_set_param(h, "merge_place_row", "12");
+            clip_t *mcl = &inst->tracks[MT].clips[MROW];
+            HX_ASSERT(inst->merge_state == MERGE_STATE_IDLE, "merge_place_row: -> IDLE after commit");
+            HX_ASSERT(inst->merge_pending_count[MT] == 0, "merge_place_row: pending count consumed");
+            HX_ASSERT(mcl->note_count >= 1 && mcl->notes[0].active &&
+                      mcl->notes[0].pitch == 65, "merge_place_row: pending note written to clip row");
+            HX_ASSERT(mcl->length == 4, "merge_place_row: clip sized from merge_end_abs/tps");
+        }
+
+        /* ---- BAKE (offline Print). The pfx-chain apply + loop-unroll SEMANTICS
+         * are covered by test_bake_convert.c (via bake_scene, which shares
+         * bake_clip); here we pin only what sp_globals_misc's `bake` handler owns:
+         * the arg parse + the T/C range guard, plus reachability of a valid call
+         * (melodic, mode 0). One note on melodic t4 clip 13, 2 loops -> the shared
+         * loop-unroll doubles note_count + length (same observable as
+         * test_bake_convert). ---- */
+        {
+            const int BT = 4, BC = 13;
+            clip_t *bcl = &inst->tracks[BT].clips[BC];
+            hx_set_param(h, "t4_c13_step_0_toggle", "60 100");
+            HX_ASSERT(bcl->note_count == 1 && bcl->length == 16, "bake setup: 1 note, len 16 on t4 c13");
+            /* T/C range guard: out-of-range track index is a no-op. */
+            hx_set_param(h, "bake", "99 13 0 2 0 0");
+            HX_ASSERT(bcl->note_count == 1 && bcl->length == 16, "bake: OOB track index is a no-op");
+            /* valid melodic bake, 2 loops: shared bake_clip unroll. */
+            hx_set_param(h, "bake", "4 13 0 2 0 0");
+            HX_ASSERT(bcl->note_count == 2, "bake: melodic 2-loop unroll doubles note_count");
+            HX_ASSERT(bcl->length == 32, "bake: 2-loop unroll doubles clip length");
+        }
+        /* bake_scene: the full scene bake (undo snapshot + per-track fold +
+         * Conductor auto-disable) is characterized in test_bake_convert.c; not
+         * duplicated here. */
+
+        /* perf_mods: stores the raw performance-modifier bitmask verbatim
+         * (perf_apply that consumes it is RT/looper-tick -> out of scope). */
+        hx_set_param(h, "perf_mods", "12345");
+        HX_ASSERT(inst->perf_mods_active == 12345u, "perf_mods: stores bitmask verbatim");
+        hx_set_param(h, "perf_mods", "0");
+        HX_ASSERT(inst->perf_mods_active == 0u, "perf_mods: 0 clears");
+
+        /* ---- launch_scene / launch_scene_quant: all-track clip launch. ---- */
+
+        /* launch_scene, stopped: queues every track at clip M (queued_clip=M,
+         * will_relaunch cleared). */
+        hx_set_param(h, "transport", "stop");
+        HX_ASSERT(inst->launch_quant == 0, "launch_scene precondition: launch_quant=Now(0)");
+        hx_set_param(h, "launch_scene", "9");
+        {
+            int lt, ok_q = 1, ok_wr = 1;
+            for (lt = 0; lt < NUM_TRACKS; lt++) {
+                if (inst->tracks[lt].queued_clip != 9)   ok_q = 0;
+                if (inst->tracks[lt].will_relaunch != 0) ok_wr = 0;
+            }
+            HX_ASSERT(ok_q,  "launch_scene stopped: all tracks queued_clip=9");
+            HX_ASSERT(ok_wr, "launch_scene stopped: all tracks will_relaunch cleared");
+        }
+
+        /* launch_scene, immediate (playing + launch_quant=0): fires every track
+         * now (active_clip=M, clip_playing=1, queued_clip cleared to -1). */
+        hx_set_param(h, "transport", "play");
+        hx_set_param(h, "launch_scene", "10");
+        {
+            int lt, ok_ac = 1, ok_pl = 1, ok_q = 1;
+            for (lt = 0; lt < NUM_TRACKS; lt++) {
+                if (inst->tracks[lt].active_clip != 10) ok_ac = 0;
+                if (inst->tracks[lt].clip_playing != 1) ok_pl = 0;
+                if (inst->tracks[lt].queued_clip != -1) ok_q = 0;
+            }
+            HX_ASSERT(ok_ac, "launch_scene immediate: all tracks active_clip=10");
+            HX_ASSERT(ok_pl, "launch_scene immediate: all tracks clip_playing=1");
+            HX_ASSERT(ok_q,  "launch_scene immediate: all tracks queued_clip=-1");
+        }
+
+        /* launch_scene_quant: ALWAYS queues at the next bar (regardless of
+         * transport/launch_quant): pending_page_stop on playing tracks +
+         * queued_clip=M. Tracks are playing from the immediate launch above. */
+        hx_set_param(h, "launch_scene_quant", "3");
+        {
+            int lt, ok_q = 1, ok_pps = 1;
+            for (lt = 0; lt < NUM_TRACKS; lt++) {
+                if (inst->tracks[lt].queued_clip != 3)      ok_q = 0;
+                if (inst->tracks[lt].pending_page_stop != 1) ok_pps = 0;
+            }
+            HX_ASSERT(ok_q,   "launch_scene_quant: all tracks queued_clip=3");
+            HX_ASSERT(ok_pps, "launch_scene_quant: playing tracks pending_page_stop armed");
+        }
+        hx_set_param(h, "transport", "stop");   /* restore stopped */
+
+        /* mute_all_clear (GLOBAL): zeroes every track's mute AND solo. */
+        {
+            int lt;
+            for (lt = 0; lt < NUM_TRACKS; lt++) { inst->mute[lt] = 1; inst->solo[lt] = 0; }
+            inst->solo[3] = 1;
+            hx_set_param(h, "mute_all_clear", "1");
+            int ok = 1;
+            for (lt = 0; lt < NUM_TRACKS; lt++)
+                if (inst->mute[lt] != 0 || inst->solo[lt] != 0) ok = 0;
+            HX_ASSERT(ok, "mute_all_clear: clears all mute + solo");
+        }
+
+        /* ---- SNAPSHOTS (snap_save/load/delete): 16 slots. Round-trip: save a
+         * mute/solo/drum-eff-mute pattern into a slot, mutate the live state,
+         * load to restore, delete to invalidate. snap_save format:
+         * "N m0..m7 s0..s7 dm0..dm7" (dm = uint32 drum eff-mute bitmask). ---- */
+        {
+            /* snap_save into slot 5: t0 muted, no solos, t0 drum-eff-mute = 7. */
+            hx_set_param(h, "snap_save",
+                         "5  1 0 0 0 0 0 0 0  0 0 0 0 0 0 0 0  7 0 0 0 0 0 0 0");
+            HX_ASSERT(inst->snap_valid[5] == 1, "snap_save: slot 5 marked valid");
+            HX_ASSERT(inst->snap_mute[5][0] == 1 && inst->snap_mute[5][1] == 0,
+                      "snap_save: mute pattern stored");
+            HX_ASSERT(inst->snap_drum_eff_mute[5][0] == 7u,
+                      "snap_save: drum eff-mute bitmask stored");
+
+            /* Mutate live state away from the snapshot. */
+            {
+                int lt;
+                for (lt = 0; lt < NUM_TRACKS; lt++) { inst->mute[lt] = 1; inst->solo[lt] = 0; }
+                inst->tracks[0].drum_lane_mute = 0xFFFFFFFFu;
+                inst->tracks[0].drum_lane_solo = 9;
+            }
+            /* snap_load slot 5: restores mute/solo + drum_lane_mute, clears
+             * drum_lane_solo. mute[1] going 1 -> 0 proves the restore. */
+            hx_set_param(h, "snap_load", "5");
+            HX_ASSERT(inst->mute[0] == 1, "snap_load: mute[0] restored to 1");
+            HX_ASSERT(inst->mute[1] == 0, "snap_load: mute[1] restored to 0 (proves load)");
+            HX_ASSERT(inst->solo[0] == 0, "snap_load: solo restored");
+            HX_ASSERT(inst->tracks[0].drum_lane_mute == 7u, "snap_load: drum_lane_mute restored to 7");
+            HX_ASSERT(inst->tracks[0].drum_lane_solo == 0, "snap_load: drum_lane_solo cleared");
+
+            /* snap_delete: invalidates the slot. */
+            hx_set_param(h, "snap_delete", "5");
+            HX_ASSERT(inst->snap_valid[5] == 0, "snap_delete: slot 5 invalidated");
+
+            /* snap_load on an invalid slot is a guarded no-op. */
+            inst->mute[1] = 1;
+            hx_set_param(h, "snap_load", "5");
+            HX_ASSERT(inst->mute[1] == 1, "snap_load: invalid slot is a no-op (mute untouched)");
+
+            /* Slot-index guard: N>=16 is a no-op (no OOB write / no crash). */
+            hx_set_param(h, "snap_save",
+                         "99  1 1 1 1 1 1 1 1  0 0 0 0 0 0 0 0  0 0 0 0 0 0 0 0");
+            HX_ASSERT(inst->snap_valid[5] == 0, "snap_save: N>=16 is a no-op");
+        }
+    }
+
     /* ---- Globals-STATE white-box pins (Phase 4B group 10 prep). Runs after
      * the table AND every other white-box block, in file order — it is
      * intentionally LAST because its state_load pin RESETS the whole instance
@@ -2037,6 +2302,11 @@ int main(void) {
            "audio_reverse clamps, clock_shift, nudge, beat_stretch, "
            "loop_double_fill, lgto_apply, pfx_set catch-all routing + "
            "pfx_noteFx_reset/pfx_delay_reset)\n");
+    printf("PASS: globals-misc white-box pins "
+           "(looper arm/stop/retrigger/sync + LOOPING pending-rate, merge "
+           "arm/cancel/stop/place_row state machine, bake guard + unroll, "
+           "perf_mods, launch_scene/launch_scene_quant, mute_all_clear, "
+           "snap save/load/delete round-trip + slot guards)\n");
     printf("PASS: globals-state white-box pins "
            "(debug_log no-op, state_path store, save preview-clear + file "
            "write + version-mismatch guard, prune opendir-failed no-op, "
