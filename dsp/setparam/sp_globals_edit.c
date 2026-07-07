@@ -1,16 +1,25 @@
-/* FUNCTION-BODY SEGMENT of set_param() -- included mid-function by
- * seq8_set_param.c; NOT a translation unit, not even a complete function;
- * shares set_param's locals (inst, key, val); never compile or lint this
- * file standalone.
- * Covers GLOBAL-key branches: clip_copy, row_copy, clip_cut, row_cut, drum_clip_copy, drum_clip_cut, row_clear, undo_restore, redo_restore
- *
- * LOAD-BEARING: the `#line 1` directive below resets clang's start-of-line
- * lexer state after this comment block; without it `clang -E -P` collapses
- * the first code line's indentation and the phase-4A byte-identity gate
- * fails (only the value 1 disarms it -- measured, Apple clang 16). Side
- * effect: diagnostics in this file number from 1 at the first code line.
- * Do not remove, reorder, or tidy. */
-#line 1
+/* FILE-SCOPE GLOBALS HANDLER for set_param()'s clip/row edit + undo/redo keys --
+ * part of the seq8.c single translation unit; #included at FILE scope by
+ * seq8_set_param.c (before set_param), NOT a standalone TU; never compile or
+ * lint this file on its own. Globals handler (phase 4B group 12): dispatched
+ * BEFORE the tN_ block, so it uses only inst/key/val (never tidx/tr/sub --
+ * they aren't in scope at the globals dispatch point).
+ * Covers GLOBAL-key branches: clip_copy, row_copy, clip_cut, row_cut,
+ * drum_clip_copy, drum_clip_cut, row_clear, undo_restore, redo_restore. Each
+ * is a top-level `strcmp(key,...)` branch. Returns 1 when it handled the key
+ * (caller returns from set_param), 0 to fall through to the remaining globals
+ * segment (transport) / the tN_ block. undo_restore/redo_restore build
+ * inst->last_restore_info (char[64], read by JS); that string-build -- incl.
+ * the deliberate `_off < _cap` snprintf-underflow clamp -- moves verbatim. */
+static int sp_globals_edit(sp_ctx_t *cx) {
+    seq8_instance_t *inst = cx->inst;
+    const char *key = cx->key;
+    const char *val = cx->val;
+
+    /* Body below kept at its Stage-A segment indentation (4 spaces) so it
+     * byte-diffs against the pre-conversion segment; reindent only in a
+     * dedicated cleanup pass after the group is device-blessed. */
+
     if (!strcmp(key, "clip_copy")) {
         const char *p = val;
         int nums[4], i;
@@ -26,7 +35,7 @@
             int dstC = clamp_i(nums[3], 0, NUM_CLIPS-1);
             clip_t *src = &inst->tracks[srcT].clips[srcC];
             clip_t *dst = &inst->tracks[dstT].clips[dstC];
-            if (srcT == dstT && srcC == dstC) return;
+            if (srcT == dstT && srcC == dstC) return 1;
             undo_begin_single(inst, dstT, dstC);
             dst->length        = src->length;
             dst->loop_start    = src->loop_start;
@@ -52,7 +61,7 @@
             if ((int)inst->tracks[dstT].active_clip == dstC)
                 pfx_sync_from_clip(&inst->tracks[dstT]);
         }
-        return;
+        return 1;
     }
 
     if (!strcmp(key, "row_copy")) {
@@ -64,7 +73,7 @@
         while (*p >= '0' && *p <= '9') dstRow = dstRow*10 + (*p++ - '0');
         srcRow = clamp_i(srcRow, 0, NUM_CLIPS-1);
         dstRow = clamp_i(dstRow, 0, NUM_CLIPS-1);
-        if (srcRow == dstRow) return;
+        if (srcRow == dstRow) return 1;
         undo_begin_row(inst, dstRow);
         for (t = 0; t < NUM_TRACKS; t++) {
             clip_t *src = &inst->tracks[t].clips[srcRow];
@@ -137,7 +146,7 @@
             }
         }
         inst->state_dirty = 1;
-        return;
+        return 1;
     }
 
     if (!strcmp(key, "clip_cut")) {
@@ -154,7 +163,7 @@
             int srcC = clamp_i(nums[1], 0, NUM_CLIPS-1);
             int dstT = clamp_i(nums[2], 0, NUM_TRACKS-1);
             int dstC = clamp_i(nums[3], 0, NUM_CLIPS-1);
-            if (srcT == dstT && srcC == dstC) return;
+            if (srcT == dstT && srcC == dstC) return 1;
             seq8_track_t *srcTr = &inst->tracks[srcT];
             seq8_track_t *dstTr = &inst->tracks[dstT];
             clip_t *src = &srcTr->clips[srcC];
@@ -192,7 +201,7 @@
             if (srcTr->queued_clip == srcC) srcTr->queued_clip = -1;
             inst->state_dirty = 1;
         }
-        return;
+        return 1;
     }
 
     if (!strcmp(key, "row_cut")) {
@@ -205,7 +214,7 @@
         while (*p >= '0' && *p <= '9') dstRow = dstRow*10 + (*p++ - '0');
         srcRow = clamp_i(srcRow, 0, NUM_CLIPS-1);
         dstRow = clamp_i(dstRow, 0, NUM_CLIPS-1);
-        if (srcRow == dstRow) return;
+        if (srcRow == dstRow) return 1;
         undo_begin_row_pair(inst, srcRow, dstRow);
         for (t = 0; t < NUM_TRACKS; t++) {
             seq8_track_t *tr = &inst->tracks[t];
@@ -290,7 +299,7 @@
             }
         }
         inst->state_dirty = 1;
-        return;
+        return 1;
     }
 
     if (!strcmp(key, "drum_clip_copy")) {
@@ -307,10 +316,10 @@
             int srcC = clamp_i(nums[1], 0, NUM_CLIPS-1);
             int dstT = clamp_i(nums[2], 0, NUM_TRACKS-1);
             int dstC = clamp_i(nums[3], 0, NUM_CLIPS-1);
-            if (srcT == dstT && srcC == dstC) return;
+            if (srcT == dstT && srcC == dstC) return 1;
             drum_clip_t *src = inst->tracks[srcT].drum_clips[srcC];
             drum_clip_t *dst = inst->tracks[dstT].drum_clips[dstC];
-            if (!src || !dst) return;
+            if (!src || !dst) return 1;
             int l;
             undo_begin_drum_clip(inst, dstT, dstC);
             for (l = 0; l < DRUM_LANES; l++) {
@@ -341,7 +350,7 @@
                 pfx_sync_from_clip(&inst->tracks[dstT]);
             inst->state_dirty = 1;
         }
-        return;
+        return 1;
     }
 
     if (!strcmp(key, "drum_clip_cut")) {
@@ -358,12 +367,12 @@
             int srcC = clamp_i(nums[1], 0, NUM_CLIPS-1);
             int dstT = clamp_i(nums[2], 0, NUM_TRACKS-1);
             int dstC = clamp_i(nums[3], 0, NUM_CLIPS-1);
-            if (srcT == dstT && srcC == dstC) return;
+            if (srcT == dstT && srcC == dstC) return 1;
             seq8_track_t *srcTr = &inst->tracks[srcT];
             seq8_track_t *dstTr = &inst->tracks[dstT];
             drum_clip_t *src = srcTr->drum_clips[srcC];
             drum_clip_t *dst = dstTr->drum_clips[dstC];
-            if (!src || !dst) return;
+            if (!src || !dst) return 1;
             int l;
             undo_begin_drum_clip(inst, dstT, dstC);
             for (l = 0; l < DRUM_LANES; l++) {
@@ -401,7 +410,7 @@
                 pfx_sync_from_clip(srcTr);
             inst->state_dirty = 1;
         }
-        return;
+        return 1;
     }
 
     if (!strcmp(key, "row_clear")) {
@@ -456,7 +465,7 @@
             }
         }
         inst->state_dirty = 1;
-        return;
+        return 1;
     }
 
     if (!strcmp(key, "undo_restore")) {
@@ -467,7 +476,7 @@
             drum_clip_t *dc = inst->tracks[t].drum_clips[c];
             if (!dc) {
                 dc = (drum_clip_t *)calloc(1, sizeof(drum_clip_t));
-                if (!dc) return;
+                if (!dc) return 1;
                 inst->tracks[t].drum_clips[c] = dc;
                 int _li;
                 for (_li = 0; _li < DRUM_LANES; _li++) {
@@ -527,9 +536,9 @@
                 pfx_sync_from_clip(&inst->tracks[t]);
             inst->drum_undo_valid = 0;
             snprintf(inst->last_restore_info, sizeof(inst->last_restore_info), "d %d %d", t, c);
-            return;
+            return 1;
         }
-        if (!inst->undo_valid) return;
+        if (!inst->undo_valid) return 1;
         inst->redo_clip_count = inst->undo_clip_count;
         memcpy(inst->redo_clip_tracks,  inst->undo_clip_tracks,  inst->undo_clip_count);
         memcpy(inst->redo_clip_indices, inst->undo_clip_indices, inst->undo_clip_count);
@@ -581,7 +590,7 @@
                                      " DR %d", (int)inst->drum_row_redo_clips[_s]);
             }
         }
-        return;
+        return 1;
     }
 
     if (!strcmp(key, "redo_restore")) {
@@ -592,7 +601,7 @@
             drum_clip_t *dc = inst->tracks[t].drum_clips[c];
             if (!dc) {
                 dc = (drum_clip_t *)calloc(1, sizeof(drum_clip_t));
-                if (!dc) return;
+                if (!dc) return 1;
                 inst->tracks[t].drum_clips[c] = dc;
                 int _li;
                 for (_li = 0; _li < DRUM_LANES; _li++) {
@@ -649,9 +658,9 @@
                 pfx_sync_from_clip(&inst->tracks[t]);
             inst->drum_redo_valid = 0;
             snprintf(inst->last_restore_info, sizeof(inst->last_restore_info), "d %d %d", t, c);
-            return;
+            return 1;
         }
-        if (!inst->redo_valid) return;
+        if (!inst->redo_valid) return 1;
         inst->undo_clip_count = inst->redo_clip_count;
         memcpy(inst->undo_clip_tracks,  inst->redo_clip_tracks,  inst->redo_clip_count);
         memcpy(inst->undo_clip_indices, inst->redo_clip_indices, inst->redo_clip_count);
@@ -703,5 +712,8 @@
                                      " DR %d", (int)inst->drum_row_undo_clips[_s]);
             }
         }
-        return;
+        return 1;
     }
+
+    return 0;
+}

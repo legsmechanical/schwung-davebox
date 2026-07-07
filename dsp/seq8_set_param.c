@@ -479,9 +479,11 @@ typedef struct {
  * tN_ handlers they use only inst/key/val (no tidx/tr/sub), matching top-level
  * global keys. Included at file scope like the tN_ handlers; order among the
  * file-scope includes is irrelevant (plain static fns):
- * sp_globals_state (group 10), sp_globals_misc (group 11). */
+ * sp_globals_state (group 10), sp_globals_misc (group 11),
+ * sp_globals_edit (group 12). */
 #include "setparam/sp_globals_state.c"
 #include "setparam/sp_globals_misc.c"
+#include "setparam/sp_globals_edit.c"
 
 /* ------------------------------------------------------------------ */
 /* set_param                                                            */
@@ -522,19 +524,26 @@ static void set_param(void *instance, const char *key, const char *val) {
      * place_row/cancel, bake, bake_scene, perf_mods, launch_scene[_quant],
      * mute_all_clear, snap_save/load/delete. It reads only inst/key/val;
      * returns 1 on a matched key (we return), 0 to fall through. Dispatched
-     * after the state handler and before the edit segment, preserving the
+     * after the state handler and before the edit handler, preserving the
      * original branch order (transport -> state -> misc -> edit -> tN_). The
      * state handler above returns 0 without mutating cx on fall-through, and the
      * transport segment before it never touches cx, so cx is still
      * {inst,key,val} here. */
     if (sp_globals_misc(&cx)) return;
 
-/* LOAD-BEARING SPACING: function-body segment include (phase 4A). The
- * blank-line layout around this include is part of the byte-identity
- * gate (`clang -E -P` preprocessed TU identical pre/post split); do not
- * tidy. The segment file opens with `#line 1` to disarm clang's
- * start-of-line indentation collapse at the include entry. */
-#include "setparam/sp_globals_edit.c"
+    /* --- Clip/row copy/cut/clear + undo/redo (global) --- now a file-scope
+     * GLOBALS handler (phase 4B group 12), dispatched here reusing the
+     * call-wide cx. Covers clip_copy, row_copy, clip_cut, row_cut,
+     * drum_clip_copy, drum_clip_cut, row_clear, undo_restore, redo_restore. It
+     * reads only inst/key/val; returns 1 on a matched key (we return), 0 to
+     * fall through. Dispatched after the misc handler and before the tN_ block,
+     * preserving the original branch order (transport -> state -> misc -> edit
+     * -> tN_). The state + misc handlers above return 0
+     * without mutating cx on fall-through, and the transport segment before
+     * them never touches cx, so cx is still {inst,key,val} here. Only
+     * sp_globals_transport remains a raw function-body segment (converted last,
+     * group 13). */
+    if (sp_globals_edit(&cx)) return;
 
     /* --- Track-prefixed params: tN_<subkey> --- */
     /* This parent code OPENS the tN_ track block and declares the block-locals
