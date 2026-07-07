@@ -171,6 +171,9 @@ static int sp_track_live(sp_ctx_t *cx) {
              * on every computePadNoteMap recompute, not just at init.
              * PHASE-1: remove the enable line when patches upstreamed. */
             inst->active_track = (uint8_t)tidx;
+            /* This is the flag the live_notes branch above early-returns on:
+             * once padmap enables inbound, on_midi owns live dispatch and a
+             * following live_notes push is a no-op. Keep the two in sync. */
             inst->dsp_inbound_enabled = 1;
             /* 33rd token = pad_dispatch_muted. When set, on_midi skips
              * drum_pad_event so modal gestures (Shift+bottom-row track
