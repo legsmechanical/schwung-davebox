@@ -42,7 +42,7 @@ import { R } from './ui_seams.mjs';
 
 /* Launch quantization: 0=Now, 1=1/16, 2=1/8, 3=1/4, 4=1/2, 5=1-bar; default 0 */
 
-export function buildGlobalMenuItems() {
+function buildGlobalMenuItems() {
     return [
         createValue('Channel', {
             get: function() { return S.trackChannel[S.activeTrack]; },
