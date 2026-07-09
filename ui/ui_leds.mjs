@@ -926,3 +926,32 @@ export function drawPositionBar(t) {
         fill_rect(xRight, barY + 1, 1, barH - 2, 1);
     }
 }
+
+/* Pack a SysEx byte array into 4-byte USB-MIDI SysEx packets for move_midi_internal_send. */
+function _sysexPkts(bytes) {
+    const out = [];
+    for (let i = 0; i < bytes.length; i += 3) {
+        const rem = bytes.length - i;
+        const cin = rem >= 3 ? (rem === 3 ? 0x07 : 0x04) : (rem === 2 ? 0x06 : 0x05);
+        out.push(cin, bytes[i], rem > 1 ? bytes[i + 1] : 0, rem > 2 ? bytes[i + 2] : 0);
+    }
+    return out;
+}
+
+/* Pre-packed reapply SysEx: [F0 00 21 1D 01 01 05 F7] */
+const _CC_REAPPLY_PKT = _sysexPkts([0xF0, 0x00, 0x21, 0x1D, 0x01, 0x01, 0x05, 0xF7]);
+
+/* Set palette entry idx to RGB (0-255 each), then call reapplyPalette to push to LEDs. */
+export function setPaletteEntryRGB(idx, r, g, b) {
+    move_midi_internal_send(_sysexPkts([
+        0xF0, 0x00, 0x21, 0x1D, 0x01, 0x01, 0x03,
+        idx & 0x7F,
+        r & 0x7F, r >> 7,
+        g & 0x7F, g >> 7,
+        b & 0x7F, b >> 7,
+        0, 0,   /* white channel = 0 */
+        0xF7
+    ]));
+}
+
+export function reapplyPalette() { move_midi_internal_send(_CC_REAPPLY_PKT); }

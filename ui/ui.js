@@ -97,7 +97,7 @@ import { trackClipHasContent, sceneAllQueued, updateSceneMapLEDs } from './ui_sc
 import { _padDispatchMutedNow, computePadNoteMap, syncDrumLaneSteps, syncDrumLanesMeta,
     setActiveDrumLane, setDrumPerformMode, setDrumLanePage, syncDrumClipContent,
     syncDrumRepeatState } from './ui_drummodel.mjs';
-import { effectiveClip, updateStepLEDs, updateSessionLEDs, updateTrackLEDs, flashAtRate, drawPositionBar, invalidateLEDCache, paintCoRunSideButtons, trackColor, trackDimColor } from './ui_leds.mjs';
+import { effectiveClip, updateStepLEDs, updateSessionLEDs, updateTrackLEDs, flashAtRate, drawPositionBar, invalidateLEDCache, paintCoRunSideButtons, trackColor, trackDimColor, setPaletteEntryRGB, reapplyPalette } from './ui_leds.mjs';
 import { SPLASH_FRAMES, SPLASH_COUNT, SPLASH_W, SPLASH_H, pickSplashIdx } from './ui_splash.mjs';
 import { requestExport, confirmExportStart, confirmExportCondClick, pollPendingExport } from './ui_export.mjs';
 
@@ -684,35 +684,6 @@ const KNOB_TURN_HIGHLIGHT_TICKS = 56;             /* ~600ms at 94Hz — highligh
 
 /* Scratch palette indices for CC bank live value display (51-58, all undefined in palette).
  * Updated dynamically via SysEx each tick — one entry per knob. */
-
-/* Pack a SysEx byte array into 4-byte USB-MIDI SysEx packets for move_midi_internal_send. */
-function _sysexPkts(bytes) {
-    const out = [];
-    for (let i = 0; i < bytes.length; i += 3) {
-        const rem = bytes.length - i;
-        const cin = rem >= 3 ? (rem === 3 ? 0x07 : 0x04) : (rem === 2 ? 0x06 : 0x05);
-        out.push(cin, bytes[i], rem > 1 ? bytes[i + 1] : 0, rem > 2 ? bytes[i + 2] : 0);
-    }
-    return out;
-}
-
-/* Pre-packed reapply SysEx: [F0 00 21 1D 01 01 05 F7] */
-const _CC_REAPPLY_PKT = _sysexPkts([0xF0, 0x00, 0x21, 0x1D, 0x01, 0x01, 0x05, 0xF7]);
-
-/* Set palette entry idx to RGB (0-255 each), then call reapplyPalette to push to LEDs. */
-function setPaletteEntryRGB(idx, r, g, b) {
-    move_midi_internal_send(_sysexPkts([
-        0xF0, 0x00, 0x21, 0x1D, 0x01, 0x01, 0x03,
-        idx & 0x7F,
-        r & 0x7F, r >> 7,
-        g & 0x7F, g >> 7,
-        b & 0x7F, b >> 7,
-        0, 0,   /* white channel = 0 */
-        0xF7
-    ]));
-}
-
-function reapplyPalette() { move_midi_internal_send(_CC_REAPPLY_PKT); }
 
 /* Resolve the Schwung chain slot index for a dAVEBOx track's MIDI channel.
  * shadow_get_slots() returns {channel, name} per slot where channel is 1-16
