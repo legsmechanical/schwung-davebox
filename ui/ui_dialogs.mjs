@@ -1,10 +1,14 @@
 import { S } from './ui_state.mjs';
-import { MCUFONT } from './ui_constants.mjs';
+import { MCUFONT, STATE_VERSION, NOTE_KEYS, SCALE_DISPLAY } from './ui_constants.mjs';
 import {
     drawMenuHeader, drawMenuList, menuLayoutDefaults
 } from '/data/UserData/schwung/shared/menu_layout.mjs';
 import { formatItemValue } from '/data/UserData/schwung/shared/menu_items.mjs';
-import { SNAPSHOT_CAP } from './ui_persistence.mjs';
+import {
+    SNAPSHOT_CAP, snapshotLabel, saveState, loadSnapshotManifest, showActionPopup,
+    dropSnapshots, applySnapshotToLive
+} from './ui_persistence.mjs';
+import { effectiveClip, invalidateLEDCache } from './ui_leds.mjs';
 
 function pixelPrintMcu(x, y, text, scale, color) {
     const charW = 5 * scale + scale;
@@ -274,4 +278,499 @@ export function drawGlobalMenu() {
             return formatItemValue(item, isEditing, S.globalMenuState.editValue);
         }
     });
+}
+
+/* "REC Unavailable" two-option dialog (OK | BAKE NOW). Opens when Record
+ * is pressed on a clip / lane in any non-Forward direction or Audio reverse
+ * style. OK dismisses; BAKE NOW opens the standard bake confirm dialog
+ * pre-targeted at the active clip / drum lane. */
+export function drawStateWipeConfirm() {
+    clear_screen();
+    function _btn(x, y, w, h, sel, label, labelOff) {
+        if (sel) {
+            fill_rect(x, y, w, h, 1);
+            print(x + labelOff, y + 3, label, 0);
+        } else {
+            fill_rect(x, y, w, 1, 1);
+            fill_rect(x, y + h - 1, w, 1, 1);
+            fill_rect(x, y, 1, h, 1);
+            fill_rect(x + w - 1, y, 1, h, 1);
+            print(x + labelOff, y + 3, label, 1);
+        }
+    }
+    drawMenuHeader('Incompatible State');
+    print(4, 16, 'Session incompatible', 1);
+    print(4, 25, 'with current dB ver.', 1);
+    print(4, 34, 'Erase and proceed?', 1);
+    _btn(6,  46, 46, 13, S.confirmStateWipeSel === 0, 'Yes', 14);
+    _btn(74, 46, 46, 13, S.confirmStateWipeSel === 1, 'No',  17);
+}
+
+export function drawRecordBlockedDialog() {
+    clear_screen();
+    function _btn(x, y, w, h, sel, label, labelOff) {
+        if (sel) {
+            fill_rect(x, y, w, h, 1);
+            print(x + labelOff, y + 3, label, 0);
+        } else {
+            fill_rect(x, y, w, 1, 1);
+            fill_rect(x, y + h - 1, w, 1, 1);
+            fill_rect(x, y, 1, h, 1);
+            fill_rect(x + w - 1, y, 1, h, 1);
+            print(x + labelOff, y + 3, label, 1);
+        }
+    }
+    drawMenuHeader('REC Unavailable');
+    print(4, 16, 'Set Dir to Fwd', 1);
+    print(4, 25, 'or Bake', 1);
+    _btn(6,  46, 46, 13, S.recordBlockedDialogSel === 0, 'OK',       19);
+    _btn(58, 46, 64, 13, S.recordBlockedDialogSel === 1, 'BAKE NOW', 6);
+}
+
+/* Shown when Tap Tempo is invoked while Clock Follow = Move (tempo is Move's, so
+ * there's nothing to tap). Single OK button; dismissed by jog click or Back. */
+export function drawBpmMoveInfo() {
+    clear_screen();
+    drawMenuHeader('Tempo');
+    print(4, 20, 'BPM controlled', 1);
+    print(4, 30, 'by Move', 1);
+    /* OK button (filled, bottom center) — matches the generic INFO dialog. */
+    fill_rect(49, 52, 30, 11, 1);
+    print(59, 54, 'OK', 0);
+}
+
+/* Destructive Lgto confirm dialog. Right-turn of CLIP K8 / DRUM LANE K8
+ * opens this. OK applies; CANCEL aborts. Undoable. */
+export function drawLgtoConfirm() {
+    clear_screen();
+    function _btn(x, y, w, h, sel, label, labelOff) {
+        if (sel) {
+            fill_rect(x, y, w, h, 1);
+            print(x + labelOff, y + 3, label, 0);
+        } else {
+            fill_rect(x, y, w, 1, 1);
+            fill_rect(x, y + h - 1, w, 1, 1);
+            fill_rect(x, y, 1, h, 1);
+            fill_rect(x + w - 1, y, 1, h, 1);
+            print(x + labelOff, y + 3, label, 1);
+        }
+    }
+    drawMenuHeader(S.confirmLgtoIsDrum ? 'Lgto (lane)' : 'Lgto (clip)');
+    print(4, 16, 'Destructive', 1);
+    print(4, 25, 'Proceed?', 1);
+    _btn(6,  46, 46, 13, S.confirmLgtoSel === 0, 'OK',     19);
+    _btn(58, 46, 64, 13, S.confirmLgtoSel === 1, 'CANCEL', 14);
+}
+
+export function drawBakeConfirm() {
+    clear_screen();
+    function _btn(x, y, w, h, sel, label, labelOff) {
+        if (sel) {
+            fill_rect(x, y, w, h, 1);
+            print(x + labelOff, y + 3, label, 0);
+        } else {
+            fill_rect(x, y, w, 1, 1);
+            fill_rect(x, y + h - 1, w, 1, 1);
+            fill_rect(x, y, 1, h, 1);
+            fill_rect(x + w - 1, y, 1, h, 1);
+            print(x + labelOff, y + 3, label, 1);
+        }
+    }
+    if (S.confirmBakeWrapPhase) {
+        drawMenuHeader('WRAP TAILS?');
+        print(4, 16, 'Wrap delay echoes', 1);
+        print(4, 25, 'past clip end back', 1);
+        print(4, 34, 'to the beginning?', 1);
+        const bW = 38, bH = 13, bY = 50;
+        _btn(4,  bY, bW, bH, S.confirmBakeWrapSel === 0, 'YES',    9);
+        _btn(45, bY, bW, bH, S.confirmBakeWrapSel === 1, 'NO',    14);
+        _btn(86, bY, bW, bH, S.confirmBakeWrapSel === 2, 'CANCEL', 1);
+    } else if (S.confirmBakeIsMultiLoop) {
+        drawMenuHeader('BAKE FX?');
+        print(4, 14, 'Bake N loops of FX', 1);
+        print(4, 23, 'chain to clip?', 1);
+        const bH = 12, bY = 38;
+        _btn(2,  bY, 27, bH, S.confirmBakeSel === 1, '1x',     9);
+        _btn(31, bY, 27, bH, S.confirmBakeSel === 2, '2x',     9);
+        _btn(60, bY, 27, bH, S.confirmBakeSel === 3, '4x',     9);
+        _btn(89, bY, 37, bH, S.confirmBakeSel === 0, 'CANCEL', 3);
+    } else if (!S.confirmBakeIsDrum) {
+        drawMenuHeader('BAKE FX?');
+        print(4, 16, 'Apply effects chain', 1);
+        print(4, 25, 'to clip notes and', 1);
+        print(4, 34, 'clear the settings.', 1);
+        _btn(6,  46, 46, 13, S.confirmBakeSel === 1, 'No',  17);
+        _btn(74, 46, 46, 13, S.confirmBakeSel === 0, 'Yes', 14);
+    } else if (S.confirmBakeDrumLoopOpen) {
+        /* Step 2: loop count selection */
+        const modeLabel = S.confirmBakeDrumMode === 1 ? 'LANE' : 'CLIP';
+        drawMenuHeader('BAKE DRUMS?');
+        print(4, 13, modeLabel + ' — loop count:', 1);
+        const mH = 11;
+        _btn(14, 33, 100, mH, S.confirmBakeDrumLoopSel === 0, 'CANCEL', 31);
+        _btn(4,  47, 36,  mH, S.confirmBakeDrumLoopSel === 1, '1x', 12);
+        _btn(46, 47, 36,  mH, S.confirmBakeDrumLoopSel === 2, '2x', 12);
+        _btn(88, 47, 36,  mH, S.confirmBakeDrumLoopSel === 3, '4x', 12);
+    } else {
+        drawMenuHeader('BAKE DRUMS?');
+        print(4, 16, 'Bake FX to clip', 1);
+        print(4, 25, '(all lanes) or lane?', 1);
+        /* 3 buttons: CLIP(0) | LANE(1) | CANCEL(2, default) */
+        const bW = 38, bH = 13, bY = 50;
+        _btn(4,  bY, bW, bH, S.confirmBakeSel === 0, 'CLIP',   7);
+        _btn(45, bY, bW, bH, S.confirmBakeSel === 1, 'LANE',   7);
+        _btn(86, bY, bW, bH, S.confirmBakeSel === 2, 'CANCEL', 1);
+    }
+}
+
+export function drawInheritPicker() {
+    clear_screen();
+    const p = S.pendingInheritPicker;
+    if (!p) return;
+    /* Header (two preamble lines + title wrapped to two lines; Move display
+     * is 128px wide which only fits ~21 chars at the standard 6px/char font).
+     * Tight 8-9px line stride to leave room for the list below. */
+    print(2, 2,  'Copied Move set', 1);
+    print(2, 10, 'detected',        1);
+    fill_rect(0, 18, 128, 1, 1);
+    print(2, 20, 'Inherit dAVEBOx', 1);
+    print(2, 28, 'state from?',     1);
+    fill_rect(0, 36, 128, 1, 1);
+
+    /* List: candidates + 'Start blank' sentinel. Scroll window of 3 around
+     * the selected index so 4+ entries still fit. Selection inverts the
+     * line; arrows hint at off-screen items. */
+    const total = p.candidates.length + 1;
+    const visible = 3;
+    const sel = p.selectedIndex;
+    let top = Math.max(0, Math.min(sel - 1, total - visible));
+    if (total <= visible) top = 0;
+    const lineH = 9;
+    const listTopY = 39;
+    for (let i = 0; i < visible && (top + i) < total; i++) {
+        const idx = top + i;
+        const y = listTopY + i * lineH;
+        const isBlank = (idx === p.candidates.length);
+        const label = isBlank ? 'Start blank' : p.candidates[idx].name;
+        const truncated = label.length > 20 ? label.substring(0, 19) + '…' : label;
+        if (idx === sel) {
+            fill_rect(2, y - 1, 124, lineH - 1, 1);
+            print(5, y, truncated, 0);
+        } else {
+            print(5, y, truncated, 1);
+        }
+    }
+    /* Scroll indicators */
+    if (top > 0)               print(120, listTopY, '^', 1);
+    if (top + visible < total) print(120, listTopY + (visible - 1) * lineH, 'v', 1);
+}
+
+function snapById(p, id) {
+    for (let i = 0; i < p.snaps.length; i++) if (p.snaps[i].id === id) return p.snaps[i];
+    return null;
+}
+
+/* Yes/No buttons matching the other confirm dialogs (No left, Yes right). */
+function drawSnapYesNo(sel) {
+    const noX = 6, yesX = 74, btnY = 46, btnW = 46, btnH = 13;
+    function btn(x, on, label, off) {
+        if (on) { fill_rect(x, btnY, btnW, btnH, 1); print(x + off, btnY + 3, label, 0); }
+        else {
+            fill_rect(x, btnY, btnW, 1, 1); fill_rect(x, btnY + btnH - 1, btnW, 1, 1);
+            fill_rect(x, btnY, 1, btnH, 1); fill_rect(x + btnW - 1, btnY, 1, btnH, 1);
+            print(x + off, btnY + 3, label, 1);
+        }
+    }
+    btn(noX, sel === 1, 'No', 17);
+    btn(yesX, sel === 0, 'Yes', 14);
+}
+
+export function drawSnapshotPicker() {
+    clear_screen();
+    const p = S.snapshotPicker;
+    if (!p) return;
+
+    if (p.confirm) {
+        const c = p.confirm;
+        if (c.kind === 'wipe') {
+            drawMenuHeader('STATES UPDATED');
+            print(4, 18, 'Delete ' + c.wipeIds.length + ' snapshot(s)', 1);
+            print(4, 27, 'from an older', 1);
+            print(4, 36, 'version?', 1);
+        } else if (c.kind === 'load') {
+            const s = snapById(p, c.targetId);
+            drawMenuHeader('LOAD STATE');
+            print(4, 18, 'Load ' + (s ? s.label : ''), 1);
+            print(4, 27, 'Unsaved changes', 1);
+            print(4, 36, 'will be lost.', 1);
+        } else {
+            const s = snapById(p, c.targetId);
+            drawMenuHeader('OVERWRITE');
+            print(4, 18, 'Replace', 1);
+            print(4, 27, (s ? s.label : '') + '?', 1);
+        }
+        drawSnapYesNo(c.sel);
+        return;
+    }
+
+    drawMenuHeader(p.mode === 'overwrite' ? 'OVERWRITE WHICH?' : 'LOAD STATE');
+    const total = p.snaps.length;
+    const visible = 4;
+    const sel = p.sel;
+    let top = Math.max(0, Math.min(sel - 1, total - visible));
+    if (total <= visible) top = 0;
+    const lineH = 9;
+    const listTopY = 20;
+    for (let i = 0; i < visible && (top + i) < total; i++) {
+        const idx = top + i;
+        const y = listTopY + i * lineH;
+        const s = p.snaps[idx];
+        let label = s.label || '';
+        if (p.mode === 'load' && s.sv !== STATE_VERSION) label += ' (old)';
+        const truncated = label.length > 20 ? label.substring(0, 19) + '…' : label;
+        if (idx === sel) {
+            fill_rect(2, y - 1, 124, lineH - 1, 1);
+            print(5, y, truncated, 0);
+        } else {
+            print(5, y, truncated, 1);
+        }
+    }
+    if (top > 0)               print(120, listTopY, '^', 1);
+    if (top + visible < total) print(120, listTopY + (visible - 1) * lineH, 'v', 1);
+}
+
+/* CLEAR AUTOMATION modal — checkable AT / PB(disabled) / CC + a CLEAR action. */
+export function drawClearAutoMenu() {
+    clear_screen();
+    const m = S.clearAutoMenu;
+    if (!m) return;
+    drawMenuHeader('CLEAR AUTOMATION');
+    const rows = [
+        { label: 'Aftertouch (AT)',     box: m.at ? '[x]' : '[ ]' },
+        { label: 'Pitch bend (PB)',     box: '( )' },   /* placeholder, not selectable */
+        { label: 'Control Change (CC)', box: m.cc ? '[x]' : '[ ]' },
+        { label: 'CLEAR',  action: true },
+        { label: 'Cancel', action: true }
+    ];
+    const lineH = 9, topY = 18;
+    for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const y = topY + i * lineH;
+        const seld = (m.sel === i);
+        if (seld) fill_rect(2, y - 1, 124, lineH - 1, 1);
+        const txt = r.action ? r.label : (r.box + ' ' + r.label);
+        print(5, y, txt, seld ? 0 : 1);
+    }
+}
+
+export function drawBakeSceneConfirm() {
+    clear_screen();
+    function _btn(x, y, w, h, sel, label, labelOff) {
+        if (sel) {
+            fill_rect(x, y, w, h, 1);
+            print(x + labelOff, y + 3, label, 0);
+        } else {
+            fill_rect(x, y, w, 1, 1);
+            fill_rect(x, y + h - 1, w, 1, 1);
+            fill_rect(x, y, 1, h, 1);
+            fill_rect(x + w - 1, y, 1, h, 1);
+            print(x + labelOff, y + 3, label, 1);
+        }
+    }
+    drawMenuHeader('BAKE SCENE?');
+    const mH = 11;
+    if (S.confirmBakeSceneCondPhase) {
+        print(4, 22, 'Apply Conductor?', 1);
+        const bY = 47, bW = 36;
+        _btn(4,  bY, bW, mH, S.confirmBakeSceneCondSel === 0, 'YES',    9);
+        _btn(45, bY, bW, mH, S.confirmBakeSceneCondSel === 1, 'NO',    14);
+        _btn(86, bY, bW, mH, S.confirmBakeSceneCondSel === 2, 'CANCEL', 1);
+    } else if (S.confirmBakeSceneWrapPhase) {
+        print(4, 22, 'Wrap tails?', 1);
+        const bY = 47, bW = 36;
+        _btn(4,  bY, bW, mH, S.confirmBakeSceneWrapSel === 0, 'YES',    9);
+        _btn(45, bY, bW, mH, S.confirmBakeSceneWrapSel === 1, 'NO',    14);
+        _btn(86, bY, bW, mH, S.confirmBakeSceneWrapSel === 2, 'CANCEL', 1);
+    } else {
+        print(4, 22, 'Loop count:', 1);
+        _btn(14, 33, 100, mH, S.confirmBakeSceneSel === 0, 'CANCEL', 31);
+        _btn(4,  47, 36,  mH, S.confirmBakeSceneSel === 1, '1x', 12);
+        _btn(46, 47, 36,  mH, S.confirmBakeSceneSel === 2, '2x', 12);
+        _btn(88, 47, 36,  mH, S.confirmBakeSceneSel === 3, '4x', 12);
+    }
+}
+
+export function drawXposeConfirm() {
+    clear_screen();
+    function _btn(x, y, w, h, sel, label, labelOff) {
+        if (sel) {
+            fill_rect(x, y, w, h, 1);
+            print(x + labelOff, y + 3, label, 0);
+        } else {
+            fill_rect(x, y, w, 1, 1);
+            fill_rect(x, y + h - 1, w, 1, 1);
+            fill_rect(x, y, 1, h, 1);
+            fill_rect(x + w - 1, y, 1, h, 1);
+            print(x + labelOff, y + 3, label, 1);
+        }
+    }
+    drawMenuHeader('TRANSPOSE CLIPS?');
+    const tgt = NOTE_KEYS[S.confirmXposeKey] + ' ' + (SCALE_DISPLAY[S.confirmXposeScale] || '?');
+    print(4, 22, 'To ' + tgt, 1);
+    print(4, 33, 'All melodic clips', 1);
+    const mH = 11, bY = 50, bW = 50;
+    _btn(4,  bY, bW, mH, S.confirmXposeSel === 0, 'YES', 17);
+    _btn(74, bY, bW, mH, S.confirmXposeSel === 1, 'NO',  20);
+}
+
+/* Flush live state to disk (deferred 'save') then copy it into snapshot
+ * `id` next tick — pendingSnapshotCopy is drained one tick after the save,
+ * by which point seq8_save_state has written the file synchronously.
+ * Reusing an existing id overwrites that snapshot in place. */
+export function beginSnapshotSave(id) {
+    S.pendingSnapshotCopy = { id: id, label: snapshotLabel() };
+    saveState();
+}
+
+/* Save state action. Under the cap → new timestamped snapshot. At the cap →
+ * open the overwrite picker to choose which existing one to replace. */
+export function openSaveSnapshot() {
+    if (S.pendingSuspendSave || S.pendingSnapshotCopy) return;  /* save already in flight */
+    const snaps = loadSnapshotManifest(S.currentSetUuid);
+    if (snaps.length >= SNAPSHOT_CAP) {
+        S.snapshotPicker = { mode: 'overwrite', snaps: snaps, sel: 0, confirm: null };
+        S.globalMenuOpen = false;
+        S.screenDirty = true;
+        return;
+    }
+    beginSnapshotSave(String(Date.now()));
+    S.globalMenuOpen = false;
+    showActionPopup('STATE', 'SAVED');
+}
+
+/* Load state action. Empty → popup. If any snapshots predate the current
+ * state version, offer to wipe them before showing the list. */
+export function openLoadSnapshot() {
+    const snaps = loadSnapshotManifest(S.currentSetUuid);
+    if (snaps.length === 0) {
+        S.globalMenuOpen = false;
+        showActionPopup('NO', 'SNAPSHOTS');
+        return;
+    }
+    const stale = [];
+    for (let i = 0; i < snaps.length; i++)
+        if (snaps[i].sv !== STATE_VERSION) stale.push(snaps[i].id);
+    S.snapshotPicker = { mode: 'load', snaps: snaps, sel: 0, confirm: null };
+    if (stale.length > 0)
+        S.snapshotPicker.confirm = { kind: 'wipe', sel: 1, wipeIds: stale };
+    S.globalMenuOpen = false;
+    S.screenDirty = true;
+}
+
+export function closeSnapshotPicker() {
+    S.snapshotPicker = null;
+    S.screenDirty = true;
+}
+
+/* Jog rotation inside the picker: toggle a confirm's Yes/No, else move
+ * the list selection. */
+export function snapshotPickerRotate(delta) {
+    const p = S.snapshotPicker;
+    if (!p || delta === 0) return;
+    if (p.confirm) {
+        p.confirm.sel = p.confirm.sel === 0 ? 1 : 0;
+    } else {
+        const n = p.snaps.length;
+        if (n > 0) p.sel = (p.sel + (delta > 0 ? 1 : n - 1)) % n;
+    }
+    S.screenDirty = true;
+}
+
+/* Jog click inside the picker: resolve a confirm, or arm one for the
+ * selected entry. */
+export function snapshotPickerClick() {
+    const p = S.snapshotPicker;
+    if (!p) return;
+    if (p.confirm) {
+        const yes = p.confirm.sel === 0;
+        const kind = p.confirm.kind;
+        if (kind === 'wipe') {
+            if (yes) { p.snaps = dropSnapshots(S.currentSetUuid, p.confirm.wipeIds); p.sel = 0; }
+            p.confirm = null;
+            if (p.snaps.length === 0) closeSnapshotPicker();
+            else S.screenDirty = true;
+            return;
+        }
+        const id = p.confirm.targetId;
+        closeSnapshotPicker();
+        if (kind === 'load' && yes) {
+            applySnapshotToLive(S.currentSetUuid, id);
+            S.pendingSetLoad = true;          /* reuse the normal state_load reload path */
+            showActionPopup('STATE', 'LOADED');
+        } else if (kind === 'overwrite' && yes) {
+            beginSnapshotSave(id);            /* reuse id → overwrite in place */
+            showActionPopup('STATE', 'SAVED');
+        }
+        return;
+    }
+    const snap = p.snaps[p.sel];
+    if (!snap) return;
+    if (p.mode === 'load') {
+        if (snap.sv !== STATE_VERSION) return;   /* incompatible: ignore press */
+        p.confirm = { kind: 'load', sel: 1, targetId: snap.id };
+    } else {
+        p.confirm = { kind: 'overwrite', sel: 1, targetId: snap.id };
+    }
+    S.screenDirty = true;
+}
+
+/* ---- CLEAR AUTOMATION menu (Delete-tap on the AUTO bank) ---- */
+export function openClearAutoMenu() {
+    S.clearAutoMenu = { sel: 0, at: false, cc: false };
+    S.screenDirty = true;
+}
+
+export function closeClearAutoMenu() {
+    S.clearAutoMenu = null;
+    S.screenDirty = true;
+}
+
+export function clearAutoMenuRotate(delta) {
+    const m = S.clearAutoMenu;
+    if (!m || delta === 0) return;
+    m.sel = (m.sel + (delta > 0 ? 1 : 4)) % 5;   /* 0=AT 1=PB 2=CC 3=CLEAR 4=Cancel */
+    S.screenDirty = true;
+}
+
+export function clearAutoMenuClick() {
+    const m = S.clearAutoMenu;
+    if (!m) return;
+    if (m.sel === 0) { m.at = !m.at; }              /* Aftertouch (AT) */
+    else if (m.sel === 1) { /* Pitch bend (PB) — placeholder, not selectable */ }
+    else if (m.sel === 2) { m.cc = !m.cc; }         /* Control Change (CC) — all CC data */
+    else if (m.sel === 4) { closeClearAutoMenu(); return; }   /* Cancel */
+    else {                                           /* CLEAR — execute */
+        const t = S.activeTrack, c = effectiveClip(t);
+        if (m.cc) {
+            S.trackCCAutoBits[t][c] = 0;
+            S.trackCCLiveVal[t] = new Array(8).fill(-1);
+            S.clipCCVal[t][c] = new Array(8).fill(-1);
+            S.pendingDefaultSetParams.push({ key: 't' + t + '_cc_auto_clear', val: String(c) });
+        }
+        if (m.at) {
+            S.clipAtHas[t][c] = false;
+            S.pendingDefaultSetParams.push({ key: 't' + t + '_c' + c + '_at_clear', val: '1' });
+        }
+        const done = [];
+        if (m.at) done.push('AT');
+        if (m.cc) done.push('CC');
+        if (done.length) {
+            S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
+        }
+        closeClearAutoMenu();
+        invalidateLEDCache();
+        showActionPopup('CLEARED', done.length ? done.join(' ') : 'NOTHING');
+        return;
+    }
+    S.screenDirty = true;
 }
