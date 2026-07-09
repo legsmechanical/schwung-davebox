@@ -1040,3 +1040,22 @@ export function forceRedraw() {
     }
     updateTrackLEDs();
 }
+
+export function bankHasAltParams(t, bank) {
+    if (S.trackPadMode[t] === PAD_MODE_DRUM) return bank === 0 || bank === 5 || bank === 6 || bank === 7;
+    /* Melodic CLIP(0), NOTE FX(1), DELAY(3), SEQ ARP(4), ARP IN(5), AUTO/CC(6).
+     * Banks 4/5 use stepIntervalMode (Arp Steps overlay) rather than altMode —
+     * the arrow still shows their toggle-availability, and altIndicatorActive()
+     * reflects which underlying flag is on. */
+    return bank === 0 || bank === 1 || bank === 3 || bank === 4 || bank === 5 || bank === 6;
+}
+
+/* Returns true when the current bank's alt indicator should flash. For melodic
+ * SEQ ARP / ARP IN this is the Arp Steps overlay flag; for every other alt-param
+ * bank it is altMode. */
+export function altIndicatorActive(t, bank) {
+    if (S.trackPadMode[t] !== PAD_MODE_DRUM && (bank === 4 || bank === 5)) {
+        return S.stepIntervalMode;
+    }
+    return S.altMode;
+}

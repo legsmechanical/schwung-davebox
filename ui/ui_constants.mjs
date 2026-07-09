@@ -385,3 +385,13 @@ export const PARAM_LED_BANKS = [1, 2, 3, 4, 5];
 export const PAD_MODE_DRUM = 1;
 export const PAD_MODE_MELODIC_SCALE = 0;
 export const PAD_MODE_CONDUCT = 2;
+
+/* Iter knob list: 36 entries, raw byte at each position. Index 0 = default (1/1).
+ * Sorted by cycle_len then cycle_idx: 1/1, 1/2, 2/2, 1/3, 2/3, 3/3, ..., 8/8. */
+export const STEP_ITER_LIST = (function() {
+    const L = [0];
+    for (let cl = 2; cl <= 8; cl++)
+        for (let ci = 1; ci <= cl; ci++)
+            L.push((cl << 4) | ci);
+    return L;
+})();

@@ -66,7 +66,8 @@ import {
     BANK_RESPONDER, BANK_OCTAVE, BANK_WHEN,
     POLL_INTERVAL, TICK_HZ, TAP_TEMPO_FLASH_TICKS, TAP_TEMPO_RESET_MS,
     PARAM_LED_BANKS,
-    CC_GRADIENT_BASE, CC_GRADIENT_LEVELS, CC_GRADIENT_SCALARS
+    CC_GRADIENT_BASE, CC_GRADIENT_LEVELS, CC_GRADIENT_SCALARS,
+    STEP_ITER_LIST
 } from './ui_constants.mjs';
 
 import { S, CC_ASSIGN_DEFAULTS, PERF_FACTORY_PRESETS, conductorTrackIdx } from './ui_state.mjs';
@@ -86,7 +87,7 @@ import { trackClipHasContent, sceneAllQueued, updateSceneMapLEDs } from './ui_sc
 import { _padDispatchMutedNow, computePadNoteMap, syncDrumLaneSteps, syncDrumLanesMeta,
     setActiveDrumLane, setDrumPerformMode, setDrumLanePage, syncDrumClipContent,
     syncDrumRepeatState } from './ui_drummodel.mjs';
-import { effectiveClip, updateStepLEDs, updateSessionLEDs, updateTrackLEDs, flashAtRate, drawPositionBar, invalidateLEDCache, paintCoRunSideButtons, trackColor, trackDimColor, setPaletteEntryRGB, reapplyPalette, forceRedraw, updatePerfModeLEDs, PERF_MOD_PAD_MAP } from './ui_leds.mjs';
+import { effectiveClip, updateStepLEDs, updateSessionLEDs, updateTrackLEDs, flashAtRate, drawPositionBar, invalidateLEDCache, paintCoRunSideButtons, trackColor, trackDimColor, setPaletteEntryRGB, reapplyPalette, forceRedraw, updatePerfModeLEDs, PERF_MOD_PAD_MAP, bankHasAltParams, altIndicatorActive } from './ui_leds.mjs';
 import { schSlotForTrack, schSlotsForTrack, openSchwungSlotEditor, enterSchwungCoRun, exitSchwungCoRun,
     enterMoveNativeCoRun, exitMoveNativeCoRun, assertOvertakeSysexSuppress,
     CORUN_TARGET_CHAIN_EDIT, CORUN_TARGET_MOVE_NATIVE, DAVEBOX_CORUN_KEEP_MASK,
@@ -99,10 +100,6 @@ import { R } from './ui_seams.mjs';
 /* ------------------------------------------------------------------ */
 /* Parameter bank definitions                                           */
 /* ------------------------------------------------------------------ */
-
-function bankHeader(bankIdx) {
-    return '[ ' + BANKS[bankIdx].name + ' ]';
-}
 
 /* Compact "you are here in the bank chain" strip, right-aligned on the header
  * bar (replaces the old ad-hoc '>>' name hints). Each bank = a 3px tick; the
@@ -211,16 +208,6 @@ function formatStepRatch(raw) {
     if (raw < 2) return '--';
     return 'x' + raw;
 }
-/* Iter knob list: 36 entries, raw byte at each position. Index 0 = default (1/1).
- * Sorted by cycle_len then cycle_idx: 1/1, 1/2, 2/2, 1/3, 2/3, 3/3, ..., 8/8. */
-const STEP_ITER_LIST = (function() {
-    const L = [0];
-    for (let cl = 2; cl <= 8; cl++)
-        for (let ci = 1; ci <= cl; ci++)
-            L.push((cl << 4) | ci);
-    return L;
-})();
-
 
 function drawMetroIndicator() {
     /* Match the Global Menu / Shift+Step6 popup wording exactly (one source of
@@ -2344,25 +2331,6 @@ function bankHeaderName(t, bank) {
     if (S.trackPadMode[t] === PAD_MODE_CONDUCT)
         return 'C-' + (bank === 0 ? 'CONDUCT' : BANKS[bank].name);
     return BANKS[bank].name;
-}
-
-function bankHasAltParams(t, bank) {
-    if (S.trackPadMode[t] === PAD_MODE_DRUM) return bank === 0 || bank === 5 || bank === 6 || bank === 7;
-    /* Melodic CLIP(0), NOTE FX(1), DELAY(3), SEQ ARP(4), ARP IN(5), AUTO/CC(6).
-     * Banks 4/5 use stepIntervalMode (Arp Steps overlay) rather than altMode —
-     * the arrow still shows their toggle-availability, and altIndicatorActive()
-     * reflects which underlying flag is on. */
-    return bank === 0 || bank === 1 || bank === 3 || bank === 4 || bank === 5 || bank === 6;
-}
-
-/* Returns true when the current bank's alt indicator should flash. For melodic
- * SEQ ARP / ARP IN this is the Arp Steps overlay flag; for every other alt-param
- * bank it is altMode. */
-function altIndicatorActive(t, bank) {
-    if (S.trackPadMode[t] !== PAD_MODE_DRUM && (bank === 4 || bank === 5)) {
-        return S.stepIntervalMode;
-    }
-    return S.altMode;
 }
 
 /* Conductor bank knob: knob k edits dAVEBOx track k's per-Conductor-clip value.
