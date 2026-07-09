@@ -15,16 +15,9 @@ import {
     Blue,
     VividYellow,
     Green,
-    DeepRed,
-    DarkBlue,
-    Mustard,
-    DeepGreen,
     DarkGrey,
-    LightGrey,
     HotMagenta,
-    DeepMagenta,
     Cyan,
-    PurpleBlue,
     Purple,
     DarkPurple,
     Bright,
@@ -97,7 +90,7 @@ import { trackClipHasContent, sceneAllQueued, updateSceneMapLEDs } from './ui_sc
 import { _padDispatchMutedNow, computePadNoteMap, syncDrumLaneSteps, syncDrumLanesMeta,
     setActiveDrumLane, setDrumPerformMode, setDrumLanePage, syncDrumClipContent,
     syncDrumRepeatState } from './ui_drummodel.mjs';
-import { effectiveClip, updateStepLEDs, updateSessionLEDs, updateTrackLEDs, flashAtRate, drawPositionBar, invalidateLEDCache, paintCoRunSideButtons, trackColor, trackDimColor, setPaletteEntryRGB, reapplyPalette } from './ui_leds.mjs';
+import { effectiveClip, updateStepLEDs, updateSessionLEDs, updateTrackLEDs, flashAtRate, drawPositionBar, invalidateLEDCache, paintCoRunSideButtons, trackColor, trackDimColor, setPaletteEntryRGB, reapplyPalette, forceRedraw, updatePerfModeLEDs, PERF_MOD_PAD_MAP } from './ui_leds.mjs';
 import { SPLASH_FRAMES, SPLASH_COUNT, SPLASH_W, SPLASH_H, pickSplashIdx } from './ui_splash.mjs';
 import { requestExport, confirmExportStart, confirmExportCondClick, pollPendingExport } from './ui_export.mjs';
 
@@ -597,15 +590,6 @@ const DAVEBOX_PICKER_KEEP_MASK =
 
 const LOOPER_RATES_STRAIGHT = [12, 24, 48, 96, 192];   /* 1/32, 1/16, 1/8, 1/4, 1/2 */
 const PERF_LATCH_LONG_PRESS = 100;     /* ~510ms → clear all toggled mods + exit Latch mode */
-/* Pad → modifier bit index. R1=bits 0-7 (pitch), R2=bits 8-15 (vel/gate), R3=bits 16-23 (wild). */
-const PERF_MOD_PAD_MAP = Object.freeze({
-    76: 0,  /* Oct↑    */ 77: 1,  /* Oct↓    */ 78: 2,  /* Sc↑     */ 79: 3,  /* Sc↓     */
-    80: 4,  /* 5th     */ 81: 5,  /* Triton  */ 82: 6,  /* Drift   */ 83: 7,  /* Storm   */
-    84: 8,  /* Soft    */ 85: 9,  /* Hard    */ 86: 10, /* Cresc   */ 87: 11, /* Pulse   */
-    88: 12, /* Sdchn   */ 89: 13, /* Stac    */ 90: 14, /* Lgto    */ 91: 15, /* RmpG    */
-    92: 16, /* ½time   */ 93: 17, /* 3Skip   */ 94: 18, /* Phnm    */ 95: 19, /* Sprs    */
-    96: 20, /* Gltch   */ 97: 21, /* Stggr   */ 98: 22, /* Shfl    */ 99: 23, /* Back    */
-});
 const PERF_MOD_NAMES = [
     'Oct↑','Oct↓','Sc↑','Sc↓','5th','Triton','Drift','Storm',
     'Decrsc','Swell','Cresc','Pulse','Sdchn','Stac','Lgto','RmpG',
@@ -3012,80 +2996,6 @@ function sceneAnyPlaying(sceneIdx) {
 function sendPerfMods() {
     if (typeof host_module_set_param === 'function')
         host_module_set_param('perf_mods', String(S.perfModsToggled | S.perfModsHeld));
-}
-
-/* Draw the full 4-row pad grid for Performance Mode.
- * R0 (68-75): rate pads 1-6 (pulse at capture rate), triplet toggle, latch.
- * R1 (76-83): PITCH modifier pads (HotMagenta family).
- * R2 (84-91): VEL/GATE modifier pads (VividYellow family).
- * R3 (92-99): WILD modifier pads (Cyan family).
- * Also clears step buttons (16-31) — not used in Perf Mode. */
-function updatePerfModeLEDs() {
-    if (!S.ledInitComplete) return;
-    const activeMods = S.perfModsToggled | S.perfModsHeld;
-    /* Step buttons: preset slots. */
-    for (let i = 0; i < 16; i++) {
-        if (i === S.perfRecalledSlot)         setLED(16 + i, White);
-        else if (S.perfSnapshots[i] !== 0)    setLED(16 + i, PurpleBlue);
-        else                                setLED(16 + i, LightGrey);
-    }
-
-    /* R0 (68-75): rate pads 0-4 (1/32..1/2), hold (5), sync (6), latch (7).
-     * Static colors only — no flashing. */
-    for (let i = 0; i < 5; i++) {
-        const rateActive = S.perfStickyLengths.has(i) ||
-                           S.perfStack.some(function(e) { return e.idx === i; });
-        setLED(68 + i, rateActive ? White : DarkGrey);
-    }
-    /* Hold pad (73): bright Red when engaged, dim Red when off. */
-    setLED(73, S.perfHoldPadHeld ? Red : DeepRed);
-    /* Sync (pad 74): bright Green when on, dim Green when off. */
-    setLED(74, S.perfSync ? Green : DeepGreen);
-    /* Latch (pad 75): track-3 bright/dim pair (BrightGreen / DarkOlive). */
-    setLED(75, S.perfLatchMode ? TRACK_COLORS[2] : TRACK_DIM_COLORS[2]);
-
-    /* R1 (76-83): PITCH mods — active = White, inactive = dim Magenta */
-    for (let i = 0; i < 8; i++) {
-        const note = 76 + i;
-        const modIdx = PERF_MOD_PAD_MAP[note];
-        if (modIdx !== undefined)
-            setLED(note, (activeMods >> modIdx) & 1 ? White : DeepMagenta);
-        else
-            setLED(note, LED_OFF);
-    }
-
-    /* R2 (84-91): VEL/GATE mods — active = White, inactive = dim Yellow */
-    for (let i = 0; i < 8; i++) {
-        const note = 84 + i;
-        const modIdx = PERF_MOD_PAD_MAP[note];
-        if (modIdx !== undefined)
-            setLED(note, (activeMods >> modIdx) & 1 ? White : Mustard);
-        else
-            setLED(note, LED_OFF);
-    }
-
-    /* R3 (92-99): WILD mods — active = White, inactive = dim Blue */
-    for (let i = 0; i < 8; i++) {
-        const note = 92 + i;
-        const modIdx = PERF_MOD_PAD_MAP[note];
-        if (modIdx !== undefined)
-            setLED(note, (activeMods >> modIdx) & 1 ? White : DarkBlue);
-        else
-            setLED(note, LED_OFF);
-    }
-}
-
-function forceRedraw() {
-    S.screenDirty = true;
-    if (!S.ledInitComplete) return;
-    if (S.sessionView) {
-        updateSessionLEDs();
-        if (S.loopHeld || S.perfViewLocked) updatePerfModeLEDs();
-        else { updateSceneMapLEDs(); for (let i = 0; i < 16; i++) setLED(16 + i, LED_OFF); }
-    } else {
-        updateStepLEDs();
-    }
-    updateTrackLEDs();
 }
 
 /* ------------------------------------------------------------------ */
