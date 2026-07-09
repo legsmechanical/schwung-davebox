@@ -623,11 +623,18 @@ export function drawXposeConfirm() {
     _btn(74, bY, bW, mH, S.confirmXposeSel === 1, 'NO',  20);
 }
 
+/* ------------------------------------------------------------------ */
+/* Snapshots — Save state / Load state                                 */
+/* Self-contained modal (S.snapshotPicker), modeled on the inherit     */
+/* picker. Confirm dialogs are folded into the picker object so the     */
+/* only integration points are draw, jog-rotate, jog-click and close.  */
+/* ------------------------------------------------------------------ */
+
 /* Flush live state to disk (deferred 'save') then copy it into snapshot
  * `id` next tick — pendingSnapshotCopy is drained one tick after the save,
  * by which point seq8_save_state has written the file synchronously.
  * Reusing an existing id overwrites that snapshot in place. */
-export function beginSnapshotSave(id) {
+function beginSnapshotSave(id) {
     S.pendingSnapshotCopy = { id: id, label: snapshotLabel() };
     saveState();
 }

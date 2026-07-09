@@ -76,7 +76,7 @@ import {
     BANKS, ACTION_POPUP_TICKS, PAD_MODE_DRUM, PAD_MODE_MELODIC_SCALE, PAD_MODE_CONDUCT,
     BANK_RESPONDER, BANK_OCTAVE, BANK_WHEN,
     POLL_INTERVAL, TICK_HZ, TAP_TEMPO_FLASH_TICKS, TAP_TEMPO_RESET_MS,
-    PARAM_LED_BANKS, STATE_VERSION,
+    PARAM_LED_BANKS,
     CC_GRADIENT_BASE, CC_GRADIENT_LEVELS, CC_GRADIENT_SCALARS
 } from './ui_constants.mjs';
 
@@ -84,7 +84,7 @@ import { S, CC_ASSIGN_DEFAULTS, PERF_FACTORY_PRESETS, conductorTrackIdx } from '
 import { drumPadToLane, drumPadToVelZone, drumVelZoneToVelocity, _clipIsEmpty, clipHasContent,
     bankCyclePos, scaleNudgeNote, SCALE_INTERVALS } from './ui_pure.mjs';
 import { saveState, writeSidecar, doClearSession, showActionPopup, uuidToStatePath, uuidToUiStatePath, readActiveSet, loadNameIndex, saveNameIndex, copyStateFiles, findInheritCandidates,
-    SNAPSHOT_CAP, snapshotLabel, loadSnapshotManifest, commitSnapshot, applySnapshotToLive, dropSnapshots } from './ui_persistence.mjs';
+    loadSnapshotManifest, commitSnapshot } from './ui_persistence.mjs';
 import {
     drawGlobalMenu, drawStateWipeConfirm, drawRecordBlockedDialog, drawBpmMoveInfo,
     drawLgtoConfirm, drawBakeConfirm, drawInheritPicker, drawSnapshotPicker,
@@ -1559,19 +1559,6 @@ function ensureGlobalMenuFresh() {
     S.globalMenuBuiltForTrack = S.activeTrack;
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 /* True when scene-baking at clipIdx should offer "Apply Conductor?":
  * a Conductor exists and its clip at clipIdx has at least one responder On for a
  * non-conductor melodic track (something there is to fold). */
@@ -1620,8 +1607,6 @@ function commitSceneBake(clipIdx, loops, wrap, apply) {
         }
     }
 }
-
-
 
 /* PHASE-1: helper for the pad-dispatch mute condition. Modal sources:
  * - sessionView                 — pads launch clips
@@ -4792,20 +4777,6 @@ function resolveInheritPicker(action) {
     S.pendingInheritPicker = null;
     S.screenDirty = true;
 }
-
-/* ------------------------------------------------------------------ */
-/* Snapshots — Save state / Load state                                 */
-/* Self-contained modal (S.snapshotPicker), modeled on the inherit     */
-/* picker. Confirm dialogs are folded into the picker object so the     */
-/* only integration points are draw, jog-rotate, jog-click and close.  */
-/* ------------------------------------------------------------------ */
-
-
-
-
-
-
-
 
 /* Open the Schwung-slot picker (first use) or enter co-run directly if the
  * track already has a slot assigned. Co-run keeps dAVEBOx loaded; the chain
