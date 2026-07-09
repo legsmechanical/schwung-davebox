@@ -1904,13 +1904,6 @@ function syncDrumClipContent(t) {
     }
 }
 
-/** MIDI note number → display string e.g. "C3 / 60" */
-function drumNoteLabel(midiNote) {
-    const oct  = Math.floor(midiNote / 12) - 2;
-    const name = NOTE_KEYS[midiNote % 12];
-    return name + oct + '/' + midiNote;
-}
-
 /* --------------------------------------------------------------------------- */
 
 /* Root note in pad layout closest to octave 4 — guaranteed in-scale and on a pad. */
