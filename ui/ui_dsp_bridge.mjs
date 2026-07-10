@@ -45,6 +45,10 @@ export const _drumRecNoteOffs = [];  /* { track, laneNote } — queued drum reco
 /* Per-clip banks: NOTE FX (2), HARMZ (3), SEQ ARP (4), MIDI DLY (5) */
 const PER_CLIP_BANKS  = [1, 2, 3, 4];
 
+/* ------------------------------------------------------------------ */
+/* Refresh / read helpers (per-clip banks, drum lanes, tarp, repeat)    */
+/* ------------------------------------------------------------------ */
+
 /* Immediately refresh S.seqActiveNotes for the given step if it is the current
  * sequencer position on the active track — call after any step state change. */
 export function refreshSeqNotesIfCurrent(t, ac, absIdx) {
@@ -238,6 +242,10 @@ export function resetPerClipBankParamsToDefault(t) {
     });
     S.screenDirty = true;
 }
+
+/* ------------------------------------------------------------------ */
+/* pollDSP — the one legal get_param reader (runs from tick)           */
+/* ------------------------------------------------------------------ */
 
 export function pollDSP() {
     /* bpm mirror — MIDI handlers can't get_param (silently null there), so
@@ -537,7 +545,7 @@ export function pollDSP() {
         }
     }
     if (S.playingPrev  && !S.playing) {
-        R.disarmRecord();
+        R.disarmRecord();   /* resident record helper — seam IOU→5b; R populated in ui.js */
         /* Transport stop unlatches TARP + Rpt1 + Rpt2 on every track so
          * latched chords/lanes don't drone with transport dead. Shared
          * helper queues the per-track set_params one-per-tick via
@@ -886,6 +894,10 @@ export function applyBankParam(t, bankIdx, knobIdx, val) {
     }
 }
 
+/* ------------------------------------------------------------------ */
+/* Live-note dispatch (tick-batched queue)                              */
+/* ------------------------------------------------------------------ */
+
 /* Tick-batched live-note dispatch. Multiple set_param calls within a single
  * audio buffer coalesce to the last write — regardless of key — so a 3-pad
  * chord that fires 3 separate tN_live_notes microtasks within one buffer
@@ -990,6 +1002,10 @@ export function liveSendNote(t, type, pitch, vel, rawVel) {
         }
     }
 }
+
+/* ------------------------------------------------------------------ */
+/* UI-sidecar restore                                                   */
+/* ------------------------------------------------------------------ */
 
 export function restoreUiSidecar(applyDefaultsNow) {
     const uiSp = uuidToUiStatePath(S.currentSetUuid);
@@ -1120,6 +1136,10 @@ export function restoreUiSidecar(applyDefaultsNow) {
         }
     }
 }
+
+/* ------------------------------------------------------------------ */
+/* Clip / mute-solo sync from DSP (full + targeted)                     */
+/* ------------------------------------------------------------------ */
 
 export function syncClipsFromDsp() {
     if (typeof host_module_get_param !== 'function') return;
