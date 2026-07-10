@@ -26,7 +26,7 @@
 #include "harness.h"
 
 #ifndef EXT_INC
-#define EXT_INC 0   /* highest implemented increment; bumped per increment */
+#define EXT_INC 1   /* highest implemented increment; bumped per increment */
 #endif
 
 /* Per-note ext marker on record payloads: introduced with the Path B

@@ -1141,6 +1141,13 @@ typedef struct {
     uint16_t on_midi_drum_release_step[NUM_TRACKS][DRUM_LANES];
     int16_t  on_midi_drum_release_off[NUM_TRACKS][DRUM_LANES];
     uint8_t  on_midi_drum_release_active[NUM_TRACKS][DRUM_LANES];
+
+    /* Ext-MIDI (cable-2 echo) press-track snapshot, keyed by pitch — the DSP
+     * analog of JS extHeldNotes[d1].track. on_midi records which track an
+     * external note was pressed on so a cross-track note-off (active track
+     * changed mid-hold) releases/records on the ORIGINAL press track, not the
+     * current active track. 0xFF = no tracked press. */
+    uint8_t  ext_press_track[128];
 } seq8_instance_t;
 
 static const host_api_v1_t *g_host = NULL;
@@ -3950,6 +3957,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     memset(inst->perf_emitted_pitch, 0xFF, sizeof(inst->perf_emitted_pitch));
     memset(inst->pad_note_map, 0xFF, sizeof(inst->pad_note_map));
     memset(inst->pad_live_pitch, 0xFF, sizeof(inst->pad_live_pitch));
+    memset(inst->ext_press_track, 0xFF, sizeof(inst->ext_press_track));
     memset(inst->pad_source_scratch, 0, sizeof(inst->pad_source_scratch)); /* PAD_SRC_NORMAL */
     memset(inst->drum_vel_zone_armed, 0, sizeof(inst->drum_vel_zone_armed));
     memset(inst->drum_last_vel_zone, 0, sizeof(inst->drum_last_vel_zone));
@@ -4287,11 +4295,82 @@ static int drum_pad_event(seq8_instance_t *inst, seq8_track_t *tr,
     return 1;
 }
 
+/* Ext-MIDI record-slot stamp. Mirrors the pad press/release slot stamping in
+ * on_midi (melodic + drum) for external cable-2 notes, keyed by an EXPLICIT
+ * track index `t` (the press-track snapshot) so a cross-track release still
+ * lands on the track the note was pressed on. Only stamps while that track is
+ * recording or in the preroll capture window (caller passes is_preroll).
+ * RT-safe: pure slot writes, no alloc / I/O / logging. */
+static void ext_stamp_record_slot(seq8_instance_t *inst, seq8_track_t *tr,
+                                  int t, uint8_t pitch, int is_on, int is_preroll) {
+    if (!(tr->recording || is_preroll)) return;
+    if (tr->pad_mode == PAD_MODE_DRUM) {
+        int ac = (int)tr->active_clip;
+        drum_clip_t *dc = tr->drum_clips[ac];
+        if (!dc) return;
+        int lane = -1;
+        { int l; for (l = 0; l < DRUM_LANES; l++)
+            if (dc->lanes[l].midi_note == pitch) { lane = l; break; } }
+        if (lane < 0) return;
+        uint16_t snap_step = is_preroll ? dc->lanes[lane].clip.loop_start
+                                        : tr->drum_current_step[lane];
+        int16_t  snap_off  = is_preroll ? (int16_t)0
+                                        : (int16_t)tr->drum_tick_in_step[lane];
+        if (is_on) {
+            inst->on_midi_drum_press_step[t][lane]   = snap_step;
+            inst->on_midi_drum_press_off[t][lane]    = snap_off;
+            inst->on_midi_drum_press_active[t][lane] = 1;
+        } else {
+            inst->on_midi_drum_release_step[t][lane]   = snap_step;
+            inst->on_midi_drum_release_off[t][lane]    = snap_off;
+            inst->on_midi_drum_release_active[t][lane] = 1;
+        }
+    } else {
+        uint32_t snap_tick;
+        if (is_preroll) {
+            clip_t *cl = &tr->clips[tr->active_clip];
+            snap_tick = (uint32_t)cl->loop_start * cl->ticks_per_step;
+        } else {
+            snap_tick = tr->current_clip_tick;
+        }
+        if (is_on) {
+            inst->on_midi_press_tick[t][pitch]   = snap_tick;
+            inst->on_midi_press_active[t][pitch] = 1;
+        } else {
+            inst->on_midi_release_tick[t][pitch]   = snap_tick;
+            inst->on_midi_release_active[t][pitch] = 1;
+        }
+    }
+}
+
+/* Ext seq-echo gate: is `pitch` currently a sequencer-sounding output on tr?
+ * davebox's own ROUTE_MOVE sequencer notes are injected to Move, which echoes
+ * them back on cable-2 into on_midi — indistinguishable by bytes from the
+ * performer's keyboard. play_pending[] is the per-track registry of
+ * sequencer-emitted notes (pushed at the render step-fire sites, drained at
+ * note-off) — the DSP analog of JS S.seqActiveNotes, and (unlike
+ * pfx.pitch_refcount) NOT conflated with live input, since live pads/ext never
+ * push play_pending. Consulted before stamping a record slot so we don't
+ * capture our own echoes (JS gates the same way: isSeqEcho → don't record).
+ * RT-safe: read-only scan of a small fixed array. */
+static int ext_is_seq_echo(seq8_track_t *tr, uint8_t pitch) {
+    int i;
+    for (i = 0; i < (int)tr->play_pending_count; i++)
+        if (tr->play_pending[i].pitch == pitch) return 1;
+    return 0;
+}
+
 /* Phase 1 inbound: audio-thread pad MIDI from the patched Schwung shim.
  *
  * source: 0 = MOVE_MIDI_SOURCE_INTERNAL (Move pads / hardware controls),
- *         1 = MOVE_MIDI_SOURCE_EXTERNAL (cable-2 USB / external MIDI),
- *         2 = panic and other shim-side announcements.
+ *         2 = MOVE_MIDI_SOURCE_EXTERNAL (cable-2 USB / external MIDI echo,
+ *             schwung_shim.c:1305-1307; also the 1-byte realtime stream),
+ *         3 = MOVE_MIDI_SOURCE_HOST (host-generated, e.g. boot CC reset —
+ *             goes to chain slots, not the overtake gen, in practice).
+ * (An earlier revision of this comment claimed EXTERNAL == 1; that was wrong —
+ * host/plugin_api_v1.h has always defined it as 2, and the shim passes the
+ * constant. The ext branch below keys on "not internal" rather than the
+ * literal, so it is robust to any future source-constant drift.)
  *
  * We currently filter for cable-0 internal pad note events in d1 range
  * 68..99 (the Move pad note block). The resolved pitch comes from
@@ -4307,7 +4386,8 @@ static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
 
     /* ---- System realtime from Move's sequencer ----------------------------
      * The Schwung shim delivers Move's cable-0 realtime to the overtake DSP's
-     * on_midi as a 1-byte message, source EXTERNAL (schwung_shim.c:1226). These
+     * on_midi as a 1-byte message, source MOVE_MIDI_SOURCE_EXTERNAL
+     * (schwung_shim.c:1211-1213). These
      * are otherwise dropped by the len<3 / source filters below. on_midi runs
      * on the RT SPI thread, so this branch stays allocation- and I/O-free: it
      * only bumps counters, queues ticks, and runs the (alloc/IO-free) transport
@@ -4405,6 +4485,60 @@ static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
     uint8_t d1     = msg[1];
     uint8_t d2     = msg[2];
     uint8_t type   = status & 0xF0;
+
+    /* ---- External cable-2 MIDI notes (non-internal source) ----------------
+     * The Schwung shim delivers ROUTE_MOVE external notes to on_midi as the
+     * Move MIDI_OUT echo with MOVE_MIDI_SOURCE_EXTERNAL (schwung_shim.c:
+     * 1305-1307, constant = 2 per host/plugin_api_v1.h). We gate on "not
+     * internal" instead of the literal constant: any non-internal 3-byte note
+     * event is treated as ext (robust to source-constant drift between host
+     * versions; the inbound/route/channel filters below still bound what it
+     * can do, and this branch never emits on its own). Only ROUTE_MOVE ext
+     * notes reach here (non-ROUTE_MOVE are BLOCKED at the shim → Path B is
+     * the JS ext-origin-token path, see sp_track_live/record). Move already
+     * plays these natively, so we STAMP record slots but never fire
+     * live_note_on — injecting would double-play (and risk the cable-2 echo
+     * cascade). The existing JS tN_record_note_on / tN_drum_record_note_on
+     * pushes then consume the stamped slot (mirrors the pad flow). RT-safe.
+     * ext pitches are real MIDI notes (not pad indices 68-99), so this runs
+     * before the pad-note filter below. */
+    if (source != MOVE_MIDI_SOURCE_INTERNAL) {
+        if (type != 0x90 && type != 0x80) return;   /* CC/AT/PB → JS owns */
+        if (!inst->dsp_inbound_enabled)   return;    /* dormant: JS fallback owns */
+        uint8_t at = inst->active_track;
+        if (at >= NUM_TRACKS) return;
+        seq8_track_t *atr = &inst->tracks[at];
+        /* Only ROUTE_MOVE ext echoes reach on_midi; non-Move never delivered. */
+        if (atr->pfx.route != ROUTE_MOVE) return;
+        /* Channel filter: the shim's cable-2 remap rewrites the echo channel to
+         * the active track's channel, so matching subsumes the JS midiInChannel
+         * filter (map §1) — a foreign-channel echo simply won't match. */
+        if ((status & 0x0F) != (atr->channel & 0x0F)) return;
+
+        uint8_t pitch = d1;
+        int is_on = (type == 0x90) && (d2 > 0);
+        if (is_on) {
+            /* Seq-echo gate: our own sequencer's ROUTE_MOVE output echoes back
+             * here on cable-2. Don't record it (and don't tag a press-track, so
+             * the matching echo note-off is skipped too). */
+            if (ext_is_seq_echo(atr, pitch)) return;
+            inst->ext_press_track[pitch] = at;
+            int is_preroll = (!atr->recording && inst->count_in_ticks > 0 &&
+                              inst->count_in_ticks <= (int32_t)(PPQN / 2) &&
+                              (int)inst->count_in_track == (int)at);
+            ext_stamp_record_slot(inst, atr, at, pitch, 1, is_preroll);
+        } else {
+            uint8_t rt = inst->ext_press_track[pitch];
+            if (rt >= NUM_TRACKS) return;   /* untracked (echo / never pressed) */
+            inst->ext_press_track[pitch] = 0xFF;
+            seq8_track_t *rtr = &inst->tracks[rt];
+            int is_preroll = (!rtr->recording && inst->count_in_ticks > 0 &&
+                              inst->count_in_ticks <= (int32_t)(PPQN / 2) &&
+                              (int)inst->count_in_track == (int)rt);
+            ext_stamp_record_slot(inst, rtr, rt, pitch, 0, is_preroll);
+        }
+        return;
+    }
 
     /* Filter to internal pad note events only. */
     if (source != 0)                          return; /* not internal */
