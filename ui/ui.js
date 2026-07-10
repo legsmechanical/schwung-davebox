@@ -87,8 +87,7 @@ import { _padDispatchMutedNow, computePadNoteMap, syncDrumLaneSteps, syncDrumLan
 import { effectiveClip, updateStepLEDs, updateSessionLEDs, updateTrackLEDs, flashAtRate, invalidateLEDCache, trackColor, trackDimColor, setPaletteEntryRGB, reapplyPalette, forceRedraw, updatePerfModeLEDs, PERF_MOD_PAD_MAP, bankHasAltParams, altIndicatorActive, clearAllLEDs, installFlagsWrap, removeFlagsWrap, sendPerfMods } from './ui_leds.mjs';
 import { schSlotForTrack, schSlotsForTrack, openSchwungSlotEditor, enterSchwungCoRun, exitSchwungCoRun,
     enterMoveNativeCoRun, exitMoveNativeCoRun, assertOvertakeSysexSuppress,
-    DAVEBOX_CORUN_KEEP_MASK,
-    CORUN_GRP_JOG, CORUN_GRP_KNOBS, CORUN_GRP_SHIFT, CORUN_GRP_BACK, CORUN_GRP_TOUCH } from './ui_corun.mjs';
+    DAVEBOX_PICKER_KEEP_MASK } from './ui_corun.mjs';
 import { confirmExportStart, confirmExportCondClick, pollPendingExport } from './ui_export.mjs';
 import { openGlobalMenu, ensureGlobalMenuFresh } from './ui_menu.mjs';
 import { drawUI } from './ui_render.mjs';
@@ -120,21 +119,6 @@ import { setTrackMute, setTrackSolo, clearAllMuteSolo, clearStep, showModePopup,
  * S.perfModsToggled: latched modifier bitmask (Latch-toggle presses).
  * S.perfModsHeld: momentary bitmask (held mod pads, not Latch-pressed).
  * DSP receives (S.perfModsToggled | S.perfModsHeld) as perf_mods each change. */
-/* Mask while the FX-picker overlay is open: the normal Move-co-run mask PLUS the
- * UI elements the overlay should own — jog (turn/click), the Back *routing* group,
- * the param knobs (turn → FX value), knob touch (param pop-up), and Shift (CC 49).
- * Keeping a group routes it to shadow_ui's intercept instead of ceding it to Move
- * firmware; shadow_ui's uniform coRunWants() rule then handles exactly what we keep.
- * Shift specifically: the overlay/chain editor's Shift-modified nav (FX-bus zoom,
- * fx_picker entry) is gated on coRunWants(CORUN_GRP_SHIFT) in shadow_ui — so unless
- * we KEEP Shift here, CC 49 cedes to Move firmware and isShiftHeld() never updates,
- * making Shift dead in every fx-picker-accessed chain. NOTE: the normal mask keeps
- * only CORUN_KEEP_BACK (1<<15, the framework-exit opt-out), NOT CORUN_GRP_BACK (the
- * routing group) — so the Back/jog/knob/shift groups must be added explicitly here
- * or those elements never reach shadow_ui. */
-const DAVEBOX_PICKER_KEEP_MASK =
-    DAVEBOX_CORUN_KEEP_MASK | CORUN_GRP_JOG | CORUN_GRP_BACK | CORUN_GRP_KNOBS | CORUN_GRP_TOUCH | CORUN_GRP_SHIFT;
-
 const LOOPER_RATES_STRAIGHT = [12, 24, 48, 96, 192];   /* 1/32, 1/16, 1/8, 1/4, 1/2 */
 const PERF_MOD_FULL_NAMES = [
     'Octave Up','Octave Down','Scale Up','Scale Down','Fifth','Tritone','Drift','Storm',

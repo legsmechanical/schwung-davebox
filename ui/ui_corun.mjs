@@ -29,16 +29,16 @@ const DAVEBOX_CORUN_KEEP_DEFAULT = CORUN_GRP_PADS | CORUN_GRP_STEPS | CORUN_GRP_
  * (existing muscle memory) and lets Back cede to the peer for sub-view nav
  * (chain editor pop-up, Move firmware preset/synth navigation). */
 const CORUN_KEEP_BACK_BIT      = 1 << 15;
-export const DAVEBOX_CORUN_KEEP_MASK  = DAVEBOX_CORUN_KEEP_DEFAULT | CORUN_KEEP_BACK_BIT;
+const DAVEBOX_CORUN_KEEP_MASK  = DAVEBOX_CORUN_KEEP_DEFAULT | CORUN_KEEP_BACK_BIT;
 /* Control-group bits matching Schwung's shadow_constants.h (OLED=0, PADS=1,
  * STEPS=2, TRANSPORT=3, JOG=4, TRACK=5, KNOBS=6, MASTER=7, SHIFT=8, BACK=9,
  * MENU=10, TOUCH=11). */
-export const CORUN_GRP_JOG   = 1 << 4;
+const CORUN_GRP_JOG   = 1 << 4;
 const CORUN_GRP_TRACK  = 1 << 5;  /* CC 40-43 — the side clip buttons */
-export const CORUN_GRP_KNOBS = 1 << 6;
-export const CORUN_GRP_SHIFT = 1 << 8;
-export const CORUN_GRP_BACK  = 1 << 9;
-export const CORUN_GRP_TOUCH = 1 << 11;
+const CORUN_GRP_KNOBS = 1 << 6;
+const CORUN_GRP_SHIFT = 1 << 8;
+const CORUN_GRP_BACK  = 1 << 9;
+const CORUN_GRP_TOUCH = 1 << 11;
 const CORUN_GRP_MUTE  = 1 << 12;  /* CC 88 — the Mute button */
 /* LED-keep mask (lights/input split): dAVEBOx paints the side clip buttons
  * (CC 40-43, paintCoRunSideButtons) as a paired-track indicator, but must let
@@ -59,6 +59,21 @@ const DAVEBOX_CORUN_LED_KEEP_MASK = DAVEBOX_CORUN_KEEP_MASK | CORUN_GRP_TRACK;
  * this is a no-op there (graceful). */
 const DAVEBOX_CHAIN_KEEP_MASK     = DAVEBOX_CORUN_KEEP_MASK | CORUN_GRP_MUTE;
 const DAVEBOX_CHAIN_LED_KEEP_MASK = DAVEBOX_CORUN_LED_KEEP_MASK | CORUN_GRP_MUTE;
+
+/* Mask while the FX-picker overlay is open: the normal Move-co-run mask PLUS the
+ * UI elements the overlay should own — jog (turn/click), the Back *routing* group,
+ * the param knobs (turn → FX value), knob touch (param pop-up), and Shift (CC 49).
+ * Keeping a group routes it to shadow_ui's intercept instead of ceding it to Move
+ * firmware; shadow_ui's uniform coRunWants() rule then handles exactly what we keep.
+ * Shift specifically: the overlay/chain editor's Shift-modified nav (FX-bus zoom,
+ * fx_picker entry) is gated on coRunWants(CORUN_GRP_SHIFT) in shadow_ui — so unless
+ * we KEEP Shift here, CC 49 cedes to Move firmware and isShiftHeld() never updates,
+ * making Shift dead in every fx-picker-accessed chain. NOTE: the normal mask keeps
+ * only CORUN_KEEP_BACK (1<<15, the framework-exit opt-out), NOT CORUN_GRP_BACK (the
+ * routing group) — so the Back/jog/knob/shift groups must be added explicitly here
+ * or those elements never reach shadow_ui. */
+export const DAVEBOX_PICKER_KEEP_MASK =
+    DAVEBOX_CORUN_KEEP_MASK | CORUN_GRP_JOG | CORUN_GRP_BACK | CORUN_GRP_KNOBS | CORUN_GRP_TOUCH | CORUN_GRP_SHIFT;
 
 /* Resolve the Schwung chain slot index for a dAVEBOx track's MIDI channel.
  * shadow_get_slots() returns {channel, name} per slot where channel is 1-16
