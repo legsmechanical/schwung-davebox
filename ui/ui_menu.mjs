@@ -2,9 +2,10 @@
  * Global settings menu: building the item list (track config, clock/tempo,
  * key/scale, save/load/quit) and opening/refreshing the menu against the
  * active track. Track-config mutation (applyTrackConfig) comes from
- * ui_dsp_bridge.mjs; key/scale preview (xposePreviewSet) and Tap Tempo
- * (openTapTempo) stay resident in ui.js and are reached via the
- * ui_seams.mjs registry (R) until Phase 5b absorbs them.
+ * ui_dsp_bridge.mjs; Tap Tempo (openTapTempo) comes from ui_record.mjs.
+ * Key/scale preview (xposePreviewSet) still stays resident in ui.js and is
+ * reached via the ui_seams.mjs registry (R) until Phase 5b prep increment 3
+ * absorbs it.
  * Extracted from ui.js (Phase 5 of the modularity refactor, module 4).
  */
 
@@ -35,6 +36,7 @@ import { openSchwungSlotEditor, exitSchwungCoRun, enterMoveNativeCoRun, exitMove
 import { requestExport } from './ui_export.mjs';
 import { R } from './ui_seams.mjs';
 import { applyTrackConfig } from './ui_dsp_bridge.mjs';
+import { openTapTempo } from './ui_record.mjs';
 
 /* ------------------------------------------------------------------ */
 /* Global menu items                                                    */
@@ -188,7 +190,7 @@ function buildGlobalMenuItems() {
         }),
         createAction('Tap Tempo', function() {
             if (S.clockFollowOn) { showActionPopup('TEMPO: MOVE'); return; }
-            R.openTapTempo();
+            openTapTempo();
         }),
         /* Key/Scale: turning the knob previews a transpose of all melodic clips
          * (live, uncommitted); the click commits behind a confirm (see the

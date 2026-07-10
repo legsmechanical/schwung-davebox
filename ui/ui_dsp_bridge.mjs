@@ -35,7 +35,7 @@ import { computePadNoteMap, setActiveDrumLane, syncDrumClipContent,
 import { effectiveClip, forceRedraw } from './ui_leds.mjs';
 import { exitSchwungCoRun, exitMoveNativeCoRun,
     CORUN_TARGET_CHAIN_EDIT, CORUN_TARGET_MOVE_NATIVE } from './ui_corun.mjs';
-import { R } from './ui_seams.mjs';
+import { disarmRecord } from './ui_record.mjs';
 
 const pendingLiveNotes = Array.from({length: NUM_TRACKS}, () => []);  /* buffered live notes flushed each tick */
 export const pendingDrumNoteOffs = Array.from({length: NUM_TRACKS}, () => []);  /* drum tap note-offs deferred 1 tick to avoid coalescing with note-on */
@@ -545,7 +545,7 @@ export function pollDSP() {
         }
     }
     if (S.playingPrev  && !S.playing) {
-        R.disarmRecord();   /* resident record helper — seam IOU→5b; R populated in ui.js */
+        disarmRecord();
         /* Transport stop unlatches TARP + Rpt1 + Rpt2 on every track so
          * latched chords/lanes don't drone with transport dead. Shared
          * helper queues the per-track set_params one-per-tick via

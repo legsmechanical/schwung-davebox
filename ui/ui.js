@@ -100,6 +100,9 @@ import { pollDSP, applyTrackConfig, readBankParams, applyBankParam,
     liveSendNote, queueLiveNoteOff, _drainLiveNotes,
     unlatchAllTracks, _focusedClipIsEmpty,
     pendingDrumNoteOffs, _drumRecNoteOns, _drumRecNoteOffs } from './ui_dsp_bridge.mjs';
+import { disarmRecord, handoffRecordingToTrack, recordNoteOn, recordNoteOff,
+    openTapTempo, closeTapTempo, registerTapTempo, extNoteOffAll,
+    _recordingNoteTrack, extHeldNotes } from './ui_record.mjs';
 
 /* ------------------------------------------------------------------ */
 /* UI state                                                             */
@@ -655,145 +658,6 @@ function clearRow(rowIdx) {
     }
 }
 
-/* Disarm real-time recording: clear DSP flag (triggers deferred save), update LED. */
-function disarmRecord() {
-    if (!S.recordArmed) return;
-    const t = S.recordArmedTrack;
-    const _wasCountingIn   = S.recordCountingIn;
-    S.recordArmed          = false;
-    S.recordPendingPage    = false;
-    S.recordCountingIn     = false;
-    S.recordArmedTrack     = -1;
-    S.countInStartTick    = -1;
-    S.countInQuarterTicks = 0;
-    _recordingNoteTrack.clear();
-    S._recNoteOns.length   = 0;
-    S._recNoteOffs.length  = 0;
-    _drumRecNoteOns.length  = 0;
-    _drumRecNoteOffs.length = 0;
-    S.pendingPrerollNote          = null;
-    S.pendingPrerollNotes         = [];
-    S.pendingPrerollToggleQueue   = [];
-    S.pendingPrerollGate          = null;
-    if (t >= 0) {
-        const _dat = S.trackActiveClip[t];
-        S.clipAdaptiveMode[t][_dat] = false;
-        if (S.trackPadMode[t] === PAD_MODE_DRUM) {
-            S.pendingDrumResync      = 2;
-            S.pendingDrumResyncTrack = t;
-        }
-    }
-    S.recordScheduledStop       = false;
-    S.recordScheduledStopTarget = -1;
-    S.pendingScheduledDisarm    = false;
-    if (typeof host_module_set_param === 'function') {
-        if (_wasCountingIn) {
-            /* Count-in active: only cancel is needed; sending _recording 0 would coalesce it away */
-            host_module_set_param('record_count_in_cancel', '1');
-        } else {
-            if (t >= 0) {
-                host_module_set_param('t' + t + '_recording', '0');
-                /* Re-send the disarm across the next few ticks (drained in tick()):
-                 * a single set_param can be coalesced away by another set_param
-                 * sharing the same audio buffer (e.g. a knob-release on the AUTO
-                 * bank), which would strand recording=1 and flood the lane. */
-                S.recOffTrack = t;
-                S.recOffTicks = 5;
-            }
-        }
-    }
-    setButtonLED(MoveRec, LED_OFF);
-}
-
-/* Move recording to a different track while staying armed. No-op if not actively recording. */
-function handoffRecordingToTrack(newTrack) {
-    if (!S.recordArmed || S.recordCountingIn || newTrack === S.recordArmedTrack) return;
-    const old = S.recordArmedTrack;
-    _recordingNoteTrack.clear();
-    S.recordArmedTrack      = newTrack;
-    if (typeof host_module_set_param === 'function') {
-        if (old >= 0) host_module_set_param('t' + old + '_recording', '0');
-        host_module_set_param('t' + newTrack + '_recording', '1');
-    }
-}
-
-/* DSP-side recording: buffer note events; tick() flushes as a single batched set_param so
- * chords (multiple pads hit in the same ~5ms JS tick) are not lost to coalescing. */
-const _recordingNoteTrack = new Map(); /* pitch → track index, for matching note-offs */
-const extHeldNotes = new Map(); /* pitch → {track, recording} — external MIDI held notes */
-
-function recordNoteOn(pitch, velocity, rt) {
-    _recordingNoteTrack.set(pitch, rt);
-    S._recNoteOns.push({pitch, vel: velocity, rt});
-}
-
-function recordNoteOff(pitch) {
-    const rt = _recordingNoteTrack.get(pitch);
-    if (rt === undefined) return;
-    _recordingNoteTrack.delete(pitch);
-    S._recNoteOffs.push({pitch, rt});
-}
-
-
-function openTapTempo() {
-    S.tapTempoOpen      = true;
-    S.tapTempoTapTimes  = [];
-    S.tapTempoBpm       = Math.max(40, Math.min(250, Math.round(parseFloat(host_module_get_param('bpm')) || 120)));
-    S.tapTempoFlashTick = -1;
-    S.tapTempoFlashPad  = -1;
-    computePadNoteMap();
-    invalidateLEDCache();
-    S.screenDirty = true;
-}
-
-function closeTapTempo() {
-    S.tapTempoOpen = false;
-    if (typeof host_module_set_param === 'function')
-        host_module_set_param('bpm', String(S.tapTempoBpm));
-    computePadNoteMap();
-    invalidateLEDCache();
-    S.screenDirty = true;
-}
-
-function registerTapTempo(padNote) {
-    const nowMs  = Date.now();
-    const taps   = S.tapTempoTapTimes;
-    const last   = taps.length > 0 ? taps[taps.length - 1] : -1;
-    const intvl  = last >= 0 ? nowMs - last : -1;
-
-    /* Inactivity reset: gap exceeds 2s */
-    if (intvl > TAP_TEMPO_RESET_MS) {
-        S.tapTempoTapTimes = [nowMs];
-    } else if (intvl > 0 && taps.length >= 2) {
-        /* Deviation reset: new interval differs from previous by >~1.8x */
-        const prevIntvl = taps[taps.length - 1] - taps[taps.length - 2];
-        const ratio     = intvl / prevIntvl;
-        if (ratio > 1.8 || ratio < 0.55) {
-            /* Tempo change: keep last tap as anchor for new session */
-            S.tapTempoTapTimes = [last, nowMs];
-        } else {
-            taps.push(nowMs);
-            /* Sliding window: cap at last 9 taps (8 intervals) */
-            if (taps.length > 9) S.tapTempoTapTimes = taps.slice(-9);
-        }
-    } else {
-        taps.push(nowMs);
-    }
-
-    if (S.tapTempoTapTimes.length >= 2) {
-        const t = S.tapTempoTapTimes;
-        const n = t.length;
-        const avgInterval = (t[n - 1] - t[0]) / (n - 1);
-        if (avgInterval > 0) {
-            S.tapTempoBpm = Math.max(40, Math.min(250, Math.round(60000 / avgInterval)));
-            host_module_set_param('bpm', String(S.tapTempoBpm));
-        }
-    }
-    S.tapTempoFlashTick = S.tickCount;
-    S.tapTempoFlashPad  = padNote;
-    S.screenDirty = true;
-}
-
 /* Save the current S.activeBank into the outgoing track's per-track slot,
  * switch to newT, then restore the new track's stored bank into S.activeBank.
  * Existing post-switch validity checks (e.g. drum-track hidden banks → 0)
@@ -1260,15 +1124,6 @@ function applyConductGridKnob(bank, k, delta) {
     forceRedraw();
 }
 
-function extNoteOffAll() {
-    if (extHeldNotes.size === 0) return;
-    for (const [pitch, info] of extHeldNotes) {
-        liveSendNote(info.track, 0x80, pitch, 0);
-        if (info.recording) recordNoteOff(pitch);
-    }
-    extHeldNotes.clear();
-}
-
 
 
 function sceneAllPlaying(sceneIdx) {
@@ -1334,12 +1189,9 @@ function maybeShowInheritPicker(uuid, name) {
 }
 
 /* Seam registry population — resident helpers still needed by extracted
- * modules (see ui_seams.mjs). IOUs: xposePreviewSet, openTapTempo,
- * disarmRecord → Phase-5b/record module (disarmRecord is called by the
- * bridge's pollDSP on the transport-stop edge). */
+ * modules (see ui_seams.mjs). IOU: xposePreviewSet → Phase-5b/xpose module
+ * (openTapTempo/disarmRecord dissolved into ui_record.mjs, prep increment 2). */
 R.xposePreviewSet = xposePreviewSet;
-R.openTapTempo = openTapTempo;
-R.disarmRecord = disarmRecord;
 
 /* --- DIAGNOSTIC (2026-05-23 crash investigation) ---------------------------
  * QuickJS swallows unhandled exceptions thrown inside entry-point callbacks:
