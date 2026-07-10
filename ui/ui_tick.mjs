@@ -251,6 +251,9 @@ var _lastSessionView = false;
  *   collision-aware deferred-drain block. An earlier revision of this file
  *   had one (removed in Phase 6, long before this extraction) — its ordering
  *   hazard was real but the block itself is gone from current behavior.
+ *   NOTE: S.stepOpTick and its two writers (ui_input_pads.mjs) still linger
+ *   WRITE-ONLY — nothing reads them; kept pending the board decision, so a
+ *   grep hit on the field does not mean behavior depends on it.
  *   If a future change reintroduces a similar deferred step-op drain,
  *   treat its ordering against the blocks above as a fresh design question,
  *   not a copy-paste restore. (Tracked as its own board item — see

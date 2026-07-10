@@ -1,3 +1,10 @@
+/* ui.js — dAVEBOx host entry point.
+ * Owns only: the globalThis entry bindings the host calls by name
+ * (init / tick / onMidiMessageInternal / onMidiMessageExternal), the MIDI
+ * dispatch impls behind them, and the captureError entry-point safety wrap.
+ * ALL other logic lives in the ui_*.mjs modules, which import each other
+ * freely but NEVER this file. (Modularity refactor, Phases 5-6, 2026-07.) */
+
 import {
     MoveUp,
     MoveDown,
@@ -159,7 +166,8 @@ import { _tickImpl, applyExtMidiRemap } from './ui_tick.mjs';
  * then spins → RT throttle). Wrap the top-level entry points so the NEXT
  * failure writes its error to a file we can pull over ssh instead of vanishing.
  * Deduped by (where|message) → a persistent error writes once (no I/O storm).
- * Errors are swallowed so the module survives. REMOVE once the crash is pinned. */
+ * Errors are swallowed so the module survives. Originally a 2026-05-23 crash
+ * diagnostic; kept PERMANENT as entry-point safety (decision at Phase-6b close). */
 let _jsErrSeen = {};
 let _jsErrBuf = '';
 function captureError(where, e) {
