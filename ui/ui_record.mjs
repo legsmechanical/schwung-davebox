@@ -14,6 +14,9 @@ import { setButtonLED } from '/data/UserData/schwung/shared/input_filter.mjs';
 import { S } from './ui_state.mjs';
 import { computePadNoteMap } from './ui_drummodel.mjs';
 import { invalidateLEDCache } from './ui_leds.mjs';
+/* Intentional ES-module cycle with ui_dsp_bridge.mjs (it imports disarmRecord
+ * from here) — safe because both sides reference the cycled bindings only
+ * inside function bodies, never at module-init time. Keep it that way. */
 import { liveSendNote, _drumRecNoteOns, _drumRecNoteOffs } from './ui_dsp_bridge.mjs';
 
 /* DSP-side recording: buffer note events; tick() flushes as a single batched set_param so

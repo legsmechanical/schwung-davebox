@@ -35,6 +35,10 @@ import { computePadNoteMap, setActiveDrumLane, syncDrumClipContent,
 import { effectiveClip, forceRedraw } from './ui_leds.mjs';
 import { exitSchwungCoRun, exitMoveNativeCoRun,
     CORUN_TARGET_CHAIN_EDIT, CORUN_TARGET_MOVE_NATIVE } from './ui_corun.mjs';
+/* Intentional ES-module cycle with ui_record.mjs (it imports liveSendNote +
+ * the drum-rec arrays from here) — safe because both sides reference the
+ * cycled bindings only inside function bodies, never at module-init time.
+ * Keep it that way: no top-level use of anything from this import. */
 import { disarmRecord } from './ui_record.mjs';
 
 const pendingLiveNotes = Array.from({length: NUM_TRACKS}, () => []);  /* buffered live notes flushed each tick */
