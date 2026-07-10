@@ -1,6 +1,6 @@
 import { S } from './ui_state.mjs';
 import {
-    NUM_STEPS, NUM_TRACKS, LED_OFF,
+    NUM_STEPS, NUM_TRACKS, LED_OFF, LEDS_PER_FRAME,
     TRACK_COLORS, TRACK_DIM_COLORS, TRACK_PAD_BASE, SCENE_BTN_FLASH_TICKS,
     PAD_MODE_DRUM, PAD_MODE_CONDUCT, BANKS,
     POLL_INTERVAL, TAP_TEMPO_FLASH_TICKS, PARAM_LED_BANKS,
@@ -956,6 +956,39 @@ export function setPaletteEntryRGB(idx, r, g, b) {
 }
 
 export function reapplyPalette() { move_midi_internal_send(_CC_REAPPLY_PKT); }
+
+export function buildLedInitQueue() {
+    const q = [];
+    for (let n = 68; n <= 99; n++) q.push({ kind: 'note', id: n });
+    for (let n = 16; n <= 31; n++) q.push({ kind: 'note', id: n });
+    for (let c = 16; c <= 31; c++) q.push({ kind: 'cc', id: c });
+    for (let c = 40; c <= 43; c++) q.push({ kind: 'cc', id: c });
+    for (const c of [49, 50, 51, 52, 54, 55, 56, 58, 60, 62, 63])
+        q.push({ kind: 'cc', id: c });
+    for (let c = 71; c <= 78; c++) q.push({ kind: 'cc', id: c });
+    for (const c of [85, 86, 88, 118, 119]) q.push({ kind: 'cc', id: c });
+    return q;
+}
+
+export function drainLedInit() {
+    const end = Math.min(S.ledInitIndex + LEDS_PER_FRAME, S.ledInitQueue.length);
+    for (let i = S.ledInitIndex; i < end; i++) {
+        const led = S.ledInitQueue[i];
+        if (led.kind === 'cc') setButtonLED(led.id, LED_OFF);
+        else setLED(led.id, LED_OFF);
+    }
+    S.ledInitIndex = end;
+    if (S.ledInitIndex >= S.ledInitQueue.length) {
+        S.ledInitComplete = true;
+        /* Custom scratch palette entry for the Loop button's ambient LED —
+         * Loop's LED renders palette colors brighter than peers (Delete/Copy
+         * idx 16 = dim grey; same idx 16 is invisible on Loop, and 124/DarkGrey
+         * on Loop reads as fully bright). Push a low-RGB entry before
+         * reapplyPalette so the LED hardware picks up index 60 on the refresh. */
+        setPaletteEntryRGB(60, 32, 32, 32);
+        reapplyPalette();
+    }
+}
 
 /* Pad → modifier bit index. R1=bits 0-7 (pitch), R2=bits 8-15 (vel/gate), R3=bits 16-23 (wild). */
 export const PERF_MOD_PAD_MAP = Object.freeze({
