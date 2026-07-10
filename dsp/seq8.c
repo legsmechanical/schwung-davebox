@@ -4540,7 +4540,8 @@ static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
         return;
     }
 
-    /* Filter to internal pad note events only. */
+    /* Filter to internal pad note events only. (Redundant post-ext-branch —
+     * every non-internal path above returns — kept as a defensive guard.) */
     if (source != 0)                          return; /* not internal */
     if (type != 0x90 && type != 0x80)         return; /* not note on/off */
     if (d1 < 68 || d1 > 99)                   return; /* not a pad note */
