@@ -5841,7 +5841,6 @@ function _onCC_transport(d1, d2) {
             S.recordArmed         = true;
             S.recordCountingIn    = true;
             S.recordArmedTrack    = S.activeTrack;
-            S.recordBpm           = bpm;
             S.countInStartTick    = S.tickCount;
             S.countInBeatStartTick = S.tickCount;
             S.countInQuarterTicks = Math.round(TICK_HZ * 60 / bpm);
@@ -5862,7 +5861,6 @@ function _onCC_transport(d1, d2) {
              *   Fixed (clip exists / length locked): record immediately at
              *     the current step — the existing clip grid is the meaningful
              *     frame. JS sends recording=1 (legacy). No blink. */
-            const rawBpmLive = S.bpmMirror;   /* MIDI-handler context: get_param null (js-input-3) */
             const _at = S.activeTrack, _ac = S.trackActiveClip[_at];
             const _isDrum = S.trackPadMode[_at] === PAD_MODE_DRUM;
             const _adaptive = _isDrum
@@ -5872,7 +5870,6 @@ function _onCC_transport(d1, d2) {
             S.recordCountingIn  = false;
             S.recordArmedTrack  = _at;
             S.recordPendingPage = _adaptive;
-            S.recordBpm        = (rawBpmLive > 0 && isFinite(rawBpmLive)) ? rawBpmLive : 120;
             if (_adaptive) S.clipAdaptiveMode[_at][_ac] = true;
             setButtonLED(MoveRec, Red);
             if (typeof host_module_set_param === 'function')

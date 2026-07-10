@@ -471,7 +471,6 @@ export const S = {
     transportStartTick: 0,
     _recNoteOns: [],
     _recNoteOffs: [],
-    recordBpm: 120,
     currentSetUuid: '',
     currentSetName: '',
     lastDspInstanceId: '',
