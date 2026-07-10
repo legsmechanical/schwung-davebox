@@ -178,6 +178,84 @@ function sceneAnyPlaying(sceneIdx) {
 
 var _lastSessionView = false;
 
+/* ------------------------------------------------------------------ */
+/* _tickImpl drain-order constraints (phase 6b.5)                       */
+/* ------------------------------------------------------------------ */
+/* _tickImpl is a ~44-block flat sequence of independently-triggered
+ * drains (each gated on its own S.pending* flag/countdown), but a handful
+ * of pairs are load-bearing on RELATIVE ORDER within the function body —
+ * reordering these blocks breaks behavior even though each block looks
+ * self-contained. This banner is the "make the drain order explicit"
+ * deliverable for phase 6b (map §3): NO dynamic drainPending registry —
+ * every writer lives in a module and every drain here is statically
+ * ordered, so the order belongs in comments, not indirection. Each
+ * constraint below is anchored to its block by a searchable string.
+ *
+ * - CHORD TWO-TICK PHASE ORDER: the `S.pendingChordPhase2` check (anchor:
+ *   "if (S.pendingChordPhase2 !== null)") MUST run BEFORE the
+ *   `S.pendingChordToStep` check (anchor: "if (S.pendingChordToStep !==
+ *   null && S.activeBank !== 6)") in the same tick. Phase-1 (_toggle) arms
+ *   pendingChordPhase2 for the NEXT tick; _set_notes is a DSP no-op on an
+ *   empty step, so _toggle must land a tick before _set_notes. Inverting
+ *   this pair breaks chord entry.
+ *
+ * - DEFAULT-DRAIN BEFORE dspSync COUNTDOWN: the pendingDefaultSetParams
+ *   drain (anchor: "else if (S.pendingDefaultSetParams.length > 0 &&
+ *   !S.pendingSetLoad && S.pendingDspSync === 0") MUST run BEFORE the
+ *   pendingDspSync countdown (anchor: "if (S.pendingDspSync > 0) {").
+ *   On the tick pendingDspSync hits 1, the default-drain's `=== 0` guard
+ *   correctly skips; the FOLLOWING tick's countdown-to-0 fires
+ *   restoreUiSidecar(true), which *pushes* new defaults. Swapping the
+ *   order would drain a half-populated queue.
+ *
+ * - pendingSetLoad GATES BOTH pendingDefaultSetParams (`!S.pendingSetLoad`
+ *   guard) AND pendingPruneOrphans (anchor: "if (S.pendingPruneOrphans &&
+ *   !S.pendingSetLoad && S.pendingDspSync === 0"), and pendingSetLoad's own
+ *   drain (anchor: "if (S.pendingSetLoad && !S.pendingInheritPicker...")
+ *   arms `S.pendingDspSync = 5`. Load is checked/drained first in program
+ *   order; defaults/prune wait on `pendingDspSync === 0` by construction.
+ *
+ * - pollDSP() BEFORE THE LED/SCENE/DRAW BLOCK: the POLL_INTERVAL-gated
+ *   pollDSP() call (anchor: "if ((S.tickCount % POLL_INTERVAL) === 0) {
+ *   pollDSP();") writes S.playing/trackCurrentStep/trackClipPlaying/merge
+ *   state/drum playhead — all read by the scene-cache refresh and the LED
+ *   painters that follow later in the same tick. Must stay drain-before-draw.
+ *
+ * - SUSPEND-SAVE FIRES LAST: the pendingSuspendSave drain (anchor:
+ *   "if (S.pendingSuspendSave && typeof host_module_set_param ===
+ *   'function')") is placed deliberately near the end of the function so
+ *   no subsequent set_param in the same tick can overwrite the save (see
+ *   the block's own inline comment). Its else-if siblings
+ *   (pendingExitAfterSave/pendingHideAfterSave/pendingSnapshotCopy) each
+ *   run a tick AFTER the save set_param reached DSP — do not hoist any of
+ *   this earlier in the function.
+ *
+ * - isSuspended: EARLY COMPUTE, LATE CONSUME. `const isSuspended` (anchor:
+ *   "const isSuspended = S._origClearScreen && (clear_screen !==
+ *   S._origClearScreen);") is computed near the top of the function and
+ *   consumed exactly once, at the final draw gate (anchor: "if
+ *   (S.screenDirty && !isSuspended) { S.screenDirty = false; drawUI(); }").
+ *   This is the one fn-local (not S-field) cross-block coupling in
+ *   _tickImpl — it is why the suspend-detect block and the draw-gate block
+ *   are not independently carve-safe.
+ *
+ * - 2-TICK COUNTDOWNS: pendingDrumResync (anchor: "if (S.pendingDrumResync
+ *   > 0) {") and pendingStepsReread (anchor: "if (S.pendingStepsReread >
+ *   0) {") both arm to 2, decrement once per tick, and act at 0 — the DSP
+ *   move they're waiting on must settle a full tick before the JS mirror
+ *   re-reads it. pendingScheduledDisarm (anchor: "if
+ *   (S.pendingScheduledDisarm) {") is its own 2-tick pair: lock length on
+ *   tick 1, disarm on tick 2.
+ *
+ * - STANDING WARNING: do NOT silently restore a "stepOpTick" /
+ *   collision-aware deferred-drain block. An earlier revision of this file
+ *   had one (removed in Phase 6, long before this extraction) — its ordering
+ *   hazard was real but the block itself is gone from current behavior.
+ *   If a future change reintroduces a similar deferred step-op drain,
+ *   treat its ordering against the blocks above as a fresh design question,
+ *   not a copy-paste restore. (Tracked as its own board item — see
+ *   docs/superpowers/plans/2026-07-10-refactor-phase6b-map.md §3.)
+ */
 export function _tickImpl() {
     S.tickCount++;
     if (S.bootSplashTicks > 0) S.bootSplashTicks--;
