@@ -1463,14 +1463,30 @@ int main(void) {
         }
         hx_set_param(h, "t7_live_notes", "off 70 off 72");   /* release */
 
-        /* live_notes guard: dsp_inbound_enabled=1 -> whole handler early-returns
-         * (on_midi already dispatched on the audio thread), so NO fallback emit.
-         * This is the padmap<->live_notes chaining constraint the group-7
-         * conversion must preserve. */
+        /* live_notes guard: dsp_inbound_enabled=1 -> PLAIN (pad-origin) tokens
+         * are skipped (on_midi already dispatched on the audio thread), so NO
+         * fallback emit — this is the padmap<->live_notes chaining constraint
+         * the group-7 conversion must preserve, on EVERY route (a route-aware
+         * carve-out here was tried and double-fired pads on non-Move tracks).
+         * EXT-origin tokens ("eon p v"/"eoff p", fix/extmidi-inbound) are the
+         * one exception: non-Move ext never reaches on_midi (shim BLOCK), so
+         * they are always processed — pinned in test_extmidi_inbound.c, with
+         * one representative emit here. */
         inst->dsp_inbound_enabled = 1;
         hx_clear_capture(h);
         hx_set_param(h, "t7_live_notes", "on 80 90");
-        HX_ASSERT(hx_stub_event_count() == 0, "live_notes: inbound-enabled -> early return, no emit");
+        HX_ASSERT(hx_stub_event_count() == 0, "live_notes: inbound-enabled -> plain tokens skipped, no emit");
+        hx_set_param(h, "t7_live_notes", "eon 81 90");
+        {
+            int j, found = 0;
+            for (j = 0; j < hx_stub_event_count(); j++) {
+                const hx_midi_event *e = hx_stub_event(j);
+                if (e->kind == HX_MIDI_INTERNAL && e->bytes[1] == (0x90 | 7) &&
+                    e->bytes[2] == 81 && e->bytes[3] == 90) found = 1;
+            }
+            HX_ASSERT(found, "live_notes: inbound-enabled -> ext token still emits");
+        }
+        hx_set_param(h, "t7_live_notes", "eoff 81");
         inst->dsp_inbound_enabled = 0;
 
         /* live_at poly (mode 1): pfx_send 0xA<ch> pitch press; stores

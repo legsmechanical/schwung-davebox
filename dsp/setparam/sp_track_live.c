@@ -20,7 +20,7 @@ static int sp_track_live(sp_ctx_t *cx) {
      * dedicated cleanup pass after the group is device-blessed. */
 
         if (!strcmp(sub, "live_notes")) {
-            /* tN_live_notes "off p ... on p v ... [off p|on p v]..."
+            /* tN_live_notes "off p ... on p v ... eon p v ... eoff p ..."
              * Batched live note events processed left-to-right. JS queues all
              * note events from one JS turn into pendingLiveNotes and drains
              * them into a single tN_live_notes payload via a microtask at
@@ -29,17 +29,26 @@ static int sp_track_live(sp_ctx_t *cx) {
              * of key — distinct keys do NOT defeat it).
              * Routes through pfx_note_on/pfx_note_off_imm so play effects apply.
              *
-             * When dsp_inbound_enabled is set, on_midi already dispatched
-             * the pad event on the audio thread — skip the JS fallback to
-             * avoid double-triggering. JS always queues live notes as a
-             * fallback for when the padmap push didn't reach DSP (the
-             * sentinel exists but on_midi can't dispatch without a valid
-             * pad_note_map). */
-            if (inst->dsp_inbound_enabled) return 1;
+             * Two token origins, distinguished by the 'e' prefix:
+             *   on/off   — PAD-origin fallback. When dsp_inbound_enabled is
+             *     set, on_midi already dispatched the pad event on the audio
+             *     thread — skip these to avoid double-triggering (and
+             *     corrupting tarp_physical). JS always queues them as a
+             *     fallback for when the padmap push didn't reach DSP (the
+             *     sentinel exists but on_midi can't dispatch without a valid
+             *     pad_note_map).
+             *   eon/eoff — EXT-origin (external cable-2 MIDI). The shim
+             *     BLOCKS non-ROUTE_MOVE cable-2 input, so those notes never
+             *     reach on_midi — this JS push is the ONLY live path for
+             *     them. Always processed, even under inbound. JS only tags
+             *     ext for non-ROUTE_MOVE tracks (ROUTE_MOVE ext is played
+             *     natively by Move; the !routeIsMove guards never queue it). */
             const char *sp = val;
             while (*sp) {
                 while (*sp == ' ') sp++;
                 if (!*sp) break;
+                int ext = 0;
+                if (sp[0] == 'e') { ext = 1; sp++; }
                 int is_on = -1;
                 if (sp[0]=='o' && sp[1]=='n' && (sp[2]==' '||!sp[2]))
                     { is_on = 1; sp += 2; }
@@ -50,6 +59,7 @@ static int sp_track_live(sp_ctx_t *cx) {
                 int pitch = 0;
                 while (*sp >= '0' && *sp <= '9') { pitch = pitch * 10 + (*sp++ - '0'); }
                 pitch = clamp_i(pitch, 0, 127);
+                int process = ext || !inst->dsp_inbound_enabled;
                 if (is_on) {
                     while (*sp == ' ') sp++;
                     int vel = SEQ_VEL;
@@ -57,9 +67,11 @@ static int sp_track_live(sp_ctx_t *cx) {
                         vel = 0;
                         while (*sp >= '0' && *sp <= '9') { vel = vel * 10 + (*sp++ - '0'); }
                     }
-                    live_note_on(inst, tr, (uint8_t)pitch, (uint8_t)clamp_i(vel, 1, 127));
+                    if (process)
+                        live_note_on(inst, tr, (uint8_t)pitch, (uint8_t)clamp_i(vel, 1, 127));
                 } else {
-                    live_note_off(inst, tr, (uint8_t)pitch);
+                    if (process)
+                        live_note_off(inst, tr, (uint8_t)pitch);
                 }
             }
             return 1;

@@ -86,16 +86,22 @@ export function handoffRecordingToTrack(newTrack) {
     }
 }
 
-export function recordNoteOn(pitch, velocity, rt) {
+/* ext (4th param): true when the note came from external cable-2 MIDI
+ * (_onMidiExternalImpl). The tick flush prefixes ext entries with the
+ * per-note 'e' marker in the tN_record_note_on/off payload; the DSP handler
+ * then applies slot-if-active-else-fallback for ext notes (non-Move ext never
+ * reaches on_midi, so it has no press slot to require — Path B), while plain
+ * pad notes keep the slot requirement. Batches can mix pad + ext entries. */
+export function recordNoteOn(pitch, velocity, rt, ext) {
     _recordingNoteTrack.set(pitch, rt);
-    S._recNoteOns.push({pitch, vel: velocity, rt});
+    S._recNoteOns.push({pitch, vel: velocity, rt, ext: !!ext});
 }
 
-export function recordNoteOff(pitch) {
+export function recordNoteOff(pitch, ext) {
     const rt = _recordingNoteTrack.get(pitch);
     if (rt === undefined) return;
     _recordingNoteTrack.delete(pitch);
-    S._recNoteOffs.push({pitch, rt});
+    S._recNoteOffs.push({pitch, rt, ext: !!ext});
 }
 
 
@@ -161,8 +167,11 @@ export function registerTapTempo(padNote) {
 export function extNoteOffAll() {
     if (extHeldNotes.size === 0) return;
     for (const [pitch, info] of extHeldNotes) {
-        liveSendNote(info.track, 0x80, pitch, 0);
-        if (info.recording) recordNoteOff(pitch);
+        /* Ext-origin tag for non-Move routes only (mirrors the
+         * _onMidiExternalImpl guards): ROUTE_MOVE ext is played natively by
+         * Move and must not generate ext live tokens. */
+        liveSendNote(info.track, 0x80, pitch, 0, false, S.trackRoute[info.track] !== 1);
+        if (info.recording) recordNoteOff(pitch, true);
     }
     extHeldNotes.clear();
 }

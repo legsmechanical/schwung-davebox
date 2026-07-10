@@ -747,6 +747,11 @@ static int sp_track_drum2(sp_ctx_t *cx) {
                 while (*sp) {
                     while (*sp == ' ') sp++;
                     if (!*sp) break;
+                    /* Per-note ext-origin marker: "e<pitch>" = external
+                     * cable-2 MIDI; bare "<pitch>" = pad. Batches can MIX
+                     * pad+ext hits, hence per-note not per-batch. */
+                    int ext = 0;
+                    if (*sp == 'e') { ext = 1; sp++; }
                     int pitch = 0;
                     while (*sp >= '0' && *sp <= '9') { pitch = pitch * 10 + (*sp++ - '0'); }
                     pitch = clamp_i(pitch, 0, 127);
@@ -765,20 +770,28 @@ static int sp_track_drum2(sp_ctx_t *cx) {
                     if (lane >= 0) {
                     clip_t   *dlc  = &dc->lanes[lane].clip;
                     /* PHASE-1: prefer the audio-thread press snapshot for this
-                     * lane's (step, tick_in_step). On patched Schwung the slot
-                     * must be active — if it isn't, the press was filtered by
-                     * on_midi (e.g., outside the preroll capture window). Drop
-                     * it to preserve the filter. Stock Schwung uses the live
-                     * drum playhead at handler arrival. */
+                     * lane's (step, tick_in_step). Uniform rule under inbound
+                     * (mirrors record_note_on):
+                     *   slot active → use + consume (pads any route; ROUTE_MOVE
+                     *     ext, whose Move echo reaches on_midi);
+                     *   slot inactive + PAD → drop (press was filtered by
+                     *     on_midi, e.g. outside the preroll capture window);
+                     *   slot inactive + EXT → live playhead fallback: non-Move
+                     *     ext never reaches on_midi (shim BLOCK) — Path B.
+                     * Stock Schwung uses the live drum playhead. */
                     uint16_t base_step;
                     int16_t  base_off;
                     if (inst->dsp_inbound_enabled) {
-                        if (!inst->on_midi_drum_press_active[tidx][lane]) {
+                        if (inst->on_midi_drum_press_active[tidx][lane]) {
+                            base_step = inst->on_midi_drum_press_step[tidx][lane];
+                            base_off  = inst->on_midi_drum_press_off[tidx][lane];
+                            inst->on_midi_drum_press_active[tidx][lane] = 0;
+                        } else if (ext) {
+                            base_step = tr->drum_current_step[lane];
+                            base_off  = (int16_t)tr->drum_tick_in_step[lane];
+                        } else {
                             continue;  /* drop filtered preroll press; sp already past this entry */
                         }
-                        base_step = inst->on_midi_drum_press_step[tidx][lane];
-                        base_off  = inst->on_midi_drum_press_off[tidx][lane];
-                        inst->on_midi_drum_press_active[tidx][lane] = 0;
                     } else {
                         base_step = tr->drum_current_step[lane];
                         base_off  = (int16_t)tr->drum_tick_in_step[lane];
@@ -876,6 +889,9 @@ static int sp_track_drum2(sp_ctx_t *cx) {
                 while (*sp2) {
                     while (*sp2 == ' ') sp2++;
                     if (!*sp2) break;
+                    /* Per-note ext-origin marker ("e<pitch>"); the off path is
+                     * already slot-if-active-else-fallback — just consume it. */
+                    if (*sp2 == 'e') sp2++;
                     int pitch2 = 0;
                     while (*sp2 >= '0' && *sp2 <= '9') { pitch2 = pitch2 * 10 + (*sp2++ - '0'); }
                     pitch2 = clamp_i(pitch2, 0, 127);

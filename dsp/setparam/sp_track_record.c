@@ -115,6 +115,12 @@ static int sp_track_record(sp_ctx_t *cx) {
                 while (*sp == ' ') sp++;
                 if (!*sp) break;
 
+                /* Per-note ext-origin marker: "e<pitch>" = external cable-2
+                 * MIDI (JS _onMidiExternalImpl push); bare "<pitch>" = pad.
+                 * Batches can MIX pad+ext notes, hence per-note not per-batch. */
+                int ext = 0;
+                if (*sp == 'e') { ext = 1; sp++; }
+
                 int pitch = 0;
                 while (*sp >= '0' && *sp <= '9') { pitch = pitch * 10 + (*sp++ - '0'); }
                 pitch = clamp_i(pitch, 0, 127);
@@ -130,18 +136,27 @@ static int sp_track_record(sp_ctx_t *cx) {
 
                 /* PHASE-1: prefer the actual hardware-press tick captured by
                  * on_midi over the late current_clip_tick. Consume the slot.
-                 * On patched Schwung the slot must be active — if it isn't,
-                 * the press was filtered by on_midi (e.g., early-count-in
-                 * window outside the last 1/8 note) and must be dropped to
-                 * preserve the filter. Stock Schwung falls back to
-                 * current_clip_tick (no slots written). */
+                 * Uniform rule under inbound:
+                 *   slot active → use + consume it (pads on any route; ext on
+                 *     ROUTE_MOVE, whose Move echo reaches on_midi);
+                 *   slot inactive + PAD → drop: the press was filtered by
+                 *     on_midi (e.g., early-count-in window outside the last
+                 *     1/8 note) and the drop preserves that filter;
+                 *   slot inactive + EXT → fallback tick: non-ROUTE_MOVE ext
+                 *     never reaches on_midi (shim BLOCK), so there is no slot
+                 *     to require — pre-Phase-1 JS-path timing (Path B).
+                 * Stock Schwung (inbound off) falls back to current_clip_tick
+                 * (no slots written). */
                 uint32_t abs_tick;
                 if (inst->dsp_inbound_enabled) {
-                    if (!inst->on_midi_press_active[tidx][pitch]) {
+                    if (inst->on_midi_press_active[tidx][pitch]) {
+                        abs_tick = inst->on_midi_press_tick[tidx][pitch];
+                        inst->on_midi_press_active[tidx][pitch] = 0;
+                    } else if (ext) {
+                        abs_tick = fallback_tick;
+                    } else {
                         continue;
                     }
-                    abs_tick = inst->on_midi_press_tick[tidx][pitch];
-                    inst->on_midi_press_active[tidx][pitch] = 0;
                 } else {
                     abs_tick = fallback_tick;
                 }
@@ -255,6 +270,11 @@ static int sp_track_record(sp_ctx_t *cx) {
             while (*sp) {
                 while (*sp == ' ') sp++;
                 if (!*sp) break;
+
+                /* Per-note ext-origin marker ("e<pitch>", see record_note_on).
+                 * The off path is already slot-if-active-else-fallback for
+                 * every origin, so the marker only needs to be consumed. */
+                if (*sp == 'e') sp++;
 
                 int pitch = 0;
                 while (*sp >= '0' && *sp <= '9') { pitch = pitch * 10 + (*sp++ - '0'); }

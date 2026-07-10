@@ -1339,11 +1339,15 @@ export function _tickImpl() {
         }
     }
     /* Flush buffered recording events — one batched set_param per tick to survive coalescing.
-     * Note-ons take priority; note-offs wait until the next tick if both are pending. */
+     * Note-ons take priority; note-offs wait until the next tick if both are pending.
+     * Ext-origin entries (external cable-2 MIDI) carry a PER-NOTE 'e' marker in the
+     * payload ("e64 100"): the DSP handlers use slot-if-active-else-fallback for
+     * ext notes (non-Move ext never reaches on_midi, so no press slot exists) while
+     * plain pad notes keep the slot requirement. A batch can mix pad + ext. */
     if (S.recordArmed && !S.recordCountingIn && typeof host_module_set_param === 'function') {
         if (S._recNoteOns.length > 0) {
             const rt   = S._recNoteOns[0].rt;
-            const pairs = S._recNoteOns.map(function(n) { return n.pitch + ' ' + n.vel; }).join(' ');
+            const pairs = S._recNoteOns.map(function(n) { return (n.ext ? 'e' : '') + n.pitch + ' ' + n.vel; }).join(' ');
             host_module_set_param('t' + rt + '_record_note_on', pairs);
             S._recNoteOns.length = 0;
         } else if (_drumRecNoteOns.length > 0) {
@@ -1351,17 +1355,17 @@ export function _tickImpl() {
              * payload so a chord-press lands in DSP in a single audio buffer
              * rather than trickling out one-per-tick. */
             const rt = _drumRecNoteOns[0].track;
-            const pairs = _drumRecNoteOns.map(function(n) { return n.laneNote + ' ' + n.vel; }).join(' ');
+            const pairs = _drumRecNoteOns.map(function(n) { return (n.ext ? 'e' : '') + n.laneNote + ' ' + n.vel; }).join(' ');
             host_module_set_param('t' + rt + '_drum_record_note_on', pairs);
             _drumRecNoteOns.length = 0;
         } else if (S._recNoteOffs.length > 0) {
             const rt     = S._recNoteOffs[0].rt;
-            const pitches = S._recNoteOffs.map(function(n) { return n.pitch; }).join(' ');
+            const pitches = S._recNoteOffs.map(function(n) { return (n.ext ? 'e' : '') + n.pitch; }).join(' ');
             host_module_set_param('t' + rt + '_record_note_off', pitches);
             S._recNoteOffs.length = 0;
         } else if (_drumRecNoteOffs.length > 0) {
             const rt = _drumRecNoteOffs[0].track;
-            const pitches = _drumRecNoteOffs.map(function(n) { return String(n.laneNote); }).join(' ');
+            const pitches = _drumRecNoteOffs.map(function(n) { return (n.ext ? 'e' : '') + n.laneNote; }).join(' ');
             host_module_set_param('t' + rt + '_drum_record_note_off', pitches);
             _drumRecNoteOffs.length = 0;
         } else if (S.pendingPrerollGate !== null) {

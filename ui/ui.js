@@ -549,11 +549,11 @@ function _onMidiExternalImpl(data) {
         if (msgType === 0x90 && d2 > 0) {
             const vel = effectiveVelocity(d2);
             S.lastPadVelocity = vel;
-            if (!routeIsMove) liveSendNote(t, 0x90, d1, vel);
+            if (!routeIsMove) liveSendNote(t, 0x90, d1, vel, false, true);
             const isSeqEcho = routeIsMove && S.seqActiveNotes.has(d1);
             const isRec = !isSeqEcho && S.recordArmed && !S.recordCountingIn && t === S.recordArmedTrack;
             if (isRec) {
-                _drumRecNoteOns.push({ track: t, laneNote: d1, vel: vel });
+                _drumRecNoteOns.push({ track: t, laneNote: d1, vel: vel, ext: true });
                 const recLane = S.drumLaneNote[t].indexOf(d1);
                 if (recLane >= 0) {
                     S.pendingDrumLaneResync      = 3;
@@ -565,9 +565,9 @@ function _onMidiExternalImpl(data) {
         } else if (msgType === 0x80 || (msgType === 0x90 && d2 === 0)) {
             const info = extHeldNotes.get(d1);
             const noteTrack = info ? info.track : t;
-            if (S.trackRoute[noteTrack] !== 1) liveSendNote(noteTrack, 0x80, d1, 0);
+            if (S.trackRoute[noteTrack] !== 1) liveSendNote(noteTrack, 0x80, d1, 0, false, true);
             if (info && info.recording && S.recordArmed && !S.recordCountingIn)
-                _drumRecNoteOffs.push({ track: noteTrack, laneNote: d1 });
+                _drumRecNoteOffs.push({ track: noteTrack, laneNote: d1, ext: true });
             extHeldNotes.delete(d1);
         } else if (msgType === 0xB0 || msgType === 0xD0 || msgType === 0xA0 || msgType === 0xE0) {
             if (!routeIsMove) liveSendNote(t, msgType, d1, d2);
@@ -579,13 +579,13 @@ function _onMidiExternalImpl(data) {
         const vel = effectiveVelocity(d2);
         S.lastPlayedNote  = d1;
         S.lastPadVelocity = vel;
-        if (!routeIsMove) liveSendNote(t, 0x90, d1, vel);
+        if (!routeIsMove) liveSendNote(t, 0x90, d1, vel, false, true);
         /* ROUTE_MOVE: sequencer inject echoes come back here on cable-2. Skip recording
          * for pitches the sequencer is already S.playing — those are echoes, not keyboard input.
          * Preserve any existing recording-active entry so the keyboard gate isn't overwritten. */
         const isSeqEcho = routeIsMove && S.seqActiveNotes.has(d1);
         const isRec = !isSeqEcho && S.recordArmed && !S.recordCountingIn && t === S.recordArmedTrack;
-        if (isRec) recordNoteOn(d1, vel, t);
+        if (isRec) recordNoteOn(d1, vel, t, true);
         const prevInfo = extHeldNotes.get(d1);
         if (!prevInfo || !prevInfo.recording || !isSeqEcho) {
             extHeldNotes.set(d1, { track: t, recording: isRec });
@@ -615,8 +615,8 @@ function _onMidiExternalImpl(data) {
     } else if (msgType === 0x80 || (msgType === 0x90 && d2 === 0)) {
         const info = extHeldNotes.get(d1);
         const noteTrack = info ? info.track : t;
-        if (S.trackRoute[noteTrack] !== 1) liveSendNote(noteTrack, 0x80, d1, 0);
-        if (info && info.recording) recordNoteOff(d1);
+        if (S.trackRoute[noteTrack] !== 1) liveSendNote(noteTrack, 0x80, d1, 0, false, true);
+        if (info && info.recording) recordNoteOff(d1, true);
         extHeldNotes.delete(d1);
     } else if (msgType === 0xB0 || msgType === 0xD0 || msgType === 0xA0 || msgType === 0xE0) {
         if (!routeIsMove) liveSendNote(t, msgType, d1, d2);

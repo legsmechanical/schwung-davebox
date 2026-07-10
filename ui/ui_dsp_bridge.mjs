@@ -43,8 +43,8 @@ import { disarmRecord } from './ui_record.mjs';
 
 const pendingLiveNotes = Array.from({length: NUM_TRACKS}, () => []);  /* buffered live notes flushed each tick */
 export const pendingDrumNoteOffs = Array.from({length: NUM_TRACKS}, () => []);  /* drum tap note-offs deferred 1 tick to avoid coalescing with note-on */
-export const _drumRecNoteOns  = [];  /* { track, laneNote, vel } — queued drum recording note-ons */
-export const _drumRecNoteOffs = [];  /* { track, laneNote } — queued drum recording note-offs */
+export const _drumRecNoteOns  = [];  /* { track, laneNote, vel, ext? } — queued drum recording note-ons (ext = external-MIDI origin) */
+export const _drumRecNoteOffs = [];  /* { track, laneNote, ext? } — queued drum recording note-offs */
 
 /* Per-clip banks: NOTE FX (2), HARMZ (3), SEQ ARP (4), MIDI DLY (5) */
 const PER_CLIP_BANKS  = [1, 2, 3, 4];
@@ -920,20 +920,31 @@ export function _drainLiveNotes() {
         pendingLiveNotes[_t] = [];
         const parts = [];
         for (const e of evts) {
-            if (e.isOff) parts.push('off ' + e.pitch);
-            else parts.push('on ' + e.pitch + ' ' + e.vel);
+            /* Ext-origin tokens carry an 'e' prefix ("eon p v"/"eoff p"): the
+             * DSP tN_live_notes handler always processes them (non-Move ext
+             * never reaches on_midi — the shim blocks non-ROUTE_MOVE cable-2),
+             * while plain pad-origin tokens are skipped under dspInboundEnabled
+             * (on_midi already dispatched them on the audio thread). */
+            if (e.isOff) parts.push((e.ext ? 'eoff ' : 'off ') + e.pitch);
+            else parts.push((e.ext ? 'eon ' : 'on ') + e.pitch + ' ' + e.vel);
         }
         host_module_set_param('t' + _t + '_live_notes', parts.join(' '));
     }
 }
-function queueLiveNoteOn(t, pitch, vel) {
-    pendingLiveNotes[t].push({ isOff: false, pitch, vel });
+function queueLiveNoteOn(t, pitch, vel, ext) {
+    pendingLiveNotes[t].push({ isOff: false, pitch, vel, ext: !!ext });
 }
-export function queueLiveNoteOff(t, pitch) {
-    pendingLiveNotes[t].push({ isOff: true, pitch });
+export function queueLiveNoteOff(t, pitch, ext) {
+    pendingLiveNotes[t].push({ isOff: true, pitch, ext: !!ext });
 }
 
-export function liveSendNote(t, type, pitch, vel, rawVel) {
+/* ext (6th param): true when the note originated from external cable-2 MIDI
+ * (_onMidiExternalImpl / extNoteOffAll). Ext-origin note events are queued
+ * with the 'e' token prefix so the DSP processes them even under
+ * dspInboundEnabled — for non-Move routes the shim blocks ext input from ever
+ * reaching on_midi, making this JS push the ONLY live path. Callers only tag
+ * ext for non-ROUTE_MOVE tracks (Move plays its own ext natively). */
+export function liveSendNote(t, type, pitch, vel, rawVel, ext) {
     const ch    = (S.trackChannel[t] - 1) & 0x0F;
     const route = S.trackRoute[t];
     const status = type | ch;
@@ -955,9 +966,9 @@ export function liveSendNote(t, type, pitch, vel, rawVel) {
         if (type === 0x90 || type === 0x80) {
             const isOff = (type === 0x80) || (type === 0x90 && vel === 0);
             if (isOff) {
-                queueLiveNoteOff(t, pitch);
+                queueLiveNoteOff(t, pitch, ext);
             } else {
-                queueLiveNoteOn(t, pitch, vel);
+                queueLiveNoteOn(t, pitch, vel, ext);
             }
         } else {
             const cin = (status >> 4) & 0x0F;
@@ -980,9 +991,9 @@ export function liveSendNote(t, type, pitch, vel, rawVel) {
             const activelyRecording = S.recordArmed && !S.recordCountingIn && S.recordArmedTrack === t;
             const isOff = (type === 0x80) || (type === 0x90 && vel === 0);
             if (isOff) {
-                queueLiveNoteOff(t, pitch);
+                queueLiveNoteOff(t, pitch, ext);
             } else if (!activelyRecording) {
-                queueLiveNoteOn(t, pitch, vel);
+                queueLiveNoteOn(t, pitch, vel, ext);
             }
         }
     } else {
@@ -997,9 +1008,9 @@ export function liveSendNote(t, type, pitch, vel, rawVel) {
         if (type === 0x90 || type === 0x80) {
             const isOff = type === 0x80 || vel === 0;
             if (isOff) {
-                queueLiveNoteOff(t, pitch);
+                queueLiveNoteOff(t, pitch, ext);
             } else {
-                queueLiveNoteOn(t, pitch, vel);
+                queueLiveNoteOn(t, pitch, vel, ext);
             }
         } else {
             if (typeof shadow_send_midi_to_dsp === 'function') shadow_send_midi_to_dsp([status, pitch, vel]);
