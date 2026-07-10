@@ -64,7 +64,7 @@ import {
     MCUFONT, pixelPrintC,
     BANKS, ACTION_POPUP_TICKS, PAD_MODE_DRUM, PAD_MODE_MELODIC_SCALE, PAD_MODE_CONDUCT,
     BANK_RESPONDER, BANK_OCTAVE, BANK_WHEN,
-    POLL_INTERVAL, TICK_HZ, TAP_TEMPO_FLASH_TICKS, TAP_TEMPO_RESET_MS,
+    POLL_INTERVAL, TICK_HZ, NO_NOTE_FLASH_TICKS, TAP_TEMPO_FLASH_TICKS, TAP_TEMPO_RESET_MS,
     PARAM_LED_BANKS,
     CC_GRADIENT_BASE, CC_GRADIENT_LEVELS, CC_GRADIENT_SCALARS,
     STEP_ITER_LIST
@@ -98,7 +98,8 @@ import { pollDSP, applyTrackConfig, readBankParams, applyBankParam,
     resyncDrumTrack, resetPerClipBankParamsToDefault,
     syncClipsFromDsp, syncClipsTargeted, syncMuteSoloFromDsp, restoreUiSidecar,
     liveSendNote, queueLiveNoteOff, _drainLiveNotes,
-    unlatchAllTracks, _focusedClipIsEmpty } from './ui_dsp_bridge.mjs';
+    unlatchAllTracks, _focusedClipIsEmpty,
+    pendingDrumNoteOffs, _drumRecNoteOns, _drumRecNoteOffs } from './ui_dsp_bridge.mjs';
 
 /* ------------------------------------------------------------------ */
 /* UI state                                                             */
@@ -190,7 +191,6 @@ const DRUM_FLASH_TICKS = 8; /* ~130ms pad flash duration after a drum hit */
  * -1 = timeout not active. */
 const BANK_DISPLAY_TICKS = 94;  /* ~1000ms at 94Hz device tick rate (was 392 = ~4.2s; constant was miscalibrated for 196Hz) */
 const STRETCH_BLOCKED_TICKS = 141;  /* ~1500ms at 94Hz (was 294, calibrated for the mistaken 196Hz) */
-const NO_NOTE_FLASH_TICKS = 56;     /* ~600ms at 94Hz (was 118 @196Hz) */
 const KNOB_TURN_HIGHLIGHT_TICKS = 56;             /* ~600ms at 94Hz — highlight after turn without touch (was 120 @196Hz) */
 
 /* S.bankParams[track][bankIdx][knobIdx] = integer value (JS-authoritative).
@@ -229,11 +229,6 @@ const STEP_SAVE_FLASH_TICKS = 40;  /* ~200ms double-blink on step button LEDs af
 const NOTE_SESSION_HOLD_TICKS = 19;  /* ~200ms at 94Hz, matching STEP_HOLD_TICKS (was 40 @196Hz — a ~300ms hold misread as tap, latching momentary views) */
 
 /* Real-time recording state */
-
-const pendingDrumNoteOffs = Array.from({length: NUM_TRACKS}, () => []);  /* drum tap note-offs deferred 1 tick to avoid coalescing with note-on */
-const _drumRecNoteOns  = [];  /* { track, laneNote, vel } — queued drum recording note-ons */
-const _drumRecNoteOffs = [];  /* { track, laneNote } — queued drum recording note-offs */
-
 
 /* ------------------------------------------------------------------ */
 /* Utility                                                              */

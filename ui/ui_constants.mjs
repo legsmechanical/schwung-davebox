@@ -378,6 +378,7 @@ export const CC_GRADIENT_LEVELS      = 3;
  * The LEDs can't resolve many white brightness steps, so we use just 3
  * widely-separated levels: dim / mid / full. */
 export const CC_GRADIENT_SCALARS     = [0.30, 0.60, 1.0];
+export const NO_NOTE_FLASH_TICKS = 56;     /* ~600ms at 94Hz (was 118 @196Hz) */
 export const TAP_TEMPO_FLASH_TICKS = 9;    /* ~96ms at 94Hz */
 export const TAP_TEMPO_RESET_MS    = 2000; /* inactivity reset threshold */
 export const PARAM_LED_BANKS = [1, 2, 3, 4, 5];

@@ -38,6 +38,9 @@ import { exitSchwungCoRun, exitMoveNativeCoRun,
 import { R } from './ui_seams.mjs';
 
 const pendingLiveNotes = Array.from({length: NUM_TRACKS}, () => []);  /* buffered live notes flushed each tick */
+export const pendingDrumNoteOffs = Array.from({length: NUM_TRACKS}, () => []);  /* drum tap note-offs deferred 1 tick to avoid coalescing with note-on */
+export const _drumRecNoteOns  = [];  /* { track, laneNote, vel } — queued drum recording note-ons */
+export const _drumRecNoteOffs = [];  /* { track, laneNote } — queued drum recording note-offs */
 
 /* Per-clip banks: NOTE FX (2), HARMZ (3), SEQ ARP (4), MIDI DLY (5) */
 const PER_CLIP_BANKS  = [1, 2, 3, 4];
