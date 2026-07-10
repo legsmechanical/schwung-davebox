@@ -526,7 +526,9 @@ function _onPadPressTrackView(status, d1, d2) {
                 bankIdx = DRUM_PAD_MAP[_padOff];
             } else if (_isConduct) {
                 /* Conductor reaches only its five banks: pads 0-4 select
-                   CONDUCT(0)/NOTE FX(1)/RESPONDER/OCTAVE/WHEN; pads 5-7 are no-ops. */
+                   CONDUCT(0)/NOTE FX(1)/RESPONDER/OCTAVE/WHEN; pads 5-7 are no-ops.
+                   First five entries must stay in lockstep with ui_pure's
+                   CONDUCT_BANK_CYCLE (kept a parallel literal, like DRUM_PAD_MAP). */
                 const CONDUCT_PAD_MAP = [0, 1, BANK_RESPONDER, BANK_OCTAVE, BANK_WHEN, -1, -1, -1];
                 bankIdx = CONDUCT_PAD_MAP[_padOff];
             } else {
