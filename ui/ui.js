@@ -65,8 +65,8 @@ import {
 import { S } from './ui_state.mjs';
 import { drumPadToLane, drumPadToVelZone, drumVelZoneToVelocity, _clipIsEmpty, clipHasContent,
     effectiveVelocity, stepEntryVelocity } from './ui_pure.mjs';
-import { saveState, showActionPopup, uuidToStatePath, readActiveSet, loadNameIndex, saveNameIndex, copyStateFiles, findInheritCandidates,
-    commitSnapshot, updateNameIndex } from './ui_persistence.mjs';
+import { saveState, showActionPopup, uuidToStatePath, readActiveSet, loadNameIndex, saveNameIndex,
+    commitSnapshot, updateNameIndex, maybeShowInheritPicker } from './ui_persistence.mjs';
 import {
     closeClearAutoMenu, showMenuInfo
 } from './ui_dialogs.mjs';
@@ -341,34 +341,6 @@ function sceneAnyPlaying(sceneIdx) {
 /* ------------------------------------------------------------------ */
 /* Lifecycle                                                            */
 /* ------------------------------------------------------------------ */
-
-/* Inherit-picker entry. On first launch in a freshly-pasted Move duplicate
- * (Copy-suffixed name + no canonical state file), check the name index for
- * family members and either auto-inherit (one candidate) or show a picker
- * dialog (two or more). Returns one of:
- *   'auto'   — silently inherited from the single candidate
- *   'picker' — dialog opened, S.pendingInheritPicker set
- *   'blank'  — nothing to inherit; let normal flow proceed */
-function maybeShowInheritPicker(uuid, name) {
-    if (!uuid || !name) return 'blank';
-    if (typeof host_file_exists !== 'function') return 'blank';
-    if (host_file_exists(uuidToStatePath(uuid))) return 'blank';
-    const idx = S.nameIndexCache || (S.nameIndexCache = loadNameIndex());
-    const candidates = findInheritCandidates(name, idx);
-    if (candidates.length === 0) return 'blank';
-    if (candidates.length === 1) {
-        copyStateFiles(candidates[0].uuid, uuid);
-        return 'auto';
-    }
-    S.pendingInheritPicker = {
-        dstUuid: uuid,
-        dstName: name,
-        candidates: candidates,
-        selectedIndex: 0
-    };
-    S.screenDirty = true;
-    return 'picker';
-}
 
 /* --- DIAGNOSTIC (2026-05-23 crash investigation) ---------------------------
  * QuickJS swallows unhandled exceptions thrown inside entry-point callbacks:

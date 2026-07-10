@@ -130,6 +130,34 @@ export function findInheritCandidates(currentName, idx) {
     return out;
 }
 
+/* Inherit-picker entry. On first launch in a freshly-pasted Move duplicate
+ * (Copy-suffixed name + no canonical state file), check the name index for
+ * family members and either auto-inherit (one candidate) or show a picker
+ * dialog (two or more). Returns one of:
+ *   'auto'   — silently inherited from the single candidate
+ *   'picker' — dialog opened, S.pendingInheritPicker set
+ *   'blank'  — nothing to inherit; let normal flow proceed */
+export function maybeShowInheritPicker(uuid, name) {
+    if (!uuid || !name) return 'blank';
+    if (typeof host_file_exists !== 'function') return 'blank';
+    if (host_file_exists(uuidToStatePath(uuid))) return 'blank';
+    const idx = S.nameIndexCache || (S.nameIndexCache = loadNameIndex());
+    const candidates = findInheritCandidates(name, idx);
+    if (candidates.length === 0) return 'blank';
+    if (candidates.length === 1) {
+        copyStateFiles(candidates[0].uuid, uuid);
+        return 'auto';
+    }
+    S.pendingInheritPicker = {
+        dstUuid: uuid,
+        dstName: name,
+        candidates: candidates,
+        selectedIndex: 0
+    };
+    S.screenDirty = true;
+    return 'picker';
+}
+
 export function showActionPopup(...lines) {
     S.actionPopupHighlight = -1;
     S.actionPopupLines   = lines;
