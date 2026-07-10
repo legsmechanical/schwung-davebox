@@ -1,9 +1,10 @@
 /* ui_menu.mjs
  * Global settings menu: building the item list (track config, clock/tempo,
  * key/scale, save/load/quit) and opening/refreshing the menu against the
- * active track. Track-config mutation (applyTrackConfig), key/scale preview
- * (xposePreviewSet), and Tap Tempo (openTapTempo) stay resident in ui.js and
- * are reached via the ui_seams.mjs registry (R) until Phase 6/5b absorb them.
+ * active track. Track-config mutation (applyTrackConfig) comes from
+ * ui_dsp_bridge.mjs; key/scale preview (xposePreviewSet) and Tap Tempo
+ * (openTapTempo) stay resident in ui.js and are reached via the
+ * ui_seams.mjs registry (R) until Phase 5b absorbs them.
  * Extracted from ui.js (Phase 5 of the modularity refactor, module 4).
  */
 
@@ -33,6 +34,7 @@ import { forceRedraw } from './ui_leds.mjs';
 import { openSchwungSlotEditor, exitSchwungCoRun, enterMoveNativeCoRun, exitMoveNativeCoRun } from './ui_corun.mjs';
 import { requestExport } from './ui_export.mjs';
 import { R } from './ui_seams.mjs';
+import { applyTrackConfig } from './ui_dsp_bridge.mjs';
 
 /* ------------------------------------------------------------------ */
 /* Global menu items                                                    */
@@ -49,7 +51,7 @@ function buildGlobalMenuItems() {
             /* Conductor has no MIDI channel — inert + shows '-'. */
             set: function(v) {
                 if (S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT) return;
-                R.applyTrackConfig(S.activeTrack, 'channel', v);
+                applyTrackConfig(S.activeTrack, 'channel', v);
             },
             min: 1, max: 16, step: 1,
             format: function(v) {
@@ -61,7 +63,7 @@ function buildGlobalMenuItems() {
             /* Conductor routes nowhere (drives transposition) — inert + shows '-'. */
             set: function(v) {
                 if (S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT) return;
-                R.applyTrackConfig(S.activeTrack, 'route', v);
+                applyTrackConfig(S.activeTrack, 'route', v);
             },
             options: [0, 1, 2],
             format: function(v) {
@@ -96,13 +98,13 @@ function buildGlobalMenuItems() {
         }),
         createValue('VelIn', {
             get: function() { return S.trackVelOverride[S.activeTrack]; },
-            set: function(v) { R.applyTrackConfig(S.activeTrack, 'track_vel_override', v); },
+            set: function(v) { applyTrackConfig(S.activeTrack, 'track_vel_override', v); },
             min: 0, max: 127, step: 1,
             format: function(v) { return fmtVelOverride(v); }
         }),
         createToggle('Looper', {
             get: function() { return S.trackLooper[S.activeTrack] !== 0; },
-            set: function(v) { R.applyTrackConfig(S.activeTrack, 'track_looper', v ? 1 : 0); },
+            set: function(v) { applyTrackConfig(S.activeTrack, 'track_looper', v ? 1 : 0); },
             onLabel: 'On', offLabel: 'Off'
         }),
         /* Pad-pressure (aftertouch) send mode — melodic tracks only. On drum

@@ -60,6 +60,17 @@ export function saveNameIndex(idx) {
     return host_write_file(NAME_INDEX_PATH, JSON.stringify(idx));
 }
 
+/* Refresh name -> uuid mapping after any successful save so that future
+ * duplicates of this set can inherit its state. In-memory cache; disk write
+ * happens on suspend, deferred-save, and clear-session. */
+export function updateNameIndex() {
+    if (!S.currentSetUuid || !S.currentSetName) return;
+    if (!S.nameIndexCache) S.nameIndexCache = loadNameIndex();
+    if (S.nameIndexCache[S.currentSetName] === S.currentSetUuid) return;
+    S.nameIndexCache[S.currentSetName] = S.currentSetUuid;
+    saveNameIndex(S.nameIndexCache);
+}
+
 /* Copy seq8-state.json + seq8-ui-state.json from one UUID folder to another.
  * Used on first launch in a freshly-pasted Move set so the duplicate inherits
  * the source's SEQ8 state. Returns true if the state file was copied. */
