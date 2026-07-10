@@ -443,7 +443,7 @@ globalThis.init = function () {
 
     /* Apply cable-2 channel remap for the current active track immediately
      * (tick() change-detect also covers this, but fires one tick later). */
-    _lastRemapTrack = -1;
+    S.lastRemapTrack = -1;
     applyExtMidiRemap();
 
     S.ledInitComplete = false;
@@ -457,7 +457,6 @@ globalThis.init = function () {
     S._wasSuspended    = false;
 };
 
-var _lastRemapTrack = -1, _lastRemapRoute = -1, _lastRemapChannel = -1, _lastRemapMidiIn = -2;
 var _lastSessionView = false;
 
 globalThis.tick = function () { try { _tickImpl(); } catch (e) { captureError('tick', e); } };
@@ -588,14 +587,14 @@ function _tickImpl() {
         const _rr = S.trackRoute[_rt];
         const _rc = S.trackChannel[_rt];
         const _rm = S.midiInChannel;
-        if (_rt !== _lastRemapTrack || _rr !== _lastRemapRoute ||
-                _rc !== _lastRemapChannel || _rm !== _lastRemapMidiIn) {
+        if (_rt !== S.lastRemapTrack || _rr !== S.lastRemapRoute ||
+                _rc !== S.lastRemapChannel || _rm !== S.lastRemapMidiIn) {
             /* TARP latch is per-track musical intent — preserved across track/
              * route/channel/MIDI-in changes. Only Stop transport and Delete+Play
              * clear it deliberately. */
             applyExtMidiRemap();
-            _lastRemapTrack = _rt; _lastRemapRoute = _rr;
-            _lastRemapChannel = _rc; _lastRemapMidiIn = _rm;
+            S.lastRemapTrack = _rt; S.lastRemapRoute = _rr;
+            S.lastRemapChannel = _rc; S.lastRemapMidiIn = _rm;
         }
     }
 

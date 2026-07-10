@@ -524,6 +524,14 @@ export const S = {
     pendingDrumLaneResyncTrack: 0,
     pendingDrumLaneResyncLane: 0,
     extMidiRemapActive: false,
+    /* Cable-2 remap change-detect edge (was module-scope `var _lastRemap*` in
+     * ui.js; hoisted onto S in phase 6b so both init() and the tick-moved
+     * applyExtMidiRemap edge-check can reach it). NOT serialized — absent
+     * from writeSidecar's whitelist by design, recomputed fresh every init. */
+    lastRemapTrack: -1,
+    lastRemapRoute: -1,
+    lastRemapChannel: -1,
+    lastRemapMidiIn: -2,
     lastTarpStyle: new Array(8).fill(1),
     padLayoutChromatic: new Array(8).fill(false),
     drumInpQuant: new Array(8).fill(0),   /* per-track drum input quantize index 0-8 */
