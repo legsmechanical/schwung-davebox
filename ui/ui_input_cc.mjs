@@ -26,7 +26,7 @@ import {
     TICK_HZ, STEP_ITER_LIST
 } from './ui_constants.mjs';
 import { S, conductorTrackIdx } from './ui_state.mjs';
-import { scaleNudgeNote, stepEntryVelocity } from './ui_pure.mjs';
+import { scaleNudgeNote, stepEntryVelocity, BANK_CYCLE_DRUM } from './ui_pure.mjs';
 import { saveState, writeSidecar, doClearSession, showActionPopup } from './ui_persistence.mjs';
 import {
     openSaveSnapshot, closeSnapshotPicker,
@@ -878,10 +878,9 @@ function _onCC_jog(d1, d2) {
                         next = CONDUCT_BANK_ORDER[ni];
                     } else if (isDrumJog) {
                         /* Drum bank order: ALL LANES(7) → DRUM LANE(0) → NOTE FX(1) → MIDI DLY(3) → RPT GROOVE(5) → CC PARAM(6) */
-                        const DRUM_BANK_ORDER = [7, 0, 1, 3, 5, 6];
-                        const ci = DRUM_BANK_ORDER.indexOf(cur);
-                        const ni = Math.max(0, Math.min(DRUM_BANK_ORDER.length - 1, (ci >= 0 ? ci : 0) + delta));
-                        next = DRUM_BANK_ORDER[ni];
+                        const ci = BANK_CYCLE_DRUM.indexOf(cur);
+                        const ni = Math.max(0, Math.min(BANK_CYCLE_DRUM.length - 1, (ci >= 0 ? ci : 0) + delta));
+                        next = BANK_CYCLE_DRUM[ni];
                     } else {
                         next = Math.min(6, Math.max(0, cur + delta));
                     }

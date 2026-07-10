@@ -34,7 +34,7 @@ export const SCALE_INTERVALS = [
     [0, 2, 3, 5, 6, 8, 9, 11],     /* 13 Diminished      */
 ];
 
-const BANK_CYCLE_DRUM = [7, 0, 1, 3, 5, 6];
+export const BANK_CYCLE_DRUM = [7, 0, 1, 3, 5, 6];
 
 /* Bank position in the jog-cycle order, for the header position strip. Melodic
  * banks cycle 0..6 linearly; drum banks cycle in BANK_CYCLE_DRUM order. Returns
