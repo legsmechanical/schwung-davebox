@@ -2,10 +2,8 @@
  * Global settings menu: building the item list (track config, clock/tempo,
  * key/scale, save/load/quit) and opening/refreshing the menu against the
  * active track. Track-config mutation (applyTrackConfig) comes from
- * ui_dsp_bridge.mjs; Tap Tempo (openTapTempo) comes from ui_record.mjs.
- * Key/scale preview (xposePreviewSet) still stays resident in ui.js and is
- * reached via the ui_seams.mjs registry (R) until Phase 5b prep increment 3
- * absorbs it.
+ * ui_dsp_bridge.mjs; Tap Tempo (openTapTempo) comes from ui_record.mjs;
+ * key/scale preview (xposePreviewSet) comes from ui_xpose.mjs.
  * Extracted from ui.js (Phase 5 of the modularity refactor, module 4).
  */
 
@@ -34,9 +32,9 @@ import { computePadNoteMap } from './ui_drummodel.mjs';
 import { forceRedraw } from './ui_leds.mjs';
 import { openSchwungSlotEditor, exitSchwungCoRun, enterMoveNativeCoRun, exitMoveNativeCoRun } from './ui_corun.mjs';
 import { requestExport } from './ui_export.mjs';
-import { R } from './ui_seams.mjs';
 import { applyTrackConfig } from './ui_dsp_bridge.mjs';
 import { openTapTempo } from './ui_record.mjs';
+import { xposePreviewSet } from './ui_xpose.mjs';
 
 /* ------------------------------------------------------------------ */
 /* Global menu items                                                    */
@@ -199,13 +197,13 @@ function buildGlobalMenuItems() {
          * cancel), so back-out cleanly drops the preview. */
         createEnum('Key', {
             get: function() { return S.padKey; },
-            set: function(v) { R.xposePreviewSet(v, S.padScale); },
+            set: function(v) { xposePreviewSet(v, S.padScale); },
             options: [0,1,2,3,4,5,6,7,8,9,10,11],
             format: function(v) { return NOTE_KEYS[((v | 0) % 12 + 12) % 12]; }
         }),
         createEnum('Scale', {
             get: function() { return S.padScale; },
-            set: function(v) { R.xposePreviewSet(S.padKey, v); },
+            set: function(v) { xposePreviewSet(S.padKey, v); },
             options: [0,1,2,3,4,5,6,7,8,9,10,11,12,13],
             format: function(v) { return SCALE_NAMES[v] || 'Major'; }
         }),
