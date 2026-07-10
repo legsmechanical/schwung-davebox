@@ -2,7 +2,8 @@
  * Pad + step-button input family: track-view/session pad press, plain pad
  * press/release, aftertouch/pressure routing, step-button edit-grid input,
  * and the Loop+step gesture helpers (window-set fire + resolve) shared by
- * both. The largest remaining resident handler family after ui_input_cc.
+ * both. ui_input_cc (the larger sibling family) extracts next and imports
+ * _resolveLoopGesture from here.
  * Extracted from ui.js (Phase 5b, increment 6 of the modularity refactor).
  */
 

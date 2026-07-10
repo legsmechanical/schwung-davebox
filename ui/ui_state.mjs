@@ -200,7 +200,7 @@ export const S = {
     pendingSchwungCoRunTrack: -1,             /* -1 = none; t = track queued to enter Schwung co-run; slot resolved in tick (schSlotsForTrack) so shadow_get_slots runs in tick context */
     pendingSchwungCoRunDelay: 0,             /* >0 = ticks remaining before entering co-run after a no-match "NO SLOT" popup (lets the message show before the editor takes the OLED) */
     moveCoRunTrack: -1,                       /* -1 = off; 0-3 = Move firmware is co-running on this track (dAVEBOx skips OLED; shim filters nav CCs + touch 0-9 from tool, lets them reach Move) */
-    moveCoRunDrumHeld: new Set(),             /* d1 notes of drum lane pads currently held in co-run (Shift still active) — per-pad Set so a 2nd simultaneous hold doesn't clobber the 1st's tracking (js-input-1). note-off + Shift-off sent on physical release, per held pad */
+    moveCoRunDrumHeld: new Set(),             /* d1 notes of drum lane pads currently held in co-run — per-pad Set so a 2nd simultaneous hold doesn't clobber the 1st's tracking (js-input-1). Plain pad note-off (no Shift injection) sent per held pad on physical release / co-run exit */
     trackPadMode: new Array(8).fill(0),
     trackVelOverride: new Array(8).fill(0),
     trackLooper: new Array(8).fill(1),
