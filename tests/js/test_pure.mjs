@@ -14,7 +14,8 @@ import { S } from '../../ui/ui_state.mjs';
 import { drumPadToLane, drumPadToVelZone, drumVelZoneToVelocity,
          _clipIsEmpty, clipHasContent,
          bankCyclePos, scaleNudgeNote } from '../../ui/ui_pure.mjs';
-import { PAD_MODE_DRUM } from '../../ui/ui_constants.mjs';
+import { PAD_MODE_DRUM, PAD_MODE_CONDUCT,
+         BANK_RESPONDER, BANK_OCTAVE, BANK_WHEN } from '../../ui/ui_constants.mjs';
 
 let failed = 0;
 function eq(got, want, label) {
@@ -120,6 +121,25 @@ S.activeBank = 6;                          /* indexOf(6) = 5 */
 eqObj(bankCyclePos(), { idx: 5, count: 6 }, 'bankCyclePos drum bank6');
 S.activeBank = 2;                          /* indexOf(2) = -1 -> idx 0 */
 eqObj(bankCyclePos(), { idx: 0, count: 6 }, 'bankCyclePos drum not-in-cycle');
+
+/* -- bankCyclePos() conductor branch (fix: bankCyclePos drift, phase 5b) --
+ * A Conductor track jog-cycles 5 banks (see _onCC_jog / CONDUCT_BANK_CYCLE in
+ * ui_pure.mjs): [0, 1, BANK_RESPONDER, BANK_OCTAVE, BANK_WHEN]. Before this
+ * fix a conductor track fell into the melodic 0..6/count:7 path, so the
+ * header strip mis-rendered 7 positions instead of the real 5. */
+S.trackPadMode[0] = PAD_MODE_CONDUCT;
+S.activeBank = 0;                          /* indexOf(0) = 0 */
+eqObj(bankCyclePos(), { idx: 0, count: 5 }, 'bankCyclePos conduct bank0 (CLIP)');
+S.activeBank = 1;                          /* indexOf(1) = 1 */
+eqObj(bankCyclePos(), { idx: 1, count: 5 }, 'bankCyclePos conduct bank1 (NOTE FX)');
+S.activeBank = BANK_RESPONDER;             /* indexOf = 2 */
+eqObj(bankCyclePos(), { idx: 2, count: 5 }, 'bankCyclePos conduct Responder');
+S.activeBank = BANK_OCTAVE;                /* indexOf = 3 */
+eqObj(bankCyclePos(), { idx: 3, count: 5 }, 'bankCyclePos conduct Octave');
+S.activeBank = BANK_WHEN;                  /* indexOf = 4 */
+eqObj(bankCyclePos(), { idx: 4, count: 5 }, 'bankCyclePos conduct When');
+S.activeBank = 3;                          /* not in CONDUCT_BANK_CYCLE -> idx 0 */
+eqObj(bankCyclePos(), { idx: 0, count: 5 }, 'bankCyclePos conduct not-in-cycle');
 
 /* -- scaleNudgeNote(note,dir,key,scale) (ui.js:651-661) --
  * scaleAware OFF: clamp(note+dir,0,127), exactly 1 semitone per dir. */

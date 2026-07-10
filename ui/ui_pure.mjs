@@ -12,7 +12,8 @@
  */
 
 import { S } from './ui_state.mjs';
-import { PAD_MODE_DRUM, NUM_STEPS } from './ui_constants.mjs';
+import { PAD_MODE_DRUM, PAD_MODE_CONDUCT, NUM_STEPS,
+    BANK_RESPONDER, BANK_OCTAVE, BANK_WHEN } from './ui_constants.mjs';
 
 /* Live pad note input — isomorphic 4ths diatonic layout.
  * EXPORTED for ui.js's computePadNoteMap (impure, moves in Phase 5) — do not
@@ -36,13 +37,23 @@ export const SCALE_INTERVALS = [
 
 export const BANK_CYCLE_DRUM = [7, 0, 1, 3, 5, 6];
 
+/* Conductor cycles 5 banks: Conduct(0=CLIP) → NOTE FX(1) → Responder → Octave
+ * → When. Single source of truth for both the jog nav (_onCC_jog) and the
+ * header position strip (bankCyclePos below) — they must stay in lockstep. */
+export const CONDUCT_BANK_CYCLE = [0, 1, BANK_RESPONDER, BANK_OCTAVE, BANK_WHEN];
+
 /* Bank position in the jog-cycle order, for the header position strip. Melodic
- * banks cycle 0..6 linearly; drum banks cycle in BANK_CYCLE_DRUM order. Returns
- * {idx, count} for the active track's chain — mirrors the jog nav in _onCC_jog. */
+ * banks cycle 0..6 linearly; drum banks cycle in BANK_CYCLE_DRUM order;
+ * conductor banks cycle in CONDUCT_BANK_CYCLE order. Returns {idx, count} for
+ * the active track's chain — mirrors the jog nav in _onCC_jog. */
 export function bankCyclePos() {
     if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
         const i = BANK_CYCLE_DRUM.indexOf(S.activeBank);
         return { idx: i < 0 ? 0 : i, count: BANK_CYCLE_DRUM.length };
+    }
+    if (S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT) {
+        const i = CONDUCT_BANK_CYCLE.indexOf(S.activeBank);
+        return { idx: i < 0 ? 0 : i, count: CONDUCT_BANK_CYCLE.length };
     }
     return { idx: Math.max(0, Math.min(6, S.activeBank)), count: 7 };
 }
