@@ -612,7 +612,7 @@ export function _onPadPress(status, d1, d2) {
                 (status & 0xF0) === 0x90 && d2 > 0 &&
                 typeof move_midi_inject_to_move === 'function') {
             move_midi_inject_to_move([0x09, 0x90, d1, d2 & 0x7F]);  /* plain pad on at hit velocity — held until release */
-            S.moveCoRunDrumHeld = d1;
+            S.moveCoRunDrumHeld.add(d1);
         }
         if (S.tapTempoOpen && d1 >= 68 && d1 <= 99) {
             registerTapTempo(d1);
@@ -1496,11 +1496,13 @@ export function _onPadRelease(status, d1, d2) {
     if (S.tapTempoOpen && d1 >= 68 && d1 <= 99) return;
     /* Co-run drum hold release: if the hold-threshold inject fired, send note-off
      * to close the held note in Move firmware. Always clear hold state on any
-     * release of the tracked pad, even if the threshold hadn't fired yet. */
-    if (S.moveCoRunTrack >= 0 && S.moveCoRunDrumHeld === d1 &&
+     * release of the tracked pad, even if the threshold hadn't fired yet.
+     * Per-pad Set (not a scalar) so releasing one held drum pad doesn't clobber
+     * or drop the note-off for a second, still-held pad (js-input-1). */
+    if (S.moveCoRunTrack >= 0 && S.moveCoRunDrumHeld.has(d1) &&
             typeof move_midi_inject_to_move === 'function') {
         move_midi_inject_to_move([0x08, 0x80, d1, 0]);    /* plain pad off (no Shift was sent) */
-        S.moveCoRunDrumHeld = -1;
+        S.moveCoRunDrumHeld.delete(d1);
     }
     /* Step buttons (notes 16-31): if a Loop+step gesture is in flight and
      * the released step is the held start, resolve the gesture — fire the

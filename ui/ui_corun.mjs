@@ -236,12 +236,15 @@ export function exitMoveNativeCoRun() {
     /* Resume the shim's overtake LED-strip loop so dAVEBOx owns the LEDs again
      * (mirror of the skip_led_clear(1) in enterMoveNativeCoRun). */
     if (typeof shadow_set_skip_led_clear === 'function') shadow_set_skip_led_clear(0);
-    /* If a drum pad hold inject was in flight, send the note-off before the
-     * co-run session ends so Move doesn't get a stuck note. */
-    if (S.moveCoRunDrumHeld >= 0 && typeof move_midi_inject_to_move === 'function') {
-        move_midi_inject_to_move([0x08, 0x80, S.moveCoRunDrumHeld, 0]);  /* plain pad off (no Shift was sent) */
+    /* If any drum pad hold injects were in flight, send a note-off for EACH
+     * before the co-run session ends so Move doesn't get a stuck note — a
+     * scalar here used to leak a note-off for every held pad but the first
+     * (js-input-1); a Set lets us drain them all. */
+    if (S.moveCoRunDrumHeld.size > 0 && typeof move_midi_inject_to_move === 'function') {
+        for (const _heldPad of S.moveCoRunDrumHeld)
+            move_midi_inject_to_move([0x08, 0x80, _heldPad, 0]);  /* plain pad off (no Shift was sent) */
     }
-    S.moveCoRunDrumHeld = -1;
+    S.moveCoRunDrumHeld.clear();
     /* Modifier-key release CCs the user pressed inside Move firmware never
      * reach us during co-run — clear defensively so a stuck Shift/Mute/etc.
      * can't silence pad dispatch on return. Mirrors resume-from-suspend. */

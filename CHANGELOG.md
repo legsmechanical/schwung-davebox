@@ -9,6 +9,7 @@ the section into a versioned heading at release time.
 ## [Unreleased]
 
 ### Fixes
+- **Fixed a stuck note when holding two Move-native drum pads at once during co-run.** In Move-native co-run on a drum track, holding a second drum pad while the first was still held could leave the first pad's note stuck sounding on Move — releasing either pad no longer stopped the right one. Each held pad is now tracked and released independently.
 - **Fixed a crash when copying or launching a drum clip that hadn't been set up yet.** Copying a drum clip into an uninitialized slot, or launching one, could crash the unit if the target drum clip's contents had never been created. The affected step now safely does nothing instead.
 - **Fixed a crash when a performance modifier was toggled on over an empty loop.** With the MIDI looper running over a loop cycle that held no note-ons (an empty capture, or only note-offs), toggling a pitch-reordering performance modifier like Shuffle could crash the unit. The modifier now safely does nothing when there are no notes to reorder.
 - **Live-recording into an empty melodic clip no longer freezes the unit.** While recording an adaptive take (empty clip growing as you play), the OLED, LEDs, and all inputs could freeze for ~4 seconds at every page-growth and again when disarming record — playback kept running. The clip-grow bookkeeping was misread as a remote-browser edit, triggering a very expensive full re-read of the whole session. Recording now stays fully responsive; browser piano-roll edits still refresh the device as before.
