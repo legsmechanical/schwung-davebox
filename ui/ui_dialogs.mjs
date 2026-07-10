@@ -6,7 +6,7 @@ import {
 import { formatItemValue } from '/data/UserData/schwung/shared/menu_items.mjs';
 import {
     SNAPSHOT_CAP, snapshotLabel, saveState, loadSnapshotManifest, showActionPopup,
-    dropSnapshots, applySnapshotToLive
+    dropSnapshots, applySnapshotToLive, copyStateFiles
 } from './ui_persistence.mjs';
 import { effectiveClip, invalidateLEDCache } from './ui_leds.mjs';
 
@@ -779,5 +779,42 @@ export function clearAutoMenuClick() {
         showActionPopup('CLEARED', done.length ? done.join(' ') : 'NOTHING');
         return;
     }
+    S.screenDirty = true;
+}
+
+/* Open the generic menu INFO dialog with the given text lines (each argument is
+ * one line, up to ~4 shown). Empty = closed. */
+export function showMenuInfo() {
+    S.menuInfoLines = Array.prototype.slice.call(arguments);
+    S.screenDirty = true;
+}
+
+/* Tear down the Keys->Drums confirm dialog and the menu's edit state so a
+ * lingering enum edit doesn't replay. Call on Yes, No, and Back-cancel. */
+export function closeConvertConfirm() {
+    S.confirmConvertToDrum = false;
+    S.confirmConvertToConduct = false;
+    S.menuInfoLines = [];
+    if (S.globalMenuState) S.globalMenuState.editing = false;
+    if (S.globalMenuState) S.globalMenuState.editValue = null;
+    S.lastSentMenuEditValue = null;
+    S.bpmWasEditing = false;
+}
+
+/* Resolve the inherit picker: action is either the candidates index to
+ * inherit from, or -1 for "Start blank". Always trigger pendingSetLoad
+ * so DSP runs its state_load handler — which both resets the internal
+ * state (clip_init, drum_track_init, etc.) and reads the canonical file.
+ * For "Start blank" the file is missing on purpose; the reset alone gives
+ * a clean slate. For inherit, we copy the source's state files first so
+ * the load reads the seeded content. */
+export function resolveInheritPicker(action) {
+    const p = S.pendingInheritPicker;
+    if (!p) return;
+    if (action >= 0 && action < p.candidates.length) {
+        copyStateFiles(p.candidates[action].uuid, p.dstUuid);
+    }
+    S.pendingSetLoad = true;
+    S.pendingInheritPicker = null;
     S.screenDirty = true;
 }

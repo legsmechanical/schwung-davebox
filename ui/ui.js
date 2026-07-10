@@ -55,7 +55,7 @@ import {
     MoveCapture, MoveSample, MoveMainButton, MoveMainKnob,
     LED_OFF, LED_STEP_ACTIVE, LED_STEP_CURSOR, SCENE_BTN_FLASH_TICKS,
     LEDS_PER_FRAME, NUM_TRACKS, NUM_CLIPS, DRUM_LANES,
-    FLAG_JUMP_TO_OVERTAKE, FLAG_JUMP_TO_TOOLS, SEQ8_NAV_FLAGS, NUM_STEPS,
+    FLAG_JUMP_TO_OVERTAKE, FLAG_JUMP_TO_TOOLS, NUM_STEPS,
     TRACK_COLORS, TRACK_DIM_COLORS, TRACK_PAD_BASE, TOP_PAD_BASE,
     TPS_VALUES, DELAY_LABELS,
     fmtLgto, fmtNote, fmtPages,
@@ -72,19 +72,19 @@ import {
 
 import { S, conductorTrackIdx } from './ui_state.mjs';
 import { drumPadToLane, drumPadToVelZone, drumVelZoneToVelocity, _clipIsEmpty, clipHasContent,
-    scaleNudgeNote } from './ui_pure.mjs';
+    scaleNudgeNote, effectiveVelocity, stepEntryVelocity } from './ui_pure.mjs';
 import { saveState, writeSidecar, doClearSession, showActionPopup, uuidToStatePath, readActiveSet, loadNameIndex, saveNameIndex, copyStateFiles, findInheritCandidates,
     commitSnapshot, updateNameIndex } from './ui_persistence.mjs';
 import {
     openSaveSnapshot, closeSnapshotPicker,
     snapshotPickerRotate, snapshotPickerClick, openClearAutoMenu, closeClearAutoMenu,
-    clearAutoMenuRotate, clearAutoMenuClick
+    clearAutoMenuRotate, clearAutoMenuClick, showMenuInfo, closeConvertConfirm, resolveInheritPicker
 } from './ui_dialogs.mjs';
 import { trackClipHasContent, sceneAllQueued, updateSceneMapLEDs } from './ui_scene.mjs';
 import { _padDispatchMutedNow, computePadNoteMap, syncDrumLaneSteps, syncDrumLanesMeta,
     setActiveDrumLane, setDrumPerformMode, setDrumLanePage,
     syncDrumClipContent } from './ui_drummodel.mjs';
-import { effectiveClip, updateStepLEDs, updateSessionLEDs, updateTrackLEDs, flashAtRate, invalidateLEDCache, trackColor, trackDimColor, setPaletteEntryRGB, reapplyPalette, forceRedraw, updatePerfModeLEDs, PERF_MOD_PAD_MAP, bankHasAltParams, altIndicatorActive } from './ui_leds.mjs';
+import { effectiveClip, updateStepLEDs, updateSessionLEDs, updateTrackLEDs, flashAtRate, invalidateLEDCache, trackColor, trackDimColor, setPaletteEntryRGB, reapplyPalette, forceRedraw, updatePerfModeLEDs, PERF_MOD_PAD_MAP, bankHasAltParams, altIndicatorActive, clearAllLEDs, installFlagsWrap, removeFlagsWrap, sendPerfMods } from './ui_leds.mjs';
 import { schSlotForTrack, schSlotsForTrack, openSchwungSlotEditor, enterSchwungCoRun, exitSchwungCoRun,
     enterMoveNativeCoRun, exitMoveNativeCoRun, assertOvertakeSysexSuppress,
     DAVEBOX_CORUN_KEEP_MASK,
@@ -127,7 +127,6 @@ const DAVEBOX_PICKER_KEEP_MASK =
     DAVEBOX_CORUN_KEEP_MASK | CORUN_GRP_JOG | CORUN_GRP_BACK | CORUN_GRP_KNOBS | CORUN_GRP_TOUCH | CORUN_GRP_SHIFT;
 
 const LOOPER_RATES_STRAIGHT = [12, 24, 48, 96, 192];   /* 1/32, 1/16, 1/8, 1/4, 1/2 */
-const PERF_LATCH_LONG_PRESS = 100;     /* ~510ms → clear all toggled mods + exit Latch mode */
 const PERF_MOD_FULL_NAMES = [
     'Octave Up','Octave Down','Scale Up','Scale Down','Fifth','Tritone','Drift','Storm',
     'Decrescendo','Swell','Crescendo','Pulse','Sidechain','Staccato','Legato','Ramp Gate',
@@ -143,7 +142,6 @@ const PERF_MOD_POPUP_TICKS = 47; /* ~500ms at 94Hz (was 80, assuming ~160 ticks/
 /* View lock: double-tap Loop keeps Perf Mode alive after Loop is released.
  * Single tap while locked → unlock + stop loop. */
 const LOOP_TAP_TICKS  = 40;
-const LOOP_DBLTAP_GAP = 80;
 
 /* Per-pad pitch sent at note-on — ensures matching note-off even if map changes mid-hold. */
 const padPitch = new Array(32).fill(-1);
@@ -233,11 +231,6 @@ const NOTE_SESSION_HOLD_TICKS = 19;  /* ~200ms at 94Hz, matching STEP_HOLD_TICKS
 /* ------------------------------------------------------------------ */
 /* Utility                                                              */
 /* ------------------------------------------------------------------ */
-
-function effectiveMute(t) {
-    const anySolo = S.trackSoloed.some(function(s) { return s; });
-    return S.trackMuted[t] || (anySolo && !S.trackSoloed[t]);
-}
 
 function setTrackMute(t, on) {
     S.trackMuted[t] = on;
@@ -724,39 +717,6 @@ function handoffRecordingToTrack(newTrack) {
     }
 }
 
-function effectiveVelocity(rawVel) { return rawVel; }
-
-/* Step-entry velocity. Single source of truth used by every step-write site.
- *
- * Drum context (allowZone=true, used at drum step-tap sites and the drum
- * vel-pad-while-step-held site): drum vel zones ALWAYS win over VelIn.
- *   active vel-pad press now (liveVel >= 0)  →  zone velocity
- *   sticky vel-zone armed                    →  sticky zone velocity
- *   VelIn engaged                            →  VelIn value
- *   otherwise                                →  100
- *
- * Melodic context (allowZone=false): VelIn wins over pad press.
- *   VelIn engaged                            →  VelIn value
- *   live pad press now (liveVel >= 0)        →  pad press velocity
- *   otherwise                                →  100
- */
-function stepEntryVelocity(t, liveVel, allowZone) {
-    if (allowZone) {
-        if (liveVel >= 0) return liveVel;
-        if (S.drumVelZoneArmed && S.drumVelZoneArmed[t])
-            return drumVelZoneToVelocity(S.drumLastVelZone[t]);
-        const tvo = S.trackVelOverride[t];
-        if (tvo > 0) return tvo;
-        return 100;
-    }
-    const tvo = S.trackVelOverride[t];
-    if (tvo > 0) return tvo;
-    if (liveVel >= 0) return liveVel;
-    return 100;
-}
-
-function flushChordBatch() {}
-
 /* DSP-side recording: buffer note events; tick() flushes as a single batched set_param so
  * chords (multiple pads hit in the same ~5ms JS tick) are not lost to coalescing. */
 const _recordingNoteTrack = new Map(); /* pitch → track index, for matching note-offs */
@@ -1038,75 +998,6 @@ function xposeCommit(candK, candS) {
 
 /* --------------------------------------------------------------------------- */
 
-/* Root note in pad layout closest to octave 4 — guaranteed in-scale and on a pad. */
-function defaultStepNote() {
-    const target = S.padKey + 60;  /* root pitch class in MIDI octave 4 */
-    let best = -1, bestDist = 999;
-    for (let i = 0; i < 32; i++) {
-        if (S.padNoteMap[i] === 0xFF) continue;  /* OOB pad — no melodic note */
-        const p = S.padNoteMap[i] + S.trackOctave[S.activeTrack] * 12;
-        if (p < 0 || p > 127) continue;
-        if (S.padNoteMap[i] % 12 !== S.padKey) continue;  /* root notes only */
-        const d = Math.abs(p - target);
-        if (d < bestDist) { bestDist = d; best = p; }
-    }
-    if (best >= 0) return best;
-    /* Fallback: first valid (non-0xFF) entry; if every pad is OOB (shouldn't
-     * happen at any sane octave), return middle C. */
-    for (let i = 0; i < 32; i++) {
-        if (S.padNoteMap[i] === 0xFF) continue;
-        return Math.max(0, Math.min(127, S.padNoteMap[i] + S.trackOctave[S.activeTrack] * 12));
-    }
-    return 60;
-}
-
-
-/* Synchronously zero every LED that SEQ8 owns — call before host_hide_module(). */
-function clearAllLEDs() {
-    let n, c;
-    for (n = 68; n <= 99; n++) setLED(n, LED_OFF);
-    for (n = 16; n <= 31; n++) setLED(n, LED_OFF);
-    for (c = 16; c <= 31; c++) setButtonLED(c, LED_OFF);
-    for (c = 40; c <= 43; c++) setButtonLED(c, LED_OFF);
-    for (const cc of [49, 50, 51, 52, 54, 55, 56, 58, 60, 62, 63])
-        setButtonLED(cc, LED_OFF);
-    for (c = 71; c <= 78; c++) setButtonLED(c, LED_OFF);
-    for (const cc of [85, 86, 88, 118, 119]) setButtonLED(cc, LED_OFF);
-}
-
-function installFlagsWrap() {
-    if (typeof shadow_get_ui_flags !== 'function') return;
-    if (globalThis.shadow_get_ui_flags._seq8) {
-        globalThis.shadow_get_ui_flags._active = true;
-        return;
-    }
-    const orig = globalThis.shadow_get_ui_flags;
-    const wrap = function () {
-        const f = orig();
-        const hit = f & SEQ8_NAV_FLAGS;
-        if (hit && wrap._active) {
-            S.ledInitComplete = false;
-            invalidateLEDCache();
-            clearAllLEDs();
-            if (typeof shadow_clear_ui_flags === 'function') shadow_clear_ui_flags(hit);
-            return f & ~SEQ8_NAV_FLAGS;
-        }
-        return f;
-    };
-    wrap._seq8   = true;
-    wrap._orig   = orig;
-    wrap._active = true;
-    globalThis.shadow_get_ui_flags = wrap;
-}
-
-function removeFlagsWrap() {
-    const cur = globalThis.shadow_get_ui_flags;
-    if (typeof cur === 'function' && cur._seq8) {
-        cur._active = false;
-        globalThis.shadow_get_ui_flags = cur._orig;
-    }
-}
-
 function buildLedInitQueue() {
     const q = [];
     for (let n = 68; n <= 99; n++) q.push({ kind: 'note', id: n });
@@ -1299,25 +1190,6 @@ function convertTrackToConduct(t) {
     forceRedraw();
 }
 
-/* Open the generic menu INFO dialog with the given text lines (each argument is
- * one line, up to ~4 shown). Empty = closed. */
-function showMenuInfo() {
-    S.menuInfoLines = Array.prototype.slice.call(arguments);
-    S.screenDirty = true;
-}
-
-/* Tear down the Keys->Drums confirm dialog and the menu's edit state so a
- * lingering enum edit doesn't replay. Call on Yes, No, and Back-cancel. */
-function closeConvertConfirm() {
-    S.confirmConvertToDrum = false;
-    S.confirmConvertToConduct = false;
-    S.menuInfoLines = [];
-    if (S.globalMenuState) S.globalMenuState.editing = false;
-    if (S.globalMenuState) S.globalMenuState.editValue = null;
-    S.lastSentMenuEditValue = null;
-    S.bpmWasEditing = false;
-}
-
 /* Rewrite the cable-2 channel remap table for the active track.
  * When the active track is ROUTE_MOVE, incoming external MIDI is remapped to the
  * track's channel so Move's firmware routes it to the correct track instrument.
@@ -1429,16 +1301,6 @@ function sceneAnyPlaying(sceneIdx) {
 
 
 
-/* Send current combined modifier bitmask to DSP. */
-function sendPerfMods() {
-    if (typeof host_module_set_param === 'function')
-        host_module_set_param('perf_mods', String(S.perfModsToggled | S.perfModsHeld));
-}
-
-function fmtHex(b) {
-    return (b & 0xff).toString(16).padStart(2, '0').toUpperCase();
-}
-
 /* ------------------------------------------------------------------ */
 /* Lifecycle                                                            */
 /* ------------------------------------------------------------------ */
@@ -1469,24 +1331,6 @@ function maybeShowInheritPicker(uuid, name) {
     };
     S.screenDirty = true;
     return 'picker';
-}
-
-/* Resolve the inherit picker: action is either the candidates index to
- * inherit from, or -1 for "Start blank". Always trigger pendingSetLoad
- * so DSP runs its state_load handler — which both resets the internal
- * state (clip_init, drum_track_init, etc.) and reads the canonical file.
- * For "Start blank" the file is missing on purpose; the reset alone gives
- * a clean slate. For inherit, we copy the source's state files first so
- * the load reads the seeded content. */
-function resolveInheritPicker(action) {
-    const p = S.pendingInheritPicker;
-    if (!p) return;
-    if (action >= 0 && action < p.candidates.length) {
-        copyStateFiles(p.candidates[action].uuid, p.dstUuid);
-    }
-    S.pendingSetLoad = true;
-    S.pendingInheritPicker = null;
-    S.screenDirty = true;
 }
 
 /* Seam registry population — resident helpers still needed by extracted

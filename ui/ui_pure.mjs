@@ -93,3 +93,34 @@ export function drumPadToVelZone(padIdx) {
 export function drumVelZoneToVelocity(zone) {
     return Math.round((zone + 1) * 127 / 16);
 }
+
+export function effectiveVelocity(rawVel) { return rawVel; }
+
+/* Step-entry velocity. Single source of truth used by every step-write site.
+ *
+ * Drum context (allowZone=true, used at drum step-tap sites and the drum
+ * vel-pad-while-step-held site): drum vel zones ALWAYS win over VelIn.
+ *   active vel-pad press now (liveVel >= 0)  →  zone velocity
+ *   sticky vel-zone armed                    →  sticky zone velocity
+ *   VelIn engaged                            →  VelIn value
+ *   otherwise                                →  100
+ *
+ * Melodic context (allowZone=false): VelIn wins over pad press.
+ *   VelIn engaged                            →  VelIn value
+ *   live pad press now (liveVel >= 0)        →  pad press velocity
+ *   otherwise                                →  100
+ */
+export function stepEntryVelocity(t, liveVel, allowZone) {
+    if (allowZone) {
+        if (liveVel >= 0) return liveVel;
+        if (S.drumVelZoneArmed && S.drumVelZoneArmed[t])
+            return drumVelZoneToVelocity(S.drumLastVelZone[t]);
+        const tvo = S.trackVelOverride[t];
+        if (tvo > 0) return tvo;
+        return 100;
+    }
+    const tvo = S.trackVelOverride[t];
+    if (tvo > 0) return tvo;
+    if (liveVel >= 0) return liveVel;
+    return 100;
+}

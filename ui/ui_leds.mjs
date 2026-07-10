@@ -4,7 +4,7 @@ import {
     TRACK_COLORS, TRACK_DIM_COLORS, TRACK_PAD_BASE, SCENE_BTN_FLASH_TICKS,
     PAD_MODE_DRUM, PAD_MODE_CONDUCT, BANKS,
     POLL_INTERVAL, TAP_TEMPO_FLASH_TICKS, PARAM_LED_BANKS,
-    CC_GRADIENT_BASE, CC_GRADIENT_LEVELS
+    CC_GRADIENT_BASE, CC_GRADIENT_LEVELS, SEQ8_NAV_FLAGS
 } from './ui_constants.mjs';
 import { trackClipHasContent, updateSceneMapLEDs } from './ui_scene.mjs';
 import {
@@ -1058,4 +1058,56 @@ export function altIndicatorActive(t, bank) {
         return S.stepIntervalMode;
     }
     return S.altMode;
+}
+
+/* Synchronously zero every LED that SEQ8 owns — call before host_hide_module(). */
+export function clearAllLEDs() {
+    let n, c;
+    for (n = 68; n <= 99; n++) setLED(n, LED_OFF);
+    for (n = 16; n <= 31; n++) setLED(n, LED_OFF);
+    for (c = 16; c <= 31; c++) setButtonLED(c, LED_OFF);
+    for (c = 40; c <= 43; c++) setButtonLED(c, LED_OFF);
+    for (const cc of [49, 50, 51, 52, 54, 55, 56, 58, 60, 62, 63])
+        setButtonLED(cc, LED_OFF);
+    for (c = 71; c <= 78; c++) setButtonLED(c, LED_OFF);
+    for (const cc of [85, 86, 88, 118, 119]) setButtonLED(cc, LED_OFF);
+}
+
+export function installFlagsWrap() {
+    if (typeof shadow_get_ui_flags !== 'function') return;
+    if (globalThis.shadow_get_ui_flags._seq8) {
+        globalThis.shadow_get_ui_flags._active = true;
+        return;
+    }
+    const orig = globalThis.shadow_get_ui_flags;
+    const wrap = function () {
+        const f = orig();
+        const hit = f & SEQ8_NAV_FLAGS;
+        if (hit && wrap._active) {
+            S.ledInitComplete = false;
+            invalidateLEDCache();
+            clearAllLEDs();
+            if (typeof shadow_clear_ui_flags === 'function') shadow_clear_ui_flags(hit);
+            return f & ~SEQ8_NAV_FLAGS;
+        }
+        return f;
+    };
+    wrap._seq8   = true;
+    wrap._orig   = orig;
+    wrap._active = true;
+    globalThis.shadow_get_ui_flags = wrap;
+}
+
+export function removeFlagsWrap() {
+    const cur = globalThis.shadow_get_ui_flags;
+    if (typeof cur === 'function' && cur._seq8) {
+        cur._active = false;
+        globalThis.shadow_get_ui_flags = cur._orig;
+    }
+}
+
+/* Send current combined modifier bitmask to DSP. */
+export function sendPerfMods() {
+    if (typeof host_module_set_param === 'function')
+        host_module_set_param('perf_mods', String(S.perfModsToggled | S.perfModsHeld));
 }
