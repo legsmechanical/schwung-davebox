@@ -104,6 +104,24 @@ export function recordNoteOff(pitch, ext) {
     S._recNoteOffs.push({pitch, rt, ext: !!ext});
 }
 
+/* External-MIDI count-in capture gate. External notes never reach the DSP
+ * on_midi preroll filter (Move plays cable-2 notes natively but does NOT echo
+ * note-on/off to MIDI_OUT — device diagnosis 2026-07-11), so the last-1/8-note
+ * count-in rule the pad path gets from on_midi must be replicated here for ext:
+ *   - not counting in            -> always capture;
+ *   - counting in, final 1/8     -> capture (these flush at the count-in->
+ *     recording transition, landing at ~loop_start / "the one");
+ *   - counting in, earlier       -> drop (warm-up noise).
+ * Mirrors seq8.c on_midi is_preroll (count_in_ticks <= PPQN/2). Count-in is a
+ * fixed 1 bar (4 * countInQuarterTicks); we estimate its end from
+ * countInStartTick since JS drives it and both sides track the same BPM. */
+export function extCountInCapture() {
+    if (!S.recordCountingIn) return true;
+    if (S.countInQuarterTicks <= 0 || S.countInStartTick < 0) return true;
+    const endTick = S.countInStartTick + 4 * S.countInQuarterTicks;  /* 1 bar */
+    return (endTick - S.tickCount) <= (S.countInQuarterTicks >> 1);   /* final 1/8 */
+}
+
 
 export function openTapTempo() {
     S.tapTempoOpen      = true;

@@ -142,11 +142,17 @@ static int sp_track_record(sp_ctx_t *cx) {
                  *   slot inactive + PAD → drop: the press was filtered by
                  *     on_midi (e.g., early-count-in window outside the last
                  *     1/8 note) and the drop preserves that filter;
-                 *   slot inactive + EXT on a non-Move route → fallback tick:
-                 *     non-ROUTE_MOVE ext never reaches on_midi (shim BLOCK),
-                 *     so there is no slot to require — pre-Phase-1 JS-path
-                 *     timing (Path B); on ROUTE_MOVE a slotless ext note is
-                 *     dropped like a pad (see below).
+                 *   slot inactive + EXT (any route) → fallback tick: external
+                 *     notes have no on_midi note slot. Non-ROUTE_MOVE ext never
+                 *     reaches on_midi (shim BLOCK); and on ROUTE_MOVE, Move
+                 *     plays the note natively but does NOT echo note-on/off to
+                 *     MIDI_OUT (only continuous controllers pass through — device
+                 *     diagnosis 2026-07-11), so no note echo ever stamps a slot
+                 *     there either. Both take the JS-path flush tick (Path B /
+                 *     Option A). Count-in last-1/8 filtering for ext lives in JS
+                 *     (extCountInCapture) — early warm-up presses are never
+                 *     pushed. A note slot only appears via a future host
+                 *     MIDI_IN→on_midi note delivery (Option B), and then wins.
                  * Stock Schwung (inbound off) falls back to current_clip_tick
                  * (no slots written). */
                 uint32_t abs_tick;
@@ -154,16 +160,10 @@ static int sp_track_record(sp_ctx_t *cx) {
                     if (inst->on_midi_press_active[tidx][pitch]) {
                         abs_tick = inst->on_midi_press_tick[tidx][pitch];
                         inst->on_midi_press_active[tidx][pitch] = 0;
-                    } else if (ext && tr->pfx.route != ROUTE_MOVE) {
-                        /* Path B fallback. On ROUTE_MOVE, on_midi's echo
-                         * delivery is guaranteed, so a missing slot means it
-                         * authoritatively FILTERED the press (early-count-in
-                         * warm-up, seq-echo, channel corner) -> drop below.
-                         * JS queues ext notes throughout the count-in (pad
-                         * precedent) and relies on this filter. */
+                    } else if (ext) {
                         abs_tick = fallback_tick;
                     } else {
-                        continue;
+                        continue;   /* pad with no slot: on_midi filtered it */
                     }
                 } else {
                     abs_tick = fallback_tick;

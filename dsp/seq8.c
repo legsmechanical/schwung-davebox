@@ -4487,21 +4487,24 @@ static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
     uint8_t type   = status & 0xF0;
 
     /* ---- External cable-2 MIDI notes (non-internal source) ----------------
-     * The Schwung shim delivers ROUTE_MOVE external notes to on_midi as the
-     * Move MIDI_OUT echo with MOVE_MIDI_SOURCE_EXTERNAL (schwung_shim.c:
-     * 1305-1307, constant = 2 per host/plugin_api_v1.h). We gate on "not
-     * internal" instead of the literal constant: any non-internal 3-byte note
-     * event is treated as ext (robust to source-constant drift between host
-     * versions; the inbound/route/channel filters below still bound what it
-     * can do, and this branch never emits on its own). Only ROUTE_MOVE ext
-     * notes reach here (non-ROUTE_MOVE are BLOCKED at the shim → Path B is
-     * the JS ext-origin-token path, see sp_track_live/record). Move already
-     * plays these natively, so we STAMP record slots but never fire
-     * live_note_on — injecting would double-play (and risk the cable-2 echo
-     * cascade). The existing JS tN_record_note_on / tN_drum_record_note_on
-     * pushes then consume the stamped slot (mirrors the pad flow). RT-safe.
-     * ext pitches are real MIDI notes (not pad indices 68-99), so this runs
-     * before the pad-note filter below. */
+     * ⚠ DORMANT-FOR-NOTES on current hardware. This branch was built to stamp
+     * record slots from the Move MIDI_OUT echo of a ROUTE_MOVE external note
+     * (schwung_shim.c:1305-1307, source = MOVE_MIDI_SOURCE_EXTERNAL = 2). Device
+     * diagnosis (2026-07-11) proved Move plays cable-2 notes natively but does
+     * NOT echo note-on/off to MIDI_OUT — only continuous controllers (poly/chan
+     * pressure, CC, bend) pass through, and those hit the `type != note` return
+     * below. So NO note ever stamps a slot here in practice; ROUTE_MOVE ext
+     * recording runs entirely through the JS push (recordNoteOn → the ext
+     * no-slot FALLBACK in sp_track_record / sp_track_drum2), with count-in
+     * last-1/8 filtering done JS-side (extCountInCapture). This branch is kept
+     * as the audio-thread landing pad for a FUTURE host MIDI_IN→on_midi note
+     * delivery (Option B, board): if real note events ever arrive here, the
+     * slot path lights up and wins over the fallback (tighter timing). We gate
+     * on "not internal" (robust to source-constant drift); the inbound/route/
+     * channel filters bound it and it never emits (Move plays natively; a
+     * live_note_on would double-play + risk the cable-2 echo cascade). ext
+     * pitches are real MIDI notes (not pad indices 68-99), so this runs before
+     * the pad-note filter below. */
     if (source != MOVE_MIDI_SOURCE_INTERNAL) {
         if (type != 0x90 && type != 0x80) return;   /* CC/AT/PB → JS owns */
         if (!inst->dsp_inbound_enabled)   return;    /* dormant: JS fallback owns */

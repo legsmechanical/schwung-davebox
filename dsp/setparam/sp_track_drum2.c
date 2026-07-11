@@ -776,10 +776,15 @@ static int sp_track_drum2(sp_ctx_t *cx) {
                      *     ext, whose Move echo reaches on_midi);
                      *   slot inactive + PAD → drop (press was filtered by
                      *     on_midi, e.g. outside the preroll capture window);
-                     *   slot inactive + EXT on a non-Move route → live
-                     *     playhead fallback: that ext never reaches on_midi
-                     *     (shim BLOCK) — Path B; ROUTE_MOVE slotless ext is
-                     *     dropped like a pad (on_midi filtered it).
+                     *   slot inactive + EXT (any route) → live playhead
+                     *     fallback: external notes have no on_midi note slot.
+                     *     Non-ROUTE_MOVE ext never reaches on_midi (shim BLOCK);
+                     *     ROUTE_MOVE ext is played natively by Move but its
+                     *     note-on/off is NOT echoed to MIDI_OUT (only continuous
+                     *     controllers — device diagnosis 2026-07-11), so no note
+                     *     echo stamps a slot there either. Count-in filtering
+                     *     for ext lives in JS. A slot only appears via a future
+                     *     host MIDI_IN→on_midi note delivery (Option B).
                      * Stock Schwung uses the live drum playhead. */
                     uint16_t base_step;
                     int16_t  base_off;
@@ -788,14 +793,11 @@ static int sp_track_drum2(sp_ctx_t *cx) {
                             base_step = inst->on_midi_drum_press_step[tidx][lane];
                             base_off  = inst->on_midi_drum_press_off[tidx][lane];
                             inst->on_midi_drum_press_active[tidx][lane] = 0;
-                        } else if (ext && tr->pfx.route != ROUTE_MOVE) {
-                            /* Path B fallback; ROUTE_MOVE slotless ext =
-                             * on_midi filtered it (count-in warm-up /
-                             * seq-echo) -> drop below. */
+                        } else if (ext) {
                             base_step = tr->drum_current_step[lane];
                             base_off  = (int16_t)tr->drum_tick_in_step[lane];
                         } else {
-                            continue;  /* drop filtered preroll press; sp already past this entry */
+                            continue;  /* pad with no slot: on_midi filtered it */
                         }
                     } else {
                         base_step = tr->drum_current_step[lane];

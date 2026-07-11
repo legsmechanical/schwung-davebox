@@ -75,7 +75,7 @@ import { applyTrackConfig,
     _drumRecNoteOns, _drumRecNoteOffs } from './ui_dsp_bridge.mjs';
 import { recordNoteOn, recordNoteOff,
     openTapTempo, registerTapTempo,
-    extHeldNotes } from './ui_record.mjs';
+    extHeldNotes, extCountInCapture } from './ui_record.mjs';
 import { clearStep, showModePopup,
     copyStep, copyDrumLane, cutDrumLane,
     doDoubleFill, doLaneDoubleFill } from './ui_editops.mjs';
@@ -558,7 +558,10 @@ function _onMidiExternalImpl(data) {
              * (ROUTE_MOVE ext without an on_midi slot -- early count-in
              * warm-up -- is dropped; in-window presses land at loop_start). */
             const isRec = !isSeqEcho && S.recordArmed && t === S.recordArmedTrack;
-            if (isRec) {
+            /* Count-in last-1/8 filter — ext notes never reach the DSP on_midi
+             * preroll (Move doesn't echo notes), so gate the capture here. */
+            const recCap = isRec && extCountInCapture();
+            if (recCap) {
                 _drumRecNoteOns.push({ track: t, laneNote: d1, vel: vel, ext: true });
                 const recLane = S.drumLaneNote[t].indexOf(d1);
                 if (recLane >= 0) {
@@ -567,7 +570,7 @@ function _onMidiExternalImpl(data) {
                     S.pendingDrumLaneResyncLane  = recLane;
                 }
             }
-            extHeldNotes.set(d1, { track: t, recording: isRec });
+            extHeldNotes.set(d1, { track: t, recording: recCap });
         } else if (msgType === 0x80 || (msgType === 0x90 && d2 === 0)) {
             const info = extHeldNotes.get(d1);
             const noteTrack = info ? info.track : t;
@@ -590,14 +593,15 @@ function _onMidiExternalImpl(data) {
          * for pitches the sequencer is already S.playing — those are echoes, not keyboard input.
          * Preserve any existing recording-active entry so the keyboard gate isn't overwritten. */
         const isSeqEcho = routeIsMove && S.seqActiveNotes.has(d1);
-        /* Queue record events regardless of count-in state (pad precedent, see
-         * the drum branch above / ui_input_pads.mjs): flush waits for the
-         * count-in->recording transition; DSP slots authoritatively filter. */
+        /* Count-in last-1/8 filter — ext notes never reach the DSP on_midi
+         * preroll (Move doesn't echo notes to MIDI_OUT), so gate the capture
+         * here; kept notes flush at the count-in->recording transition (~the one). */
         const isRec = !isSeqEcho && S.recordArmed && t === S.recordArmedTrack;
-        if (isRec) recordNoteOn(d1, vel, t, true);
+        const recCap = isRec && extCountInCapture();
+        if (recCap) recordNoteOn(d1, vel, t, true);
         const prevInfo = extHeldNotes.get(d1);
         if (!prevInfo || !prevInfo.recording || !isSeqEcho) {
-            extHeldNotes.set(d1, { track: t, recording: isRec });
+            extHeldNotes.set(d1, { track: t, recording: recCap });
         }
         if (S.heldStep >= 0 && !S.shiftHeld && !S.sessionView) {
             const ac = effectiveClip(t);
