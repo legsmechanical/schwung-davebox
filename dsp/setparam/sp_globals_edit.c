@@ -103,8 +103,16 @@ static int sp_globals_edit(sp_ctx_t *cx) {
             drum_clip_t *dsrc = inst->tracks[t].drum_clips[srcRow];
             drum_clip_t *ddst = inst->tracks[t].drum_clips[dstRow];
             int l;
-            if (!dsrc) { /* nothing to copy; free dst if allocated */
-                if (ddst) { free(ddst); inst->tracks[t].drum_clips[dstRow] = NULL; }
+            if (!dsrc) { /* nothing to copy; re-init dst lanes (keep allocated)
+                            rather than freeing to NULL — a drum track's active
+                            clip must never go NULL (crash invariant; mirrors
+                            row_cut's empty-source handling). */
+                if (ddst) {
+                    for (l = 0; l < DRUM_LANES; l++) {
+                        pfx_note_off_imm(inst, &inst->tracks[t], ddst->lanes[l].midi_note);
+                        clip_init(&ddst->lanes[l].clip);
+                    }
+                }
                 continue;
             }
             if (!ddst) { /* allocate dst */

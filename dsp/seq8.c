@@ -2826,8 +2826,15 @@ advance_l:
 static void live_note_on(seq8_instance_t *inst, seq8_track_t *tr,
                          uint8_t pitch, uint8_t vel) {
     if (tr->pad_mode == PAD_MODE_DRUM) {
+        /* Defense-in-depth: the active drum clip can transiently be NULL (the
+         * documented window between pad_mode being set and drum_clips being
+         * allocated; see dsp/CLAUDE.md render_block guard). Drop the pad hit
+         * rather than deref NULL. The alloc invariant is also enforced at the
+         * copy/cut/restore sources so this should not fire in practice. */
+        drum_clip_t *dc = tr->drum_clips[tr->active_clip];
+        if (!dc) return;
         for (int l = 0; l < DRUM_LANES; l++) {
-            if (tr->drum_clips[tr->active_clip]->lanes[l].midi_note == pitch) {
+            if (dc->lanes[l].midi_note == pitch) {
                 inst->emit_bypass_swing = 1;
                 drum_pfx_note_on(inst, tr, &tr->drum_lane_pfx[l], pitch, vel);
                 inst->emit_bypass_swing = 0;
@@ -4795,8 +4802,17 @@ static void drum_row_restore(seq8_instance_t *inst, int row,
             }
         }
         if (dc && !has_data) {
-            free(dc);
-            inst->tracks[t].drum_clips[row] = NULL;
+            /* Empty snapshot: for a drum track keep the clip allocated (clear
+             * its lanes) so active_clip never points at a freed slot — the
+             * crash invariant the live/render drum paths rely on. Only a
+             * non-drum track reclaims the memory (its drum_clips are unused). */
+            if (inst->tracks[t].pad_mode == PAD_MODE_DRUM) {
+                for (l = 0; l < DRUM_LANES; l++)
+                    clip_init(&dc->lanes[l].clip);
+            } else {
+                free(dc);
+                inst->tracks[t].drum_clips[row] = NULL;
+            }
             continue;
         }
         for (l = 0; l < DRUM_LANES; l++) {
