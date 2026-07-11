@@ -474,7 +474,6 @@ export const S = {
     currentSetUuid: '',
     currentSetName: '',
     lastDspInstanceId: '',
-    stepOpTick: -99,
     pendingSetLoad: false,
     pendingDspSync: 0,
     stateLoading: false,

@@ -1099,7 +1099,6 @@ export function _onStepButtons(d1, d2) {
     }
     if (S.tapTempoOpen) return;
     if (d2 > 0 && S.shiftTrackLEDActive) { S.shiftTrackLEDActive = false; S.screenDirty = true; }
-    S.stepOpTick = S.tickCount;
     const idx = d1 - 16;
     /* Delete+step in session view: clear perf preset or mute snapshot slot immediately. */
     if (S.sessionView && S.deleteHeld) {
@@ -1587,7 +1586,6 @@ export function _onPadRelease(status, d1, d2) {
     }
     /* Step button release: tap-toggle if within threshold, always exit step edit */
     if (d1 >= 16 && d1 <= 31) {
-        S.stepOpTick = S.tickCount;
         const btn = d1 - 16;
         /* Session view hold-to-save: if still pending (tick hasn't fired save yet) → tap recall */
         if (S.sessionStepHeld === btn) {
