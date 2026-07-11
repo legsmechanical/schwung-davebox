@@ -164,6 +164,46 @@ export function registerTapTempo(padNote) {
     S.screenDirty = true;
 }
 
+/* FINDING-1 fix (cross-track hold hangs a Move voice): a note pressed while
+ * the active track A was ROUTE_MOVE sounds NATIVELY on Move via the cable-2
+ * channel remap (JS deliberately never sends Move a release). When the remap
+ * is about to be repointed (active track / route / channel / midiInChannel
+ * change), the physical note-off can no longer reach Move on A's channel
+ * (B=Move: rewritten to B's channel; B=nonMove: BLOCKed table, off passes on
+ * the raw keyboard channel) -> stranded firmware voice. Called by the tick
+ * remap edge-detect BEFORE applyExtMidiRemap(): inject a note-off to Move for
+ * every held ext note whose track routes to Move, then drop the entry (its
+ * later physical release is moot). Musically this cuts the held note when you
+ * leave its track -- predictable, mirrors the co-run drum-hold drain
+ * (ui_corun.mjs exitMoveNativeCoRun).
+ *
+ * INJECT FORM (device-verify): cable-2 channel-voice note-off
+ * [0x28, 0x80|ch, pitch, 0] -- byte-identical to the packet the DSP's
+ * pfx_emit sends for EVERY sequenced/pad note-off on a ROUTE_MOVE track
+ * (dsp/seq8.c pfx_emit: {0x20|(status>>4), status, d1, d2}), delivered
+ * through the same host inject ring (shadow_midi.c: "cable ... 2 for external
+ * USB (general MIDI, routed to tracks by channel)"). Those releases verifiably
+ * reach Move channel voices today, including while the ext remap is active
+ * (multi-track ROUTE_MOVE playback works), so injected packets are not
+ * subject to the MIDI_IN remap. The documented cable-2 echo-cascade hazard is
+ * a note-ON re-injection feedback loop; a one-shot note-OFF at the switch
+ * edge cannot loop (its echo is channel-filtered / release-only in on_midi).
+ * NOT the cable-0 pad form ([0x08,0x80,pad,0]) -- that addresses the 68-99
+ * pad block, not a remapped channel voice. */
+export function flushHeldMoveExtNotes() {
+    if (extHeldNotes.size === 0) return;
+    for (const [pitch, info] of extHeldNotes) {
+        if (S.trackRoute[info.track] !== 1) continue;   /* Move-native voices only */
+        const ch = (S.trackChannel[info.track] - 1) & 0x0F;
+        if (typeof move_midi_inject_to_move === 'function')
+            move_midi_inject_to_move([0x28, 0x80 | ch, pitch, 0]);
+        /* Close an open recording gate at the cut point (fallback tick --
+         * the release slot won't exist; matches the audible cut). */
+        if (info.recording) recordNoteOff(pitch, true);
+        extHeldNotes.delete(pitch);
+    }
+}
+
 export function extNoteOffAll() {
     if (extHeldNotes.size === 0) return;
     for (const [pitch, info] of extHeldNotes) {

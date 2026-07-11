@@ -45,7 +45,7 @@ import { pollDSP,
     syncClipsFromDsp, syncClipsTargeted, syncMuteSoloFromDsp, restoreUiSidecar,
     liveSendNote, _drainLiveNotes,
     pendingDrumNoteOffs, _drumRecNoteOns, _drumRecNoteOffs } from './ui_dsp_bridge.mjs';
-import { disarmRecord, _recordingNoteTrack } from './ui_record.mjs';
+import { disarmRecord, _recordingNoteTrack, flushHeldMoveExtNotes } from './ui_record.mjs';
 import { xposeCancelPreview } from './ui_xpose.mjs';
 
 const BANK_DISPLAY_TICKS = 94;  /* ~1000ms at 94Hz device tick rate (was 392 = ~4.2s; constant was miscalibrated for 196Hz) */
@@ -391,6 +391,11 @@ export function _tickImpl() {
             /* TARP latch is per-track musical intent — preserved across track/
              * route/channel/MIDI-in changes. Only Stop transport and Delete+Play
              * clear it deliberately. */
+            /* BEFORE repointing the remap: release any ext notes still held on
+             * a Move-routed track. Once the table is rewritten their physical
+             * note-off can no longer reach Move on the old channel — stranded
+             * firmware voice (finding 1; see flushHeldMoveExtNotes). */
+            flushHeldMoveExtNotes();
             applyExtMidiRemap();
             S.lastRemapTrack = _rt; S.lastRemapRoute = _rr;
             S.lastRemapChannel = _rc; S.lastRemapMidiIn = _rm;
