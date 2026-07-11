@@ -16,7 +16,6 @@ import { showActionPopup } from './ui_persistence.mjs';
  * registers these as globals on shadow_ui's JS context; redeclaring them
  * here makes the dAVEBOx tool context self-contained on platforms that scope
  * globals differently. Keep in sync with docs/CORUN.md. */
-const CORUN_TARGET_NONE        = 0;
 export const CORUN_TARGET_CHAIN_EDIT  = 1;
 export const CORUN_TARGET_MOVE_NATIVE = 2;
 const CORUN_GRP_PADS           = 1 << 1;
