@@ -297,8 +297,15 @@ export function pollDSP() {
      * the DSP (they play immediately) but the on-device JS keeps its own clip
      * grid + step mirror, which would otherwise only refresh on a local action.
      * The DSP bumps rui_rev on every remote content edit (not on selection); when
-     * it changes, re-read clips from DSP so new clips + notes appear on-device.
-     * Throttled to the pollDSP cadence; zero cost while idle (rev unchanged). */
+     * it changes, re-read the changed clips from DSP so new clips + notes appear
+     * on-device. Throttled to the pollDSP cadence; zero cost while idle.
+     *
+     * TARGETED re-sync: on a rev change, read rui_dirty (a read-and-clear digest
+     * of WHICH clips changed) and re-read only those via syncClipsTargeted — a
+     * single-clip edit costs ~5 get_params instead of the full ~1,540 of
+     * syncClipsFromDsp (one per SPI frame ≈ 4.3 s frozen tick). "FULL"/null/
+     * unparseable (overflow, mixed drum+melodic, or a poll/edit race) falls back
+     * to a full sync inside syncClipsTargeted. */
     {
         const _rr = host_module_get_param('rui_rev');
         if (_rr !== null && _rr !== undefined) {
@@ -307,7 +314,7 @@ export function pollDSP() {
                 S.lastRemoteRev = _rev;
             } else if (_rev !== S.lastRemoteRev) {
                 S.lastRemoteRev = _rev;
-                syncClipsFromDsp();
+                syncClipsTargeted(host_module_get_param('rui_dirty'));
                 S.screenDirty = true;
             }
         }

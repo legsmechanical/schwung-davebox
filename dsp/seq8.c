@@ -756,6 +756,19 @@ typedef struct {
     int8_t   rui_cc_focus;   /* knob 0..7 whose CC breakpoints emit in rui_cc; -1 = none */
     uint32_t rui_rev;         /* monotonic edit counter */
 
+    /* Targeted re-sync accumulator: which clips changed since the on-device JS
+     * last read `rui_dirty`. A bumped rui_rev tells JS "something changed"; the
+     * dirty list tells it WHICH (t,c) to re-read, so a single-clip edit costs a
+     * few get_params instead of a full 128-clip syncClipsFromDsp() (~1,540
+     * round-trips ≈ 4.3 s frozen tick). `full` = scope unknown / overflow /
+     * mixed drum+melodic → JS falls back to a full sync. Read-and-cleared by the
+     * `rui_dirty` get_param. rui_mark() records a clip; rui_touch() sets full. */
+#define RUI_DIRTY_MAX 8
+    uint8_t  rui_dirty_full;                 /* 1 = JS must do a full re-sync */
+    uint8_t  rui_dirty_n;                    /* # entries in the (t,c) list */
+    uint8_t  rui_dirty_t[RUI_DIRTY_MAX];     /* touched track per entry */
+    uint8_t  rui_dirty_c[RUI_DIRTY_MAX];     /* touched clip  per entry */
+
     /* Phase 1 / Bundle 2C-Rpt2: global Delete-held flag. JS pushes the
      * edge via a single `t0_delete_held` set_param on every Delete CC
      * edge (per-track-shaped key, but read here at instance level —
@@ -3616,8 +3629,29 @@ static int clip_insert_note(clip_t *cl, uint32_t tick, uint16_t gate,
 /* safe (same contract clip_migrate_to_notes already relies on).        */
 /* ------------------------------------------------------------------ */
 
-/* Bump the remote-UI revision so the browser notices device/remote edits. */
-static inline void rui_touch(seq8_instance_t *inst) { if (inst) inst->rui_rev++; }
+/* Bump the remote-UI revision so the browser notices device/remote edits, and
+ * mark for a FULL on-device re-sync (scope unknown). Use rui_mark() instead when
+ * the touched clip is known — it lets the on-device JS re-read just that clip. */
+static inline void rui_touch(seq8_instance_t *inst) {
+    if (!inst) return;
+    inst->rui_rev++;
+    inst->rui_dirty_full = 1;
+}
+
+/* Bump the revision AND record clip (t,c) as dirty for a targeted on-device
+ * re-sync. Dedups; on overflow or an already-full state, degrades to full. */
+static inline void rui_mark(seq8_instance_t *inst, int t, int c) {
+    if (!inst) return;
+    inst->rui_rev++;
+    if (inst->rui_dirty_full) return;
+    if (t < 0 || t >= NUM_TRACKS || c < 0 || c >= NUM_CLIPS) { inst->rui_dirty_full = 1; return; }
+    for (uint8_t i = 0; i < inst->rui_dirty_n; i++)
+        if (inst->rui_dirty_t[i] == (uint8_t)t && inst->rui_dirty_c[i] == (uint8_t)c) return;
+    if (inst->rui_dirty_n >= RUI_DIRTY_MAX) { inst->rui_dirty_full = 1; return; }
+    inst->rui_dirty_t[inst->rui_dirty_n] = (uint8_t)t;
+    inst->rui_dirty_c[inst->rui_dirty_n] = (uint8_t)c;
+    inst->rui_dirty_n++;
+}
 
 /* Find an active note by exact tick+pitch. Returns index or -1. */
 static int clip_find_note(clip_t *cl, uint32_t tick, uint8_t pitch) {
@@ -3699,11 +3733,13 @@ static int clip_note_apply_op(clip_t *cl, char op, const char *args) {
     return 0;
 }
 
-/* Commit note edits: reclaim tombstones, re-derive the step/LED view, mark dirty. */
-static void clip_note_finalize(seq8_instance_t *inst, clip_t *cl) {
+/* Commit note edits: reclaim tombstones, re-derive the step/LED view, mark dirty.
+ * (t,c) = the clip being finalized so the on-device JS re-syncs just it (drum
+ * callers pass the active drum-clip index). */
+static void clip_note_finalize(seq8_instance_t *inst, clip_t *cl, int t, int c) {
     clip_compact_notes(cl);
     clip_build_steps_from_notes(cl);
-    rui_touch(inst);
+    rui_mark(inst, t, c);
     inst->state_dirty = 1;
 }
 
@@ -5578,12 +5614,45 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
     }
 
     if (!strcmp(key, "rui_rev")) {
-        /* Cheap monotonic edit counter, bumped by rui_touch() on every remote
-         * content edit (note/lane/length/dir/pfx) — NOT on mere clip selection.
-         * The on-device JS polls this each pollDSP cycle and re-syncs its clip
-         * grid + step view from DSP when it changes, so remote edits (new clips,
-         * added notes) become visible on-device without a local action. */
+        /* Cheap monotonic edit counter, bumped by rui_mark()/rui_touch() on every
+         * remote content edit (note/lane/length/dir/pfx) — NOT on mere clip
+         * selection. The on-device JS polls this each pollDSP cycle and, when it
+         * changes, reads rui_dirty (below) to re-sync only the changed clips. */
         return snprintf(out, out_len, "%u", (unsigned)inst->rui_rev);
+    }
+
+    if (!strcmp(key, "rui_dirty")) {
+        /* Read-and-clear targeted-resync digest. Meaningful only when rui_rev
+         * changed (the JS gates on that). Emits a syncClipsTargeted infoStr:
+         * "m t c ..." (all-melodic), "d t c ..." (all-drum), or "FULL" (scope
+         * unknown / overflow / mixed drum+melodic → JS does a full re-sync).
+         * Clearing the accumulator makes each edit re-sync exactly once; a rare
+         * poll/edit race that reads it empty degrades to a safe full sync. */
+        int len;
+        if (inst->rui_dirty_full || inst->rui_dirty_n == 0) {
+            len = snprintf(out, out_len, "FULL");
+        } else {
+            int drum = 0, mel = 0;
+            for (uint8_t i = 0; i < inst->rui_dirty_n; i++) {
+                int dt = inst->rui_dirty_t[i];
+                if (dt >= 0 && dt < NUM_TRACKS &&
+                    inst->tracks[dt].pad_mode == PAD_MODE_DRUM) drum++;
+                else mel++;
+            }
+            if (drum && mel) {
+                len = snprintf(out, out_len, "FULL");
+            } else {
+                int n = snprintf(out, out_len, "%c", drum ? 'd' : 'm');
+                for (uint8_t i = 0; i < inst->rui_dirty_n && n > 0 && n < (int)out_len; i++)
+                    n += snprintf(out + n, (size_t)((int)out_len - n), " %u %u",
+                                  (unsigned)inst->rui_dirty_t[i],
+                                  (unsigned)inst->rui_dirty_c[i]);
+                len = n;
+            }
+        }
+        inst->rui_dirty_full = 0;
+        inst->rui_dirty_n    = 0;
+        return len;
     }
 
     if (!strcmp(key, "rui_poll")) {

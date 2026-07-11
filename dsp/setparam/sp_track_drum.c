@@ -51,12 +51,12 @@ static int sp_track_drum(sp_ctx_t *cx) {
         }
 
         /* Remote-UI drum-grid edits (monophonic lane; pitch = lane note). */
-        if (!strcmp(p2, "_note_toggle")) { if (lane_note_apply_op(dlc, dlane->midi_note, 't', val)) clip_note_finalize(inst, dlc); return 1; }
-        if (!strcmp(p2, "_note_add"))    { if (lane_note_apply_op(dlc, dlane->midi_note, 'a', val)) clip_note_finalize(inst, dlc); return 1; }
-        if (!strcmp(p2, "_note_del"))    { if (lane_note_apply_op(dlc, dlane->midi_note, 'd', val)) clip_note_finalize(inst, dlc); return 1; }
-        if (!strcmp(p2, "_note_vel"))    { if (lane_note_apply_op(dlc, dlane->midi_note, 'v', val)) clip_note_finalize(inst, dlc); return 1; }
-        if (!strcmp(p2, "_note_resize")) { if (lane_note_apply_op(dlc, dlane->midi_note, 'r', val)) clip_note_finalize(inst, dlc); return 1; }
-        if (!strcmp(p2, "_note_move"))   { if (lane_note_apply_op(dlc, dlane->midi_note, 'm', val)) clip_note_finalize(inst, dlc); return 1; }
+        if (!strcmp(p2, "_note_toggle")) { if (lane_note_apply_op(dlc, dlane->midi_note, 't', val)) clip_note_finalize(inst, dlc, tidx, (int)tr->active_clip); return 1; }
+        if (!strcmp(p2, "_note_add"))    { if (lane_note_apply_op(dlc, dlane->midi_note, 'a', val)) clip_note_finalize(inst, dlc, tidx, (int)tr->active_clip); return 1; }
+        if (!strcmp(p2, "_note_del"))    { if (lane_note_apply_op(dlc, dlane->midi_note, 'd', val)) clip_note_finalize(inst, dlc, tidx, (int)tr->active_clip); return 1; }
+        if (!strcmp(p2, "_note_vel"))    { if (lane_note_apply_op(dlc, dlane->midi_note, 'v', val)) clip_note_finalize(inst, dlc, tidx, (int)tr->active_clip); return 1; }
+        if (!strcmp(p2, "_note_resize")) { if (lane_note_apply_op(dlc, dlane->midi_note, 'r', val)) clip_note_finalize(inst, dlc, tidx, (int)tr->active_clip); return 1; }
+        if (!strcmp(p2, "_note_move"))   { if (lane_note_apply_op(dlc, dlane->midi_note, 'm', val)) clip_note_finalize(inst, dlc, tidx, (int)tr->active_clip); return 1; }
         if (!strcmp(p2, "_mute")) {
             uint32_t bit = 1u << (uint32_t)lane_idx;
             if (my_atoi(val)) {

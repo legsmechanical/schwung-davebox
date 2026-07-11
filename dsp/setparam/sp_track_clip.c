@@ -14,8 +14,8 @@
  * block CONSUMES it even if the sub-op is unknown, so unmatched tN_cC_*
  * keys never leak to the pfx catch-all in sp_track_misc. Returns 0 only
  * when sub is not a clip key, to fall through to the sibling tN_ handlers.
- * Carries the _length rui_rev freeze-fix verbatim (the
- * `if (!tr->recording) rui_touch(inst);` guard, pinned by test_rui_rev).
+ * Carries the _length rui_rev freeze-fix (the
+ * `if (!tr->recording) rui_mark(inst, tidx, cidx);` guard, pinned by test_rui_rev).
  * The tN_ guard and the tidx/sub/tr locals live in the parent dispatcher
  * now (seq8_set_param.c). */
 static int sp_track_clip(sp_ctx_t *cx) {
@@ -52,17 +52,17 @@ static int sp_track_clip(sp_ctx_t *cx) {
         if (!strcmp(p, "_cc_focus")) {
             int k = val ? my_atoi(val) : -1;
             inst->rui_cc_focus = (k >= 0 && k < 8) ? (int8_t)k : -1;
-            rui_touch(inst);
+            rui_mark(inst, tidx, cidx);
             return 1;
         }
 
         /* Remote-UI piano-roll note edits (melodic clip). Each writes notes[]
          * directly then re-derives steps[] via clip_note_finalize. */
-        if (!strcmp(p, "_note_add"))    { if (clip_note_apply_op(cl, 'a', val)) clip_note_finalize(inst, cl); return 1; }
-        if (!strcmp(p, "_note_del"))    { if (clip_note_apply_op(cl, 'd', val)) clip_note_finalize(inst, cl); return 1; }
-        if (!strcmp(p, "_note_move"))   { if (clip_note_apply_op(cl, 'm', val)) clip_note_finalize(inst, cl); return 1; }
-        if (!strcmp(p, "_note_resize")) { if (clip_note_apply_op(cl, 'r', val)) clip_note_finalize(inst, cl); return 1; }
-        if (!strcmp(p, "_note_vel"))    { if (clip_note_apply_op(cl, 'v', val)) clip_note_finalize(inst, cl); return 1; }
+        if (!strcmp(p, "_note_add"))    { if (clip_note_apply_op(cl, 'a', val)) clip_note_finalize(inst, cl, tidx, cidx); return 1; }
+        if (!strcmp(p, "_note_del"))    { if (clip_note_apply_op(cl, 'd', val)) clip_note_finalize(inst, cl, tidx, cidx); return 1; }
+        if (!strcmp(p, "_note_move"))   { if (clip_note_apply_op(cl, 'm', val)) clip_note_finalize(inst, cl, tidx, cidx); return 1; }
+        if (!strcmp(p, "_note_resize")) { if (clip_note_apply_op(cl, 'r', val)) clip_note_finalize(inst, cl, tidx, cidx); return 1; }
+        if (!strcmp(p, "_note_vel"))    { if (clip_note_apply_op(cl, 'v', val)) clip_note_finalize(inst, cl, tidx, cidx); return 1; }
         if (!strcmp(p, "_notes_op")) {
             /* batch: "<op> args; <op> args; ..." — one finalize for the lot */
             const char *s = val; int changed = 0;
@@ -74,7 +74,7 @@ static int sp_track_clip(sp_ctx_t *cx) {
                 changed |= clip_note_apply_op(cl, op, s);
                 while (*s && *s != ';') s++;   /* advance to next ';' */
             }
-            if (changed) clip_note_finalize(inst, cl);
+            if (changed) clip_note_finalize(inst, cl, tidx, cidx);
             return 1;
         }
 
@@ -103,7 +103,7 @@ static int sp_track_clip(sp_ctx_t *cx) {
                 if (tr->tick_in_step >= new_tps) tr->tick_in_step = 0;
             }
             clip_build_steps_from_notes(cl);
-            rui_touch(inst);
+            rui_mark(inst, tidx, cidx);
             inst->state_dirty = 1;
             return 1;
         }
@@ -413,7 +413,7 @@ static int sp_track_clip(sp_ctx_t *cx) {
             cl->playback_dir = (uint8_t)clamp_i(my_atoi(val), 0, 3);
             cl->pp_dir_state = initial_pp_dir(cl->playback_dir);
             if (cidx == (int)tr->active_clip) silence_track_from_set_param(inst, tr);
-            rui_touch(inst);
+            rui_mark(inst, tidx, cidx);
             inst->state_dirty = 1;
             return 1;
         }
@@ -449,7 +449,8 @@ static int sp_track_clip(sp_ctx_t *cx) {
              * rev bump too; accepted (recorded notes never bumped rev
              * either, so live takes are already rev-invisible until the
              * next edit). */
-            if (!tr->recording) rui_touch(inst);
+            if (!tr->recording) rui_mark(inst, tidx, cidx);
+            inst->state_dirty = 1;   /* persist the length edit (was missing) */
             return 1;
         }
         if (!strncmp(p, "_loop_set", 9) && p[9] == '\0') {
@@ -622,7 +623,7 @@ static int sp_track_clip(sp_ctx_t *cx) {
             pfx_set(inst, tr, &cl->pfx_params, pfx_key, sp);
             if ((int)tr->active_clip == cidx)
                 pfx_sync_from_clip(tr);
-            rui_touch(inst);
+            rui_mark(inst, tidx, cidx);
             inst->state_dirty = 1;
             return 1;
         }
