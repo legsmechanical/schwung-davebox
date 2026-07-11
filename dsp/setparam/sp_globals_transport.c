@@ -20,10 +20,6 @@ static int sp_globals_transport(sp_ctx_t *cx) {
     const char *key = cx->key;
     const char *val = cx->val;
 
-    /* Body below kept at its Stage-A segment indentation (4 spaces) so it
-     * byte-diffs against the pre-conversion segment; reindent only in a
-     * dedicated cleanup pass after the group is device-blessed. */
-
     if (!strcmp(key, "transport")) {
         /* play_focus:T:C — same as "play" but ARM the focused track's
          * clip to launch on this transport-start: sets will_relaunch=1

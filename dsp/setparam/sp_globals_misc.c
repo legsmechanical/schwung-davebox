@@ -15,10 +15,6 @@ static int sp_globals_misc(sp_ctx_t *cx) {
     const char *key = cx->key;
     const char *val = cx->val;
 
-    /* Body below kept at its Stage-A segment indentation (4 spaces) so it
-     * byte-diffs against the pre-conversion segment; reindent only in a
-     * dedicated cleanup pass after the group is device-blessed. */
-
     if (!strcmp(key, "looper_arm")) {
         int t = clamp_i(my_atoi(val), 1, 65535);
         if (inst->looper_state == LOOPER_STATE_LOOPING) {

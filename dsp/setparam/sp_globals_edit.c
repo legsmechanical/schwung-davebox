@@ -16,10 +16,6 @@ static int sp_globals_edit(sp_ctx_t *cx) {
     const char *key = cx->key;
     const char *val = cx->val;
 
-    /* Body below kept at its Stage-A segment indentation (4 spaces) so it
-     * byte-diffs against the pre-conversion segment; reindent only in a
-     * dedicated cleanup pass after the group is device-blessed. */
-
     if (!strcmp(key, "clip_copy")) {
         const char *p = val;
         int nums[4], i;
