@@ -12,18 +12,6 @@ import {
 } from '/data/UserData/schwung/shared/constants.mjs';
 
 import {
-    Blue,
-    HotMagenta,
-    Cyan,
-    Purple,
-    DarkPurple,
-    Bright,
-    BurntOrange,
-    SkyBlue,
-    DeepBlue
-} from '/data/UserData/schwung/shared/constants.mjs';
-
-import {
     setButtonLED,
     isNoiseMessage
 } from '/data/UserData/schwung/shared/input_filter.mjs';
@@ -33,52 +21,30 @@ import {
 } from '/data/UserData/schwung/shared/logger.mjs';
 
 import {
-    createInfo, formatItemValue
-} from '/data/UserData/schwung/shared/menu_items.mjs';
-
-import {
-    drawMenuHeader, drawMenuList, menuLayoutDefaults
-} from '/data/UserData/schwung/shared/menu_layout.mjs';
-
-import {
     MoveNoteSession, MoveMainTouch,
-    MoveMainButton, MoveMainKnob,
-    LED_OFF, LED_STEP_ACTIVE, LED_STEP_CURSOR, SCENE_BTN_FLASH_TICKS,
+    MoveMainKnob,
+    LED_OFF,
     NUM_TRACKS,
-    FLAG_JUMP_TO_OVERTAKE, FLAG_JUMP_TO_TOOLS,
-    TRACK_COLORS, TRACK_DIM_COLORS, TRACK_PAD_BASE, TOP_PAD_BASE,
-    DELAY_LABELS,
-    fmtLgto, fmtNote, fmtPages,
-    fmtDly, fmtPlain,
-    fmtArpStyle, fmtArpSteps, fmtArpOct,
-    MCUFONT, pixelPrintC,
-    BANKS, PAD_MODE_DRUM,
-    TAP_TEMPO_FLASH_TICKS,
-    PARAM_LED_BANKS
+    TRACK_PAD_BASE,
+    BANKS, PAD_MODE_DRUM
 } from './ui_constants.mjs';
 
 import { S } from './ui_state.mjs';
-import { drumPadToLane, drumPadToVelZone, drumVelZoneToVelocity, _clipIsEmpty, clipHasContent,
-    effectiveVelocity } from './ui_pure.mjs';
+import { clipHasContent, effectiveVelocity } from './ui_pure.mjs';
 import { showActionPopup, readActiveSet, maybeShowInheritPicker } from './ui_persistence.mjs';
 import {
     closeClearAutoMenu
 } from './ui_dialogs.mjs';
-import { computePadNoteMap,
-    setActiveDrumLane, setDrumPerformMode } from './ui_drummodel.mjs';
-import { effectiveClip, invalidateLEDCache, trackColor, trackDimColor, forceRedraw, PERF_MOD_PAD_MAP, installFlagsWrap, buildLedInitQueue } from './ui_leds.mjs';
-import { exitMoveNativeCoRun, assertOvertakeSysexSuppress } from './ui_corun.mjs';
+import { computePadNoteMap } from './ui_drummodel.mjs';
+import { effectiveClip, invalidateLEDCache, trackColor, forceRedraw, installFlagsWrap, buildLedInitQueue } from './ui_leds.mjs';
+import { assertOvertakeSysexSuppress } from './ui_corun.mjs';
 import { applyTrackConfig,
     refreshSeqNotesIfCurrent,
     syncClipsFromDsp, syncMuteSoloFromDsp, restoreUiSidecar,
     liveSendNote,
     _drumRecNoteOns, _drumRecNoteOffs } from './ui_dsp_bridge.mjs';
 import { recordNoteOn, recordNoteOff,
-    openTapTempo, registerTapTempo,
     extHeldNotes, extCountInCapture } from './ui_record.mjs';
-import { clearStep, showModePopup,
-    copyStep, copyDrumLane, cutDrumLane,
-    doDoubleFill, doLaneDoubleFill } from './ui_editops.mjs';
 import { _onPadPress, _onPadRelease, _onPadAftertouch, _onStepButtons } from './ui_input_pads.mjs';
 import { _onCCMsg } from './ui_input_cc.mjs';
 import { _tickImpl, applyExtMidiRemap } from './ui_tick.mjs';

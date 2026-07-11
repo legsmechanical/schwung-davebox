@@ -2,9 +2,9 @@ import { S } from './ui_state.mjs';
 import {
     NUM_STEPS, NUM_TRACKS, LED_OFF, LEDS_PER_FRAME,
     TRACK_COLORS, TRACK_DIM_COLORS, TRACK_PAD_BASE, SCENE_BTN_FLASH_TICKS,
-    PAD_MODE_DRUM, PAD_MODE_CONDUCT, BANKS,
+    PAD_MODE_DRUM, BANKS,
     POLL_INTERVAL, TAP_TEMPO_FLASH_TICKS, PARAM_LED_BANKS,
-    CC_GRADIENT_BASE, CC_GRADIENT_LEVELS, SEQ8_NAV_FLAGS
+    SEQ8_NAV_FLAGS
 } from './ui_constants.mjs';
 import { trackClipHasContent, updateSceneMapLEDs } from './ui_scene.mjs';
 import {
