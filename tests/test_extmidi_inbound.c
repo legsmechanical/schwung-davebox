@@ -22,11 +22,13 @@
  *              incl. seq-echo gate)
  *   EXT_INC 2  cases 11-14 (Path B ext-origin tokens: eon/eoff live +
  *              e-marked record; pad single-fire + stamped-timing pins)
+ *   EXT_INC 3  cases 15-16 (count-in / preroll record semantics: ext+no-slot
+ *              is route-split -- ROUTE_MOVE drop, non-Move fallback)
  */
 #include "harness.h"
 
 #ifndef EXT_INC
-#define EXT_INC 2   /* highest implemented increment; bumped per increment */
+#define EXT_INC 3   /* highest implemented increment; bumped per increment */
 #endif
 
 /* Per-note ext marker on record payloads: introduced with the Path B
@@ -453,6 +455,71 @@ static void case14_mixed_batch(void) {
 }
 #endif /* EXT_INC >= 2 */
 
+#if EXT_INC >= 3
+/* Case 15: count-in preroll record semantics on ROUTE_MOVE (Path A).
+ * JS now queues ext notes DURING count-in (pad precedent) and flushes them at
+ * the count-in->recording transition; the DSP slot state is authoritative:
+ *   - press inside the last-1/8 window -> slot stamped at loop_start ->
+ *     the flushed e-marked push lands ON THE ONE (loop_start tick);
+ *   - press earlier in count-in -> no slot -> the push must be DROPPED
+ *     (preroll filter preserved). This is the route-split rule: ext+no-slot
+ *     on ROUTE_MOVE = authoritatively filtered by on_midi (its echo delivery
+ *     is guaranteed there), NOT a fallback. */
+static void case15_countin_routemove(void) {
+    hx_t *h = hx_create(NULL);
+    seq8_instance_t *inst = (seq8_instance_t *)h->inst;
+    seq8_track_t *tr = arm_melodic(h, 1);
+    inst->count_in_track = 1;
+    tr->recording = 0;
+
+    /* Early warm-up press: outside the window -> no slot. */
+    inst->count_in_ticks = PPQN;
+    ext_on(h, 1, 64, 100);
+    HX_ASSERT(inst->on_midi_press_active[1][64] == 0, "c15 early press must not stamp");
+    /* In-window press: stamped at loop_start (=0). */
+    inst->count_in_ticks = PPQN / 2;
+    ext_on(h, 1, 65, 100);
+    HX_ASSERT(inst->on_midi_press_active[1][65] == 1, "c15 window press stamped");
+
+    /* Count-in completes -> recording; JS flushes the accumulated queue. */
+    inst->count_in_ticks = 0;
+    tr->recording = 1;
+    tr->current_clip_tick = 7;   /* whatever tick the flush lands on */
+    hx_set_param(h, "t1_record_note_on", "e64 100 e65 100");
+
+    note_t *n64 = find_note(&tr->clips[tr->active_clip], 64);
+    note_t *n65 = find_note(&tr->clips[tr->active_clip], 65);
+    HX_ASSERT(n64 == NULL,
+              "c15 early count-in ext press must be DROPPED on ROUTE_MOVE (preroll filter)");
+    HX_ASSERT(n65 != NULL, "c15 window ext press must land");
+    HX_ASSERT(n65->tick == 0, "c15 window ext press must land at loop_start (the one)");
+    hx_destroy(h);
+    printf("PASS: extmidi case15 (count-in preroll, ROUTE_MOVE: window->one, early->dropped)\n");
+}
+
+/* Case 16: the same no-slot ext push on a NON-Move track still takes the
+ * fallback tick (Path B has no on_midi delivery -- nothing to filter against).
+ * Pins the route split of the ext no-slot rule. */
+static void case16_countin_pathb(void) {
+    hx_t *h = hx_create(NULL);
+    seq8_instance_t *inst = (seq8_instance_t *)h->inst;
+    seq8_track_t *tr = &inst->tracks[4];   /* ROUTE_SCHWUNG melodic */
+    hx_set_param(h, "t4_padmap", MAP32);
+    HX_ASSERT(tr->pfx.route == ROUTE_SCHWUNG, "c16 t4 expected ROUTE_SCHWUNG");
+    /* Ext press during count-in never reached on_midi (shim BLOCK) -> no slot.
+     * JS queued it; at the transition the flush lands it at the fallback tick
+     * (~ loop start at that moment). */
+    tr->recording = 1;
+    tr->current_clip_tick = 5;
+    hx_set_param(h, "t4_record_note_on", "e66 100");
+    note_t *n = find_note(&tr->clips[tr->active_clip], 66);
+    HX_ASSERT(n != NULL, "c16 non-Move ext push must still land (fallback)");
+    HX_ASSERT(n->tick == 5, "c16 non-Move ext push at fallback tick");
+    hx_destroy(h);
+    printf("PASS: extmidi case16 (count-in Path B: no-slot ext falls back, not dropped)\n");
+}
+#endif /* EXT_INC >= 3 */
+
 int main(void) {
     case10_stock_fallback();
 #if EXT_INC >= 1
@@ -471,6 +538,10 @@ int main(void) {
     case12_pad_single_fire_nonmove();
     case13_pad_record_stamp_nonmove();
     case14_mixed_batch();
+#endif
+#if EXT_INC >= 3
+    case15_countin_routemove();
+    case16_countin_pathb();
 #endif
     printf("PASS: test_extmidi_inbound (EXT_INC=%d)\n", EXT_INC);
     return 0;

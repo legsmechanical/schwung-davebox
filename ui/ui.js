@@ -551,7 +551,13 @@ function _onMidiExternalImpl(data) {
             S.lastPadVelocity = vel;
             if (!routeIsMove) liveSendNote(t, 0x90, d1, vel, false, true);
             const isSeqEcho = routeIsMove && S.seqActiveNotes.has(d1);
-            const isRec = !isSeqEcho && S.recordArmed && !S.recordCountingIn && t === S.recordArmedTrack;
+            /* Queue record events regardless of count-in state (pad precedent,
+             * ui_input_pads.mjs): the tick flush is gated on !S.recordCountingIn
+             * so entries accumulate during count-in and drain at the
+             * count-in->recording transition; the DSP authoritatively filters
+             * (ROUTE_MOVE ext without an on_midi slot -- early count-in
+             * warm-up -- is dropped; in-window presses land at loop_start). */
+            const isRec = !isSeqEcho && S.recordArmed && t === S.recordArmedTrack;
             if (isRec) {
                 _drumRecNoteOns.push({ track: t, laneNote: d1, vel: vel, ext: true });
                 const recLane = S.drumLaneNote[t].indexOf(d1);
@@ -566,7 +572,7 @@ function _onMidiExternalImpl(data) {
             const info = extHeldNotes.get(d1);
             const noteTrack = info ? info.track : t;
             if (S.trackRoute[noteTrack] !== 1) liveSendNote(noteTrack, 0x80, d1, 0, false, true);
-            if (info && info.recording && S.recordArmed && !S.recordCountingIn)
+            if (info && info.recording && S.recordArmed)
                 _drumRecNoteOffs.push({ track: noteTrack, laneNote: d1, ext: true });
             extHeldNotes.delete(d1);
         } else if (msgType === 0xB0 || msgType === 0xD0 || msgType === 0xA0 || msgType === 0xE0) {
@@ -584,7 +590,10 @@ function _onMidiExternalImpl(data) {
          * for pitches the sequencer is already S.playing — those are echoes, not keyboard input.
          * Preserve any existing recording-active entry so the keyboard gate isn't overwritten. */
         const isSeqEcho = routeIsMove && S.seqActiveNotes.has(d1);
-        const isRec = !isSeqEcho && S.recordArmed && !S.recordCountingIn && t === S.recordArmedTrack;
+        /* Queue record events regardless of count-in state (pad precedent, see
+         * the drum branch above / ui_input_pads.mjs): flush waits for the
+         * count-in->recording transition; DSP slots authoritatively filter. */
+        const isRec = !isSeqEcho && S.recordArmed && t === S.recordArmedTrack;
         if (isRec) recordNoteOn(d1, vel, t, true);
         const prevInfo = extHeldNotes.get(d1);
         if (!prevInfo || !prevInfo.recording || !isSeqEcho) {
