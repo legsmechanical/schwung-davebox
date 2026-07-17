@@ -261,9 +261,8 @@ cycle, with the active bank's segment gently flashing. While a knob is being
 turned the bar drops out and the parameter name shows centered in white, with a
 solid rule beneath. Jog navigation
 order is unchanged (melodic: CLIP → NOTE FX → HARMONY → DELAY → SEQ ARP →
-ARP IN → AUTO; drum: DRUM LANE → NOTE FX → DELAY → ALL LANES → REPEAT GROOVE →
-AUTO). Secondary banks (ARP IN, AUTO) draw their header white-on-black instead
-of as a filled bar; Conductor headers blink a "C-" prefix as before.
+LIVE ARP → AUTO; drum: DRUM LANE → NOTE FX → DELAY → ALL LANES → REPEAT GROOVE →
+AUTO). Conductor headers blink a "C-" prefix as before.
 
 ## Switching tracks while playing
 
@@ -290,7 +289,7 @@ buttons:
 | 8 | Drum: cycle right-pad mode (Vel/Rpt1/Rpt2). Melodic: toggle chromatic layout |
 | 9 | Open Global Menu at Scale |
 | 10 | VelIn toggle (Live ↔ Fixed 100) |
-| 11 | ARP IN on/off (melodic only) |
+| 11 | LIVE ARP on/off (melodic only) |
 | 15 | Double-and-fill loop |
 | 16 | Quantize active clip 100% |
 
@@ -351,7 +350,7 @@ A track is one of three types, set by **Mode** in [Track Config](#171-track-conf
 | Pad grid | Plays scale-snapped notes | Left 4×4 = 32 drum lanes (banked A/B); right 4×4 = function area |
 | Step pattern | One pattern per clip | One pattern per lane within each clip |
 | Per-lane loops | No | Yes — each lane can loop independently (polyrhythm) |
-| Available banks | CLIP, NOTE FX, HARMONY, DELAY, SEQ ARP, ARP IN, AUTO | DRUM LANE, NOTE FX, DELAY, ALL LANES, REPEAT GROOVE, AUTO |
+| Available banks | CLIP, NOTE FX, HARMONY, DELAY, SEQ ARP, LIVE ARP, AUTO | DRUM LANE, NOTE FX, DELAY, ALL LANES, REPEAT GROOVE, AUTO |
 
 ## 5.2 Switching type converts your notes
 
@@ -706,7 +705,7 @@ has no bake action and exports as a silent dummy track.
 The knobs control different things depending on which parameter bank is active.
 Rotate the **jog wheel** to cycle through banks:
 
-- **Melodic tracks:** CLIP, NOTE FX, HARMONY, DELAY, SEQ ARP, ARP IN, AUTO
+- **Melodic tracks:** CLIP, NOTE FX, HARMONY, DELAY, SEQ ARP, LIVE ARP, AUTO
 - **Drum tracks:** DRUM LANE, NOTE FX, DELAY, ALL LANES, REPEAT GROOVE, AUTO
 
 This part covers them all:
@@ -714,7 +713,7 @@ This part covers them all:
 - **Chapter 9 — Clip & Lane Banks** (CLIP, DRUM LANE, ALL LANES): timing grid,
   playback direction, and note transformations. Most of these changes are
   permanent and directly alter your sequenced notes (use Undo to revert).
-- **Chapter 10 — Effects Banks** (NOTE FX, HARMONY, DELAY, SEQ ARP, ARP IN):
+- **Chapter 10 — Effects Banks** (NOTE FX, HARMONY, DELAY, SEQ ARP, LIVE ARP):
   non-destructive transformations applied at playback time.
 - **Chapter 11 — Automation** (AUTO): recordable CC / aftertouch lanes.
 
@@ -732,7 +731,7 @@ switching tracks returns to the primary function.
 | Control | Result |
 |---|---|
 | Delete + jog click | Reset all params in the active bank |
-| Shift + Delete + jog click | Reset all effect params across every bank (preserves ARP IN) |
+| Shift + Delete + jog click | Reset all effect params across every bank (preserves LIVE ARP) |
 | Shift + Delete + side clip | Hard reset clip: clears notes and all params |
 
 ---
@@ -825,19 +824,19 @@ Every note — sequenced, played live, or from external MIDI — passes through 
 same effects chain before reaching a sound source:
 
 ```
- LIVE INPUT ──> [ARP IN] ──┐
+ LIVE INPUT ──> [LIVE ARP] ──┐
                             ├─> NOTE FX ─> HARMONY ─> DELAY ─> SEQ ARP ─> OUTPUT
  SEQUENCED NOTES ───────────┘
 ```
 
-- **ARP IN** processes live input only. Sequenced notes skip it.
+- **LIVE ARP** processes live input only. Sequenced notes skip it.
 - After the chain, global **Swing** is applied.
 - If Performance Mode is active, its mods apply last.
 
 All effects are **non-destructive** — they transform notes at playback time
 without changing the underlying sequenced data. Returning a knob to its default
 leaves the clip unchanged. NOTE FX, HARMONY, DELAY, and SEQ ARP settings are
-**per-clip**. ARP IN is **per-track**.
+**per-clip**. LIVE ARP is **per-track**.
 
 ## 10.1 NOTE FX bank
 
@@ -902,7 +901,7 @@ per-step pitch offsets (±24 scale degrees). Pads are a step-velocity editor (8
 columns × 4 rows). **Loop + pad** sets step-loop length (1–8). Jog click, jog
 turn, or Note/Session exits. State is per-clip.
 
-## 10.5 ARP IN bank (melodic only)
+## 10.5 LIVE ARP bank (melodic only)
 
 Live arpeggiator for pad input and external MIDI. **Per-track**, not per-clip.
 Does not affect sequenced notes. Drum tracks use [Note Repeat](#74-note-repeat)
@@ -920,7 +919,7 @@ instead.
 | K8 | Ltch | Latch — arp runs after release. First touch of a new gesture replaces the latched set; additional presses add notes. | On/Off | Off |
 
 **Latch shortcuts:**
-- While holding pads with ARP IN active, tap **Loop** to toggle latch.
+- While holding pads with LIVE ARP active, tap **Loop** to toggle latch.
 - **Delete + Loop** also unlatches.
 - Tap **Loop with no pads held** (latch already on): clears the latched chord
   without turning latch off.
@@ -933,9 +932,9 @@ Delete + Play, and Session View entry (active track only). Muting silences latch
 output but preserves the latch.
 
 **Arp Steps editor:** same as SEQ ARP — jog click to enter. State is per-track for
-ARP IN.
+LIVE ARP.
 
-Quick toggle: **Shift + Step 11** flips ARP IN on/off using the last-used style.
+Quick toggle: **Shift + Step 11** flips LIVE ARP on/off using the last-used style.
 
 ---
 
@@ -1343,7 +1342,7 @@ clears after first paste).
 | Delete + lane pad (drum) | Clear lane notes |
 | Shift + Delete + lane pad | Hard reset lane (MIDI note preserved) |
 | Delete + jog click | Reset active bank params |
-| Shift + Delete + jog click | Reset all play-FX (preserves ARP IN) |
+| Shift + Delete + jog click | Reset all play-FX (preserves LIVE ARP) |
 | Delete + clip pad (Session) | Delete clip |
 | Delete + scene launcher | Clear notes in row |
 | Shift + Delete + scene launcher | Hard reset row |
@@ -1464,12 +1463,12 @@ to the active track's channel.
 ## 16.4 External MIDI output
 
 When Route = External, all MIDI goes out via USB-A: sequencer, live pads, external
-echo, effects, ARP IN, Performance Mode. Multiple tracks can route External for
+echo, effects, LIVE ARP, Performance Mode. Multiple tracks can route External for
 multi-timbral setups.
 
-**Transport Stop** sends note-offs and clears ARP IN latches on all tracks.
+**Transport Stop** sends note-offs and clears LIVE ARP latches on all tracks.
 **Delete + Play (stopped)** sends MIDI panic on all channels and clears Rpt1,
-Rpt2, and ARP IN latches. **Delete + Play (running)** deactivates all clips and
+Rpt2, and LIVE ARP latches. **Delete + Play (running)** deactivates all clips and
 clears latches.
 
 ## 16.5 CC and aftertouch output
@@ -1636,7 +1635,7 @@ Auto-saves on suspend (Back) and exit (Shift+Back / Quit).
 - Per-track active bank and pad layout (Scale / Chrom)
 - Global settings (BPM, key, scale, swing, launch quant, metro, etc.)
 - Mute/solo state and all 16 snapshots
-- ARP IN state (latch clears on Stop/Delete+Play/Session entry but persists across
+- LIVE ARP state (latch clears on Stop/Delete+Play/Session entry but persists across
   track switches)
 - Performance Mode presets, latched mods
 - Note Repeat gate masks, grooves, per-lane rates
@@ -1712,7 +1711,7 @@ that set the next time it launches.
 | 8 | Chromatic toggle (melodic) / cycle right-pad mode (drum) | Track |
 | 9 | Scale | Both |
 | 10 | VelIn toggle (Live ↔ 100) | Track |
-| 11 | ARP IN on/off | Track (melodic) |
+| 11 | LIVE ARP on/off | Track (melodic) |
 | 15 | Double-and-fill loop | Track |
 | 16 | Quantize 100% | Track |
 
@@ -1887,7 +1886,7 @@ On drums: K1+K2 = lane MIDI note, K3–K6 = per-lane.
 
 Jog click → Arp Steps editor.
 
-## ARP IN bank (melodic only, per-track)
+## LIVE ARP bank (melodic only, per-track)
 
 | K | Label | Range | Default |
 |---|---|---|---|

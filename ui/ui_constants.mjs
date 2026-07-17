@@ -270,13 +270,13 @@ export const BANKS = [
      * ALL LANES K5), K6 unassigned, K7=Dir, K8=SqFl. */
     { name: 'CLIP', knobs: [
         p('Res',  'Resolution',      'clip_resolution', 'clip',   0, 5,   1,   fmtRes, 16),
-        p('Stch', 'Beat Stretch',    'beat_stretch',    'action', 0, 0,   0,   fmtStretch, 16, '_factor', true),
-        p('Shft', 'Clock Shift',     'clock_shift',     'action', 0, 0,   0,   fmtSign,    8),
+        p('Strch', 'Beat Stretch',    'beat_stretch',    'action', 0, 0,   0,   fmtStretch, 16, '_factor', true),
+        p('Shift', 'Clock Shift',     'clock_shift',     'action', 0, 0,   0,   fmtSign,    8),
         p('Lgto', 'Apply Legato',   'lgto_apply',       'action', 0, 0,   0,   fmtLgto,    16, '_factor', true),
-        p('InQ',  'Input Quantize', 'diq',              'track', 0, 8, 0,  fmtDiq, 8),
+        p('InQnt',  'Input Quantize', 'diq',              'track', 0, 8, 0,  fmtDiq, 8),
         _X,
         p('Dir',  'Playback Dir',   'clip_playback_dir', 'clip',  0, 3,   0,   fmtPlayDir, 16),
-        p('SqFl', 'Seq Follow',      null,              'seqfollow', 0, 1, 1,  fmtBool, 16),
+        p('SeqFl', 'Seq Follow',      null,              'seqfollow', 0, 1, 1,  fmtBool, 16),
     ]},
     /* 1 — NOTE FX (pad 93). Layout (melodic, K-cells 1..8):
      * K1=Oct, K2=Ofs, K3=Vel, K4=Qnt, K5=Len, K6=>Gate, K7=blocked, K8=Rnd.
@@ -286,55 +286,55 @@ export const BANKS = [
      * CLIP K8 / DRUM LANE K8. */
     { name: 'NOTE FX', knobs: [
         p('Oct',  'Octave Shift',    'noteFX_octave',      'track', -4,   4,   0,   fmtSign,     16),
-        p('Ofs',  'Note Offset',     'noteFX_offset',      'track', -24,  24,  0,   fmtSign,     8),
+        p('Offst',  'Note Offset',     'noteFX_offset',      'track', -24,  24,  0,   fmtSign,     8),
         p('Vel',  'Velocity Offset', 'noteFX_velocity',    'track', -127, 127, 0,   fmtSign        ),
-        p('Qnt',  'Quantize',        'quantize',           'track',  0,   100, 0,   fmtPct,      1, undefined, undefined, 2),
+        p('Quant',  'Quantize',        'quantize',           'track',  0,   100, 0,   fmtPct,      1, undefined, undefined, 2),
         p('Len>', 'Note Length',     'noteFX_length_mode', 'track',  0,   8,   0,   fmtLen,      8),
         p('Gate', 'Gate Time',       'noteFX_gate',        'track',  0,   400, 100, fmtPct,      1, undefined, undefined, 2),
         _X,
-        p('Rnd',  'Pitch Random',    'noteFX_random',      'track',  0,   24,  0,   fmtPitchRnd, 4),
+        p('Rand',  'Pitch Random',    'noteFX_random',      'track',  0,   24,  0,   fmtPitchRnd, 4),
     ]},
     /* 2 — HARMZ (pad 94) */
     { name: 'HARMONY', knobs: [
         p('Oct',  'Octaver',    'harm_octaver',   'track', -4,  4,  0, fmtSign, 16),
-        p('Hrm1', 'Harmony 1',  'harm_interval1', 'track', -24, 24, 0, fmtSign, 8),
-        p('Hrm2', 'Harmony 2',  'harm_interval2', 'track', -24, 24, 0, fmtSign, 8),
-        p('Hrm3', 'Harmony 3',  'harm_interval3', 'track', -24, 24, 0, fmtSign, 8),
+        p('Harm1', 'Harmony 1',  'harm_interval1', 'track', -24, 24, 0, fmtSign, 8),
+        p('Harm2', 'Harmony 2',  'harm_interval2', 'track', -24, 24, 0, fmtSign, 8),
+        p('Harm3', 'Harmony 3',  'harm_interval3', 'track', -24, 24, 0, fmtSign, 8),
         _X, _X, _X, _X,
     ]},
     /* 3 — MIDI DLY (pad 95). K7 = Retrg (delay_retrig); Clock Feedback folded
      * onto Shift+K1 with dynamic label flip "Rate"↔"ClkF". */
     { name: 'DELAY', knobs: [
         p('Rate', 'Delay Time',     'delay_time',         'track', 0,    16, 10, fmtDly,   10),
-        p('Lvl',  'Delay Level',    'delay_level',        'track', 0,    127, 127, fmtPlain),
-        p('Rep',  'Repeats',        'delay_repeats',      'track', 0,    16,  0, fmtPlain, 16),
-        p('Vfb',  'Vel Feedback',   'delay_vel_fb',       'track', -127, 127, 0, fmtSign ),
-        p('Pfb',  'Pitch Feedback', 'delay_pitch_fb',     'track', -24,  24,  0, fmtSign,  16),
+        p('Level',  'Delay Level',    'delay_level',        'track', 0,    127, 127, fmtPlain),
+        p('Repts',  'Repeats',        'delay_repeats',      'track', 0,    16,  0, fmtPlain, 16),
+        p('VelFb',  'Vel Feedback',   'delay_vel_fb',       'track', -127, 127, 0, fmtSign ),
+        p('PitFb',  'Pitch Feedback', 'delay_pitch_fb',     'track', -24,  24,  0, fmtSign,  16),
         p('Gate', 'Gate',           'delay_gate_fb',      'track', 0,    10,   0, fmtGateMod, 2),
-        p('Rtrg', 'Retrig',         'delay_retrig',       'track', 0,    1,   1, fmtBool, 4),
-        p('Rnd',  'Pitch Random',   'delay_pitch_random', 'track', 0,   24,   0, fmtPitchRnd, 4),
+        p('Retrg', 'Retrig',         'delay_retrig',       'track', 0,    1,   1, fmtBool, 4),
+        p('Rand',  'Pitch Random',   'delay_pitch_random', 'track', 0,   24,   0, fmtPitchRnd, 4),
     ]},
     /* 4 — ARP OUT (pad 96) */
     { name: 'SEQUENCE ARP', knobs: [
-        p('Styl', 'Arp Style',    'seq_arp_style',      'track', 0,    9,   0, fmtArpStyle, 16),
+        p('Style', 'Arp Style',    'seq_arp_style',      'track', 0,    9,   0, fmtArpStyle, 16),
         p('Rate', 'Arp Rate',     'seq_arp_rate',       'track', 0,    9,   1, fmtArpRate,  16),
         p('Oct',  'Octave Range', 'seq_arp_octaves',    'track', -4,   4,   0, fmtArpOct,   16),
         p('Gate', 'Arp Gate',     'seq_arp_gate',       'track', 1,    200, 100, fmtPct,     4),
-        p('Stps', 'Steps Mode',   'seq_arp_steps_mode', 'track', 1,    2,   1, fmtArpSteps, 16),
-        p('Rtrg', 'Retrigger',    'seq_arp_retrigger',  'track', 0,    1,   1, fmtBool,     16),
+        p('Steps', 'Steps Mode',   'seq_arp_steps_mode', 'track', 1,    2,   1, fmtArpSteps, 16),
+        p('Retrg', 'Retrigger',    'seq_arp_retrigger',  'track', 0,    1,   1, fmtBool,     16),
         p('Sync', 'Sync to Clock', 'seq_arp_sync',      'track', 0,    1,   1, fmtBool,     16),
         _X,
     ]},
     /* 5 — ARP IN (pad 97) */
-    { name: 'ARP IN', knobs: [
-        p('Styl', 'Arp Style',     'tarp_style',      'track', 0,   9,   0,  fmtArpStyle, 16),
+    { name: 'LIVE ARP', knobs: [
+        p('Style', 'Arp Style',     'tarp_style',      'track', 0,   9,   0,  fmtArpStyle, 16),
         p('Rate', 'Arp Rate',      'tarp_rate',       'track', 0,   9,   1,  fmtArpRate,  16),
         p('Oct',  'Octave Range',  'tarp_octaves',    'track', -4,  4,   0,  fmtArpOct,   16),
         p('Gate', 'Arp Gate',      'tarp_gate',       'track', 1,   200, 100, fmtPct,      4),
-        p('Stps', 'Steps Mode',    'tarp_steps_mode', 'track', 1,   2,   1,  fmtArpSteps, 16),
-        p('Rtrg', 'Retrigger',    'tarp_retrigger',  'track', 0,   1,   0,  fmtBool,     16),
+        p('Steps', 'Steps Mode',    'tarp_steps_mode', 'track', 1,   2,   1,  fmtArpSteps, 16),
+        p('Retrg', 'Retrigger',    'tarp_retrigger',  'track', 0,   1,   0,  fmtBool,     16),
         p('Sync', 'Sync to Clock', 'tarp_sync',       'track', 0,   1,   1,  fmtBool,     16),
-        p('Ltch', 'Latch',         'tarp_latch',      'track', 0,   1,   0,  fmtBool,     16),
+        p('Latch', 'Latch',         'tarp_latch',      'track', 0,   1,   0,  fmtBool,     16),
     ]},
     /* 6 — AUTO (pad 98) — per-clip CC + aftertouch (+ PB later) automation; custom handling, no DSP-wired knobs */
     { name: 'AUTOMATION', knobs: [_X, _X, _X, _X, _X, _X, _X, _X] },
@@ -344,13 +344,13 @@ export const BANKS = [
      * K7=Dir (all-lane playback dir, alt=RvSt, custom), K8=SyncRpt. */
     { name: 'ALL LANES', knobs: [
         _XR,  /* K1: Res — all-lane resolution, custom handling, def=-1 */
-        p('Stch', 'Beat Stretch', 'beat_stretch', 'action', 0, 0,  0,  fmtStretch, 16, '_factor', true),
-        p('Shft', 'Clock Shift',  'clock_shift',  'action', 0, 0,  0,  fmtSign,    8),
+        p('Strch', 'Beat Stretch', 'beat_stretch', 'action', 0, 0,  0,  fmtStretch, 16, '_factor', true),
+        p('Shift', 'Clock Shift',  'clock_shift',  'action', 0, 0,  0,  fmtSign,    8),
         _XQ,  /* K4: Qnt — quantize all lanes, custom handling, def=-1 */
         _X,   /* K5: VelIn — custom handling via trackVelOverride */
         _X,   /* K6: InQ — per-track drum input quantize, custom handling */
         _XR,  /* K7: Dir — all-lane playback dir, custom handling, def=-1 */
-        p('SyncRpt', 'Repeat Sync', 'drum_repeat_sync', 'track', 0, 1, 1, fmtBool, 16),
+        p('RSync', 'Repeat Sync', 'drum_repeat_sync', 'track', 0, 1, 1, fmtBool, 16),
     ]},
     /* 8 — RESPONDER (conduct) — per-track on/off, custom render+handler (Task 2.3/2.4) */
     { name: 'RESPONDER', knobs: [_X,_X,_X,_X,_X,_X,_X,_X] },

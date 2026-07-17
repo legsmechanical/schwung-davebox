@@ -67,9 +67,11 @@ function drawBankHeading(name, showTrack) {
     drawBankHeaderRight(showTrack, true);
 }
 
+/* Vestigial: secondary banks (LIVE ARP / AUTOMATION / REPEAT GROOVE) now use
+ * the same filled black-on-white header as everything else (Josh's call,
+ * 2026-07-18). Kept so call sites stay stable. */
 function drawBankHeadingInverted(name, showTrack) {
-    drawKitHeader(name, true);
-    drawBankHeaderRight(showTrack, false);
+    drawBankHeading(name, showTrack);
 }
 
 /* Conductor bank render: standard white bank header + a 2x4 (2 rows x 4 cols)
@@ -915,7 +917,7 @@ export function drawUI() {
         const t      = S.activeTrack;
         const isSeq  = (bank === 4);
         const arr    = isSeq ? S.seqArpStepInt[t][effectiveClip(t)] : S.tarpStepInt[t];
-        drawBankHeading(isSeq ? 'SEQ ARP Steps' : 'ARP IN Steps');
+        drawBankHeading(isSeq ? 'SEQ ARP Steps' : 'LIVE ARP Steps');
         for (let k = 0; k < 8; k++) {
             const colX = 4 + (k % 4) * 30;
             const rowY = k < 4 ? 12 : 36;
@@ -1093,20 +1095,20 @@ export function drawUI() {
                 { kind: 'enumsq', label: S.altMode ? 'Zoom' : 'Res',
                   name: S.altMode ? 'Zoom' : 'Resolution', text: fmtRes(tpsIdx),
                   options: [0,1,2,3,4,5].map(fmtRes), sel: tpsIdx },
-                { kind: 'valsq', label: 'Stch', name: 'Beat Stretch',
+                { kind: 'valsq', label: 'Strch', name: 'Beat Stretch',
                   text: fmtStretch(S.bankParams[t][0][1]) },
-                { kind: 'valsq', label: S.altMode ? 'Nudg' : 'Shft',
+                { kind: 'valsq', label: S.altMode ? 'Nudge' : 'Shift',
                   name: S.altMode ? 'Nudge' : 'Clock Shift',
                   text: fmtSign(S.bankParams[t][0][2]) },
                 { kind: 'valsq', label: 'Lgto', name: 'Apply Legato', text: '->' },
-                { kind: 'valsq', label: 'Eucl', name: 'Euclid Fill', text: String(eucN) },
+                { kind: 'valsq', label: 'Eucld', name: 'Euclid Fill', text: String(eucN) },
                 { kind: 'blank', label: '' },
                 S.altMode
-                    ? { kind: 'hbar', label: 'Rvrs', name: 'Reverse Style',
+                    ? { kind: 'hbar', label: 'Revrs', name: 'Reverse Style',
                         text: fmtRevStyle(_dlRev), norm: _dlRev ? 1 : 0 }
                     : { kind: 'enumsq', label: 'Dir', name: 'Playback Dir',
                         text: fmtPlayDir(_dlDir), options: [0,1,2,3].map(fmtPlayDir), sel: _dlDir },
-                { kind: 'hbar', label: 'SqFl', name: 'Seq Follow',
+                { kind: 'hbar', label: 'SeqFl', name: 'Seq Follow',
                   text: fmtBool(sqfl), norm: sqfl ? 1 : 0 },
             ];
             drawKitPage('DRUM LANE', cells, false);
@@ -1131,26 +1133,26 @@ export function drawUI() {
                 rv < 0 ? { kind: 'valsq', label: 'Res', name: 'Resolution', text: '--' }
                        : { kind: 'enumsq', label: 'Res', name: 'Resolution', text: fmtRes(rv),
                            options: [0,1,2,3,4,5].map(fmtRes), sel: rv },
-                { kind: 'valsq', label: 'Stch', name: 'Beat Stretch',
+                { kind: 'valsq', label: 'Strch', name: 'Beat Stretch',
                   text: fmtStretch(S.bankParams[t][7][1]) },
-                { kind: 'valsq', label: S.altMode ? 'Nudg' : 'Shft',
+                { kind: 'valsq', label: S.altMode ? 'Nudge' : 'Shift',
                   name: S.altMode ? 'Nudge' : 'Clock Shift',
                   text: fmtSign(S.bankParams[t][7][2]) },
-                qv <= 0 ? { kind: 'valsq', label: 'Qnt', name: 'Quantize', text: '--' }
-                        : { kind: 'arc', label: 'Qnt', name: 'Quantize',
+                qv <= 0 ? { kind: 'valsq', label: 'Quant', name: 'Quantize', text: '--' }
+                        : { kind: 'arc', label: 'Quant', name: 'Quantize',
                             text: fmtPct(qv), norm: Math.min(1, qv / 100) },
                 { kind: 'valsq', label: 'VelIn', name: 'Velocity Input',
                   text: fmtVelOverride(S.trackVelOverride[t]) },
-                { kind: 'enumsq', label: 'InQ', name: 'Input Quantize',
+                { kind: 'enumsq', label: 'InQnt', name: 'Input Quantize',
                   text: DIQ_LABELS[_inq] || 'Off', options: DIQ_LABELS, sel: _inq },
-                dv < 0 ? { kind: 'valsq', label: S.altMode ? 'Rvrs' : 'Dir',
+                dv < 0 ? { kind: 'valsq', label: S.altMode ? 'Revrs' : 'Dir',
                            name: S.altMode ? 'Reverse Style' : 'Playback Dir', text: '--' }
                        : (S.altMode
-                            ? { kind: 'hbar', label: 'Rvrs', name: 'Reverse Style',
+                            ? { kind: 'hbar', label: 'Revrs', name: 'Reverse Style',
                                 text: fmtRevStyle(dv), norm: dv ? 1 : 0 }
                             : { kind: 'enumsq', label: 'Dir', name: 'Playback Dir',
                                 text: fmtPlayDir(dv), options: [0,1,2,3].map(fmtPlayDir), sel: dv }),
-                { kind: 'hbar', label: 'SyncRpt', name: 'Repeat Sync',
+                { kind: 'hbar', label: 'RSync', name: 'Repeat Sync',
                   text: fmtBool(S.bankParams[t][7][7]), norm: S.bankParams[t][7][7] ? 1 : 0 },
             ];
             /* blinking "ALL" prefix: the header font is fixed-advance, so a
@@ -1173,7 +1175,7 @@ export function drawUI() {
             { kind: 'blank', label: 'Note', name: 'Lane Note', text: _noteStr },
             { kind: 'arcbip', label: 'Vel', name: 'Velocity Offset', text: fmtSign(vals[1]),
               signed: Math.max(-1, Math.min(1, (vals[1] | 0) / 127)) },
-            { kind: 'arc', label: 'Qnt', name: 'Quantize', text: fmtPct(vals[2]),
+            { kind: 'arc', label: 'Quant', name: 'Quantize', text: fmtPct(vals[2]),
               norm: Math.max(0, Math.min(1, (vals[2] | 0) / 100)) },
             { kind: 'enumsq', label: 'Len>', name: 'Note Length', text: fmtLen(_lenMode),
               options: LEN_OPTS, sel: _lenMode },
@@ -1385,7 +1387,7 @@ export function drawUI() {
             kitCellForKnob(knobs[3], vals[3]),
             { kind: 'enumsq', label: 'Gate', name: 'Gate', text: fmtGateMod(vals[4]),
               options: [0,1,2,3,4,5,6,7,8,9,10].map(fmtGateMod), sel: vals[4] | 0 },
-            { kind: 'arcbip', label: 'Clk', name: 'Clock Feedback', text: fmtSign(vals[5]),
+            { kind: 'arcbip', label: 'ClkFb', name: 'Clock Feedback', text: fmtSign(vals[5]),
               signed: Math.max(-1, Math.min(1, (vals[5] | 0) / 127)) },
             { kind: 'hbar', label: 'Retrg', name: 'Retrig', text: fmtBool(vals[6]),
               norm: vals[6] ? 1 : 0 },
@@ -1425,24 +1427,24 @@ export function drawUI() {
             }
             if (_delayShiftClkF) {
                 const _cv = S.delayClockFb[S.activeTrack] | 0;
-                cells.push({ kind: 'arcbip', label: 'ClkF', name: 'Clock Feedback',
+                cells.push({ kind: 'arcbip', label: 'ClkFb', name: 'Clock Feedback',
                              text: fmtSign(_cv), signed: Math.max(-1, Math.min(1, _cv / 127)) });
                 continue;
             }
             if (_clipDirAlt) {
                 const _rv = S.clipPlaybackAudioReverse[S.activeTrack][effectiveClip(S.activeTrack)] | 0;
-                cells.push({ kind: 'hbar', label: 'Rvrs', name: 'Reverse Style',
+                cells.push({ kind: 'hbar', label: 'Revrs', name: 'Reverse Style',
                              text: fmtRevStyle(_rv), norm: _rv ? 1 : 0 });
                 continue;
             }
             const cell = kitCellForKnob(knobs[k], vals[k]);
             if (S.altMode) {
-                if      (knobs[k].dspKey === 'clock_shift')     { cell.label = 'Nudg'; cell.name = 'Nudge'; }
+                if      (knobs[k].dspKey === 'clock_shift')     { cell.label = 'Nudge'; cell.name = 'Nudge'; }
                 else if (knobs[k].dspKey === 'clip_resolution') { cell.label = 'Zoom'; cell.name = 'Zoom'; }
             }
             cells.push(cell);
         }
-        drawKitPage(bankHeaderName(S.activeTrack, bank), cells, bank === 5);
+        drawKitPage(bankHeaderName(S.activeTrack, bank), cells, false);
         }
 
     } else if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {

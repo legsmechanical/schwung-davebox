@@ -558,7 +558,7 @@ function _onCC_jog(d1, d2) {
              * + loop length). Shift+Delete+jog (above) intentionally leaves
              * ARP IN alone. */
             resetTarp(S.activeTrack);
-            showActionPopup('ARP IN', 'RESET');
+            showActionPopup('LIVE ARP', 'RESET');
         } else {
             const _mt = S.activeTrack, _mac2 = effectiveClip(_mt);
             resetFxBanks(_mt);
