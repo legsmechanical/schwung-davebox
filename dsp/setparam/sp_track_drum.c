@@ -186,7 +186,7 @@ static int sp_track_drum(sp_ctx_t *cx) {
             tr->drum_repeat_gate_len[lane_idx]  = 8;
             tr->drum_repeat2_rate_idx[lane_idx] = 2; /* 1/8 default */
             for (_rs = 0; _rs < 8; _rs++) {
-                tr->drum_repeat_vel_scale[lane_idx][_rs] = 100;
+                tr->drum_repeat_vel_scale[lane_idx][_rs] = 255;   /* Thru */
                 tr->drum_repeat_nudge[lane_idx][_rs]     = 0;
             }
             inst->state_dirty = 1;
@@ -649,7 +649,7 @@ static int sp_track_drum(sp_ctx_t *cx) {
                 memcpy(tr->drum_repeat_nudge[dstLane],     tr->drum_repeat_nudge[lane_idx],     8);
                 tr->drum_repeat_gate[lane_idx]     = 0xFF;
                 tr->drum_repeat_gate_len[lane_idx] = 8;
-                memset(tr->drum_repeat_vel_scale[lane_idx], 100, 8);
+                memset(tr->drum_repeat_vel_scale[lane_idx], 255, 8);
                 memset(tr->drum_repeat_nudge[lane_idx],     0,   8);
                 drum_lane_note_off_imm(inst, tr, src_midi_note);
                 clip_init(dlc);
@@ -945,7 +945,8 @@ static int sp_track_drum(sp_ctx_t *cx) {
             while (*sp_r >= '0' && *sp_r <= '9') { step_r = step_r * 10 + (*sp_r++ - '0'); }
             step_r = clamp_i(step_r, 0, 7);
             while (*sp_r == ' ') sp_r++;
-            int pct_r = clamp_i(my_atoi(sp_r), 1, 127);
+            int pct_r = my_atoi(sp_r);
+            pct_r = pct_r > 127 ? 255 : clamp_i(pct_r, 1, 127);   /* >127 = Thru */
             tr->drum_repeat_vel_scale[lane_idx][step_r] = (uint8_t)pct_r;
             inst->state_dirty = 1;
             return 1;
@@ -966,7 +967,7 @@ static int sp_track_drum(sp_ctx_t *cx) {
         /* tN_lL_repeat_defaults "step" — reset vel_scale and nudge to defaults (not gate) */
         if (!strcmp(p2, "_repeat_defaults")) {
             int step_r = clamp_i(my_atoi(val), 0, 7);
-            tr->drum_repeat_vel_scale[lane_idx][step_r] = 100;
+            tr->drum_repeat_vel_scale[lane_idx][step_r] = 255;   /* Thru */
             tr->drum_repeat_nudge[lane_idx][step_r]     = 0;
             inst->state_dirty = 1;
             return 1;
@@ -976,7 +977,7 @@ static int sp_track_drum(sp_ctx_t *cx) {
             tr->drum_repeat_gate[lane_idx]     = 0xFF;
             tr->drum_repeat_gate_len[lane_idx] = 8;
             { int s; for (s = 0; s < 8; s++) {
-                tr->drum_repeat_vel_scale[lane_idx][s] = 100;
+                tr->drum_repeat_vel_scale[lane_idx][s] = 255;   /* Thru */
                 tr->drum_repeat_nudge[lane_idx][s]     = 0;
             }}
             inst->state_dirty = 1;

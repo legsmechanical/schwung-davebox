@@ -657,7 +657,7 @@ typedef struct {
     /* Drum Repeat: gate mask, vel scale, nudge (per-lane, persisted) */
     uint8_t drum_repeat_gate[DRUM_LANES];         /* 8-step bitmask; bit s=step s; default 0xFF */
     uint8_t drum_repeat_gate_len[DRUM_LANES];     /* gate cycle length 1-8; default 8 */
-    uint8_t drum_repeat_vel_scale[DRUM_LANES][8]; /* ABSOLUTE step vel 1..127, default 100 (name kept for state compat) */
+    uint8_t drum_repeat_vel_scale[DRUM_LANES][8]; /* step vel: 1..127 absolute, 0 unused, 255 = Thru (default; pass held-pad vel). Name kept for state compat */
     int8_t  drum_repeat_nudge[DRUM_LANES][8];     /* -50..50 pct, default 0 */
     /* Repeat engine (runtime, not persisted) */
     uint8_t  drum_repeat_active;
@@ -2024,7 +2024,7 @@ static void arp_init_defaults(arp_engine_t *a) {
     a->retrigger = 1;
     int i;
     /* step_vel level: 0=off, 1=row0(min), 4=row3(full incoming). Default 4. */
-    for (i = 0; i < 8; i++) a->step_vel[i] = 100;
+    for (i = 0; i < 8; i++) a->step_vel[i] = 255;   /* Thru */
     /* step_int: per-step scale-degree offset -24..+24. Default 0. */
     for (i = 0; i < 8; i++) a->step_int[i] = 0;
     a->step_loop_len = 8;
@@ -2333,7 +2333,7 @@ static void drum_repeat_init_defaults(seq8_track_t *tr) {
         tr->drum_repeat_gate_len[l]  = 8;
         tr->drum_repeat2_rate_idx[l] = 2; /* 1/8 default */
         for (s = 0; s < 8; s++) {
-            tr->drum_repeat_vel_scale[l][s] = 100;
+            tr->drum_repeat_vel_scale[l][s] = 255;   /* Thru */
             tr->drum_repeat_nudge[l][s]     = 0;
         }
     }
@@ -2602,9 +2602,10 @@ static void drum_repeat_tick(seq8_instance_t *inst, seq8_track_t *tr) {
 
     if ((int)tr->drum_repeat_phase == fire_at) {
         if (tr->drum_repeat_gate[lane] & (uint8_t)(1u << step)) {
-            /* Absolute per-step velocity (2026-07-18): the groove step's stored
-             * value IS the emitted velocity — held-pad vel / VelIn don't scale it. */
+            /* Absolute per-step velocity; Thru (255, the default) passes the
+             * held-pad velocity (incl. VelIn) through. */
             int vel = (int)tr->drum_repeat_vel_scale[lane][step];
+            if (vel > 127) vel = effective_vel(tr, (int)tr->drum_repeat_vel);
             if (vel < 1) vel = 1;
             if (vel > 127) vel = 127;
 
@@ -2749,8 +2750,9 @@ static void drum_repeat2_tick(seq8_instance_t *inst, seq8_track_t *tr) {
         if ((int)tr->drum_repeat2_phase[l] != fire_at) goto advance_l;
         if (!(tr->drum_repeat_gate[l] & (uint8_t)(1u << step))) goto advance_l;
         {
-            /* Absolute per-step velocity (2026-07-18) — same rule as Rpt1. */
+            /* Absolute per-step velocity, Thru = held-pad vel — same rule as Rpt1. */
             int vel = (int)tr->drum_repeat_vel_scale[l][step];
+            if (vel > 127) vel = effective_vel(tr, (int)tr->drum_repeat2_vel[l]);
             if (vel < 1) vel = 1;
             if (vel > 127) vel = 127;
             drum_lane_t *dlane = &tr->drum_clips[tr->active_clip]->lanes[l];
@@ -3174,7 +3176,7 @@ static void clip_pfx_params_init(clip_pfx_params_t *p) {
     p->seq_arp_retrigger = 1;
     p->seq_arp_sync      = 1;
     int i;
-    for (i = 0; i < 8; i++) p->seq_arp_step_vel[i] = 100;
+    for (i = 0; i < 8; i++) p->seq_arp_step_vel[i] = 255;   /* Thru */
     for (i = 0; i < 8; i++) p->seq_arp_step_int[i] = 0;
     p->seq_arp_step_loop_len = 8;
     p->note_length_mode = 0;  /* `--` passthrough */

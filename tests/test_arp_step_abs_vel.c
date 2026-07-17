@@ -18,16 +18,18 @@ int main(void) {
     seq8_instance_t *inst = (seq8_instance_t *)h->inst;
     seq8_track_t *tr = &inst->tracks[3];
 
-    /* Fresh defaults: every step at velocity 100. */
-    HX_ASSERT(tr->tarp.step_vel[0] == 100, "tarp default != 100");
-    HX_ASSERT(inst->tracks[0].clips[0].pfx_params.seq_arp_step_vel[0] == 100,
-              "seq arp default != 100");
+    /* Fresh defaults: every step at Thru (255 = pass incoming velocity). */
+    HX_ASSERT(tr->tarp.step_vel[0] == 255, "tarp default != Thru");
+    HX_ASSERT(inst->tracks[0].clips[0].pfx_params.seq_arp_step_vel[0] == 255,
+              "seq arp default != Thru");
 
     /* Handlers accept the full 0..127 velocity domain. */
     hx_set_param(h, "t3_tarp_step_vel", "1 115");
     HX_ASSERT(tr->tarp.step_vel[1] == 115, "tarp_step_vel: 115 not stored");
     hx_set_param(h, "t3_tarp_step_vel", "2 200");
-    HX_ASSERT(tr->tarp.step_vel[2] == 127, "tarp_step_vel: clamp high != 127");
+    HX_ASSERT(tr->tarp.step_vel[2] == 255, "tarp_step_vel: >127 != Thru");
+    hx_set_param(h, "t3_tarp_step_vel", "2 127");
+    HX_ASSERT(tr->tarp.step_vel[2] == 127, "tarp_step_vel: 127 not stored");
     hx_set_param(h, "t3_tarp_step_vel", "3 0");
     HX_ASSERT(tr->tarp.step_vel[3] == 0, "tarp_step_vel: 0 (off) rejected");
     hx_set_param(h, "t3_seq_arp_step_vel", "0 87");
@@ -35,8 +37,8 @@ int main(void) {
               "seq_arp_step_vel: 87 not stored");
 
     /* Legacy state migration: saved 5-state levels map to canonical
-     * velocities (0->0, 1->32, 2->64, 3->96, 4->127); absent keys default
-     * to 100. (Sequential instances — the stub host is process-global.) */
+     * velocities (0->0, 1->32, 2->64, 3->96, 4->Thru); absent keys default
+     * to Thru (255). (Sequential instances — the stub host is process-global.) */
     hx_destroy(h);
     h = NULL;
     hx_t *h2 = hx_create(NULL);
@@ -45,13 +47,14 @@ int main(void) {
     load_fixture(inst2, "tests/fixtures/state_v36_legacy_arp_vel.json");
     HX_ASSERT(inst2->tracks[0].tarp.step_vel[0] == 64,  "legacy tasv 2 != 64");
     HX_ASSERT(inst2->tracks[0].tarp.step_vel[1] == 0,   "legacy tasv 0 != 0");
-    HX_ASSERT(inst2->tracks[0].tarp.step_vel[2] == 100, "absent tasv != 100");
+    HX_ASSERT(inst2->tracks[0].tarp.step_vel[2] == 255, "absent tasv != Thru");
     HX_ASSERT(inst2->tracks[0].clips[0].pfx_params.seq_arp_step_vel[1] == 96,
               "legacy arsv 3 != 96");
     HX_ASSERT(inst2->tracks[0].clips[0].pfx_params.seq_arp_step_vel[2] == 32,
               "legacy arsv 1 != 32");
-    /* the two <=4 legacy-level keys in the fixture exercise the map itself */
+    /* the <=4 legacy-level keys in the fixture exercise the map itself */
     HX_ASSERT(inst2->tracks[0].tarp.step_vel[3] == 64, "legacy level 2 != 64");
+    HX_ASSERT(inst2->tracks[0].tarp.step_vel[4] == 255, "legacy level 4 != Thru");
     HX_ASSERT(inst2->tracks[0].clips[0].pfx_params.seq_arp_step_vel[4] == 96,
               "legacy level 3 != 96");
 

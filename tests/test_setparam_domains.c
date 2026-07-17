@@ -812,18 +812,18 @@ int main(void) {
         hx_set_param(h, "t3_l7_repeat_vel_scale", "2 90");
         HX_ASSERT(dt->drum_repeat_vel_scale[7][2] == 90, "_repeat_vel_scale: step2 ->90 (absolute vel)");
         hx_set_param(h, "t3_l7_repeat_vel_scale", "2 150");
-        HX_ASSERT(dt->drum_repeat_vel_scale[7][2] == 127, "_repeat_vel_scale: clamps to 127");
+        HX_ASSERT(dt->drum_repeat_vel_scale[7][2] == 255, "_repeat_vel_scale: >127 -> Thru");
         hx_set_param(h, "t3_l7_repeat_nudge", "2 -20");
         HX_ASSERT(dt->drum_repeat_nudge[7][2] == -20, "_repeat_nudge: step2 ->-20");
         hx_set_param(h, "t3_l7_repeat_defaults", "2");
-        HX_ASSERT(dt->drum_repeat_vel_scale[7][2] == 100 && dt->drum_repeat_nudge[7][2] == 0,
-                  "_repeat_defaults: step2 vel/nudge reset");
+        HX_ASSERT(dt->drum_repeat_vel_scale[7][2] == 255 && dt->drum_repeat_nudge[7][2] == 0,
+                  "_repeat_defaults: step2 vel/nudge reset (Thru)");
         HX_ASSERT(dt->drum_repeat_gate[7] == 170, "_repeat_defaults: does NOT touch gate mask");
         hx_set_param(h, "t3_l7_repeat_groove_reset", "1");
         HX_ASSERT(dt->drum_repeat_gate[7] == 0xFF && dt->drum_repeat_gate_len[7] == 8,
                   "_repeat_groove_reset: gate/len -> defaults");
-        HX_ASSERT(dt->drum_repeat_vel_scale[7][0] == 100 && dt->drum_repeat_nudge[7][0] == 0,
-                  "_repeat_groove_reset: vel/nudge -> defaults");
+        HX_ASSERT(dt->drum_repeat_vel_scale[7][0] == 255 && dt->drum_repeat_nudge[7][0] == 0,
+                  "_repeat_groove_reset: vel/nudge -> defaults (Thru)");
 
         /* Lane-index guard: lane >= DRUM_LANES returns before any write. */
         {
@@ -1214,8 +1214,8 @@ int main(void) {
                   "tarp_reset: style/rate/octaves -> defaults");
         HX_ASSERT(ct->tarp.gate_pct == 100 && ct->tarp.steps_mode == 1,
                   "tarp_reset: gate/steps_mode -> defaults");
-        HX_ASSERT(ct->tarp.step_vel[3] == 100 && ct->tarp.step_int[2] == 0 &&
-                  ct->tarp.step_loop_len == 8, "tarp_reset: step arrays -> defaults (abs vel 100)");
+        HX_ASSERT(ct->tarp.step_vel[3] == 255 && ct->tarp.step_int[2] == 0 &&
+                  ct->tarp.step_loop_len == 8, "tarp_reset: step arrays -> defaults (Thru)");
         HX_ASSERT(ct->tarp_on == 0 && ct->tarp_latch == 0 && ct->tarp_sync == 1,
                   "tarp_reset: tarp_on/latch->0, sync->1");
         HX_ASSERT(ct->tarp.retrigger == 1, "tarp_reset: retrigger reads 1 (arp_init default, NOT re-cleared)");

@@ -248,7 +248,7 @@ static void arp_fire_step(seq8_instance_t *inst, seq8_track_t *tr) {
     a->step_pos = (uint8_t)step_idx;
 
     uint8_t level = a->step_vel[step_idx];
-    if (a->steps_mode == 0) level = 1;   /* any non-zero: array bypassed below */
+    if (a->steps_mode == 0) level = 255;   /* Off mode: treat as Thru */
     int step_off = (a->steps_mode != 0) && (level == 0);
 
     /* Step mode + step off: skip — no fire, no cycle advance, leave sounding alone.
@@ -287,13 +287,11 @@ static void arp_fire_step(seq8_instance_t *inst, seq8_track_t *tr) {
     if (a->step_int[step_idx])
         pitch = (uint8_t)scale_transpose(inst, (int)pitch, (int)a->step_int[step_idx]);
 
-    /* Velocity: in Off mode, use incoming directly; in Mute/Step modes the
-     * step's stored value IS the emitted velocity (absolute). */
+    /* Velocity: a locked step (1..127) fires at exactly its stored value;
+     * Thru (255) — and Off mode — pass the incoming velocity through. */
     int v = (int)base_vel;
-    if (a->steps_mode != 0 && level >= 1) {
+    if (a->steps_mode != 0 && level >= 1 && level <= 127)
         v = (int)level;
-        if (v > 127) v = 127;
-    }
     if (v < 1)   v = 1;
     if (v > 127) v = 127;
 

@@ -169,7 +169,7 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
         {
             int _i;
             for (_i = 0; _i < 8; _i++)
-                if (tr2->tarp.step_vel[_i] != 100)
+                if (tr2->tarp.step_vel[_i] != 255)
                     fprintf(fp, ",\"t%d_tasv%d\":%d", t, _i, (int)tr2->tarp.step_vel[_i]);
             for (_i = 0; _i < 8; _i++)
                 if (tr2->tarp.step_int[_i] != 0)
@@ -265,7 +265,7 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
                 {
                     int _i;
                     for (_i = 0; _i < 8; _i++) {
-                        if (p2->seq_arp_step_vel[_i] != 100)
+                        if (p2->seq_arp_step_vel[_i] != 255)
                             fprintf(fp, ",\"t%dc%d_arsv%d\":%d", t, c, _i, (int)p2->seq_arp_step_vel[_i]);
                     }
                     for (_i = 0; _i < 8; _i++) {
@@ -439,7 +439,7 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
               if (tr_r->drum_repeat2_rate_idx[l] != 2)
                   fprintf(fp, ",\"t%dl%dr2rt\":%d", t, l, (int)tr_r->drum_repeat2_rate_idx[l]);
               for (s = 0; s < 8; s++) {
-                  if (tr_r->drum_repeat_vel_scale[l][s] != 100)
+                  if (tr_r->drum_repeat_vel_scale[l][s] != 255)
                       fprintf(fp, ",\"t%dl%drvs%d\":%d", t, l, s, (int)tr_r->drum_repeat_vel_scale[l][s]);
                   if (tr_r->drum_repeat_nudge[l][s] != 0)
                       fprintf(fp, ",\"t%dl%drn%d\":%d", t, l, s, (int)(int8_t)tr_r->drum_repeat_nudge[l][s]);
@@ -730,7 +730,18 @@ static void seq8_load_state(seq8_instance_t *inst) {
               tr_r->drum_repeat2_rate_idx[l] = (uint8_t)clamp_i(json_get_int(buf, key, 2), 0, 7);
               for (s = 0; s < 8; s++) {
                   snprintf(key, sizeof(key), "t%dl%drvs%d", t, l, s);
-                  tr_r->drum_repeat_vel_scale[l][s] = (uint8_t)clamp_i(json_get_int(buf, key, 100), 1, 127);
+                  /* Absolute 1..127, 255 = Thru (default). Legacy percent saves:
+                   * 100% meant "unscaled held-pad vel" = Thru exactly; other
+                   * percents (and anything >127) clamp into the absolute range.
+                   * (Interim absolute-100 saves never wrote 100 — it was the
+                   * sparse default — so 100 here is always legacy percent.) */
+                  {
+                      int _gl = json_get_int(buf, key, 255);
+                      if (_gl == 100 || _gl >= 255) _gl = 255;        /* Thru */
+                      else if (_gl > 127) _gl = 127;                  /* legacy 101-200% accent */
+                      else _gl = clamp_i(_gl, 1, 127);
+                      tr_r->drum_repeat_vel_scale[l][s] = (uint8_t)_gl;
+                  }
                   snprintf(key, sizeof(key), "t%dl%drn%d", t, l, s);
                   tr_r->drum_repeat_nudge[l][s] = (int8_t)clamp_i(json_get_int(buf, key, 0), -50, 50);
               }
@@ -759,12 +770,13 @@ static void seq8_load_state(seq8_instance_t *inst) {
             int _i;
             for (_i = 0; _i < 8; _i++) {
                 snprintf(key, sizeof(key), "t%d_tasv%d", t, _i);
-                /* Absolute velocity 0..127; legacy saves stored 5-state levels
-                 * 0..4 — map them to the canonical pad values (values <=4 are
-                 * unreachable by the new UI, so this is unambiguous). */
+                /* Absolute velocity 0..127, 255 = Thru (default). Legacy saves
+                 * stored 5-state levels 0..4 — map to the canonical pad values;
+                 * legacy level 4 meant "incoming vel" = Thru exactly. */
                 {
-                    int _lv = clamp_i(json_get_int(buf, key, 100), 0, 127);
-                    if (_lv <= 4) _lv = _lv == 0 ? 0 : _lv == 1 ? 32 : _lv == 2 ? 64 : _lv == 3 ? 96 : 127;
+                    int _lv = json_get_int(buf, key, 255);
+                    if (_lv <= 4) _lv = _lv == 0 ? 0 : _lv == 1 ? 32 : _lv == 2 ? 64 : _lv == 3 ? 96 : 255;
+                    else if (_lv > 127) _lv = 255;
                     tr2->tarp.step_vel[_i] = (uint8_t)_lv;
                 }
                 snprintf(key, sizeof(key), "t%d_tasi%d", t, _i);
@@ -954,10 +966,11 @@ static void seq8_load_state(seq8_instance_t *inst) {
                 int _i;
                 for (_i = 0; _i < 8; _i++) {
                     snprintf(key, sizeof(key), "t%dc%d_arsv%d", t, c, _i);
-                    /* Absolute velocity; legacy 5-state levels map up (see tasv). */
+                    /* Absolute velocity / Thru; legacy 5-state levels map up (see tasv). */
                     {
-                        int _lv = clamp_i(json_get_int(buf, key, 100), 0, 127);
-                        if (_lv <= 4) _lv = _lv == 0 ? 0 : _lv == 1 ? 32 : _lv == 2 ? 64 : _lv == 3 ? 96 : 127;
+                        int _lv = json_get_int(buf, key, 255);
+                        if (_lv <= 4) _lv = _lv == 0 ? 0 : _lv == 1 ? 32 : _lv == 2 ? 64 : _lv == 3 ? 96 : 255;
+                        else if (_lv > 127) _lv = 255;
                         p2->seq_arp_step_vel[_i] = (uint8_t)_lv;
                     }
                     snprintf(key, sizeof(key), "t%dc%d_arsi%d", t, c, _i);

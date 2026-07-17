@@ -130,7 +130,8 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
         return;
     }
     if (!strcmp(key, "seq_arp_step_vel")) {
-        /* Format: "S V" — step index 0..7, ABSOLUTE velocity 0..127 (0=step off). */
+        /* Format: "S V" — step index 0..7; V = 0 (step off), 1..127 (absolute
+         * velocity), >127 = Thru (255: pass incoming velocity through). */
         const char *p = val;
         int s = 0, lv = 0;
         while (*p == ' ') p++;
@@ -138,7 +139,7 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
         while (*p == ' ') p++;
         while (*p >= '0' && *p <= '9') { lv = lv * 10 + (*p - '0'); p++; }
         if (s < 0 || s > 7) return;
-        lv = clamp_i(lv, 0, 127);
+        lv = lv > 127 ? 255 : clamp_i(lv, 0, 127);
         cp->seq_arp_step_vel[s] = (uint8_t)lv;
         fx->arp.step_vel[s]     = (uint8_t)lv;
         return;
@@ -215,7 +216,7 @@ static void pfx_set(seq8_instance_t *inst, seq8_track_t *tr,
         cp->seq_arp_retrigger = 1;
         cp->seq_arp_sync      = 1;
         int _i;
-        for (_i = 0; _i < 8; _i++) cp->seq_arp_step_vel[_i] = 100;
+        for (_i = 0; _i < 8; _i++) cp->seq_arp_step_vel[_i] = 255;   /* Thru */
         arp_silence(inst, tr);
         arp_init_defaults(&fx->arp);
         fx->seq_arp_sync = 1;

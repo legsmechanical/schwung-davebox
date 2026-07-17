@@ -16,7 +16,7 @@ import {
 import { S } from './ui_state.mjs';
 import { drumPadToLane, drumPadToVelZone, drumVelZoneToVelocity, _clipIsEmpty,
     clipHasContent, effectiveVelocity, stepEntryVelocity,
-    ARP_VEL_CANON, arpVelLevel } from './ui_pure.mjs';
+    ARP_VEL_CANON, arpVelLevel, VEL_THRU } from './ui_pure.mjs';
 import { showActionPopup, writeSidecar } from './ui_persistence.mjs';
 import { computePadNoteMap, syncDrumLaneSteps, setActiveDrumLane,
     setDrumPerformMode } from './ui_drummodel.mjs';
@@ -647,7 +647,8 @@ export function _onPadPress(status, d1, d2) {
             const row = Math.floor(idx / 8);
             const cur = S.seqArpStepVel[t][ac][col] | 0;
             const curLvl = arpVelLevel(cur);
-            const newVel = (row === 0 && curLvl === 1) ? 0 : ARP_VEL_CANON[row + 1];
+            const newVel = S.deleteHeld ? VEL_THRU
+                : (row === 0 && curLvl === 1) ? 0 : ARP_VEL_CANON[row + 1];
             if (newVel !== cur) {
                 S.seqArpStepVel[t][ac][col] = newVel;
                 if (typeof host_module_set_param === 'function')
@@ -677,7 +678,8 @@ export function _onPadPress(status, d1, d2) {
             const row = Math.floor(idx / 8);
             const cur = S.tarpStepVel[t][col] | 0;
             const curLvl = arpVelLevel(cur);
-            const newVel = (row === 0 && curLvl === 1) ? 0 : ARP_VEL_CANON[row + 1];
+            const newVel = S.deleteHeld ? VEL_THRU
+                : (row === 0 && curLvl === 1) ? 0 : ARP_VEL_CANON[row + 1];
             if (newVel !== cur) {
                 S.tarpStepVel[t][col] = newVel;
                 if (typeof host_module_set_param === 'function')

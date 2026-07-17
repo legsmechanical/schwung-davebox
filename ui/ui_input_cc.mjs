@@ -530,7 +530,7 @@ function _onCC_jog(d1, d2) {
                 S.drumRepeatGate[_rt][_rl]    = 0xFF;
                 S.drumRepeatGateLen[_rt][_rl] = 8;
                 for (let _s = 0; _s < 8; _s++) {
-                    S.drumRepeatVelScale[_rt][_rl][_s] = 100;
+                    S.drumRepeatVelScale[_rt][_rl][_s] = 255;
                     S.drumRepeatNudge[_rt][_rl][_s]    = 0;
                 }
                 /* Defer reset push — synchronous from jog handler coalesces. */
@@ -2335,7 +2335,11 @@ function _onCC_knobs(d1, d2) {
                     if (bank === 4) {
                         const ac = effectiveClip(t);
                         const cur = S.seqArpStepVel[t][ac][knobIdx] | 0;
-                        const nxt = cur === 0 ? (dir > 0 ? 5 : 0) : Math.max(5, Math.min(127, cur + dir));
+                        /* 5..127 absolute; past the top = Thru (255) */
+                        const nxt = cur === 0 ? (dir > 0 ? 5 : 0)
+                                  : cur === 255 ? (dir > 0 ? 255 : 127)
+                                  : (cur === 127 && dir > 0) ? 255
+                                  : Math.max(5, Math.min(127, cur + dir));
                         if (nxt !== cur) {
                             S.seqArpStepVel[t][ac][knobIdx] = nxt;
                             if (typeof host_module_set_param === 'function')
@@ -2343,7 +2347,10 @@ function _onCC_knobs(d1, d2) {
                         }
                     } else {
                         const cur = S.tarpStepVel[t][knobIdx] | 0;
-                        const nxt = cur === 0 ? (dir > 0 ? 5 : 0) : Math.max(5, Math.min(127, cur + dir));
+                        const nxt = cur === 0 ? (dir > 0 ? 5 : 0)
+                                  : cur === 255 ? (dir > 0 ? 255 : 127)
+                                  : (cur === 127 && dir > 0) ? 255
+                                  : Math.max(5, Math.min(127, cur + dir));
                         if (nxt !== cur) {
                             S.tarpStepVel[t][knobIdx] = nxt;
                             if (typeof host_module_set_param === 'function')
@@ -2829,8 +2836,11 @@ function _onCC_knobs(d1, d2) {
                             host_module_set_param('t' + t + '_l' + lane + '_repeat_nudge', step + ' ' + nv);
                     }
                 } else {
-                    /* absolute step velocity 1-127 (2026-07-18 rework) */
-                    const nv = Math.max(1, Math.min(127, (S.drumRepeatVelScale[t][lane][step] | 0) + dir * 3));
+                    /* absolute 1-127; past the top = Thru (255 = held-pad vel) */
+                    const cv = S.drumRepeatVelScale[t][lane][step] | 0;
+                    const nv = cv === 255 ? (dir > 0 ? 255 : 127)
+                             : (cv === 127 && dir > 0) ? 255
+                             : Math.max(1, Math.min(127, cv + dir * 3));
                     if (nv !== S.drumRepeatVelScale[t][lane][step]) {
                         S.drumRepeatVelScale[t][lane][step] = nv;
                         if (typeof host_module_set_param === 'function')

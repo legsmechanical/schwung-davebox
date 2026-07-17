@@ -169,7 +169,7 @@ static int bake_stage_arp_out(seq8_instance_t *inst, play_fx_t *fx, uint32_t cli
         uint32_t mp = master_tick - a.master_anchor;
         a.step_pos  = (uint8_t)((mp / rate) % a.step_loop_len);
         uint8_t slevel = a.step_vel[a.step_pos];
-        if (a.steps_mode == 0) slevel = 1;   /* any non-zero: array bypassed below */
+        if (a.steps_mode == 0) slevel = 255;   /* Off mode: treat as Thru */
         int step_off   = (a.steps_mode != 0) && (slevel == 0);
 
         if (step_off && a.steps_mode == 2) {
@@ -178,9 +178,9 @@ static int bake_stage_arp_out(seq8_instance_t *inst, play_fx_t *fx, uint32_t cli
         }
         uint8_t pitch, vel;
         if (!step_off && arp_compute_step(&a, fx, &pitch, &vel)) {
-            /* ABSOLUTE step velocity (2026-07-18) — mirrors arp_fire_step. */
+            /* ABSOLUTE step velocity, Thru (255) = incoming — mirrors arp_fire_step. */
             int v = (int)vel;
-            if (a.steps_mode != 0 && slevel >= 1)
+            if (a.steps_mode != 0 && slevel >= 1 && slevel <= 127)
                 v = (int)slevel;
             if (v < 1) v = 1; if (v > 127) v = 127;
             /* Arp Steps per-step interval offset (scale-degree), as in arp_fire_step. */

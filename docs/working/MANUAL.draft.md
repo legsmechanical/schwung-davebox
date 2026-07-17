@@ -810,7 +810,7 @@ persists. See [Note Repeat](#74-note-repeat) for the gate-mask context.
 
 | K | Standard page | Jog-click page |
 |---|---|---|
-| 1–8 | **Absolute velocity** per gate step (1–127, default 100) — repeats fire at exactly this velocity | Nudge offset per gate step (±50% of step interval) |
+| 1–8 | **Velocity** per gate step: **Thru** (default — repeat fires at the held pad's velocity, one click past 127) or a locked absolute value 1–127 | Nudge offset per gate step (±50% of step interval) |
 
 The display shows all 8 groove steps as one row of bars — bar height is the
 step's velocity (or its signed nudge on the jog-click page), with the step
@@ -907,7 +907,10 @@ the 8 steps as a row of bars with the step number under each. Two pages:
   degrees), shown as ± bars around a centerline. Header reads `Pitch: ±N`
   while turning.
 - **Step Vel** (hold **Shift**): K1–K8 set each step's **absolute velocity**
-  fine (5–127), shown as bars from the baseline. Header reads `Velocity: N`.
+  fine (5–127), shown as bars from the baseline; one click past 127 is
+  **Thru** (the default) — the step fires at the incoming note's velocity,
+  drawn as a full-height dithered bar. Header reads `Velocity: N` (or `Thru`).
+  **Delete + pad** resets a step to Thru.
 
 Pads stay the **coarse** velocity editor (8 columns × 4 rows): each row writes
 a preset velocity (32 / 64 / 96 / 127; re-pressing the bottom row turns the

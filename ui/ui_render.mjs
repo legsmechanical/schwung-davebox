@@ -98,6 +98,14 @@ function drawConductTrackGrid(header, valFn, inertLabel) {
     drawKitPage(header, cells, false);
 }
 
+/* Full-height dithered (checkerboard) bar — the "Thru" state in the step
+ * editors: velocity passes through, so the bar reads as present-but-soft. */
+function drawThruBar(x, w, top, bot) {
+    for (let yy = top; yy <= bot; yy++)
+        for (let xx = x + ((x + yy) & 1); xx < x + w; xx += 2)
+            set_pixel(xx, yy, 1);
+}
+
 /* Shared canvaskit page entry: touched non-blank cell inverts the header to
  * its full param name (label strip below swaps to the value); resting state
  * goes through the standard heading helpers (C- blink, page bar, alt arrow). */
@@ -946,7 +954,7 @@ export function drawUI() {
         const _tk    = S.knobTouched;
         if (_tk >= 0 && _tk < _ll) {
             const _v = arr[_tk] | 0;
-            if (_velPage) drawKitTouchedHeader('Velocity: ' + (_v === 0 ? 'Off' : _v));
+            if (_velPage) drawKitTouchedHeader('Velocity: ' + (_v === 0 ? 'Off' : _v > 127 ? 'Thru' : _v));
             else          drawKitTouchedHeader('Pitch: ' + (_v > 0 ? '+' : '') + _v);
         } else {
             drawBankHeading(_velPage ? 'Step Vel' : 'Step Pitch');
@@ -968,8 +976,11 @@ export function drawUI() {
             }
             const _v = arr[k] | 0;
             if (_velPage) {
-                /* absolute velocity: bar up from the baseline; 0 = step off */
-                if (_v > 0) {
+                /* absolute velocity: bar up from the baseline; 0 = step off;
+                 * Thru (default) = full-height dithered bar */
+                if (_v > 127) {
+                    drawThruBar(_x, _barW, _top, _bot);
+                } else if (_v > 0) {
                     const _h = Math.max(1, Math.round(_v / 127 * (_bot - _top)));
                     fill_rect(_x, _bot - _h, _barW, _h, 1);
                 }
@@ -1276,9 +1287,10 @@ export function drawUI() {
         const _tk = S.knobTouched;
         if (_tk >= 0 && _tk < _gLen) {
             const _ndg = S.drumRepeatNudge[t][lane][_tk];
+            const _tv  = S.drumRepeatVelScale[t][lane][_tk] | 0;
             const _val = S.altMode
                 ? (_ndg > 0 ? '+' : '') + _ndg + '%'
-                : String(S.drumRepeatVelScale[t][lane][_tk]);
+                : (_tv > 127 ? 'Thru' : String(_tv));
             /* No step number here — the touched step's own number is already
              * highlighted in the row below. */
             drawKitTouchedHeader((S.altMode ? 'Nudge' : 'Velocity') + ': ' + _val);
@@ -1311,10 +1323,16 @@ export function drawUI() {
                 else rectOutline(_x, _y, _barW, Math.max(2, _h), 1);
             } else {
                 const _v = S.drumRepeatVelScale[t][lane][k] | 0;
-                const _h = Math.max(1, Math.round(_v / 127 * (_bot - _top)));
-                const _y = _bot - _h;
-                if (gateOn) fill_rect(_x, _y, _barW, _h, 1);
-                else rectOutline(_x, _y, _barW, Math.max(2, _h), 1);
+                if (_v > 127) {
+                    /* Thru: full-height dithered bar (outline when gated off) */
+                    if (gateOn) drawThruBar(_x, _barW, _top, _bot);
+                    else rectOutline(_x, _top, _barW, _bot - _top + 1, 1);
+                } else {
+                    const _h = Math.max(1, Math.round(_v / 127 * (_bot - _top)));
+                    const _y = _bot - _h;
+                    if (gateOn) fill_rect(_x, _y, _barW, _h, 1);
+                    else rectOutline(_x, _y, _barW, Math.max(2, _h), 1);
+                }
             }
             const _num = String(k + 1);
             const _nw = mvWidth(_num);
