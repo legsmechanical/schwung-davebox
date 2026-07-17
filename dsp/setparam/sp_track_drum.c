@@ -935,7 +935,9 @@ static int sp_track_drum(sp_ctx_t *cx) {
             inst->state_dirty = 1;
             return 1;
         }
-        /* tN_lL_repeat_vel_scale "step pct" — set velocity scaling 0-200 for step */
+        /* tN_lL_repeat_vel_scale "step vel" — set the step's ABSOLUTE velocity
+         * 1-127 (2026-07-18 rework; key name kept for state compat — old 0-200
+         * percent values clamp into range) */
         if (!strcmp(p2, "_repeat_vel_scale")) {
             const char *sp_r = val;
             while (*sp_r == ' ') sp_r++;
@@ -943,7 +945,7 @@ static int sp_track_drum(sp_ctx_t *cx) {
             while (*sp_r >= '0' && *sp_r <= '9') { step_r = step_r * 10 + (*sp_r++ - '0'); }
             step_r = clamp_i(step_r, 0, 7);
             while (*sp_r == ' ') sp_r++;
-            int pct_r = clamp_i(my_atoi(sp_r), 0, 200);
+            int pct_r = clamp_i(my_atoi(sp_r), 1, 127);
             tr->drum_repeat_vel_scale[lane_idx][step_r] = (uint8_t)pct_r;
             inst->state_dirty = 1;
             return 1;

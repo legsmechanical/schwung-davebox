@@ -804,9 +804,16 @@ dark and holding Loop does nothing, so no edit can land before you say so.
 Available on drum tracks when a Note Repeat mode (Rpt1/Rpt2) is active. Per-lane,
 persists. See [Note Repeat](#74-note-repeat) for the gate-mask context.
 
-| K | Label (unshifted) | Label (Shift held) |
+| K | Standard page | Jog-click page |
 |---|---|---|
-| 1–8 | Velocity scaling per gate step (0–200%, default 100%) | Nudge offset per gate step (±50% of step interval) |
+| 1–8 | **Absolute velocity** per gate step (1–127, default 100) — repeats fire at exactly this velocity | Nudge offset per gate step (±50% of step interval) |
+
+The display shows all 8 groove steps as one row of bars — bar height is the
+step's velocity (or its signed nudge on the jog-click page), with the step
+number under each bar. A filled bar means the step's gate is on; an outlined
+bar means it's gated off; steps past the loop length show a small tick.
+Turning a knob highlights its step number and shows `STEP N: value` in the
+header.
 
 **Delete + jog click** resets the groove for the active lane.
 
@@ -1910,9 +1917,9 @@ Jog click → Arp Steps editor.
 
 ## REPEAT GROOVE bank (drum, repeat active)
 
-| K | Label (unshifted) | Label (Shift) |
+| K | Standard page | Jog-click page |
 |---|---|---|
-| 1–8 | Velocity scaling per gate step (0–200%) | Nudge offset per gate step (±50%) |
+| 1–8 | Absolute velocity per gate step (1–127) | Nudge offset per gate step (±50%) |
 
 Per-lane. Delete + jog click resets.
 

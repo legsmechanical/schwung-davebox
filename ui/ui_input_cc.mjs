@@ -2803,7 +2803,8 @@ function _onCC_knobs(d1, d2) {
                             host_module_set_param('t' + t + '_l' + lane + '_repeat_nudge', step + ' ' + nv);
                     }
                 } else {
-                    const nv = Math.max(0, Math.min(200, (S.drumRepeatVelScale[t][lane][step] | 0) + dir * 3));
+                    /* absolute step velocity 1-127 (2026-07-18 rework) */
+                    const nv = Math.max(1, Math.min(127, (S.drumRepeatVelScale[t][lane][step] | 0) + dir * 3));
                     if (nv !== S.drumRepeatVelScale[t][lane][step]) {
                         S.drumRepeatVelScale[t][lane][step] = nv;
                         if (typeof host_module_set_param === 'function')

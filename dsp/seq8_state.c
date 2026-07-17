@@ -730,7 +730,7 @@ static void seq8_load_state(seq8_instance_t *inst) {
               tr_r->drum_repeat2_rate_idx[l] = (uint8_t)clamp_i(json_get_int(buf, key, 2), 0, 7);
               for (s = 0; s < 8; s++) {
                   snprintf(key, sizeof(key), "t%dl%drvs%d", t, l, s);
-                  tr_r->drum_repeat_vel_scale[l][s] = (uint8_t)clamp_i(json_get_int(buf, key, 100), 0, 200);
+                  tr_r->drum_repeat_vel_scale[l][s] = (uint8_t)clamp_i(json_get_int(buf, key, 100), 1, 127);
                   snprintf(key, sizeof(key), "t%dl%drn%d", t, l, s);
                   tr_r->drum_repeat_nudge[l][s] = (int8_t)clamp_i(json_get_int(buf, key, 0), -50, 50);
               }

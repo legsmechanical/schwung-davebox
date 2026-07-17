@@ -809,8 +809,10 @@ int main(void) {
         hx_set_param(h, "t3_l7_repeat_gate_and_len", "170 6");
         HX_ASSERT(dt->drum_repeat_gate[7] == 170 && dt->drum_repeat_gate_len[7] == 6,
                   "_repeat_gate_and_len: atomic mask+len");
+        hx_set_param(h, "t3_l7_repeat_vel_scale", "2 90");
+        HX_ASSERT(dt->drum_repeat_vel_scale[7][2] == 90, "_repeat_vel_scale: step2 ->90 (absolute vel)");
         hx_set_param(h, "t3_l7_repeat_vel_scale", "2 150");
-        HX_ASSERT(dt->drum_repeat_vel_scale[7][2] == 150, "_repeat_vel_scale: step2 ->150");
+        HX_ASSERT(dt->drum_repeat_vel_scale[7][2] == 127, "_repeat_vel_scale: clamps to 127");
         hx_set_param(h, "t3_l7_repeat_nudge", "2 -20");
         HX_ASSERT(dt->drum_repeat_nudge[7][2] == -20, "_repeat_nudge: step2 ->-20");
         hx_set_param(h, "t3_l7_repeat_defaults", "2");

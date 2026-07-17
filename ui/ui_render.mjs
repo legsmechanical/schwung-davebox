@@ -946,25 +946,6 @@ export function drawUI() {
         var _gResN = _gLTps === 12 ? '1/32' : _gLTps === 48 ? '1/8'
                    : _gLTps === 96 ? '1/4' : _gLTps === 384 ? '1bar' : '1/16';
         drawBankHeadingInverted(BANKS[6].name);
-        {
-            var _ccHas = (S.trackCCAutoBits[_gt][_gac] !== 0) ||
-                         S.clipCCVal[_gt][_gac].some(function(v) { return v >= 0; });
-            var _atHas = !!S.clipAtHas[_gt][_gac];
-            var _schHas = S.trackCCType[_gt].some(function(tp, k) {
-                return tp === 2 && (((S.trackCCAutoBits[_gt][_gac] >> k) & 1) || S.clipCCVal[_gt][_gac][k] >= 0);
-            });
-            var _bx = 60;
-            /* secondary header is white-on-black — badges fill white */
-            var _badge = function(txt) {
-                var w = txt.length * 6 + 3;
-                fill_rect(_bx, 1, w, 7, 1);
-                print(_bx + 1, 1, txt, 0);
-                _bx += w + 2;
-            };
-            if (_schHas) _badge('Sch');
-            if (_atHas) _badge('AT');
-            if (_ccHas) _badge('CC');
-        }
         /* Lane info rows */
         var _gVal = S.playing ? S.trackCCLiveVal[_gt][_gLane] : S.clipCCVal[_gt][_gac][_gLane];
         var _gValStr = (_gVal >= 0 && _gVal <= 127) ? String(_gVal) : '--';
@@ -1220,23 +1201,65 @@ export function drawUI() {
         const t    = S.activeTrack;
         const lane = S.activeDrumLane[t];
         syncDrumRepeatState(t, lane);
-        /* Per-step gate bars (filled = gate on) with the vel% (or signed
-         * nudge%, alt mode) in each label strip; steps past the gate length
-         * are blank. Alt-mode state signals via the header alt-arrow flash. */
+        /* Single 8-column step row: bar height = absolute step velocity
+         * (1-127) on the standard page, bipolar nudge (±50%) on the jog-click
+         * page; filled = gate on, outline = gate off; step number under each
+         * bar (touched step inverts + header shows STEP N: value). Steps past
+         * the gate length draw a stub tick and no number. */
         const _gLen = S.drumRepeatGateLen[t][lane];
-        const cells = [];
-        for (let k = 0; k < 8; k++) {
-            if (k >= _gLen) { cells.push({ kind: 'blank', label: '' }); continue; }
-            const gateOn = !!(S.drumRepeatGate[t][lane] & (1 << k));
-            const vs   = S.drumRepeatVelScale[t][lane][k];
-            const ndg  = S.drumRepeatNudge[t][lane][k];
-            const disp = S.altMode
-                ? (ndg === 0 ? '0%' : (ndg > 0 ? '+' : '') + ndg + '%')
-                : vs + '%';
-            cells.push({ kind: 'hbar', label: disp, name: 'Step ' + (k + 1),
-                         text: disp, norm: gateOn ? 1 : 0 });
+        const _tk = S.knobTouched;
+        if (_tk >= 0 && _tk < _gLen) {
+            const _ndg = S.drumRepeatNudge[t][lane][_tk];
+            const _val = S.altMode
+                ? (_ndg > 0 ? '+' : '') + _ndg + '%'
+                : String(S.drumRepeatVelScale[t][lane][_tk]);
+            /* No step number here — the touched step's own number is already
+             * highlighted in the row below. */
+            drawKitTouchedHeader((S.altMode ? 'Nudge' : 'Velocity') + ': ' + _val);
+        } else {
+            drawBankHeadingInverted('REPEAT GROOVE');
         }
-        drawKitPage('REPEAT GROOVE', cells, true);
+        const _colW = 16, _barW = 10, _top = 14, _bot = 54, _numY = 57;
+        if (S.altMode) {
+            /* dotted center baseline for the bipolar nudge page */
+            const _cy = Math.floor((_top + _bot) / 2);
+            for (let x = 0; x < 128; x += 2) set_pixel(x, _cy, 1);
+        } else {
+            fill_rect(0, _bot + 1, 128, 1, 1);   /* velocity baseline */
+        }
+        for (let k = 0; k < 8; k++) {
+            const _x = k * _colW + 3;
+            if (k >= _gLen) {
+                fill_rect(_x + 3, _bot - 1, 4, 1, 1);   /* inactive stub */
+                continue;
+            }
+            const gateOn = !!(S.drumRepeatGate[t][lane] & (1 << k));
+            if (S.altMode) {
+                const _cy = Math.floor((_top + _bot) / 2);
+                const _n = S.drumRepeatNudge[t][lane][k] | 0;
+                const _mag = Math.round(Math.abs(_n) / 50 * (_cy - _top));
+                const _y = _n >= 0 ? _cy - _mag : _cy + 1;
+                const _h = Math.max(1, _mag);
+                if (_n === 0) fill_rect(_x, _cy - 1, _barW, 3, 1);
+                else if (gateOn) fill_rect(_x, _y, _barW, _h, 1);
+                else rectOutline(_x, _y, _barW, Math.max(2, _h), 1);
+            } else {
+                const _v = S.drumRepeatVelScale[t][lane][k] | 0;
+                const _h = Math.max(1, Math.round(_v / 127 * (_bot - _top)));
+                const _y = _bot - _h;
+                if (gateOn) fill_rect(_x, _y, _barW, _h, 1);
+                else rectOutline(_x, _y, _barW, Math.max(2, _h), 1);
+            }
+            const _num = String(k + 1);
+            const _nw = mvWidth(_num);
+            const _nx = Math.round(k * _colW + _colW / 2 - _nw / 2);
+            if (k === _tk) {
+                fill_rect(k * _colW + 2, _numY - 1, _colW - 4, 7, 1);
+                mvPrint(_nx, _numY, _num, 0);
+            } else {
+                mvPrint(_nx, _numY, _num, 1);
+            }
+        }
         } else if (bank === 6) {
         /* CC PARAM bank overview: label = CC# or "AT" (aftertouch); value =
          * stopped → clip resting value or "—"; playing → defined value at the
@@ -1244,27 +1267,6 @@ export function drawUI() {
         const t  = S.activeTrack;
         const ac = effectiveClip(t);
         drawBankHeadingInverted(S.altMode ? 'ASSIGN' : BANKS[6].name);
-        /* Automation-type indicators: inverted badge (white bg, black text) per
-         * type that has data in the focused clip; nothing if the type is empty. */
-        {
-            const ccHas = (S.trackCCAutoBits[t][ac] !== 0) ||
-                          S.clipCCVal[t][ac].some(function(v) { return v >= 0; });
-            const atHas = !!S.clipAtHas[t][ac];
-            const schHas = S.trackCCType[t].some(function(tp, k) {
-                return tp === 2 && (((S.trackCCAutoBits[t][ac] >> k) & 1) || S.clipCCVal[t][ac][k] >= 0);
-            });
-            let bx = 60;
-            /* secondary header is white-on-black — badges fill white */
-            const _badge = function(txt) {
-                const w = txt.length * 6 + 3;
-                fill_rect(bx, 1, w, 7, 1);
-                print(bx + 1, 1, txt, 0);
-                bx += w + 2;
-            };
-            if (schHas) _badge('Sch');
-            if (atHas) _badge('AT');
-            if (ccHas) _badge('CC');
-        }
         /* Active lane = touched knob, else the persistent active lane — drives the graph. */
         const _ovLane = S.knobTouched >= 0 ? S.knobTouched : S.ccActiveLane[t];
         /* Compact knobs: 2 rows of 4 (geometry mirrors the step-hold view) to free

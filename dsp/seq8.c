@@ -657,7 +657,7 @@ typedef struct {
     /* Drum Repeat: gate mask, vel scale, nudge (per-lane, persisted) */
     uint8_t drum_repeat_gate[DRUM_LANES];         /* 8-step bitmask; bit s=step s; default 0xFF */
     uint8_t drum_repeat_gate_len[DRUM_LANES];     /* gate cycle length 1-8; default 8 */
-    uint8_t drum_repeat_vel_scale[DRUM_LANES][8]; /* 0..200, default 100 */
+    uint8_t drum_repeat_vel_scale[DRUM_LANES][8]; /* ABSOLUTE step vel 1..127, default 100 (name kept for state compat) */
     int8_t  drum_repeat_nudge[DRUM_LANES][8];     /* -50..50 pct, default 0 */
     /* Repeat engine (runtime, not persisted) */
     uint8_t  drum_repeat_active;
@@ -2602,9 +2602,9 @@ static void drum_repeat_tick(seq8_instance_t *inst, seq8_track_t *tr) {
 
     if ((int)tr->drum_repeat_phase == fire_at) {
         if (tr->drum_repeat_gate[lane] & (uint8_t)(1u << step)) {
-            int vel = effective_vel(tr, (int)tr->drum_repeat_vel);
-            int scale = (int)tr->drum_repeat_vel_scale[lane][step];
-            vel = vel * scale / 100;
+            /* Absolute per-step velocity (2026-07-18): the groove step's stored
+             * value IS the emitted velocity — held-pad vel / VelIn don't scale it. */
+            int vel = (int)tr->drum_repeat_vel_scale[lane][step];
             if (vel < 1) vel = 1;
             if (vel > 127) vel = 127;
 
@@ -2749,9 +2749,8 @@ static void drum_repeat2_tick(seq8_instance_t *inst, seq8_track_t *tr) {
         if ((int)tr->drum_repeat2_phase[l] != fire_at) goto advance_l;
         if (!(tr->drum_repeat_gate[l] & (uint8_t)(1u << step))) goto advance_l;
         {
-            int vel   = effective_vel(tr, (int)tr->drum_repeat2_vel[l]);
-            int scale = (int)tr->drum_repeat_vel_scale[l][step];
-            vel = vel * scale / 100;
+            /* Absolute per-step velocity (2026-07-18) — same rule as Rpt1. */
+            int vel = (int)tr->drum_repeat_vel_scale[l][step];
             if (vel < 1) vel = 1;
             if (vel > 127) vel = 127;
             drum_lane_t *dlane = &tr->drum_clips[tr->active_clip]->lanes[l];
