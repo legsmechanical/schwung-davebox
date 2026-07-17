@@ -23,7 +23,9 @@ import {
     TRACK_PAD_BASE, TPS_VALUES,
     BANKS, PAD_MODE_DRUM, PAD_MODE_CONDUCT,
     BANK_RESPONDER, BANK_OCTAVE, BANK_WHEN,
-    TICK_HZ, STEP_ITER_LIST
+    TICK_HZ, STEP_ITER_LIST,
+    fmtRes, fmtDiq, fmtPlayDir, fmtLen, fmtGateMod, fmtDly,
+    fmtArpStyle, fmtArpRate, fmtArpSteps, fmtArpOct, fmtBool
 } from './ui_constants.mjs';
 import { S, conductorTrackIdx } from './ui_state.mjs';
 import { scaleNudgeNote, stepEntryVelocity, BANK_CYCLE_DRUM, CONDUCT_BANK_CYCLE } from './ui_pure.mjs';
@@ -2060,6 +2062,34 @@ function _onCC_side(d1, d2) {
  * after sustained continuous turning, so big sweeps accelerate. A direction
  * change or a pause (>180ms) resets. Returns a signed integer step (0 if the
  * accumulator hasn't reached a whole unit yet). */
+/* ---- Unified knob response (2026-07-18) ----
+ * Three classes, one feel each:
+ *  'cont'  — continuous values: ccKnobDelta() run-length acceleration.
+ *            Slow turning always yields ±1 (exact dialing guaranteed);
+ *            sustained fast turning ramps ×2/×4/×6. NO step multipliers.
+ *  'pick'  — discrete options (enums, octaves, small counts): one step per
+ *            KNOB_PICK detents, never accelerated, clamp-no-wrap.
+ *  'delib' — toggles, one-shot actions, destructive things: one step per
+ *            KNOB_DELIB detents (an accidental brush must not fire).
+ * knobPick() is the shared accumulator for the fixed classes; every knob
+ * site routes through ccKnobDelta or knobPick — no private thresholds. */
+const KNOB_PICK = 6, KNOB_DELIB = 16;
+function knobPick(k, dir, need) {
+    if (dir !== S.knobLastDir[k]) { S.knobAccum[k] = 0; S.knobLastDir[k] = dir; }
+    S.knobAccum[k]++;
+    if (S.knobAccum[k] >= need) { S.knobAccum[k] = 0; return dir; }
+    return 0;
+}
+
+/* BANKS knobDef -> response class (generic bank path). */
+const KNOB_PICK_FMTS = [fmtRes, fmtDiq, fmtPlayDir, fmtLen, fmtGateMod,
+                        fmtDly, fmtArpStyle, fmtArpRate, fmtArpSteps, fmtArpOct];
+function knobClass(pm) {
+    if (pm.lock || pm.scope === 'action' || pm.fmt === fmtBool) return 'delib';
+    if (KNOB_PICK_FMTS.indexOf(pm.fmt) >= 0 || (pm.max - pm.min) <= 16) return 'pick';
+    return 'cont';
+}
+
 function ccKnobDelta(d2, k) {
     const sign = (d2 >= 1 && d2 <= 63) ? 1 : (d2 >= 65 && d2 <= 127) ? -1 : 0;
     if (!sign) return 0;
@@ -2152,16 +2182,16 @@ function _onCC_stepedit(d1, d2) {
             if (typeof host_module_set_param === 'function')
                 host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_gate', String(S.stepEditGate));
         } else if (knobIdx === 1) {
-            S.stepEditVel = Math.max(0, Math.min(127, S.stepEditVel + dir));
+            const _sv = ccKnobDelta(d2, knobIdx);   /* unified: cont accel */
+            if (_sv === 0) return;
+            S.stepEditVel = Math.max(0, Math.min(127, S.stepEditVel + _sv));
             if (typeof host_module_set_param === 'function')
                 host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_vel', String(S.stepEditVel));
         } else if (knobIdx === 2) {
-            S.knobAccum[knobIdx] = (dir === S.knobLastDir[knobIdx]) ? S.knobAccum[knobIdx] + 1 : 1;
-            S.knobLastDir[knobIdx] = dir;
-            if (S.knobAccum[knobIdx] >= 8) {
-                S.knobAccum[knobIdx] = 0;
+            const _sn = ccKnobDelta(d2, knobIdx);   /* unified: cont accel */
+            if (_sn !== 0) {
                 const _tpsN1 = (S.drumLaneTPS[t] || 24) - 1;
-                S.stepEditNudge = Math.max(-_tpsN1, Math.min(_tpsN1, S.stepEditNudge + dir));
+                S.stepEditNudge = Math.max(-_tpsN1, Math.min(_tpsN1, S.stepEditNudge + _sn));
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_nudge', String(S.stepEditNudge));
             }
@@ -2169,11 +2199,10 @@ function _onCC_stepedit(d1, d2) {
             /* K5 Iter: one entry per detent (no accel — 36-entry list, ~1 turn end-to-end) */
             S.knobAccum[knobIdx] = (dir === S.knobLastDir[knobIdx]) ? S.knobAccum[knobIdx] + 1 : 1;
             S.knobLastDir[knobIdx] = dir;
-            if (S.knobAccum[knobIdx] >= 3) {
-                S.knobAccum[knobIdx] = 0;
+            if ((S._iterKd = ccKnobDelta(d2, knobIdx)) !== 0) {   /* unified: cont accel */
                 let idx = STEP_ITER_LIST.indexOf(S.stepEditIter);
                 if (idx < 0) idx = 0;
-                idx = Math.max(0, Math.min(STEP_ITER_LIST.length - 1, idx + dir));
+                idx = Math.max(0, Math.min(STEP_ITER_LIST.length - 1, idx + S._iterKd));
                 S.stepEditIter = STEP_ITER_LIST[idx];
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_iter', String(S.stepEditIter));
@@ -2190,7 +2219,7 @@ function _onCC_stepedit(d1, d2) {
             /* K7 Ratch: 0..4, sens=8 (10 detents per step at low gain) */
             S.knobAccum[knobIdx] = (dir === S.knobLastDir[knobIdx]) ? S.knobAccum[knobIdx] + 1 : 1;
             S.knobLastDir[knobIdx] = dir;
-            if (S.knobAccum[knobIdx] >= 8) {
+            if (S.knobAccum[knobIdx] >= KNOB_PICK) {
                 S.knobAccum[knobIdx] = 0;
                 S.stepEditRatch = Math.max(0, Math.min(4, S.stepEditRatch + dir));
                 if (typeof host_module_set_param === 'function')
@@ -2213,7 +2242,7 @@ function _onCC_stepedit(d1, d2) {
             /* K1 Oct: shift all notes ±12 semitones, sens=12 */
             S.knobAccum[knobIdx] = (dir === S.knobLastDir[knobIdx]) ? S.knobAccum[knobIdx] + 1 : 1;
             S.knobLastDir[knobIdx] = dir;
-            if (S.knobAccum[knobIdx] >= 12) {
+            if (S.knobAccum[knobIdx] >= KNOB_PICK) {
                 S.knobAccum[knobIdx] = 0;
                 S.heldStepNotes = S.heldStepNotes.map(function(n) {
                     return Math.max(0, Math.min(127, n + dir * 12));
@@ -2225,7 +2254,7 @@ function _onCC_stepedit(d1, d2) {
             /* K2 Pitch: shift each note ±1 scale degree (or ±1 semitone if scale-aware off), sens=10 */
             S.knobAccum[knobIdx] = (dir === S.knobLastDir[knobIdx]) ? S.knobAccum[knobIdx] + 1 : 1;
             S.knobLastDir[knobIdx] = dir;
-            if (S.knobAccum[knobIdx] >= 10) {
+            if (S.knobAccum[knobIdx] >= KNOB_PICK) {
                 S.knobAccum[knobIdx] = 0;
                 S.heldStepNotes = S.heldStepNotes.map(function(n) {
                     return scaleNudgeNote(n, dir, S.padKey, S.padScale);
@@ -2250,19 +2279,19 @@ function _onCC_stepedit(d1, d2) {
             if (typeof host_module_set_param === 'function')
                 host_module_set_param(pfx + '_gate', String(S.stepEditGate));
         } else if (knobIdx === 3) {
-            /* K4 Vel: velocity 0-127 */
-            S.stepEditVel = Math.max(0, Math.min(127, S.stepEditVel + dir));
+            /* K4 Vel: velocity 0-127, cont accel */
+            const _sv = ccKnobDelta(d2, knobIdx);
+            if (_sv === 0) return;
+            S.stepEditVel = Math.max(0, Math.min(127, S.stepEditVel + _sv));
             if (typeof host_module_set_param === 'function')
                 host_module_set_param(pfx + '_vel', String(S.stepEditVel));
         } else if (knobIdx === 4) {
-            /* K5 Nudge: tick offset ±(TPS-1), sens=8 */
-            S.knobAccum[knobIdx] = (dir === S.knobLastDir[knobIdx]) ? S.knobAccum[knobIdx] + 1 : 1;
-            S.knobLastDir[knobIdx] = dir;
-            if (S.knobAccum[knobIdx] >= 8) {
-                S.knobAccum[knobIdx] = 0;
+            /* K5 Nudge: tick offset ±(TPS-1), cont accel */
+            const _sn = ccKnobDelta(d2, knobIdx);
+            if (_sn !== 0) {
                 const _acN = effectiveClip(S.activeTrack);
                 const _tpsN1 = (S.clipTPS[S.activeTrack][_acN] || 24) - 1;
-                S.stepEditNudge = Math.max(-_tpsN1, Math.min(_tpsN1, S.stepEditNudge + dir));
+                S.stepEditNudge = Math.max(-_tpsN1, Math.min(_tpsN1, S.stepEditNudge + _sn));
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param(pfx + '_nudge', String(S.stepEditNudge));
             }
@@ -2270,11 +2299,10 @@ function _onCC_stepedit(d1, d2) {
             /* K6 Iter: discrete step, sens=3 (no accel) */
             S.knobAccum[knobIdx] = (dir === S.knobLastDir[knobIdx]) ? S.knobAccum[knobIdx] + 1 : 1;
             S.knobLastDir[knobIdx] = dir;
-            if (S.knobAccum[knobIdx] >= 3) {
-                S.knobAccum[knobIdx] = 0;
+            if ((S._iterKd = ccKnobDelta(d2, knobIdx)) !== 0) {   /* unified: cont accel */
                 let idx = STEP_ITER_LIST.indexOf(S.stepEditIter);
                 if (idx < 0) idx = 0;
-                idx = Math.max(0, Math.min(STEP_ITER_LIST.length - 1, idx + dir));
+                idx = Math.max(0, Math.min(STEP_ITER_LIST.length - 1, idx + S._iterKd));
                 S.stepEditIter = STEP_ITER_LIST[idx];
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param(pfx + '_iter', String(S.stepEditIter));
@@ -2291,7 +2319,7 @@ function _onCC_stepedit(d1, d2) {
             /* K8 Ratch: 0..4, sens=8 */
             S.knobAccum[knobIdx] = (dir === S.knobLastDir[knobIdx]) ? S.knobAccum[knobIdx] + 1 : 1;
             S.knobLastDir[knobIdx] = dir;
-            if (S.knobAccum[knobIdx] >= 8) {
+            if (S.knobAccum[knobIdx] >= KNOB_PICK) {
                 S.knobAccum[knobIdx] = 0;
                 S.stepEditRatch = Math.max(0, Math.min(4, S.stepEditRatch + dir));
                 if (typeof host_module_set_param === 'function')
@@ -2324,9 +2352,8 @@ function _onCC_knobs(d1, d2) {
             const t   = S.activeTrack;
             const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
             if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
-            S.knobAccum[knobIdx]++;
-            if (S.knobAccum[knobIdx] >= 2) {
-                S.knobAccum[knobIdx] = 0;
+            const _kd = ccKnobDelta(d2, knobIdx);   /* unified: cont accel */
+            if (_kd !== 0) {
                 if (S.shiftHeld) {
                     /* Shift page: fine ABSOLUTE step velocity, floor 5 so fine
                      * values never collide with legacy 0-4 levels in saved
@@ -2339,7 +2366,7 @@ function _onCC_knobs(d1, d2) {
                         const nxt = cur === 0 ? (dir > 0 ? 5 : 0)
                                   : cur === 255 ? (dir > 0 ? 255 : 127)
                                   : (cur === 127 && dir > 0) ? 255
-                                  : Math.max(5, Math.min(127, cur + dir));
+                                  : Math.max(5, Math.min(127, cur + _kd));
                         if (nxt !== cur) {
                             S.seqArpStepVel[t][ac][knobIdx] = nxt;
                             if (typeof host_module_set_param === 'function')
@@ -2350,7 +2377,7 @@ function _onCC_knobs(d1, d2) {
                         const nxt = cur === 0 ? (dir > 0 ? 5 : 0)
                                   : cur === 255 ? (dir > 0 ? 255 : 127)
                                   : (cur === 127 && dir > 0) ? 255
-                                  : Math.max(5, Math.min(127, cur + dir));
+                                  : Math.max(5, Math.min(127, cur + _kd));
                         if (nxt !== cur) {
                             S.tarpStepVel[t][knobIdx] = nxt;
                             if (typeof host_module_set_param === 'function')
@@ -2360,7 +2387,7 @@ function _onCC_knobs(d1, d2) {
                 } else if (bank === 4) {
                     const ac = effectiveClip(t);
                     const cur = S.seqArpStepInt[t][ac][knobIdx] | 0;
-                    const nxt = Math.max(-24, Math.min(24, cur + dir));
+                    const nxt = Math.max(-24, Math.min(24, cur + _kd));
                     if (nxt !== cur) {
                         S.seqArpStepInt[t][ac][knobIdx] = nxt;
                         /* Writes to active-clip pfx_params via pfx_set; matches the
@@ -2370,7 +2397,7 @@ function _onCC_knobs(d1, d2) {
                     }
                 } else {
                     const cur = S.tarpStepInt[t][knobIdx] | 0;
-                    const nxt = Math.max(-24, Math.min(24, cur + dir));
+                    const nxt = Math.max(-24, Math.min(24, cur + _kd));
                     if (nxt !== cur) {
                         S.tarpStepInt[t][knobIdx] = nxt;
                         if (typeof host_module_set_param === 'function')
@@ -2397,7 +2424,7 @@ function _onCC_knobs(d1, d2) {
             if (bank === BANK_OCTAVE) {
                 /* sens=16 — matches drum NOTE FX LaneOct/LaneNote ±1 stepping */
                 S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 16) {
+                if (S.knobAccum[knobIdx] >= KNOB_PICK) {
                     S.knobAccum[knobIdx] = 0;
                     applyConductGridKnob(BANK_OCTAVE, knobIdx, dir);
                 }
@@ -2405,7 +2432,7 @@ function _onCC_knobs(d1, d2) {
                 /* Responder / When: single-fire toggle, locked per gesture */
                 if (S.knobLocked[knobIdx]) return;
                 S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 16) {
+                if (S.knobAccum[knobIdx] >= KNOB_DELIB) {
                     S.knobAccum[knobIdx] = 0;
                     S.knobLocked[knobIdx] = true;
                     applyConductGridKnob(bank, knobIdx, dir);
@@ -2423,7 +2450,7 @@ function _onCC_knobs(d1, d2) {
             if (knobIdx === 0) {
                 /* K1 = Res (normal=proportional rescale; alt=zoom, sens=8) */
                 S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 8) {
+                if (S.knobAccum[knobIdx] >= KNOB_PICK) {
                     S.knobAccum[knobIdx] = 0;
                     const curIdx = Math.max(0, TPS_VALUES.indexOf(S.drumLaneTPS[t]));
                     const nv = Math.max(0, Math.min(5, curIdx + dir));
@@ -2466,7 +2493,7 @@ function _onCC_knobs(d1, d2) {
                 const canFire = dir === 1 ? (len * 2 <= 256) : (len >= 2);
                 if (!canFire) return;
                 S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 16) {
+                if (S.knobAccum[knobIdx] >= KNOB_DELIB) {
                     S.knobAccum[knobIdx] = 0;
                     if (typeof host_module_set_param === 'function')
                         host_module_set_param('t' + t + '_l' + lane + '_beat_stretch', String(dir));
@@ -2510,7 +2537,7 @@ function _onCC_knobs(d1, d2) {
                 if (S.knobLocked[knobIdx]) return;
                 if (dir !== 1) return;
                 S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 16) {
+                if (S.knobAccum[knobIdx] >= KNOB_DELIB) {
                     S.knobAccum[knobIdx] = 0;
                     S.confirmLgto       = true;
                     S.confirmLgtoSel    = 0;
@@ -2523,7 +2550,7 @@ function _onCC_knobs(d1, d2) {
             if (knobIdx === 4) {
                 /* K5 = Eucl (Bjorklund hit count, sens=8) */
                 S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 8) {
+                if (S.knobAccum[knobIdx] >= KNOB_PICK) {
                     S.knobAccum[knobIdx] = 0;
                     const len  = S.drumLaneLength[t];
                     const prev = Math.min(S.drumLaneEuclidN[t][lane] | 0, len);
@@ -2545,7 +2572,7 @@ function _onCC_knobs(d1, d2) {
                 /* K7 = Dir (per-lane playback direction, sens=16).
                  * AltMode flips this to Step / Audio playback style (sens=4). */
                 S.knobAccum[knobIdx]++;
-                const _k7Sens = S.altMode ? 4 : 8;
+                const _k7Sens = KNOB_PICK;
                 if (S.knobAccum[knobIdx] >= _k7Sens) {
                     S.knobAccum[knobIdx] = 0;
                     if (S.altMode) {
@@ -2573,7 +2600,7 @@ function _onCC_knobs(d1, d2) {
             if (knobIdx === 7) {
                 /* K8 = SqFl: sens=16 — matches melodic */
                 S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 16) {
+                if (S.knobAccum[knobIdx] >= KNOB_DELIB) {
                     S.knobAccum[knobIdx] = 0;
                     const _cur = S.clipSeqFollow[t][ac] ? 1 : 0;
                     const _nv  = Math.max(0, Math.min(1, _cur + dir));
@@ -2598,7 +2625,7 @@ function _onCC_knobs(d1, d2) {
             if (knobIdx === 0) {
                 /* K1 = Res: set resolution on all 32 lanes (absolute), sens=8 */
                 S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 8) {
+                if (S.knobAccum[knobIdx] >= KNOB_PICK) {
                     S.knobAccum[knobIdx] = 0;
                     const curIdx = S.bankParams[t][7][0] < 0 ? -1 : S.bankParams[t][7][0];
                     const nv = Math.max(0, Math.min(5, curIdx + dir));
@@ -2616,7 +2643,7 @@ function _onCC_knobs(d1, d2) {
                 /* K2 = Stch: beat stretch all lanes, lock, sens=16 */
                 if (S.knobLocked[knobIdx]) return;
                 S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 16) {
+                if (S.knobAccum[knobIdx] >= KNOB_DELIB) {
                     S.knobAccum[knobIdx] = 0;
                     host_module_set_param('t' + t + '_all_lanes_beat_stretch', String(dir));
                     S.knobLocked[knobIdx] = true;
@@ -2630,7 +2657,7 @@ function _onCC_knobs(d1, d2) {
             if (knobIdx === 2) {
                 /* K3 = Shft: clock shift all lanes, sens=8. Alt = Nudge (sens=1). */
                 S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= (S.altMode ? 1 : 8)) {
+                if (S.knobAccum[knobIdx] >= (S.altMode ? 1 : KNOB_PICK)) {
                     S.knobAccum[knobIdx] = 0;
                     if (S.altMode) {
                         S.bankParams[t][7][2] += dir;
@@ -2646,12 +2673,11 @@ function _onCC_knobs(d1, d2) {
                 return;
             }
             if (knobIdx === 3) {
-                /* K4 = Qnt: quantize all lanes 0-100, sens=1 */
-                S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 1) {
-                    S.knobAccum[knobIdx] = 0;
+                /* K4 = Qnt: quantize all lanes 0-100, cont accel */
+                const _q = ccKnobDelta(d2, knobIdx);
+                if (_q !== 0) {
                     const cur7q = S.bankParams[t][7][3] < 0 ? 0 : S.bankParams[t][7][3];
-                    const nv = Math.max(0, Math.min(100, cur7q + dir));
+                    const nv = Math.max(0, Math.min(100, cur7q + _q));
                     if (nv !== cur7q) {
                         S.bankParams[t][7][3] = nv;
                         S.drumLaneQnt[t] = nv;
@@ -2663,9 +2689,11 @@ function _onCC_knobs(d1, d2) {
                 return;
             }
             if (knobIdx === 4) {
-                /* K5 = VelIn: track velocity override, sens=1 */
+                /* K5 = VelIn: track velocity override, cont accel */
+                const _v5 = ccKnobDelta(d2, knobIdx);
+                if (_v5 === 0) return;
                 const cur7v = S.trackVelOverride[t];
-                const nv = Math.max(0, Math.min(127, cur7v + dir));
+                const nv = Math.max(0, Math.min(127, cur7v + _v5));
                 if (nv !== cur7v) applyTrackConfig(t, 'track_vel_override', nv);
                 S.screenDirty = true;
                 return;
@@ -2673,7 +2701,7 @@ function _onCC_knobs(d1, d2) {
             if (knobIdx === 5) {
                 /* K6 = InQ: per-track drum input quantize, 9 values (0=Off..8=1/4T), sens=5 */
                 S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 5) {
+                if (S.knobAccum[knobIdx] >= KNOB_PICK) {
                     S.knobAccum[knobIdx] = 0;
                     const nv = Math.max(0, Math.min(8, S.drumInpQuant[t] + dir));
                     if (nv !== S.drumInpQuant[t]) {
@@ -2689,7 +2717,7 @@ function _onCC_knobs(d1, d2) {
                 /* K7 = Dir: set playback direction on all 32 lanes, sens=16.
                  * Alt = RvSt (audio reverse on all lanes), sens=4. */
                 S.knobAccum[knobIdx]++;
-                const _k7Sens = S.altMode ? 4 : 8;
+                const _k7Sens = KNOB_PICK;
                 if (S.knobAccum[knobIdx] >= _k7Sens) {
                     S.knobAccum[knobIdx] = 0;
                     if (S.altMode) {
@@ -2714,7 +2742,7 @@ function _onCC_knobs(d1, d2) {
             if (knobIdx === 7) {
                 /* K8 = SyncRpt: per-track drum repeat sync toggle, bool, sens=8 */
                 S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 8) {
+                if (S.knobAccum[knobIdx] >= KNOB_DELIB) {
                     S.knobAccum[knobIdx] = 0;
                     const cur7s = S.bankParams[t][7][7] | 0;
                     const nv = Math.max(0, Math.min(1, cur7s + dir));
@@ -2736,11 +2764,10 @@ function _onCC_knobs(d1, d2) {
             const dir  = (d2 >= 1 && d2 <= 63) ? 1 : -1;
             if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
             if (knobIdx === 0 || knobIdx === 1) {
-                /* K1 = LaneOct (±12 semitones), K2 = LaneNote (±1 semitone), sens=16 */
-                S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 16) {
-                    S.knobAccum[knobIdx] = 0;
-                    const delta = knobIdx === 0 ? dir * 12 : dir;
+                /* K1 = LaneOct (±12 semitones, picker pace), K2 = LaneNote (cont accel) */
+                const delta = knobIdx === 0 ? knobPick(knobIdx, dir, KNOB_PICK) * 12
+                                            : ccKnobDelta(d2, knobIdx);
+                if (delta !== 0) {
                     const nv = Math.max(0, Math.min(127, S.drumLaneNote[t][lane] + delta));
                     if (nv !== S.drumLaneNote[t][lane]) {
                         S.drumLaneNote[t][lane] = nv;
@@ -2755,11 +2782,10 @@ function _onCC_knobs(d1, d2) {
                 return;
             }
             if (knobIdx === 2) {
-                /* K3 = Vel: -127..127, sens=1 */
-                S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 1) {
-                    S.knobAccum[knobIdx] = 0;
-                    const nv = Math.max(-127, Math.min(127, (S.bankParams[t][1][1] | 0) + dir));
+                /* K3 = Vel: -127..127, cont accel */
+                const _d3 = ccKnobDelta(d2, knobIdx);
+                if (_d3 !== 0) {
+                    const nv = Math.max(-127, Math.min(127, (S.bankParams[t][1][1] | 0) + _d3));
                     if (nv !== S.bankParams[t][1][1]) {
                         S.bankParams[t][1][1] = nv;
                         if (typeof host_module_set_param === 'function')
@@ -2770,11 +2796,10 @@ function _onCC_knobs(d1, d2) {
                 return;
             }
             if (knobIdx === 3) {
-                /* K4 = Qnt — per-lane quantize, sens=1 */
-                S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 1) {
-                    S.knobAccum[knobIdx] = 0;
-                    const nv = Math.max(0, Math.min(100, S.drumLaneQnt[t] + dir));
+                /* K4 = Qnt — per-lane quantize, cont accel */
+                const _d4 = ccKnobDelta(d2, knobIdx);
+                if (_d4 !== 0) {
+                    const nv = Math.max(0, Math.min(100, S.drumLaneQnt[t] + _d4));
                     if (nv !== S.drumLaneQnt[t]) {
                         S.drumLaneQnt[t] = nv;
                         S.bankParams[t][1][2] = nv;
@@ -2786,9 +2811,9 @@ function _onCC_knobs(d1, d2) {
                 return;
             }
             if (knobIdx === 4) {
-                /* K5 = Len: 0..8 (--/.25/.5/.75/1/2/4/8/16), sens=5 */
+                /* K5 = Len: 0..8, picker pace */
                 S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 5) {
+                if (S.knobAccum[knobIdx] >= KNOB_PICK) {
                     S.knobAccum[knobIdx] = 0;
                     const cur = S.drumLaneLenMode[t][lane] | 0;
                     const nv  = Math.max(0, Math.min(8, cur + dir));
@@ -2802,11 +2827,10 @@ function _onCC_knobs(d1, d2) {
                 return;
             }
             if (knobIdx === 5) {
-                /* K6 = Gate: 0-400, sens=2 */
-                S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 2) {
-                    S.knobAccum[knobIdx] = 0;
-                    const nv = Math.max(0, Math.min(400, (S.bankParams[t][1][0] | 0) + dir));
+                /* K6 = Gate: 0-400, cont accel */
+                const _d6 = ccKnobDelta(d2, knobIdx);
+                if (_d6 !== 0) {
+                    const nv = Math.max(0, Math.min(400, (S.bankParams[t][1][0] | 0) + _d6));
                     if (nv !== S.bankParams[t][1][0]) {
                         S.bankParams[t][1][0] = nv;
                         if (typeof host_module_set_param === 'function')
@@ -2824,12 +2848,11 @@ function _onCC_knobs(d1, d2) {
             const lane = S.activeDrumLane[t];
             const dir  = (d2 >= 1 && d2 <= 63) ? 1 : -1;
             if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
-            S.knobAccum[knobIdx]++;
-            if (S.knobAccum[knobIdx] >= 2) {
-                S.knobAccum[knobIdx] = 0;
+            const _kd = ccKnobDelta(d2, knobIdx);   /* unified: cont accel */
+            if (_kd !== 0) {
                 const step = knobIdx;
                 if (S.altMode) {
-                    const nv = Math.max(-50, Math.min(50, (S.drumRepeatNudge[t][lane][step] | 0) + dir));
+                    const nv = Math.max(-50, Math.min(50, (S.drumRepeatNudge[t][lane][step] | 0) + _kd));
                     if (nv !== S.drumRepeatNudge[t][lane][step]) {
                         S.drumRepeatNudge[t][lane][step] = nv;
                         if (typeof host_module_set_param === 'function')
@@ -2840,7 +2863,7 @@ function _onCC_knobs(d1, d2) {
                     const cv = S.drumRepeatVelScale[t][lane][step] | 0;
                     const nv = cv === 255 ? (dir > 0 ? 255 : 127)
                              : (cv === 127 && dir > 0) ? 255
-                             : Math.max(1, Math.min(127, cv + dir * 3));
+                             : Math.max(1, Math.min(127, cv + _kd));
                     if (nv !== S.drumRepeatVelScale[t][lane][step]) {
                         S.drumRepeatVelScale[t][lane][step] = nv;
                         if (typeof host_module_set_param === 'function')
@@ -2870,7 +2893,7 @@ function _onCC_knobs(d1, d2) {
              * Unified position: CC0..127 = 0..127, AT = -1, Sch1 = -2, Sch2 = -3, ..., Sch8 = -9.
              * When type=2, trackCCAssign holds the chain knob number (1-8). */
             if (S.altMode) {
-                if (S.knobAccum[knobIdx] >= 4) {
+                if (S.knobAccum[knobIdx] >= KNOB_PICK) {
                     S.knobAccum[knobIdx] = 0;
                     const hasSch = typeof shadow_set_param === 'function';
                     const cur = (S.trackCCType[t][knobIdx] === 2) ? -(S.trackCCAssign[t][knobIdx] + 1)
@@ -2963,7 +2986,7 @@ function _onCC_knobs(d1, d2) {
             const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
             if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
             S.knobAccum[knobIdx]++;
-            if (S.knobAccum[knobIdx] >= 16) {
+            if (S.knobAccum[knobIdx] >= KNOB_PICK) {
                 S.knobAccum[knobIdx] = 0;
                 const t = S.activeTrack;
                 const isMidi = bank === 3;
@@ -2987,10 +3010,9 @@ function _onCC_knobs(d1, d2) {
             const t   = S.activeTrack;
             const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
             if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
-            S.knobAccum[knobIdx]++;
-            if (S.knobAccum[knobIdx] >= 1) {
-                S.knobAccum[knobIdx] = 0;
-                const nv = Math.max(-100, Math.min(100, (S.delayClockFb[t] | 0) + dir));
+            const _q = ccKnobDelta(d2, knobIdx);
+            if (_q !== 0) {
+                const nv = Math.max(-100, Math.min(100, (S.delayClockFb[t] | 0) + _q));
                 if (nv !== S.delayClockFb[t]) {
                     S.delayClockFb[t] = nv;
                     if (typeof host_module_set_param === 'function')
@@ -3010,7 +3032,7 @@ function _onCC_knobs(d1, d2) {
             const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
             if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
             S.knobAccum[knobIdx]++;
-            if (S.knobAccum[knobIdx] >= 8) {
+            if (S.knobAccum[knobIdx] >= KNOB_PICK) {
                 S.knobAccum[knobIdx] = 0;
                 const nv = Math.max(0, Math.min(8, S.drumInpQuant[t] + dir));
                 if (nv !== S.drumInpQuant[t]) {
@@ -3035,7 +3057,7 @@ function _onCC_knobs(d1, d2) {
             const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
             if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
             S.knobAccum[knobIdx]++;
-            if (S.knobAccum[knobIdx] >= 16) {
+            if (S.knobAccum[knobIdx] >= KNOB_DELIB) {
                 S.knobAccum[knobIdx] = 0;
                 S.knobLocked[knobIdx] = true;
                 S.condLock[ac] = S.condLock[ac] ? 0 : 1;   /* single-fire toggle */
@@ -3057,17 +3079,15 @@ function _onCC_knobs(d1, d2) {
         const pm      = BANKS[bank].knobs[knobIdx];
         if (pm && pm.abbrev && pm.scope !== 'stub' && !S.knobLocked[knobIdx]) {
             const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
-            if (dir !== S.knobLastDir[knobIdx]) {
-                S.knobAccum[knobIdx]   = 0;
-                S.knobLastDir[knobIdx] = dir;
-            }
-            S.knobAccum[knobIdx]++;
-            /* Shift+Shft (Nudge mode) fires twice as fast as plain Clock Shift. */
-            const _effSens = (pm.dspKey === 'clock_shift' && S.altMode) ? Math.max(1, (pm.sens >> 1))
-                           : (pm.dspKey === 'clip_playback_dir' && S.altMode) ? 4
-                           : pm.sens;
-            if (S.knobAccum[knobIdx] >= _effSens) {
-                S.knobAccum[knobIdx] = 0;
+            /* Unified response: class decides the feel. Clock Shift (+alt
+             * Nudge) fires one discrete step at picker pace — its DSP key
+             * takes a ±1 direction, so it can't take accelerated deltas
+             * (set_param coalescing forbids bursts). */
+            let _cls = knobClass(pm);
+            if (pm.dspKey === 'clock_shift') _cls = 'pick';
+            const _delta = _cls === 'cont' ? ccKnobDelta(d2, knobIdx)
+                         : knobPick(knobIdx, dir, _cls === 'delib' ? KNOB_DELIB : KNOB_PICK);
+            if (_delta !== 0) {
                 S.screenDirty = true;
                 if (pm.scope === 'action') {
                     const t   = S.activeTrack;
@@ -3166,8 +3186,10 @@ function _onCC_knobs(d1, d2) {
                     }
                 } else {
                     const cur  = S.bankParams[S.activeTrack][bank][knobIdx];
-                    const step = pm.step || 1;
-                    let nv  = Math.max(pm.min, Math.min(pm.max, cur + dir * step));
+                    /* _delta already carries acceleration for 'cont' knobs;
+                     * slow turns are always ±1 so exact values stay dialable
+                     * (the old step-2 skips are gone). */
+                    let nv  = Math.max(pm.min, Math.min(pm.max, cur + _delta));
                     if (nv !== cur) {
                         if (S.altMode && pm.dspKey === 'clip_resolution') {
                             const _t   = S.activeTrack;
