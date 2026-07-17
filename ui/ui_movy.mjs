@@ -359,6 +359,35 @@ export function drawValSquare(kx, ky, text) {
     pf3Print(kx + 1 + Math.floor((MV_KW - 2 - w) / 2), ky + 1 + Math.floor((MV_KH - 2 - 5) / 2), text, 1);
 }
 
+/* One-shot / relative action square. Resting: just "< >" ("turn either way").
+ * While its knob is touched the VALUE takes over the box (mirroring the
+ * label<->value swap). `oneWay` (Lgto-style destructive actions) stays "< >"
+ * even while touched — there is no value to show. */
+export function drawActionSquare(kx, ky, text, oneWay, touched) {
+    rectOutline(kx, ky, MV_KW, MV_KH, 1);
+    const t = (touched && !oneWay) ? String(text) : '< >';
+    const w = pf3Width(t);
+    pf3Print(kx + 1 + Math.floor((MV_KW - 2 - w) / 2), ky + 1 + Math.floor((MV_KH - 2 - 5) / 2), t, 1);
+}
+
+/* Playback-direction square: arrow glyphs per mode —
+ * 0 Fwd ►, 1 Bwd ◄, 2 PPf ◄ ► (outward), 3 PPb ► ◄ (inward). */
+export function drawDirSquare(kx, ky, mode) {
+    rectOutline(kx, ky, MV_KW, MV_KH, 1);
+    const cy = ky + Math.floor(MV_KH / 2);
+    const tri = (x, dir) => {   /* 4-col solid triangle; dir 1 = points right */
+        for (let c = 0; c < 4; c++) {
+            const h = dir > 0 ? 7 - 2 * c : 1 + 2 * c;
+            fill_rect(x + c, cy - (h >> 1), 1, h, 1);
+        }
+    };
+    const mid = kx + Math.floor(MV_KW / 2);
+    if (mode === 0)      tri(mid - 2, 1);
+    else if (mode === 1) tri(mid - 2, -1);
+    else if (mode === 2) { tri(mid - 7, -1); tri(mid + 3, 1); }   /* outward */
+    else                 { tri(mid - 7, 1);  tri(mid + 3, -1); }  /* inward */
+}
+
 /* ---- chrome ---- */
 
 /* Resting header (davebox flavor — colors inverted vs kit v27, Josh's call):
@@ -407,7 +436,7 @@ export function drawKitPageBar(idx, count) {
 
 /* ---- grid ---- */
 
-function drawCellWidget(col, rowY, cell) {
+function drawCellWidget(col, rowY, cell, touched) {
     const kx = col * MV_CELL_W + Math.floor((MV_CELL_W - MV_KW) / 2);
     switch (cell.kind) {
         case 'arc':    return drawArcKnob(kx, rowY, cell.norm || 0, false);
@@ -415,6 +444,8 @@ function drawCellWidget(col, rowY, cell) {
         case 'hbar':   return drawHBar(kx, rowY, cell.norm || 0);
         case 'enumsq': return drawEnumSquare(kx, rowY, cell.text, cell.sq);
         case 'valsq':  return drawValSquare(kx, rowY, cell.sq != null ? cell.sq : cell.text);
+        case 'action': return drawActionSquare(kx, rowY, cell.text, cell.oneWay, touched);
+        case 'dirsq':  return drawDirSquare(kx, rowY, cell.sel | 0);
         default:       return; /* blank */
     }
 }
@@ -443,7 +474,7 @@ export function drawKitCells(cells, touchedIdx) {
         const col = k % 4;
         const rowY = k < 4 ? MV_ROW0_Y : MV_ROW1_Y;
         const lblY = k < 4 ? MV_LBL0_Y : MV_LBL1_Y;
-        drawCellWidget(col, rowY, cell);
+        drawCellWidget(col, rowY, cell, k === touchedIdx);
         drawCellLabel(col, lblY, cell, k === touchedIdx);
     }
 }
@@ -452,7 +483,8 @@ export function drawKitCells(cells, touchedIdx) {
  * covers the 3 columns away from the touched knob, selection inverted. */
 export function drawKitEnumOverlay(cells, touchedIdx) {
     const cell = touchedIdx >= 0 ? cells[touchedIdx] : null;
-    if (!cell || cell.kind !== 'enumsq' || !cell.options || cell.options.length <= 2) return;
+    if (!cell || (cell.kind !== 'enumsq' && cell.kind !== 'dirsq') ||
+        !cell.options || cell.options.length <= 2) return;
     const sel = cell.sel | 0;
     if (sel < 0) return; /* unset value ("--") — nothing to browse */
     const ovX = (touchedIdx % 4) < 2 ? SCREEN_W - 3 * MV_CELL_W : 0;

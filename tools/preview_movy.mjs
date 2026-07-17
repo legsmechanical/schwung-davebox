@@ -36,13 +36,13 @@ function frame(name, cells, opts) {
 
 /* 1 — CLIP bank, resting */
 frame('CLIP (melodic, resting)', [
-    enumCell('Res', 'Resolution', RES, 1),
-    { kind: 'valsq', label: 'Strch', name: 'Beat Stretch', text: '1x' },
-    { kind: 'valsq', label: 'Shift', name: 'Clock Shift', text: '+0' },
-    { kind: 'valsq', label: 'Lgto', name: 'Apply Legato', text: '->' },
-    enumCell('InQnt', 'Input Quantize', DIQ, 0),
+    { ...enumCell('Res', 'Resolution', RES, 1), pick: { n: 6, sel: 1 } },
+    { kind: 'action', label: 'Strch', name: 'Beat Stretch', text: '1x' },
+    { kind: 'action', label: 'Shift', name: 'Clock Shift', text: '+0' },
+    { kind: 'action', oneWay: true, label: 'Lgto', name: 'Apply Legato', text: '->' },
+    { ...enumCell('InQnt', 'Input Quantize', DIQ, 3), pick: { n: 9, sel: 3 } },
     { kind: 'blank', label: '' },
-    enumCell('Dir', 'Playback Dir', DIR, 0),
+    { kind: 'dirsq', label: 'Dir', name: 'Playback Dir', text: 'PPf', options: DIR, sel: 2 },
     { kind: 'hbar', label: 'SeqFl', name: 'Seq Follow', text: 'ON', norm: 1 },
 ], { headerText: 'CLIP', pageIdx: 0, pageCount: 7, touchedIdx: -1, altArrowShow: true });
 
@@ -74,7 +74,7 @@ frame('DELAY (Rate touched, enum overlay)', [
 frame('ARP IN (resting, inverted header)', [
     enumCell('Style', 'Arp Style', STYL, 1),
     enumCell('Rate', 'Arp Rate', ['1/32','1/16','1/16t','1/8','1/8t','1/4','1/4t','1/2','1/2t','1bar'], 2),
-    { kind: 'valsq', label: 'Oct', name: 'Octave Range', text: '+2' },
+    { kind: 'valsq', label: 'Oct', name: 'Octave Range', text: '+2', pick: { n: 9, sel: 6 } },
     { kind: 'arc', label: 'Gate', name: 'Arp Gate', text: '100%', norm: 0.5 },
     enumCell('Steps', 'Steps Mode', ['Off','Mute','Step'], 1),
     { kind: 'hbar', label: 'Retrg', name: 'Retrigger', text: 'OFF', norm: 0 },

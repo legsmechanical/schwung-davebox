@@ -2388,9 +2388,9 @@ function _onCC_knobs(d1, d2) {
             if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
 
             if (knobIdx === 0) {
-                /* K1 = Res (normal=proportional rescale; alt=zoom, sens=16) */
+                /* K1 = Res (normal=proportional rescale; alt=zoom, sens=8) */
                 S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 16) {
+                if (S.knobAccum[knobIdx] >= 8) {
                     S.knobAccum[knobIdx] = 0;
                     const curIdx = Math.max(0, TPS_VALUES.indexOf(S.drumLaneTPS[t]));
                     const nv = Math.max(0, Math.min(5, curIdx + dir));
@@ -2512,7 +2512,7 @@ function _onCC_knobs(d1, d2) {
                 /* K7 = Dir (per-lane playback direction, sens=16).
                  * AltMode flips this to Step / Audio playback style (sens=4). */
                 S.knobAccum[knobIdx]++;
-                const _k7Sens = S.altMode ? 4 : 16;
+                const _k7Sens = S.altMode ? 4 : 8;
                 if (S.knobAccum[knobIdx] >= _k7Sens) {
                     S.knobAccum[knobIdx] = 0;
                     if (S.altMode) {
@@ -2563,9 +2563,9 @@ function _onCC_knobs(d1, d2) {
             const dir = (d2 >= 1 && d2 <= 63) ? 1 : -1;
             if (dir !== S.knobLastDir[knobIdx]) { S.knobAccum[knobIdx] = 0; S.knobLastDir[knobIdx] = dir; }
             if (knobIdx === 0) {
-                /* K1 = Res: set resolution on all 32 lanes (absolute), sens=16 */
+                /* K1 = Res: set resolution on all 32 lanes (absolute), sens=8 */
                 S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 16) {
+                if (S.knobAccum[knobIdx] >= 8) {
                     S.knobAccum[knobIdx] = 0;
                     const curIdx = S.bankParams[t][7][0] < 0 ? -1 : S.bankParams[t][7][0];
                     const nv = Math.max(0, Math.min(5, curIdx + dir));
@@ -2638,9 +2638,9 @@ function _onCC_knobs(d1, d2) {
                 return;
             }
             if (knobIdx === 5) {
-                /* K6 = InQ: per-track drum input quantize, 9 values (0=Off..8=1/4T), sens=8 */
+                /* K6 = InQ: per-track drum input quantize, 9 values (0=Off..8=1/4T), sens=5 */
                 S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 8) {
+                if (S.knobAccum[knobIdx] >= 5) {
                     S.knobAccum[knobIdx] = 0;
                     const nv = Math.max(0, Math.min(8, S.drumInpQuant[t] + dir));
                     if (nv !== S.drumInpQuant[t]) {
@@ -2656,7 +2656,7 @@ function _onCC_knobs(d1, d2) {
                 /* K7 = Dir: set playback direction on all 32 lanes, sens=16.
                  * Alt = RvSt (audio reverse on all lanes), sens=4. */
                 S.knobAccum[knobIdx]++;
-                const _k7Sens = S.altMode ? 4 : 16;
+                const _k7Sens = S.altMode ? 4 : 8;
                 if (S.knobAccum[knobIdx] >= _k7Sens) {
                     S.knobAccum[knobIdx] = 0;
                     if (S.altMode) {
@@ -2753,9 +2753,9 @@ function _onCC_knobs(d1, d2) {
                 return;
             }
             if (knobIdx === 4) {
-                /* K5 = Len: 0..8 (--/.25/.5/.75/1/2/4/8/16), sens=8 */
+                /* K5 = Len: 0..8 (--/.25/.5/.75/1/2/4/8/16), sens=5 */
                 S.knobAccum[knobIdx]++;
-                if (S.knobAccum[knobIdx] >= 8) {
+                if (S.knobAccum[knobIdx] >= 5) {
                     S.knobAccum[knobIdx] = 0;
                     const cur = S.drumLaneLenMode[t][lane] | 0;
                     const nv  = Math.max(0, Math.min(8, cur + dir));

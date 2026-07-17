@@ -242,7 +242,12 @@ The primary editing environment. Shows the active track's clip.
 The OLED shows all 8 knob parameters as **graphical widgets** in a 2×4 grid:
 arc knobs for continuous values (with a center tick for ± parameters), toggle
 bars for on/off, and framed squares for option lists and stepped values, each
-with its name on the label strip beneath. Turning a knob inverts the header to
+with its name on the label strip beneath. The squares carry extra cues by
+function: one-shot action knobs (Beat Stretch, Clock Shift) show chevrons on
+their side borders ("turn either way to act"), destructive one-way actions
+(Legato) show a single filled arrow, Playback Direction draws actual arrows
+(► ◄ and paired arrows for ping-pong), and small stepped ranges (Resolution,
+Input Quantize, octaves…) show a selection dot-strip along the bottom edge. Turning a knob inverts the header to
 that parameter's **full name** while the label strip under its widget swaps to
 the **live value**. Turning a knob with more than two options (Delay Rate, Arp
 Style, Resolution, ...) also pops up a scrolling list of every option, with the

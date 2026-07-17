@@ -14,7 +14,7 @@ import {
     col4, col5, pixelPrint,
     fmtSign, fmtStretch, fmtLen, fmtRes, fmtPct, fmtBool, fmtGateMod,
     fmtArpRate, fmtVelOverride, fmtPlayDir, fmtRevStyle,
-    fmtDly, fmtArpStyle, fmtArpSteps, fmtArpOct, fmtDiq, fmtPlain
+    fmtDly, fmtArpStyle, fmtArpSteps, fmtDiq, fmtPlain, fmtLgto
 } from './ui_constants.mjs';
 import {
     drawKitHeader, drawKitTouchedHeader, drawKitPageBar, drawKitAltArrow,
@@ -210,6 +210,12 @@ function bankHeaderName(t, bank) {
 const KIT_ENUM_FMTS = [fmtRes, fmtDiq, fmtPlayDir, fmtLen, fmtGateMod,
                        fmtDly, fmtArpStyle, fmtArpRate, fmtArpSteps, fmtRevStyle];
 
+/* Full option names for the picker overlays (the widget squares keep the
+ * short forms from the fmt* tables). */
+const KIT_DIR_NAMES = ['Forward', 'Backward', 'Ping Pong', 'Rev Ping Pong'];
+const KIT_ARP_STYLE_NAMES = ['Off', 'Up', 'Down', 'Up/Down', 'Down/Up',
+                             'Converge', 'Diverge', 'Ordered', 'Random', 'Rnd Order'];
+
 /* knobDef (BANKS entry) + current value -> canvaskit cell descriptor.
  * Widget choice mirrors the kit's cell constructors: toggles -> hbar,
  * option lists -> enum square, small counts / small signed / one-shot
@@ -221,15 +227,27 @@ function kitCellForKnob(knob, val) {
     const text = knob.fmt(v);
     const base = { label: knob.abbrev, name: knob.full, text };
     if (knob.fmt === fmtBool) { base.kind = 'hbar'; base.norm = v ? 1 : 0; return base; }
+    if (knob.fmt === fmtLgto) { base.kind = 'action'; base.oneWay = true; return base; }
+    /* relative one-shot actions (Stch, Shft) + Octave Shift: "< >" square
+     * whose box shows the live value while its knob is touched */
+    if (knob.scope === 'action' || knob.dspKey === 'noteFX_octave') { base.kind = 'action'; return base; }
+    if (knob.fmt === fmtPlayDir) {
+        base.kind = 'dirsq';
+        base.options = KIT_DIR_NAMES;
+        base.sel = v;
+        return base;
+    }
     if (KIT_ENUM_FMTS.indexOf(knob.fmt) >= 0) {
         base.kind = 'enumsq';
-        base.options = [];
-        for (let i = knob.min; i <= knob.max; i++) base.options.push(knob.fmt(i));
+        if (knob.fmt === fmtArpStyle) {
+            base.options = KIT_ARP_STYLE_NAMES;
+        } else {
+            base.options = [];
+            for (let i = knob.min; i <= knob.max; i++) base.options.push(knob.fmt(i));
+        }
         base.sel = v - knob.min;
         return base;
     }
-    /* one-shot / relative action knobs (Stch, Shft, Lgto): value square */
-    if (knob.scope === 'action') { base.kind = 'valsq'; return base; }
     if (knob.min < 0) {
         if (knob.max <= 4) { base.kind = 'valsq'; return base; }  /* octave-ish */
         base.kind = 'arcbip';
@@ -237,8 +255,7 @@ function kitCellForKnob(knob, val) {
         base.signed = Math.max(-1, Math.min(1, v / halfR));
         return base;
     }
-    if (knob.fmt === fmtArpOct) { base.kind = 'valsq'; return base; }
-    if (knob.fmt === fmtPlain && knob.max <= 16) { base.kind = 'valsq'; return base; } /* counts (Rep) */
+    if (knob.fmt === fmtPlain && knob.max <= 16) { base.kind = 'valsq'; return base; } /* counts (Repts) */
     base.kind = 'arc';
     base.norm = Math.max(0, Math.min(1, (v - knob.min) / ((knob.max - knob.min) || 1)));
     return base;
@@ -914,20 +931,38 @@ export function drawUI() {
      * offsets (±24); pad grid is the persistent step-vel level editor handled in
      * updateTrackLEDs. Renders REGARDLESS of knob-touch / inTimeout (persistent). */
     if (bank >= 0 && S.stepIntervalMode && !S.sessionView && (bank === 4 || bank === 5)) {
+        /* Repeat-groove-style single 8-column row: bipolar bars (±24
+         * scale-degree offset) around a dotted centerline, step number under
+         * each bar; touched step inverts its number, header = "Offset: +N". */
         const t      = S.activeTrack;
         const isSeq  = (bank === 4);
         const arr    = isSeq ? S.seqArpStepInt[t][effectiveClip(t)] : S.tarpStepInt[t];
-        drawBankHeading(isSeq ? 'SEQ ARP Steps' : 'LIVE ARP Steps');
+        const _tk    = S.knobTouched;
+        if (_tk >= 0 && _tk < 8) {
+            const _v = arr[_tk] | 0;
+            drawKitTouchedHeader('Pitch: ' + (_v > 0 ? '+' : '') + _v);
+        } else {
+            drawBankHeading('Step Pitch');
+        }
+        const _colW = 16, _barW = 10, _top = 14, _bot = 54, _numY = 57;
+        const _cy = Math.floor((_top + _bot) / 2);
+        for (let x = 0; x < 128; x += 2) set_pixel(x, _cy, 1);
         for (let k = 0; k < 8; k++) {
-            const colX = 4 + (k % 4) * 30;
-            const rowY = k < 4 ? 12 : 36;
-            const hi   = (S.knobTouched === k);
-            if (hi) fill_rect(colX, rowY, 24, 24, 1);
-            const lbl = 'S' + (k + 1);
-            const v   = arr[k] | 0;
-            const val = (v === 0) ? ' 0' : (v > 0 ? '+' + v : String(v));
-            print(colX, rowY,      col4(lbl), hi ? 0 : 1);
-            print(colX, rowY + 12, col4(val), hi ? 0 : 1);
+            const _x = k * _colW + 3;
+            const _v = arr[k] | 0;
+            const _mag = Math.round(Math.abs(_v) / 24 * (_cy - _top));
+            if (_v === 0) fill_rect(_x, _cy - 1, _barW, 3, 1);
+            else if (_v > 0) fill_rect(_x, _cy - _mag, _barW, Math.max(1, _mag), 1);
+            else fill_rect(_x, _cy + 1, _barW, Math.max(1, _mag), 1);
+            const _num = String(k + 1);
+            const _nw = mvWidth(_num);
+            const _nx = Math.round(k * _colW + _colW / 2 - _nw / 2);
+            if (k === _tk) {
+                fill_rect(k * _colW + 2, _numY - 1, _colW - 4, 7, 1);
+                mvPrint(_nx, _numY, _num, 0);
+            } else {
+                mvPrint(_nx, _numY, _num, 1);
+            }
         }
         return;
     }
@@ -951,22 +986,22 @@ export function drawUI() {
         /* Lane info rows */
         var _gVal = S.playing ? S.trackCCLiveVal[_gt][_gLane] : S.clipCCVal[_gt][_gac][_gLane];
         var _gValStr = (_gVal >= 0 && _gVal <= 127) ? String(_gVal) : '--';
-        var _gLine1L = 'K' + (_gLane + 1) + ' ' + _gLbl + ':';
-        pixelPrint(4, 13, _gLine1L, 1);
-        var _gValX = 4 + _gLine1L.length * 6;
-        pixelPrint(_gValX, 13, _gValStr, 1);
-        fill_rect(_gValX, 19, _gValStr.length * 6 - 1, 1, 1);
+        var _gLine1L = 'K' + (_gLane + 1) + ' ' + _gLbl + ': ';
+        mvPrint(4, 13, _gLine1L, 1);
+        var _gValX = 4 + mvWidth(_gLine1L) + 1;
+        mvPrint(_gValX, 13, _gValStr, 1);
+        fill_rect(_gValX, 19, mvWidth(_gValStr), 1, 1);
         if (_gParam) {
             var _gPTrunc = _gParam.length > 12 ? _gParam.substring(0, 12) : _gParam;
-            pixelPrint(128 - _gPTrunc.length * 6 - 1, 13, _gPTrunc, 1);
+            mvPrint(128 - mvWidth(_gPTrunc) - 2, 13, _gPTrunc, 1);
         }
         var _gZoomTps = S.ccLaneTps[_gt][_gac][_gLane] || (S.clipTPS[_gt][_gac] || 24);
         var _gZoomN = _gZoomTps === 12 ? '1/32' : _gZoomTps === 48 ? '1/8'
                     : _gZoomTps === 96 ? '1/4' : _gZoomTps === 384 ? '1bar' : '1/16';
         var _gResStr = 'Res: ' + _gResN;
         var _gZoomStr = 'Zoom: ' + _gZoomN;
-        pixelPrint(4, 23, _gResStr, 1);
-        pixelPrint(128 - _gZoomStr.length * 6 - 4, 23, _gZoomStr, 1);
+        mvPrint(4, 23, _gResStr, 1);
+        mvPrint(128 - mvWidth(_gZoomStr) - 4, 23, _gZoomStr, 1);
         /* Automation graph: 128px wide, just above progress bar */
         var _gBarY = 60, _gBarH = 3;
         var _gH = 24, _gY = _gBarY - _gH - 3;
@@ -1095,19 +1130,19 @@ export function drawUI() {
                 { kind: 'enumsq', label: S.altMode ? 'Zoom' : 'Res',
                   name: S.altMode ? 'Zoom' : 'Resolution', text: fmtRes(tpsIdx),
                   options: [0,1,2,3,4,5].map(fmtRes), sel: tpsIdx },
-                { kind: 'valsq', label: 'Strch', name: 'Beat Stretch',
+                { kind: 'action', label: 'Strch', name: 'Beat Stretch',
                   text: fmtStretch(S.bankParams[t][0][1]) },
-                { kind: 'valsq', label: S.altMode ? 'Nudge' : 'Shift',
+                { kind: 'action', label: S.altMode ? 'Nudge' : 'Shift',
                   name: S.altMode ? 'Nudge' : 'Clock Shift',
                   text: fmtSign(S.bankParams[t][0][2]) },
-                { kind: 'valsq', label: 'Lgto', name: 'Apply Legato', text: '->' },
+                { kind: 'action', oneWay: true, label: 'Lgto', name: 'Apply Legato', text: '->' },
                 { kind: 'valsq', label: 'Eucld', name: 'Euclid Fill', text: String(eucN) },
                 { kind: 'blank', label: '' },
                 S.altMode
                     ? { kind: 'hbar', label: 'Revrs', name: 'Reverse Style',
                         text: fmtRevStyle(_dlRev), norm: _dlRev ? 1 : 0 }
-                    : { kind: 'enumsq', label: 'Dir', name: 'Playback Dir',
-                        text: fmtPlayDir(_dlDir), options: [0,1,2,3].map(fmtPlayDir), sel: _dlDir },
+                    : { kind: 'dirsq', label: 'Dir', name: 'Playback Dir',
+                        text: fmtPlayDir(_dlDir), options: KIT_DIR_NAMES, sel: _dlDir },
                 { kind: 'hbar', label: 'SeqFl', name: 'Seq Follow',
                   text: fmtBool(sqfl), norm: sqfl ? 1 : 0 },
             ];
@@ -1133,9 +1168,9 @@ export function drawUI() {
                 rv < 0 ? { kind: 'valsq', label: 'Res', name: 'Resolution', text: '--' }
                        : { kind: 'enumsq', label: 'Res', name: 'Resolution', text: fmtRes(rv),
                            options: [0,1,2,3,4,5].map(fmtRes), sel: rv },
-                { kind: 'valsq', label: 'Strch', name: 'Beat Stretch',
+                { kind: 'action', label: 'Strch', name: 'Beat Stretch',
                   text: fmtStretch(S.bankParams[t][7][1]) },
-                { kind: 'valsq', label: S.altMode ? 'Nudge' : 'Shift',
+                { kind: 'action', label: S.altMode ? 'Nudge' : 'Shift',
                   name: S.altMode ? 'Nudge' : 'Clock Shift',
                   text: fmtSign(S.bankParams[t][7][2]) },
                 qv <= 0 ? { kind: 'valsq', label: 'Quant', name: 'Quantize', text: '--' }
@@ -1150,8 +1185,8 @@ export function drawUI() {
                        : (S.altMode
                             ? { kind: 'hbar', label: 'Revrs', name: 'Reverse Style',
                                 text: fmtRevStyle(dv), norm: dv ? 1 : 0 }
-                            : { kind: 'enumsq', label: 'Dir', name: 'Playback Dir',
-                                text: fmtPlayDir(dv), options: [0,1,2,3].map(fmtPlayDir), sel: dv }),
+                            : { kind: 'dirsq', label: 'Dir', name: 'Playback Dir',
+                                text: fmtPlayDir(dv), options: KIT_DIR_NAMES, sel: dv }),
                 { kind: 'hbar', label: 'RSync', name: 'Repeat Sync',
                   text: fmtBool(S.bankParams[t][7][7]), norm: S.bankParams[t][7][7] ? 1 : 0 },
             ];
@@ -1168,11 +1203,13 @@ export function drawUI() {
         const _noteStr = midiNoteName(_dlNote) + ' ' + _dlNote;
         const _lenMode = S.drumLaneLenMode[t][_lane] | 0;
         const LEN_OPTS = [0,1,2,3,4,5,6,7,8].map(fmtLen);
-        /* K1+K2 share the merged Oct/Note box (widget drawn below); their
-         * label strips + touch swap still run per-cell. */
+        /* K1+K2 share the merged Oct/Note box (drawn as part of this page's
+         * widget pass, BEFORE the enum overlay so a touched Len list draws on
+         * top of it). Their labels don't value-swap on touch — the box already
+         * shows the note readout. */
         const cells = [
-            { kind: 'blank', label: 'Oct',  name: 'Lane Note', text: _noteStr },
-            { kind: 'blank', label: 'Note', name: 'Lane Note', text: _noteStr },
+            { kind: 'blank', label: 'Oct',  name: 'Lane Note' },
+            { kind: 'blank', label: 'Note', name: 'Lane Note' },
             { kind: 'arcbip', label: 'Vel', name: 'Velocity Offset', text: fmtSign(vals[1]),
               signed: Math.max(-1, Math.min(1, (vals[1] | 0) / 127)) },
             { kind: 'arc', label: 'Quant', name: 'Quantize', text: fmtPct(vals[2]),
@@ -1184,18 +1221,20 @@ export function drawUI() {
             { kind: 'blank', label: '' },
             { kind: 'blank', label: '' },
         ];
-        drawKitPage('NOTE FX', cells, false);
-        /* Merged Oct/Note box spanning the K1+K2 widget area (per-lane MIDI
-         * note editor): framed note readout, inverted while either knob is
-         * touched. */
         {
-            const hiLane = (S.knobTouched === 0 || S.knobTouched === 1);
+            const _tch = S.knobTouched;
+            const _tcell = _tch >= 0 && cells[_tch] && cells[_tch].name ? cells[_tch] : null;
+            if (_tcell) drawKitTouchedHeader(_tcell.name);
+            else drawBankHeading('NOTE FX', false);
+            drawKitCells(cells, _tch);
+            /* merged Oct/Note box over the K1+K2 widget span */
+            const hiLane = (_tch === 0 || _tch === 1);
             const BX = 6, BW = 52, BY = MV_ROW0_Y, BH = MV_KH;
             if (hiLane) fill_rect(BX, BY, BW, BH, 1);
             else        rectOutline(BX, BY, BW, BH, 1);
-            const _fg = hiLane ? 0 : 1;
             mvPrint(BX + Math.round((BW - mvWidth(_noteStr)) / 2),
-                    BY + Math.floor((BH - 5) / 2), _noteStr, _fg);
+                    BY + Math.floor((BH - 5) / 2), _noteStr, hiLane ? 0 : 1);
+            drawKitEnumOverlay(cells, _tch);
         }
 
         } else if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 5) {
@@ -1286,12 +1325,12 @@ export function drawUI() {
                  * value half highlighted only when touched. */
                 fill_rect(colX - 1, rowY - 1, 29, 9, 1);
                 if (touchedHi) fill_rect(colX - 1, rowY + 8, 29, 9, 1);
-                print(colX, rowY,     col4(lbl), 0);
-                print(colX, rowY + 9, col4(val), touchedHi ? 0 : 1);
+                mvPrint(colX, rowY + 1,  lbl, 0);
+                mvPrint(colX, rowY + 10, val, touchedHi ? 0 : 1);
             } else {
                 if (touchedHi) fill_rect(colX - 1, rowY - 1, 29, 18, 1);
-                print(colX, rowY,     col4(lbl), touchedHi ? 0 : 1);
-                print(colX, rowY + 9, col4(val), touchedHi ? 0 : 1);
+                mvPrint(colX, rowY + 1,  lbl, touchedHi ? 0 : 1);
+                mvPrint(colX, rowY + 10, val, touchedHi ? 0 : 1);
             }
         }
         /* Touch-activated automation graph of the active lane (12px, ported from

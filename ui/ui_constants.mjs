@@ -269,13 +269,13 @@ export const BANKS = [
      * confirm dialog on right-turn), K5=InQ (custom handling, mirrors drum
      * ALL LANES K5), K6 unassigned, K7=Dir, K8=SqFl. */
     { name: 'CLIP', knobs: [
-        p('Res',  'Resolution',      'clip_resolution', 'clip',   0, 5,   1,   fmtRes, 16),
+        p('Res',  'Resolution',      'clip_resolution', 'clip',   0, 5,   1,   fmtRes, 8),
         p('Strch', 'Beat Stretch',    'beat_stretch',    'action', 0, 0,   0,   fmtStretch, 16, '_factor', true),
         p('Shift', 'Clock Shift',     'clock_shift',     'action', 0, 0,   0,   fmtSign,    8),
         p('Lgto', 'Apply Legato',   'lgto_apply',       'action', 0, 0,   0,   fmtLgto,    16, '_factor', true),
-        p('InQnt',  'Input Quantize', 'diq',              'track', 0, 8, 0,  fmtDiq, 8),
+        p('InQnt',  'Input Quantize', 'diq',              'track', 0, 8, 0,  fmtDiq, 5),
         _X,
-        p('Dir',  'Playback Dir',   'clip_playback_dir', 'clip',  0, 3,   0,   fmtPlayDir, 16),
+        p('Dir',  'Playback Dir',   'clip_playback_dir', 'clip',  0, 3,   0,   fmtPlayDir, 8),
         p('SeqFl', 'Seq Follow',      null,              'seqfollow', 0, 1, 1,  fmtBool, 16),
     ]},
     /* 1 — NOTE FX (pad 93). Layout (melodic, K-cells 1..8):
@@ -285,18 +285,18 @@ export const BANKS = [
      * length multiplier (non-destructive). Destructive legato lives on
      * CLIP K8 / DRUM LANE K8. */
     { name: 'NOTE FX', knobs: [
-        p('Oct',  'Octave Shift',    'noteFX_octave',      'track', -4,   4,   0,   fmtSign,     16),
+        p('Oct',  'Octave Shift',    'noteFX_octave',      'track', -4,   4,   0,   fmtSign,     8),
         p('Offst',  'Note Offset',     'noteFX_offset',      'track', -24,  24,  0,   fmtSign,     8),
         p('Vel',  'Velocity Offset', 'noteFX_velocity',    'track', -127, 127, 0,   fmtSign        ),
         p('Quant',  'Quantize',        'quantize',           'track',  0,   100, 0,   fmtPct,      1, undefined, undefined, 2),
-        p('Len>', 'Note Length',     'noteFX_length_mode', 'track',  0,   8,   0,   fmtLen,      8),
+        p('Len>', 'Note Length',     'noteFX_length_mode', 'track',  0,   8,   0,   fmtLen,      5),
         p('Gate', 'Gate Time',       'noteFX_gate',        'track',  0,   400, 100, fmtPct,      1, undefined, undefined, 2),
         _X,
         p('Rand',  'Pitch Random',    'noteFX_random',      'track',  0,   24,  0,   fmtPitchRnd, 4),
     ]},
     /* 2 — HARMZ (pad 94) */
     { name: 'HARMONY', knobs: [
-        p('Oct',  'Octaver',    'harm_octaver',   'track', -4,  4,  0, fmtSign, 16),
+        p('Oct',  'Octaver',    'harm_octaver',   'track', -4,  4,  0, fmtSign, 8),
         p('Harm1', 'Harmony 1',  'harm_interval1', 'track', -24, 24, 0, fmtSign, 8),
         p('Harm2', 'Harmony 2',  'harm_interval2', 'track', -24, 24, 0, fmtSign, 8),
         p('Harm3', 'Harmony 3',  'harm_interval3', 'track', -24, 24, 0, fmtSign, 8),
@@ -305,7 +305,7 @@ export const BANKS = [
     /* 3 — MIDI DLY (pad 95). K7 = Retrg (delay_retrig); Clock Feedback folded
      * onto Shift+K1 with dynamic label flip "Rate"↔"ClkF". */
     { name: 'DELAY', knobs: [
-        p('Rate', 'Delay Time',     'delay_time',         'track', 0,    16, 10, fmtDly,   10),
+        p('Rate', 'Delay Time',     'delay_time',         'track', 0,    16, 10, fmtDly,   6),
         p('Level',  'Delay Level',    'delay_level',        'track', 0,    127, 127, fmtPlain),
         p('Repts',  'Repeats',        'delay_repeats',      'track', 0,    16,  0, fmtPlain, 16),
         p('VelFb',  'Vel Feedback',   'delay_vel_fb',       'track', -127, 127, 0, fmtSign ),
@@ -316,22 +316,22 @@ export const BANKS = [
     ]},
     /* 4 — ARP OUT (pad 96) */
     { name: 'SEQUENCE ARP', knobs: [
-        p('Style', 'Arp Style',    'seq_arp_style',      'track', 0,    9,   0, fmtArpStyle, 16),
-        p('Rate', 'Arp Rate',     'seq_arp_rate',       'track', 0,    9,   1, fmtArpRate,  16),
-        p('Oct',  'Octave Range', 'seq_arp_octaves',    'track', -4,   4,   0, fmtArpOct,   16),
+        p('Style', 'Arp Style',    'seq_arp_style',      'track', 0,    9,   0, fmtArpStyle, 8),
+        p('Rate', 'Arp Rate',     'seq_arp_rate',       'track', 0,    9,   1, fmtArpRate,  8),
+        p('Oct',  'Octave Range', 'seq_arp_octaves',    'track', -4,   4,   0, fmtArpOct,   8),
         p('Gate', 'Arp Gate',     'seq_arp_gate',       'track', 1,    200, 100, fmtPct,     4),
-        p('Steps', 'Steps Mode',   'seq_arp_steps_mode', 'track', 1,    2,   1, fmtArpSteps, 16),
+        p('Steps', 'Steps Mode',   'seq_arp_steps_mode', 'track', 1,    2,   1, fmtArpSteps, 8),
         p('Retrg', 'Retrigger',    'seq_arp_retrigger',  'track', 0,    1,   1, fmtBool,     16),
         p('Sync', 'Sync to Clock', 'seq_arp_sync',      'track', 0,    1,   1, fmtBool,     16),
         _X,
     ]},
     /* 5 — ARP IN (pad 97) */
     { name: 'LIVE ARP', knobs: [
-        p('Style', 'Arp Style',     'tarp_style',      'track', 0,   9,   0,  fmtArpStyle, 16),
-        p('Rate', 'Arp Rate',      'tarp_rate',       'track', 0,   9,   1,  fmtArpRate,  16),
-        p('Oct',  'Octave Range',  'tarp_octaves',    'track', -4,  4,   0,  fmtArpOct,   16),
+        p('Style', 'Arp Style',     'tarp_style',      'track', 0,   9,   0,  fmtArpStyle, 8),
+        p('Rate', 'Arp Rate',      'tarp_rate',       'track', 0,   9,   1,  fmtArpRate,  8),
+        p('Oct',  'Octave Range',  'tarp_octaves',    'track', -4,  4,   0,  fmtArpOct,   8),
         p('Gate', 'Arp Gate',      'tarp_gate',       'track', 1,   200, 100, fmtPct,      4),
-        p('Steps', 'Steps Mode',    'tarp_steps_mode', 'track', 1,   2,   1,  fmtArpSteps, 16),
+        p('Steps', 'Steps Mode',    'tarp_steps_mode', 'track', 1,   2,   1,  fmtArpSteps, 8),
         p('Retrg', 'Retrigger',    'tarp_retrigger',  'track', 0,   1,   0,  fmtBool,     16),
         p('Sync', 'Sync to Clock', 'tarp_sync',       'track', 0,   1,   1,  fmtBool,     16),
         p('Latch', 'Latch',         'tarp_latch',      'track', 0,   1,   0,  fmtBool,     16),
