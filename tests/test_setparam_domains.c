@@ -1214,8 +1214,8 @@ int main(void) {
                   "tarp_reset: style/rate/octaves -> defaults");
         HX_ASSERT(ct->tarp.gate_pct == 100 && ct->tarp.steps_mode == 1,
                   "tarp_reset: gate/steps_mode -> defaults");
-        HX_ASSERT(ct->tarp.step_vel[3] == 4 && ct->tarp.step_int[2] == 0 &&
-                  ct->tarp.step_loop_len == 8, "tarp_reset: step arrays -> defaults");
+        HX_ASSERT(ct->tarp.step_vel[3] == 100 && ct->tarp.step_int[2] == 0 &&
+                  ct->tarp.step_loop_len == 8, "tarp_reset: step arrays -> defaults (abs vel 100)");
         HX_ASSERT(ct->tarp_on == 0 && ct->tarp_latch == 0 && ct->tarp_sync == 1,
                   "tarp_reset: tarp_on/latch->0, sync->1");
         HX_ASSERT(ct->tarp.retrigger == 1, "tarp_reset: retrigger reads 1 (arp_init default, NOT re-cleared)");

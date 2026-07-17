@@ -221,8 +221,10 @@ static int arp_compute_step(arp_engine_t *a, play_fx_t *fx,
  *               the next active step plays what would have played anyway.
  *   2 = Step  — level 0 step skips entirely (no note, no cycle advance).
  *
- * step_vel[i] is a 5-state level: 0 = step off, 1..4 = row 0..3 of the editor.
- * Active levels lerp between vel=10 (level 1) and incoming vel (level 4).
+ * step_vel[i] is an ABSOLUTE velocity 0..127 (2026-07-18 rework): 0 = step
+ * off; an active step fires at exactly its stored velocity, independent of
+ * the incoming note's velocity. Off mode bypasses the array entirely (live
+ * dynamics pass through).
  *
  * Column = beat division of the arp rate (rate=1/16 → cols are 1/16 notes,
  * rate=1/4 → cols are 1/4 notes). step_pos is derived from absolute master
@@ -246,7 +248,7 @@ static void arp_fire_step(seq8_instance_t *inst, seq8_track_t *tr) {
     a->step_pos = (uint8_t)step_idx;
 
     uint8_t level = a->step_vel[step_idx];
-    if (a->steps_mode == 0) level = 4;
+    if (a->steps_mode == 0) level = 1;   /* any non-zero: array bypassed below */
     int step_off = (a->steps_mode != 0) && (level == 0);
 
     /* Step mode + step off: skip — no fire, no cycle advance, leave sounding alone.
@@ -285,18 +287,12 @@ static void arp_fire_step(seq8_instance_t *inst, seq8_track_t *tr) {
     if (a->step_int[step_idx])
         pitch = (uint8_t)scale_transpose(inst, (int)pitch, (int)a->step_int[step_idx]);
 
-    /* Velocity: in Off mode, use incoming directly; in Mute/Step modes, scale
-     * via the level: level 1 → vel 10, level 4 → vel = base_vel, levels 2/3
-     * proportionally between. */
+    /* Velocity: in Off mode, use incoming directly; in Mute/Step modes the
+     * step's stored value IS the emitted velocity (absolute). */
     int v = (int)base_vel;
-    if (a->steps_mode != 0 && level >= 1 && level <= 4) {
-        if (level == 4) {
-            v = (int)base_vel;
-        } else {
-            /* lerp(10, base_vel, (level-1)/3) */
-            int span = (int)base_vel - 10;
-            v = 10 + (span * (level - 1)) / 3;
-        }
+    if (a->steps_mode != 0 && level >= 1) {
+        v = (int)level;
+        if (v > 127) v = 127;
     }
     if (v < 1)   v = 1;
     if (v > 127) v = 127;

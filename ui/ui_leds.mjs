@@ -7,6 +7,7 @@ import {
     SEQ8_NAV_FLAGS
 } from './ui_constants.mjs';
 import { trackClipHasContent, updateSceneMapLEDs } from './ui_scene.mjs';
+import { arpVelLevel } from './ui_pure.mjs';
 import {
     White, Red, Green, Blue, DarkBlue, LightGrey, DarkGrey, Cyan, PurpleBlue, VividYellow,
     DeepRed, DeepGreen, DeepMagenta, Mustard
@@ -562,7 +563,7 @@ export function updateTrackLEDs() {
             const row = Math.floor(i / 8);
             let color = LED_OFF;
             if (col < loopLen) {
-                const lvl = sv[col] | 0;
+                const lvl = arpVelLevel(sv[col]);
                 if (lvl > 0 && row < lvl) {
                     color = (row === lvl - 1) ? tc : td;
                 }
@@ -583,7 +584,7 @@ export function updateTrackLEDs() {
             const row = Math.floor(i / 8);
             let color = LED_OFF;
             if (col < loopLen) {
-                const lvl = sv[col] | 0;
+                const lvl = arpVelLevel(sv[col]);
                 if (lvl > 0 && row < lvl) {
                     color = (row === lvl - 1) ? tc : td;
                 }

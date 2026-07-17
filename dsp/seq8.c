@@ -374,7 +374,7 @@ typedef struct {
     int seq_arp_steps_mode;    /* 0..2 (Off/Mute/Skip) */
     int seq_arp_retrigger;     /* 0/1; default 1 */
     int seq_arp_sync;          /* 0=free, 1=sync to global rate boundary */
-    uint8_t seq_arp_step_vel[8]; /* level 0..4 (0=off, 1..4=row 0..3); default 4 */
+    uint8_t seq_arp_step_vel[8]; /* ABSOLUTE step velocity 0..127 (0=off); default 100 (name kept for state compat; legacy 5-state levels migrate on load) */
     int8_t  seq_arp_step_int[8]; /* per-step scale-degree offset -24..+24; default 0 */
     uint8_t seq_arp_step_loop_len; /* 1..8, default 8 — step pattern loop length */
     /* NOTE FX K5 "Len": non-destructive fixed pre-gate note length.
@@ -2024,7 +2024,7 @@ static void arp_init_defaults(arp_engine_t *a) {
     a->retrigger = 1;
     int i;
     /* step_vel level: 0=off, 1=row0(min), 4=row3(full incoming). Default 4. */
-    for (i = 0; i < 8; i++) a->step_vel[i] = 4;
+    for (i = 0; i < 8; i++) a->step_vel[i] = 100;
     /* step_int: per-step scale-degree offset -24..+24. Default 0. */
     for (i = 0; i < 8; i++) a->step_int[i] = 0;
     a->step_loop_len = 8;
@@ -3174,7 +3174,7 @@ static void clip_pfx_params_init(clip_pfx_params_t *p) {
     p->seq_arp_retrigger = 1;
     p->seq_arp_sync      = 1;
     int i;
-    for (i = 0; i < 8; i++) p->seq_arp_step_vel[i] = 4;
+    for (i = 0; i < 8; i++) p->seq_arp_step_vel[i] = 100;
     for (i = 0; i < 8; i++) p->seq_arp_step_int[i] = 0;
     p->seq_arp_step_loop_len = 8;
     p->note_length_mode = 0;  /* `--` passthrough */

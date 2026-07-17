@@ -901,10 +901,22 @@ live input.
 | K6 | Rtrg | Retrigger — resets pattern on each new note and at loop boundary. | On/Off | On |
 | K7 | Sync | Waits for next rate boundary before firing. Off = fires from anchor. | On/Off | On |
 
-**Arp Steps editor:** jog click on this bank enters the editor. K1–K8 set
-per-step pitch offsets (±24 scale degrees). Pads are a step-velocity editor (8
-columns × 4 rows). **Loop + pad** sets step-loop length (1–8). Jog click, jog
-turn, or Note/Session exits. State is per-clip.
+**Arp Steps editor:** jog click on this bank enters the editor. The OLED shows
+the 8 steps as a row of bars with the step number under each. Two pages:
+- **Step Pitch** (default): K1–K8 set per-step pitch offsets (±24 scale
+  degrees), shown as ± bars around a centerline. Header reads `Pitch: ±N`
+  while turning.
+- **Step Vel** (hold **Shift**): K1–K8 set each step's **absolute velocity**
+  fine (5–127), shown as bars from the baseline. Header reads `Velocity: N`.
+
+Pads stay the **coarse** velocity editor (8 columns × 4 rows): each row writes
+a preset velocity (32 / 64 / 96 / 127; re-pressing the bottom row turns the
+step off). The pad LEDs always show the nearest of the four levels for the
+step's true velocity, so knob-fine values still read on the grid. A step fires
+at exactly its stored velocity in Mute/Step modes; Steps Off ignores the
+pattern and passes playing dynamics through. **Loop + pad** sets step-loop
+length (1–8); steps past it show as stubs on the OLED. Jog click, jog turn, or
+Note/Session exits. State is per-clip.
 
 ## 10.5 LIVE ARP bank (melodic only)
 
@@ -936,8 +948,8 @@ the OLED. The Loop button blinks at the arp's step rate while latched.
 Delete + Play, and Session View entry (active track only). Muting silences latched
 output but preserves the latch.
 
-**Arp Steps editor:** same as SEQ ARP — jog click to enter. State is per-track for
-LIVE ARP.
+**Arp Steps editor:** same as SEQ ARP — jog click to enter, Shift for the
+fine-velocity page. State is per-track for LIVE ARP.
 
 Quick toggle: **Shift + Step 11** flips LIVE ARP on/off using the last-used style.
 

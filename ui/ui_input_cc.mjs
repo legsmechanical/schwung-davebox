@@ -916,6 +916,9 @@ function _onCC_buttons(d1, d2) {
          * Shift, and Shift-press never cleared it before. Mirrors the jog-release
          * clear in the MoveMainTouch handler. */
         if (!S.sessionView) { S.jogTouched = false; S.bankSelectTick = -1; }
+        /* Arp step editor: Shift flips the Pitch <-> Velocity page — redraw on
+         * both edges so the flip is immediate. */
+        if (S.stepIntervalMode && !S.sessionView) forceRedraw();
         /* Deferred Shift+Step3 dispatch: fire on Shift release so the Shift
          * held state doesn't leak into Move firmware / Schwung chain editor. */
         if (!S.shiftHeld && S.pendingEditEntryTrack >= 0) {
@@ -2324,7 +2327,30 @@ function _onCC_knobs(d1, d2) {
             S.knobAccum[knobIdx]++;
             if (S.knobAccum[knobIdx] >= 2) {
                 S.knobAccum[knobIdx] = 0;
-                if (bank === 4) {
+                if (S.shiftHeld) {
+                    /* Shift page: fine ABSOLUTE step velocity, floor 5 so fine
+                     * values never collide with legacy 0-4 levels in saved
+                     * state (pads handle step-off). Turning a dead (0) step
+                     * brings it in at the floor. */
+                    if (bank === 4) {
+                        const ac = effectiveClip(t);
+                        const cur = S.seqArpStepVel[t][ac][knobIdx] | 0;
+                        const nxt = cur === 0 ? (dir > 0 ? 5 : 0) : Math.max(5, Math.min(127, cur + dir));
+                        if (nxt !== cur) {
+                            S.seqArpStepVel[t][ac][knobIdx] = nxt;
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_seq_arp_step_vel', knobIdx + ' ' + nxt);
+                        }
+                    } else {
+                        const cur = S.tarpStepVel[t][knobIdx] | 0;
+                        const nxt = cur === 0 ? (dir > 0 ? 5 : 0) : Math.max(5, Math.min(127, cur + dir));
+                        if (nxt !== cur) {
+                            S.tarpStepVel[t][knobIdx] = nxt;
+                            if (typeof host_module_set_param === 'function')
+                                host_module_set_param('t' + t + '_tarp_step_vel', knobIdx + ' ' + nxt);
+                        }
+                    }
+                } else if (bank === 4) {
                     const ac = effectiveClip(t);
                     const cur = S.seqArpStepInt[t][ac][knobIdx] | 0;
                     const nxt = Math.max(-24, Math.min(24, cur + dir));

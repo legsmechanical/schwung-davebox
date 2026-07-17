@@ -167,9 +167,11 @@ export const S = {
     Array.from({length: 32}, () => new Array(8).fill(100))),
     drumRepeatNudge: Array.from({length: 8}, () =>
     Array.from({length: 32}, () => new Array(8).fill(0))),
+    /* Absolute step velocity 0..127 (0 = off), default 100. Pads write the
+     * coarse ARP_VEL_CANON values; Shift+knobs in the step editor write fine. */
     seqArpStepVel: Array.from({length: 8}, () =>
-    Array.from({length: 16}, () => new Array(8).fill(4))),
-    tarpStepVel: Array.from({length: 8}, () => new Array(8).fill(4)),
+    Array.from({length: 16}, () => new Array(8).fill(100))),
+    tarpStepVel: Array.from({length: 8}, () => new Array(8).fill(100)),
     /* Per-step scale-degree offset (-14..+14) for SEQ ARP (per-clip) and TARP (per-track).
      * Edited via the Arp Steps interval-mode overlay (jog click on bank 4 or 5). */
     seqArpStepInt: Array.from({length: 8}, () =>

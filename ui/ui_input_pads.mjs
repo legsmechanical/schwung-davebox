@@ -15,7 +15,8 @@ import {
 } from './ui_constants.mjs';
 import { S } from './ui_state.mjs';
 import { drumPadToLane, drumPadToVelZone, drumVelZoneToVelocity, _clipIsEmpty,
-    clipHasContent, effectiveVelocity, stepEntryVelocity } from './ui_pure.mjs';
+    clipHasContent, effectiveVelocity, stepEntryVelocity,
+    ARP_VEL_CANON, arpVelLevel } from './ui_pure.mjs';
 import { showActionPopup, writeSidecar } from './ui_persistence.mjs';
 import { computePadNoteMap, syncDrumLaneSteps, setActiveDrumLane,
     setDrumPerformMode } from './ui_drummodel.mjs';
@@ -641,13 +642,16 @@ export function _onPadPress(status, d1, d2) {
                 }
                 return;
             }
+            /* Pads write the coarse canonical velocities; knobs (Shift page)
+             * write fine values that display as the nearest pad level. */
             const row = Math.floor(idx / 8);
             const cur = S.seqArpStepVel[t][ac][col] | 0;
-            const newLvl = (row === 0 && cur === 1) ? 0 : (row + 1);
-            if (newLvl !== cur) {
-                S.seqArpStepVel[t][ac][col] = newLvl;
+            const curLvl = arpVelLevel(cur);
+            const newVel = (row === 0 && curLvl === 1) ? 0 : ARP_VEL_CANON[row + 1];
+            if (newVel !== cur) {
+                S.seqArpStepVel[t][ac][col] = newVel;
                 if (typeof host_module_set_param === 'function')
-                    host_module_set_param('t' + t + '_seq_arp_step_vel', col + ' ' + newLvl);
+                    host_module_set_param('t' + t + '_seq_arp_step_vel', col + ' ' + newVel);
                 forceRedraw();
             }
             return;
@@ -669,13 +673,15 @@ export function _onPadPress(status, d1, d2) {
                 }
                 return;
             }
+            /* Coarse canonical velocities (see the SEQ ARP branch above). */
             const row = Math.floor(idx / 8);
             const cur = S.tarpStepVel[t][col] | 0;
-            const newLvl = (row === 0 && cur === 1) ? 0 : (row + 1);
-            if (newLvl !== cur) {
-                S.tarpStepVel[t][col] = newLvl;
+            const curLvl = arpVelLevel(cur);
+            const newVel = (row === 0 && curLvl === 1) ? 0 : ARP_VEL_CANON[row + 1];
+            if (newVel !== cur) {
+                S.tarpStepVel[t][col] = newVel;
                 if (typeof host_module_set_param === 'function')
-                    host_module_set_param('t' + t + '_tarp_step_vel', col + ' ' + newLvl);
+                    host_module_set_param('t' + t + '_tarp_step_vel', col + ' ' + newVel);
                 forceRedraw();
             }
             return;

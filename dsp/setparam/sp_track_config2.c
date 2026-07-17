@@ -176,7 +176,7 @@ static int sp_track_config2(sp_ctx_t *cx) {
         return 1;
     }
     if (!strcmp(sub, "tarp_step_vel")) {
-        /* Format: "S L" — step index 0..7, level 0..4 */
+        /* Format: "S V" — step index 0..7, ABSOLUTE velocity 0..127 (0=step off) */
         const char *p = val;
         int s = 0, lv = 0;
         while (*p == ' ') p++;
@@ -184,7 +184,7 @@ static int sp_track_config2(sp_ctx_t *cx) {
         while (*p == ' ') p++;
         while (*p >= '0' && *p <= '9') { lv = lv * 10 + (*p - '0'); p++; }
         if (s < 0 || s > 7) return 1;
-        lv = clamp_i(lv, 0, 4);
+        lv = clamp_i(lv, 0, 127);
         tr->tarp.step_vel[s] = (uint8_t)lv;
         inst->state_dirty = 1;
         return 1;

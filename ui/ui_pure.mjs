@@ -135,3 +135,17 @@ export function stepEntryVelocity(t, liveVel, allowZone) {
     if (liveVel >= 0) return liveVel;
     return 100;
 }
+
+/* ---- Arp step velocity (absolute 0..127; 0 = step off) ---- */
+
+/* Canonical coarse velocities the PAD rows write (index = level 1..4). */
+export const ARP_VEL_CANON = [0, 32, 64, 96, 127];
+
+/* Quantize an absolute step velocity to its 4-band display level for the pad
+ * grid: 0 -> 0 (off), 1-32 -> 1, 33-64 -> 2, 65-96 -> 3, 97-127 -> 4.
+ * The canonical pad values land exactly on their own band. */
+export function arpVelLevel(v) {
+    v = v | 0;
+    if (v <= 0) return 0;
+    return Math.min(4, 1 + (((v - 1) * 4) >> 7));
+}

@@ -19,6 +19,7 @@ import {
 import {
     drawKitHeader, drawKitTouchedHeader, drawKitPageBar, drawKitAltArrow,
     drawKitCells, drawKitEnumOverlay, mvPrint, mvWidth, rectOutline,
+    pf3Print, pf3Width,
     MV_ROW0_Y, MV_KH
 } from './ui_movy.mjs';
 import {
@@ -936,24 +937,48 @@ export function drawUI() {
          * each bar; touched step inverts its number, header = "Offset: +N". */
         const t      = S.activeTrack;
         const isSeq  = (bank === 4);
-        const arr    = isSeq ? S.seqArpStepInt[t][effectiveClip(t)] : S.tarpStepInt[t];
+        const _ac    = effectiveClip(t);
+        const _velPage = S.shiftHeld;   /* Shift page = absolute step velocity */
+        const arr    = _velPage ? (isSeq ? S.seqArpStepVel[t][_ac] : S.tarpStepVel[t])
+                                : (isSeq ? S.seqArpStepInt[t][_ac] : S.tarpStepInt[t]);
+        const _llRaw = isSeq ? (S.seqArpStepLoopLen[t][_ac] | 0) : (S.tarpStepLoopLen[t] | 0);
+        const _ll    = (_llRaw >= 1 && _llRaw <= 8) ? _llRaw : 8;
         const _tk    = S.knobTouched;
-        if (_tk >= 0 && _tk < 8) {
+        if (_tk >= 0 && _tk < _ll) {
             const _v = arr[_tk] | 0;
-            drawKitTouchedHeader('Pitch: ' + (_v > 0 ? '+' : '') + _v);
+            if (_velPage) drawKitTouchedHeader('Velocity: ' + (_v === 0 ? 'Off' : _v));
+            else          drawKitTouchedHeader('Pitch: ' + (_v > 0 ? '+' : '') + _v);
         } else {
-            drawBankHeading('Step Pitch');
+            drawBankHeading(_velPage ? 'Step Vel' : 'Step Pitch');
+            if (!_velPage) {
+                /* micro-font hint that Shift flips to the velocity page —
+                 * black on the filled header bar, right-aligned */
+                pf3Print(126 - pf3Width('SHIFT'), 2, 'SHIFT', 0);
+            }
         }
         const _colW = 16, _barW = 10, _top = 14, _bot = 54, _numY = 57;
         const _cy = Math.floor((_top + _bot) / 2);
-        for (let x = 0; x < 128; x += 2) set_pixel(x, _cy, 1);
+        if (_velPage) fill_rect(0, _bot + 1, 128, 1, 1);   /* velocity baseline */
+        else for (let x = 0; x < 128; x += 2) set_pixel(x, _cy, 1);
         for (let k = 0; k < 8; k++) {
             const _x = k * _colW + 3;
+            if (k >= _ll) {
+                fill_rect(_x + 3, _bot - 1, 4, 1, 1);   /* inactive stub */
+                continue;
+            }
             const _v = arr[k] | 0;
-            const _mag = Math.round(Math.abs(_v) / 24 * (_cy - _top));
-            if (_v === 0) fill_rect(_x, _cy - 1, _barW, 3, 1);
-            else if (_v > 0) fill_rect(_x, _cy - _mag, _barW, Math.max(1, _mag), 1);
-            else fill_rect(_x, _cy + 1, _barW, Math.max(1, _mag), 1);
+            if (_velPage) {
+                /* absolute velocity: bar up from the baseline; 0 = step off */
+                if (_v > 0) {
+                    const _h = Math.max(1, Math.round(_v / 127 * (_bot - _top)));
+                    fill_rect(_x, _bot - _h, _barW, _h, 1);
+                }
+            } else {
+                const _mag = Math.round(Math.abs(_v) / 24 * (_cy - _top));
+                if (_v === 0) fill_rect(_x, _cy - 1, _barW, 3, 1);
+                else if (_v > 0) fill_rect(_x, _cy - _mag, _barW, Math.max(1, _mag), 1);
+                else fill_rect(_x, _cy + 1, _barW, Math.max(1, _mag), 1);
+            }
             const _num = String(k + 1);
             const _nw = mvWidth(_num);
             const _nx = Math.round(k * _colW + _colW / 2 - _nw / 2);

@@ -169,7 +169,7 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
         {
             int _i;
             for (_i = 0; _i < 8; _i++)
-                if (tr2->tarp.step_vel[_i] != 4)
+                if (tr2->tarp.step_vel[_i] != 100)
                     fprintf(fp, ",\"t%d_tasv%d\":%d", t, _i, (int)tr2->tarp.step_vel[_i]);
             for (_i = 0; _i < 8; _i++)
                 if (tr2->tarp.step_int[_i] != 0)
@@ -265,7 +265,7 @@ static void seq8_do_serialize(seq8_instance_t *inst, FILE *fp) {
                 {
                     int _i;
                     for (_i = 0; _i < 8; _i++) {
-                        if (p2->seq_arp_step_vel[_i] != 4)
+                        if (p2->seq_arp_step_vel[_i] != 100)
                             fprintf(fp, ",\"t%dc%d_arsv%d\":%d", t, c, _i, (int)p2->seq_arp_step_vel[_i]);
                     }
                     for (_i = 0; _i < 8; _i++) {
@@ -759,7 +759,14 @@ static void seq8_load_state(seq8_instance_t *inst) {
             int _i;
             for (_i = 0; _i < 8; _i++) {
                 snprintf(key, sizeof(key), "t%d_tasv%d", t, _i);
-                tr2->tarp.step_vel[_i] = (uint8_t)clamp_i(json_get_int(buf, key, 4), 0, 4);
+                /* Absolute velocity 0..127; legacy saves stored 5-state levels
+                 * 0..4 — map them to the canonical pad values (values <=4 are
+                 * unreachable by the new UI, so this is unambiguous). */
+                {
+                    int _lv = clamp_i(json_get_int(buf, key, 100), 0, 127);
+                    if (_lv <= 4) _lv = _lv == 0 ? 0 : _lv == 1 ? 32 : _lv == 2 ? 64 : _lv == 3 ? 96 : 127;
+                    tr2->tarp.step_vel[_i] = (uint8_t)_lv;
+                }
                 snprintf(key, sizeof(key), "t%d_tasi%d", t, _i);
                 tr2->tarp.step_int[_i] = (int8_t)clamp_i(json_get_int(buf, key, 0), -24, 24);
             }
@@ -947,7 +954,12 @@ static void seq8_load_state(seq8_instance_t *inst) {
                 int _i;
                 for (_i = 0; _i < 8; _i++) {
                     snprintf(key, sizeof(key), "t%dc%d_arsv%d", t, c, _i);
-                    p2->seq_arp_step_vel[_i] = (uint8_t)clamp_i(json_get_int(buf, key, 4), 0, 4);
+                    /* Absolute velocity; legacy 5-state levels map up (see tasv). */
+                    {
+                        int _lv = clamp_i(json_get_int(buf, key, 100), 0, 127);
+                        if (_lv <= 4) _lv = _lv == 0 ? 0 : _lv == 1 ? 32 : _lv == 2 ? 64 : _lv == 3 ? 96 : 127;
+                        p2->seq_arp_step_vel[_i] = (uint8_t)_lv;
+                    }
                     snprintf(key, sizeof(key), "t%dc%d_arsi%d", t, c, _i);
                     p2->seq_arp_step_int[_i] = (int8_t)clamp_i(json_get_int(buf, key, 0), -24, 24);
                 }
