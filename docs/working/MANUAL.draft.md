@@ -239,8 +239,15 @@ The primary editing environment. Shows the active track's clip.
 | Loop (hold) | Enter loop view |
 | Loop (hold) + jog | Adjust clip length ±1 step |
 
-The OLED shows all 8 knob parameters and values. Touching a knob highlights its
-row. The LED below each knob lights when that parameter differs from default.
+The OLED shows all 8 knob parameters as **graphical widgets** in a 2×4 grid:
+arc knobs for continuous values (with a center tick for ± parameters), toggle
+bars for on/off, and framed squares for option lists and stepped values, each
+with its name on the label strip beneath. Turning a knob inverts the header to
+that parameter's **full name** while the label strip under its widget swaps to
+the **live value**. Turning a knob with more than two options (Delay Rate, Arp
+Style, Resolution, ...) also pops up a scrolling list of every option, with the
+current one highlighted. The LED below each knob lights when that parameter
+differs from default.
 
 The bank display returns to the track overview after about a second of inactivity.
 **Touch the jog wheel** at any time to bring the active bank's display back —
@@ -248,13 +255,15 @@ it stays up while you hold the touch — wherever a bank display applies (melodi
 drum, and Conductor banks alike). The reveal is disabled while the Global Menu is
 open.
 
-The header shows a compact **bank position strip** at the right edge — on both
-the resting track overview and every parameter-bank overview (where it takes the
-place of the old `Tr#` track-number readout). A tall block marks the active bank;
-short stubs show the others — a glanceable reminder of where you are in the bank
-cycle. It follows jog navigation order (melodic: CLIP → NOTE FX → HARMONY → DELAY
-→ SEQ ARP → ARP IN → AUTO; drum: DRUM LANE → NOTE FX → DELAY → ALL LANES → REPEAT
-GROOVE → AUTO). Conductor headers blink a "C-" prefix instead.
+The header is a filled bar with a **page-indicator line** beneath it (replacing
+the old bank tick strip in the header's corner): one segment per bank in the
+cycle, with the active bank's segment gently flashing. While a knob is being
+turned the bar drops out and the parameter name shows centered in white, with a
+solid rule beneath. Jog navigation
+order is unchanged (melodic: CLIP → NOTE FX → HARMONY → DELAY → SEQ ARP →
+ARP IN → AUTO; drum: DRUM LANE → NOTE FX → DELAY → ALL LANES → REPEAT GROOVE →
+AUTO). Secondary banks (ARP IN, AUTO) draw their header white-on-black instead
+of as a filled bar; Conductor headers blink a "C-" prefix as before.
 
 ## Switching tracks while playing
 

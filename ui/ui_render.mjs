@@ -13,8 +13,14 @@ import {
     POLL_INTERVAL, SCALE_DISPLAY, SCENE_LETTERS, TPS_VALUES,
     col4, col5, pixelPrint,
     fmtSign, fmtStretch, fmtLen, fmtRes, fmtPct, fmtBool, fmtGateMod,
-    fmtArpRate, fmtVelOverride, fmtPlayDir, fmtRevStyle
+    fmtArpRate, fmtVelOverride, fmtPlayDir, fmtRevStyle,
+    fmtDly, fmtArpStyle, fmtArpSteps, fmtArpOct, fmtDiq, fmtPlain
 } from './ui_constants.mjs';
+import {
+    drawKitHeader, drawKitTouchedHeader, drawKitPageBar, drawKitAltArrow,
+    drawKitCells, drawKitEnumOverlay, mvPrint, mvWidth, rectOutline,
+    MV_ROW0_Y, MV_KH
+} from './ui_movy.mjs';
 import {
     drawGlobalMenu, drawStateWipeConfirm, drawRecordBlockedDialog, drawBpmMoveInfo,
     drawLgtoConfirm, drawBakeConfirm, drawInheritPicker, drawSnapshotPicker,
@@ -33,54 +39,36 @@ import { SPLASH_FRAMES, SPLASH_COUNT, SPLASH_W, SPLASH_H, pickSplashIdx } from '
 /* Parameter bank definitions                                           */
 /* ------------------------------------------------------------------ */
 
-/* Compact "you are here in the bank chain" strip, right-aligned on the header
- * bar (replaces the old ad-hoc '>>' name hints). Each bank = a 3px tick; the
- * active bank = a tall filled block. Returns the strip's left x so the caller
- * can tuck the alt-arrow to its left. hdrBgWhite picks ink (black on white bar). */
-function drawBankStrip(rightX, hdrBgWhite) {
-    const fg = hdrBgWhite ? 0 : 1;
-    const pos = bankCyclePos();
-    const segW = 3, pitch = 4;
-    const startX = rightX - (pos.count * pitch - 1);
-    for (let i = 0; i < pos.count; i++) {
-        const x = startX + i * pitch;
-        if (i === pos.idx) fill_rect(x, 1, segW, 6, fg);   /* active: full 6px block */
-        else               fill_rect(x, 5, segW, 2, fg);   /* others: 2px stub, baseline-aligned */
-    }
-    return startX;
-}
-
-/* Right side of the bank header: the bank-position strip on every screen —
- * resting overview AND deeper param banks — with the alt-arrow tucked to its
- * left. The strip replaces the old per-bank Tr[n] indicator. showTrack is now
- * vestigial here (kept for caller-signature stability). */
-function drawBankHeaderRight(showTrack, hdrBgWhite) {
+/* Bank-position indicator: the canvaskit page bar on row 9 — one segment per
+ * bank in the cycle, the ACTIVE segment dotted (replaces the old tick strip).
+ * The alt-arrow affordance sits at the header's top-right corner. hdrFilled =
+ * the header bar is filled white (arrow inks black). */
+function drawBankHeaderRight(showTrack, hdrFilled) {
     if (S.sessionView) return;
-    const sx = drawBankStrip(124, hdrBgWhite);
+    const pos = bankCyclePos();
+    drawKitPageBar(pos.idx, pos.count);
     if (bankHasAltParams(S.activeTrack, S.activeBank)) {
-        drawAltArrow(sx - 8, hdrBgWhite, altIndicatorActive(S.activeTrack, S.activeBank));
+        drawAltArrow(121, hdrFilled, altIndicatorActive(S.activeTrack, S.activeBank));
     }
 }
 
+/* Canvaskit chrome: resting header = white-on-black bank name (ALL CAPS, 6x6
+ * header font); the "inverted" variant (secondary banks: ARP IN / AUTO) is a
+ * filled white bar with black text. */
 function drawBankHeading(name, showTrack) {
-    fill_rect(0, 0, 128, 9, 1);
-    /* Conductor banks: blink ONLY the "C-" prefix (phase driven in the tick loop,
-     * like the alt-arrow flash); the bank name stays steady. */
+    /* Conductor banks: blink ONLY the "C-" prefix (phase driven in the tick
+     * loop); the header font is fixed-advance so the name stays steady. */
     if (S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT &&
             name.charAt(0) === 'C' && name.charAt(1) === '-') {
-        if (S._altBlinkPhase !== 1) print(4, 1, 'C-', 0);   /* prefix blinks */
-        print(16, 1, name.slice(2), 0);                     /* bank name steady (after "C-") */
+        drawKitHeader((S._altBlinkPhase !== 1 ? 'C-' : '  ') + name.slice(2), false);
     } else {
-        print(4, 1, name, 0);
+        drawKitHeader(name, false);
     }
     drawBankHeaderRight(showTrack, true);
 }
 
 function drawBankHeadingInverted(name, showTrack) {
-    fill_rect(0, 0, 128, 9, 0);
-    fill_rect(0, 0, 128, 1, 1);
-    fill_rect(0, 8, 128, 1, 1);
-    print(4, 1, name, 1);
+    drawKitHeader(name, true);
     drawBankHeaderRight(showTrack, false);
 }
 
@@ -92,17 +80,31 @@ function drawBankHeadingInverted(name, showTrack) {
  * same idiom as the drum-lane / ALL-LANES overviews). valFn(trackIdx) -> short
  * string. The Conductor's own track cell shows inertLabel instead of a value. */
 function drawConductTrackGrid(header, valFn, inertLabel) {
-    drawBankHeading(header, false);
+    /* Canvaskit grid: one value square per track, Tr# label strips, touched
+     * cell swaps its label to the value and the header to "TRACK N". */
+    const cells = [];
     for (let i = 0; i < 8; i++) {
-        const colX = 4 + (i % 4) * 30;
-        const rowY = i < 4 ? 12 : 36;
-        const hi   = (S.knobTouched === i);
-        if (hi) fill_rect(colX, rowY, 24, 24, 1);
-        /* activeTrack is the Conductor whenever these banks render */
-        const isCond = (i === S.activeTrack);
-        print(colX, rowY,      col4(isCond ? '-' : 'Tr' + (i + 1)),  hi ? 0 : 1);
-        print(colX, rowY + 12, col4(isCond ? inertLabel : valFn(i)), hi ? 0 : 1);
+        if (i === S.activeTrack) {
+            /* activeTrack is the Conductor whenever these banks render */
+            cells.push({ kind: 'blank', label: inertLabel });
+        } else {
+            cells.push({ kind: 'valsq', label: 'Tr' + (i + 1),
+                         name: 'Track ' + (i + 1), text: String(valFn(i)) });
+        }
     }
+    drawKitPage(header, cells, false);
+}
+
+/* Shared canvaskit page entry: touched non-blank cell inverts the header to
+ * its full param name (label strip below swaps to the value); resting state
+ * goes through the standard heading helpers (C- blink, page bar, alt arrow). */
+function drawKitPage(name, cells, inverted) {
+    const t = S.knobTouched;
+    const touched = t >= 0 && cells[t] && cells[t].name ? cells[t] : null;
+    if (touched) drawKitTouchedHeader(touched.name);
+    else (inverted ? drawBankHeadingInverted : drawBankHeading)(name, false);
+    drawKitCells(cells, t);
+    drawKitEnumOverlay(cells, t);
 }
 
 /* Down-arrow affordance for banks that expose alt params. Always drawn in the
@@ -112,11 +114,7 @@ function drawConductTrackGrid(header, valFn, inertLabel) {
  * phase is set in the tick loop (S._altBlinkPhase) which also marks the screen
  * dirty so the animation runs while idle. */
 function drawAltArrow(x, hdrBgWhite, on) {
-    if (on && S._altBlinkPhase === 1) return;   /* off-phase of the flash */
-    const fg = hdrBgWhite ? 0 : 1;
-    fill_rect(x,     2, 5, 1, fg);
-    fill_rect(x + 1, 3, 3, 1, fg);
-    fill_rect(x + 2, 4, 1, 1, fg);
+    drawKitAltArrow(x, hdrBgWhite, on, S._altBlinkPhase === 1);
 }
 
 function drawStepEditHeader() {
@@ -149,11 +147,11 @@ function drawMetroIndicator() {
     if (label) {
         const tx = 8;
         const tw = label.length * 6;
-        fill_rect(4, 22, 2, 2, 1);           /* left dot */
-        pixelPrint(tx, 21, label, 1);
-        fill_rect(tx + tw + 2, 22, 2, 2, 1); /* right dot */
+        fill_rect(4, 23, 2, 2, 1);           /* left dot */
+        pixelPrint(tx, 22, label, 1);
+        fill_rect(tx + tw + 2, 23, 2, 2, 1); /* right dot */
     }
-    /* Velocity / Fixed/Adaptive indicators (track view only, y=21) */
+    /* Velocity / Fixed/Adaptive indicators (track view only, y=22) */
     if (!S.sessionView) {
         const t  = S.activeTrack;
         const ac = (!S.playing && S.trackQueuedClip[t] >= 0) ? S.trackQueuedClip[t] : S.trackActiveClip[t];
@@ -161,11 +159,11 @@ function drawMetroIndicator() {
         const _isEmpty7  = _isDrum7 ? !S.drumClipNonEmpty[t][ac] : !S.clipNonEmpty[t][ac];
         const _manualL7  = _isDrum7 ? S.drumLaneLengthManuallySet[t] : S.clipLengthManuallySet[t][ac];
         /* Velocity input indicator (between metro and fixed/adap) */
-        pixelPrint(67, 21, fmtVelOverride(S.trackVelOverride[t]), 1);
+        pixelPrint(67, 22, fmtVelOverride(S.trackVelOverride[t]), 1);
         if (_isEmpty7 && !_manualL7) {
-            pixelPrint(103, 21, 'Adap', 1);
+            pixelPrint(103, 22, 'Adap', 1);
         } else {
-            pixelPrint(109, 21, 'Fix', 1);
+            pixelPrint(109, 22, 'Fix', 1);
         }
     }
 }
@@ -199,6 +197,49 @@ function bankHeaderName(t, bank) {
     if (S.trackPadMode[t] === PAD_MODE_CONDUCT)
         return 'C-' + (bank === 0 ? 'CONDUCT' : BANKS[bank].name);
     return BANKS[bank].name;
+}
+
+/* ------------------------------------------------------------------ */
+/* Canvaskit cell mapping                                               */
+/* ------------------------------------------------------------------ */
+
+/* Formatters whose domain is a browsable option list (enum square + the
+ * scrolling overlay while touched). fmtBool is special-cased to the hbar. */
+const KIT_ENUM_FMTS = [fmtRes, fmtDiq, fmtPlayDir, fmtLen, fmtGateMod,
+                       fmtDly, fmtArpStyle, fmtArpRate, fmtArpSteps, fmtRevStyle];
+
+/* knobDef (BANKS entry) + current value -> canvaskit cell descriptor.
+ * Widget choice mirrors the kit's cell constructors: toggles -> hbar,
+ * option lists -> enum square, small counts / small signed / one-shot
+ * actions -> value square, signed continuous -> center-tick arc,
+ * unsigned continuous -> arc. Stubs -> blank. */
+function kitCellForKnob(knob, val) {
+    if (!knob || !knob.abbrev) return { kind: 'blank', label: '' };
+    const v = val | 0;
+    const text = knob.fmt(v);
+    const base = { label: knob.abbrev, name: knob.full, text };
+    if (knob.fmt === fmtBool) { base.kind = 'hbar'; base.norm = v ? 1 : 0; return base; }
+    if (KIT_ENUM_FMTS.indexOf(knob.fmt) >= 0) {
+        base.kind = 'enumsq';
+        base.options = [];
+        for (let i = knob.min; i <= knob.max; i++) base.options.push(knob.fmt(i));
+        base.sel = v - knob.min;
+        return base;
+    }
+    /* one-shot / relative action knobs (Stch, Shft, Lgto): value square */
+    if (knob.scope === 'action') { base.kind = 'valsq'; return base; }
+    if (knob.min < 0) {
+        if (knob.max <= 4) { base.kind = 'valsq'; return base; }  /* octave-ish */
+        base.kind = 'arcbip';
+        const halfR = Math.max(1, Math.max(knob.max, -knob.min));
+        base.signed = Math.max(-1, Math.min(1, v / halfR));
+        return base;
+    }
+    if (knob.fmt === fmtArpOct) { base.kind = 'valsq'; return base; }
+    if (knob.fmt === fmtPlain && knob.max <= 16) { base.kind = 'valsq'; return base; } /* counts (Rep) */
+    base.kind = 'arc';
+    base.norm = Math.max(0, Math.min(1, (v - knob.min) / ((knob.max - knob.min) || 1)));
+    return base;
 }
 
 /* ------------------------------------------------------------------ */
@@ -525,7 +566,7 @@ export function drawUI() {
         const banner = 'd' + dA + 'V' + dE + 'B' + dO + 'x';
         print(43, 2, banner, 0);
         drawMetroIndicator();
-        drawTrackRow(34);
+        drawTrackRow(35);
         for (let t = 0; t < NUM_TRACKS; t++) {
             const cx = t * 16 + 5;
             const ac = S.trackActiveClip[t];
@@ -534,10 +575,10 @@ export function drawUI() {
                 : S.clipNonEmpty[t][ac];
             const isActive = (S.trackClipPlaying[t] || S.trackWillRelaunch[t] || (S.trackQueuedClip[t] >= 0)) && hasData;
             if (isActive) {
-                fill_rect(cx - 1, 45, 9, 7, 1);
-                pixelPrint(cx, 46, SCENE_LETTERS[ac], 0);
+                fill_rect(cx - 1, 46, 9, 7, 1);
+                pixelPrint(cx, 47, SCENE_LETTERS[ac], 0);
             } else {
-                pixelPrint(cx, 46, SCENE_LETTERS[ac], 1);
+                pixelPrint(cx, 47, SCENE_LETTERS[ac], 1);
             }
         }
         return;
@@ -913,6 +954,7 @@ export function drawUI() {
                 return tp === 2 && (((S.trackCCAutoBits[_gt][_gac] >> k) & 1) || S.clipCCVal[_gt][_gac][k] >= 0);
             });
             var _bx = 60;
+            /* secondary header is white-on-black — badges fill white */
             var _badge = function(txt) {
                 var w = txt.length * 6 + 3;
                 fill_rect(_bx, 1, w, 7, 1);
@@ -927,21 +969,21 @@ export function drawUI() {
         var _gVal = S.playing ? S.trackCCLiveVal[_gt][_gLane] : S.clipCCVal[_gt][_gac][_gLane];
         var _gValStr = (_gVal >= 0 && _gVal <= 127) ? String(_gVal) : '--';
         var _gLine1L = 'K' + (_gLane + 1) + ' ' + _gLbl + ':';
-        print(4, 10, _gLine1L, 1);
+        pixelPrint(4, 13, _gLine1L, 1);
         var _gValX = 4 + _gLine1L.length * 6;
-        print(_gValX, 10, _gValStr, 1);
-        fill_rect(_gValX, 19, _gValStr.length * 6, 1, 1);
+        pixelPrint(_gValX, 13, _gValStr, 1);
+        fill_rect(_gValX, 19, _gValStr.length * 6 - 1, 1, 1);
         if (_gParam) {
             var _gPTrunc = _gParam.length > 12 ? _gParam.substring(0, 12) : _gParam;
-            print(128 - _gPTrunc.length * 6 - 1, 10, _gPTrunc, 1);
+            pixelPrint(128 - _gPTrunc.length * 6 - 1, 13, _gPTrunc, 1);
         }
         var _gZoomTps = S.ccLaneTps[_gt][_gac][_gLane] || (S.clipTPS[_gt][_gac] || 24);
         var _gZoomN = _gZoomTps === 12 ? '1/32' : _gZoomTps === 48 ? '1/8'
                     : _gZoomTps === 96 ? '1/4' : _gZoomTps === 384 ? '1bar' : '1/16';
         var _gResStr = 'Res: ' + _gResN;
         var _gZoomStr = 'Zoom: ' + _gZoomN;
-        print(4, 21, _gResStr, 1);
-        print(128 - _gZoomStr.length * 6 - 4, 21, _gZoomStr, 1);
+        pixelPrint(4, 23, _gResStr, 1);
+        pixelPrint(128 - _gZoomStr.length * 6 - 4, 23, _gZoomStr, 1);
         /* Automation graph: 128px wide, just above progress bar */
         var _gBarY = 60, _gBarH = 3;
         var _gH = 24, _gY = _gBarY - _gH - 3;
@@ -1064,33 +1106,34 @@ export function drawUI() {
             const tpsIdx = Math.max(0, TPS_VALUES.indexOf(S.drumLaneTPS[t]));
             const sqfl   = S.clipSeqFollow[t][ac] ? 1 : 0;
             const eucN = Math.min(S.drumLaneEuclidN[t][lane] | 0, len);
-            const drumLaneLabels = [S.altMode ? 'Zoom' : 'Res', 'Stch', S.altMode ? 'Nudg' : 'Shft', 'Lgto', 'Eucl', '-', S.altMode ? 'Rvrs' : 'Dir', 'SqFl'];
-            const drumLaneVals  = [
-                fmtRes(tpsIdx),
-                fmtStretch(S.bankParams[t][0][1]),
-                fmtSign(S.bankParams[t][0][2]),
-                '->',
-                String(eucN),
-                '-',
-                S.altMode ? fmtRevStyle(S.drumLanePlaybackAudioReverse[t][lane] | 0)
-                          : fmtPlayDir(S.drumLanePlaybackDir[t][lane] | 0),
-                fmtBool(sqfl),
+            const _dlRev = S.drumLanePlaybackAudioReverse[t][lane] | 0;
+            const _dlDir = S.drumLanePlaybackDir[t][lane] | 0;
+            const cells = [
+                { kind: 'enumsq', label: S.altMode ? 'Zoom' : 'Res',
+                  name: S.altMode ? 'Zoom' : 'Resolution', text: fmtRes(tpsIdx),
+                  options: [0,1,2,3,4,5].map(fmtRes), sel: tpsIdx },
+                { kind: 'valsq', label: 'Stch', name: 'Beat Stretch',
+                  text: fmtStretch(S.bankParams[t][0][1]) },
+                { kind: 'valsq', label: S.altMode ? 'Nudg' : 'Shft',
+                  name: S.altMode ? 'Nudge' : 'Clock Shift',
+                  text: fmtSign(S.bankParams[t][0][2]) },
+                { kind: 'valsq', label: 'Lgto', name: 'Apply Legato', text: '->' },
+                { kind: 'valsq', label: 'Eucl', name: 'Euclid Fill', text: String(eucN) },
+                { kind: 'blank', label: '' },
+                S.altMode
+                    ? { kind: 'hbar', label: 'Rvrs', name: 'Reverse Style',
+                        text: fmtRevStyle(_dlRev), norm: _dlRev ? 1 : 0 }
+                    : { kind: 'enumsq', label: 'Dir', name: 'Playback Dir',
+                        text: fmtPlayDir(_dlDir), options: [0,1,2,3].map(fmtPlayDir), sel: _dlDir },
+                { kind: 'hbar', label: 'SqFl', name: 'Seq Follow',
+                  text: fmtBool(sqfl), norm: sqfl ? 1 : 0 },
             ];
-            drawBankHeading('DRUM LANE');
-            for (let k = 0; k < 8; k++) {
-                if (!drumLaneLabels[k]) continue;
-                const colX = 4 + (k % 4) * 30;
-                const rowY = k < 4 ? 12 : 36;
-                const hi   = (S.knobTouched === k);
-                if (hi) fill_rect(colX, rowY, 24, 24, 1);
-                print(colX, rowY,      col4(drumLaneLabels[k]), hi ? 0 : 1);
-                print(colX, rowY + 12, col4(drumLaneVals[k]),   hi ? 0 : 1);
-            }
+            drawKitPage('DRUM LANE', cells, false);
         } else if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 7 && !S.allLanesConfirmed) {
             /* ALL LANES confirmation screen */
-            fill_rect(0, 0, 128, 9, 1);
-            print(4, 1, (Math.floor(S.tickCount / 24) % 2 === 0 ? 'ALL' : '   ') + ' LANES', 0);
-            drawBankStrip(124, true);
+            drawKitHeader((Math.floor(S.tickCount / 24) % 2 === 0 ? 'ALL' : '   ') + ' LANES', false);
+            const _alPos = bankCyclePos();
+            drawKitPageBar(_alPos.idx, _alPos.count);
             print(10, 18, 'Edits will affect', 1);
             print(10, 28, 'all lanes. Proceed?', 1);
             fill_rect(40, 44, 48, 16, 1);
@@ -1102,75 +1145,74 @@ export function drawUI() {
             const qv = S.bankParams[t][7][3];
             const dv = S.bankParams[t][7][6];
             const DIQ_LABELS = ['Off','1/64','1/32','1/16','1/16T','1/8','1/8T','1/4','1/4T'];
-            const allLabels = ['Res', 'Stch', S.altMode ? 'Nudg' : 'Shft', 'Qnt', 'VelIn', 'InQ', S.altMode ? 'Rvrs' : 'Dir', 'SyncRpt'];
-            const allVals = [
-                rv < 0 ? '--' : fmtRes(rv),
-                fmtStretch(S.bankParams[t][7][1]),
-                fmtSign(S.bankParams[t][7][2]),
-                qv <= 0 ? '--' : fmtPct(qv),
-                fmtVelOverride(S.trackVelOverride[t]),
-                DIQ_LABELS[S.drumInpQuant[t]] || 'Off',
-                dv < 0 ? '--' : (S.altMode ? fmtRevStyle(dv) : fmtPlayDir(dv)),
-                fmtBool(S.bankParams[t][7][7]),
+            const _inq = S.drumInpQuant[t] | 0;
+            const cells = [
+                rv < 0 ? { kind: 'valsq', label: 'Res', name: 'Resolution', text: '--' }
+                       : { kind: 'enumsq', label: 'Res', name: 'Resolution', text: fmtRes(rv),
+                           options: [0,1,2,3,4,5].map(fmtRes), sel: rv },
+                { kind: 'valsq', label: 'Stch', name: 'Beat Stretch',
+                  text: fmtStretch(S.bankParams[t][7][1]) },
+                { kind: 'valsq', label: S.altMode ? 'Nudg' : 'Shft',
+                  name: S.altMode ? 'Nudge' : 'Clock Shift',
+                  text: fmtSign(S.bankParams[t][7][2]) },
+                qv <= 0 ? { kind: 'valsq', label: 'Qnt', name: 'Quantize', text: '--' }
+                        : { kind: 'arc', label: 'Qnt', name: 'Quantize',
+                            text: fmtPct(qv), norm: Math.min(1, qv / 100) },
+                { kind: 'valsq', label: 'VelIn', name: 'Velocity Input',
+                  text: fmtVelOverride(S.trackVelOverride[t]) },
+                { kind: 'enumsq', label: 'InQ', name: 'Input Quantize',
+                  text: DIQ_LABELS[_inq] || 'Off', options: DIQ_LABELS, sel: _inq },
+                dv < 0 ? { kind: 'valsq', label: S.altMode ? 'Rvrs' : 'Dir',
+                           name: S.altMode ? 'Reverse Style' : 'Playback Dir', text: '--' }
+                       : (S.altMode
+                            ? { kind: 'hbar', label: 'Rvrs', name: 'Reverse Style',
+                                text: fmtRevStyle(dv), norm: dv ? 1 : 0 }
+                            : { kind: 'enumsq', label: 'Dir', name: 'Playback Dir',
+                                text: fmtPlayDir(dv), options: [0,1,2,3].map(fmtPlayDir), sel: dv }),
+                { kind: 'hbar', label: 'SyncRpt', name: 'Repeat Sync',
+                  text: fmtBool(S.bankParams[t][7][7]), norm: S.bankParams[t][7][7] ? 1 : 0 },
             ];
-            fill_rect(0, 0, 128, 9, 1);
-            print(4, 1, (Math.floor(S.tickCount / 24) % 2 === 0 ? 'ALL' : '   ') + ' LANES', 0);
-            const _alSx = drawBankStrip(124, true);
-            drawAltArrow(_alSx - 8, true, altIndicatorActive(S.activeTrack, S.activeBank));
-            for (let k = 0; k < 8; k++) {
-                if (!allLabels[k]) continue;
-                const colX = 4 + (k % 4) * 30;
-                const rowY = k < 4 ? 12 : 36;
-                const hi   = (S.knobTouched === k);
-                if (hi) fill_rect(colX, rowY, 24, 24, 1);
-                const _lbl = allLabels[k];
-                print(colX, rowY,      _lbl.length > 4 ? _lbl : col4(_lbl), hi ? 0 : 1);
-                print(colX, rowY + 12, col4(allVals[k]),   hi ? 0 : 1);
-            }
+            /* blinking "ALL" prefix: the header font is fixed-advance, so a
+             * space prefix keeps "LANES" steady */
+            drawKitPage((Math.floor(S.tickCount / 24) % 2 === 0 ? 'ALL' : '   ') + ' LANES', cells, false);
         } else if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 1) {
         /* Drum NOTE/NOTEFX bank: K1=Gate K2=Vel K3=Qnt */
         /* Drum NOTE FX: K1+K2=Oct/Note (merged), K3=Vel, K4=Qnt, K5=Len(placeholder), K6=Gate */
-        const t    = S.activeTrack;
-        const vals = S.bankParams[t][1];
-        drawBankHeading('NOTE FX');
-        /* K1+K2: merged Oct/Note box (per-lane MIDI note editor) */
+        const t     = S.activeTrack;
+        const vals  = S.bankParams[t][1];
+        const _lane = S.activeDrumLane[t];
+        const _dlNote  = S.drumLaneNote[t][_lane];
+        const _noteStr = midiNoteName(_dlNote) + ' ' + _dlNote;
+        const _lenMode = S.drumLaneLenMode[t][_lane] | 0;
+        const LEN_OPTS = [0,1,2,3,4,5,6,7,8].map(fmtLen);
+        /* K1+K2 share the merged Oct/Note box (widget drawn below); their
+         * label strips + touch swap still run per-cell. */
+        const cells = [
+            { kind: 'blank', label: 'Oct',  name: 'Lane Note', text: _noteStr },
+            { kind: 'blank', label: 'Note', name: 'Lane Note', text: _noteStr },
+            { kind: 'arcbip', label: 'Vel', name: 'Velocity Offset', text: fmtSign(vals[1]),
+              signed: Math.max(-1, Math.min(1, (vals[1] | 0) / 127)) },
+            { kind: 'arc', label: 'Qnt', name: 'Quantize', text: fmtPct(vals[2]),
+              norm: Math.max(0, Math.min(1, (vals[2] | 0) / 100)) },
+            { kind: 'enumsq', label: 'Len>', name: 'Note Length', text: fmtLen(_lenMode),
+              options: LEN_OPTS, sel: _lenMode },
+            { kind: 'arc', label: '>Gate', name: 'Gate Time', text: fmtPct(vals[0]),
+              norm: Math.max(0, Math.min(1, (vals[0] | 0) / 400)) },
+            { kind: 'blank', label: '' },
+            { kind: 'blank', label: '' },
+        ];
+        drawKitPage('NOTE FX', cells, false);
+        /* Merged Oct/Note box spanning the K1+K2 widget area (per-lane MIDI
+         * note editor): framed note readout, inverted while either knob is
+         * touched. */
         {
-            const lane     = S.activeDrumLane[t];
-            const _dlNote  = S.drumLaneNote[t][lane];
-            const _noteStr = midiNoteName(_dlNote) + ' ' + _dlNote;
-            const hiLane   = (S.knobTouched === 0 || S.knobTouched === 1);
-            const LX = 4, LY = 12, LW = 54, LH = 24;
-            if (hiLane) {
-                fill_rect(LX, LY, LW, LH, 1);
-            } else {
-                /* single horizontal line under the Oct/Note labels */
-                fill_rect(LX, LY + 9, LW, 1, 1);
-            }
-            const _lc = hiLane ? 0 : 1;
-            print(LX + Math.floor((LW/2 - 18) / 2),                         LY + 1,  'Oct',  _lc);
-            print(LX + Math.floor(LW/2) + Math.floor((LW/2 - 24) / 2),      LY + 1,  'Note', _lc);
-            print(LX + Math.floor((LW - _noteStr.length * 6) / 2), LY + 13, _noteStr, _lc);
-        }
-        /* K3=Vel, K4=Qnt (row 1 right half); K5=Len, K6=Gate (row 2 left half) */
-        {
-            const _lane = S.activeDrumLane[t];
-            const nfxLabels = [null, null, 'Vel', 'Qnt', 'Len>', '>Gate', null, null];
-            const nfxVals   = [null, null, fmtSign(vals[1]), fmtPct(vals[2]),
-                               fmtLen(S.drumLaneLenMode[t][_lane] | 0), fmtPct(vals[0]),
-                               null, null];
-            for (let k = 2; k < 6; k++) {
-                const colX = 4 + (k % 4) * 30;
-                const rowY = k < 4 ? 12 : 36;
-                const hi   = (S.knobTouched === k);
-                /* K6 label ">Gate" is 5 chars (30px) — widen the cell so the label
-                 * and its highlight rect aren't clipped. K7/K8 are blocked on this
-                 * bank, so the extra column is free. */
-                const cellW = (k === 5) ? 30 : 24;
-                if (hi) fill_rect(colX, rowY, cellW, 24, 1);
-                const _lbl = nfxLabels[k];
-                print(colX, rowY,      _lbl.length > 4 ? _lbl : col4(_lbl), hi ? 0 : 1);
-                print(colX, rowY + 12, col4(nfxVals[k]),                    hi ? 0 : 1);
-            }
+            const hiLane = (S.knobTouched === 0 || S.knobTouched === 1);
+            const BX = 6, BW = 52, BY = MV_ROW0_Y, BH = MV_KH;
+            if (hiLane) fill_rect(BX, BY, BW, BH, 1);
+            else        rectOutline(BX, BY, BW, BH, 1);
+            const _fg = hiLane ? 0 : 1;
+            mvPrint(BX + Math.round((BW - mvWidth(_noteStr)) / 2),
+                    BY + Math.floor((BH - 5) / 2), _noteStr, _fg);
         }
 
         } else if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 5) {
@@ -1178,42 +1220,23 @@ export function drawUI() {
         const t    = S.activeTrack;
         const lane = S.activeDrumLane[t];
         syncDrumRepeatState(t, lane);
-        /* Custom header: drop Tr# to clear the right side; arrow flash + per-step
-         * value format (vel% vs signed nudge%) signal the alt-mode state. */
-        fill_rect(0, 0, 128, 9, 0);
-        fill_rect(0, 0, 128, 1, 1);
-        fill_rect(0, 8, 128, 1, 1);
-        print(4, 1, 'REPEAT GROOVE', 1);
-        if (!S.sessionView) {
-            const _rgSx = drawBankStrip(124, false);
-            if (bankHasAltParams(S.activeTrack, S.activeBank)) {
-                drawAltArrow(_rgSx - 8, false, altIndicatorActive(S.activeTrack, S.activeBank));
-            }
-        }
+        /* Per-step gate bars (filled = gate on) with the vel% (or signed
+         * nudge%, alt mode) in each label strip; steps past the gate length
+         * are blank. Alt-mode state signals via the header alt-arrow flash. */
         const _gLen = S.drumRepeatGateLen[t][lane];
+        const cells = [];
         for (let k = 0; k < 8; k++) {
-            const colX = 4 + (k % 4) * 30;
-            const rowY = k < 4 ? 12 : 36;
-            const hi   = (S.knobTouched === k);
-            if (hi) fill_rect(colX, rowY, 24, 24, 1);
-            if (k >= _gLen) continue;
+            if (k >= _gLen) { cells.push({ kind: 'blank', label: '' }); continue; }
             const gateOn = !!(S.drumRepeatGate[t][lane] & (1 << k));
-            if (gateOn) {
-                fill_rect(colX, rowY + 1, 24, 4, hi ? 0 : 1);
-            } else {
-                const bc = hi ? 0 : 1;
-                fill_rect(colX, rowY + 1, 24, 1, bc);
-                fill_rect(colX, rowY + 4, 24, 1, bc);
-                fill_rect(colX, rowY + 1, 1, 4, bc);
-                fill_rect(colX + 23, rowY + 1, 1, 4, bc);
-            }
             const vs   = S.drumRepeatVelScale[t][lane][k];
             const ndg  = S.drumRepeatNudge[t][lane][k];
             const disp = S.altMode
-                ? (ndg === 0 ? ' 0%' : (ndg > 0 ? '+' : '') + ndg + '%')
+                ? (ndg === 0 ? '0%' : (ndg > 0 ? '+' : '') + ndg + '%')
                 : vs + '%';
-            print(colX, rowY + 12, col4(disp), hi ? 0 : 1);
+            cells.push({ kind: 'hbar', label: disp, name: 'Step ' + (k + 1),
+                         text: disp, norm: gateOn ? 1 : 0 });
         }
+        drawKitPage('REPEAT GROOVE', cells, true);
         } else if (bank === 6) {
         /* CC PARAM bank overview: label = CC# or "AT" (aftertouch); value =
          * stopped → clip resting value or "—"; playing → defined value at the
@@ -1231,6 +1254,7 @@ export function drawUI() {
                 return tp === 2 && (((S.trackCCAutoBits[t][ac] >> k) & 1) || S.clipCCVal[t][ac][k] >= 0);
             });
             let bx = 60;
+            /* secondary header is white-on-black — badges fill white */
             const _badge = function(txt) {
                 const w = txt.length * 6 + 3;
                 fill_rect(bx, 1, w, 7, 1);
@@ -1317,8 +1341,9 @@ export function drawUI() {
             }
         }
         } else if (S.trackPadMode[S.activeTrack] !== PAD_MODE_DRUM && bank === 1) {
-        /* Melodic NOTE FX: K1=Oct, K2=Ofs, K3=Vel, K4=Qnt, K5=Len, K6=>Gate
-         * (widened cell for 5-char label), K7=blocked, K8=Rnd. */
+        /* Melodic NOTE FX: K1=Oct, K2=Ofs, K3=Vel, K4=Qnt, K5=Len, K6=>Gate,
+         * K7=blocked, K8=Rnd — canvaskit grid (proportional labels, so
+         * ">Gate" needs no widened cell). */
         const t     = S.activeTrack;
         const knobs = BANKS[1].knobs;
         const vals  = S.bankParams[t][1];
@@ -1327,36 +1352,22 @@ export function drawUI() {
          * alt-K8 random-mode apply — they shape the conductor note before its
          * offset is derived. K3-K6 (Vel/Qnt/Len/Gate) are inert/greyed. */
         const _conductNfx = S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT;
-        drawBankHeading(BANKS[1].name);
-        drawAltArrow(98, true, altIndicatorActive(S.activeTrack, S.activeBank));
+        const cells = [];
         for (let k = 0; k < 8; k++) {
-            if (k === 6) continue;  /* K7 blocked, no render */
-            const colX = 4 + (k % 4) * 30;
-            const rowY = k < 4 ? 12 : 36;
-            const hi   = (S.knobTouched === k);
-            const widen = (k === 5);
-            const cellW = widen ? 30 : 24;
-            const _inert = _conductNfx && (k === 2 || k === 3 || k === 4 || k === 5);
-            if (_inert) {
-                /* greyed-out inert cell: label/value '-' (no highlight) */
-                print(colX, rowY,      col4('-'), 1);
-                print(colX, rowY + 12, col4('-'), 1);
+            if (k === 6) { cells.push({ kind: 'blank', label: '' }); continue; }  /* K7 blocked */
+            if (_conductNfx && (k === 2 || k === 3 || k === 4 || k === 5)) {
+                cells.push({ kind: 'blank', label: '-' });  /* inert on Conductor */
                 continue;
             }
-            if (hi) fill_rect(colX, rowY, cellW, 24, 1);
-            const _nfxAlt = S.altMode && k === 7;
-            if (widen) {
-                print(colX, rowY,      '>Gate',                       hi ? 0 : 1);
-                print(colX, rowY + 12, col4(knobs[k].fmt(vals[k])),   hi ? 0 : 1);
-            } else if (_nfxAlt) {
-                print(colX, rowY,      col4('Algo'),                   hi ? 0 : 1);
-                print(colX, rowY + 12, col4(RND_ALG_NAMES_NFX[S.noteFXRandomMode[t] || 0]), hi ? 0 : 1);
-            } else {
-                print(colX, rowY,      col4(knobs[k].abbrev),         hi ? 0 : 1);
-                print(colX, rowY + 12, col4(knobs[k].fmt(vals[k])),   hi ? 0 : 1);
+            if (S.altMode && k === 7) {
+                const _md = S.noteFXRandomMode[t] || 0;
+                cells.push({ kind: 'enumsq', label: 'Algo', name: 'Random Algo',
+                             text: RND_ALG_NAMES_NFX[_md], options: RND_ALG_NAMES_NFX, sel: _md });
+                continue;
             }
+            cells.push(kitCellForKnob(knobs[k], vals[k]));
         }
-
+        drawKitPage(BANKS[1].name, cells, false);
         } else if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 3) {
         /* Drum MIDI DLY: K1-K4 same as melodic, K5=Gate, K6=Clk, K7=Retrg, K8 empty.
          * Drum has no Pfb (no per-lane pitch) and no Rnd (no random pitch fb),
@@ -1365,65 +1376,71 @@ export function drawUI() {
         const t    = S.activeTrack;
         const vals = S.bankParams[t][3];
         const knobs = BANKS[3].knobs;
-        const drumDlyLabels = [knobs[0].abbrev, knobs[1].abbrev, knobs[2].abbrev, knobs[3].abbrev, 'Gate', 'Clk', 'Retrg', null];
-        const drumDlyFmt    = [knobs[0].fmt, knobs[1].fmt, knobs[2].fmt, knobs[3].fmt, fmtGateMod, fmtSign, fmtBool, null];
-        drawBankHeading(BANKS[3].name);
-        for (let k = 0; k < 8; k++) {
-            if (!drumDlyLabels[k]) continue;
-            const colX = 4 + (k % 4) * 30;
-            const rowY = k < 4 ? 12 : 36;
-            const hi   = (S.knobTouched === k);
-            if (hi) fill_rect(colX, rowY, 24, 24, 1);
-            print(colX, rowY,      col4(drumDlyLabels[k]), hi ? 0 : 1);
-            print(colX, rowY + 12, col4(drumDlyFmt[k](vals[k])), hi ? 0 : 1);
-        }
+        const cells = [
+            kitCellForKnob(knobs[0], vals[0]),
+            kitCellForKnob(knobs[1], vals[1]),
+            kitCellForKnob(knobs[2], vals[2]),
+            kitCellForKnob(knobs[3], vals[3]),
+            { kind: 'enumsq', label: 'Gate', name: 'Gate', text: fmtGateMod(vals[4]),
+              options: [0,1,2,3,4,5,6,7,8,9,10].map(fmtGateMod), sel: vals[4] | 0 },
+            { kind: 'arcbip', label: 'Clk', name: 'Clock Feedback', text: fmtSign(vals[5]),
+              signed: Math.max(-1, Math.min(1, (vals[5] | 0) / 127)) },
+            { kind: 'hbar', label: 'Retrg', name: 'Retrig', text: fmtBool(vals[6]),
+              norm: vals[6] ? 1 : 0 },
+            { kind: 'blank', label: '' },
+        ];
+        drawKitPage(BANKS[3].name, cells, false);
 
         } else {
-        /* Bank overview — 5 rows; touched knob column inverted */
+        /* Bank overview — canvaskit grid (widgets + label strips + touch swap) */
         const knobs = BANKS[bank].knobs;
         const vals  = S.bankParams[S.activeTrack][bank];
         const _isDrum = S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM;
-        (bank === 5 ? drawBankHeadingInverted : drawBankHeading)(bankHeaderName(S.activeTrack, bank));
+        const RND_ALG_NAMES = ['Pure', 'Gaus', 'Walk'];
+        const cells = [];
         for (let k = 0; k < 8; k++) {
-            const colX = 4 + (k % 4) * 30;
-            const rowY = k < 4 ? 12 : 36;
-            const hi   = (S.knobTouched === k);
-            if (hi) fill_rect(colX, rowY, 24, 24, 1);
             /* Conduct bank (CLIP bank 0 on a Conductor) K6 = CdLk lock toggle.
-             * Melodic/drum CLIP K6 stays the generic '-' stub (unchanged). */
+             * Melodic/drum CLIP K6 stays the generic stub (unchanged). */
             if (bank === 0 && k === 5 &&
                     S.trackPadMode[S.activeTrack] === PAD_MODE_CONDUCT) {
                 const _cdc = S.trackActiveClip[S.activeTrack] | 0;
-                print(colX, rowY,      col4('CdLk'), hi ? 0 : 1);
-                print(colX, rowY + 12, col4(S.condLock[_cdc] ? 'Lock' : 'Off'), hi ? 0 : 1);
+                const _lk = S.condLock[_cdc] ? 1 : 0;
+                cells.push({ kind: 'hbar', label: 'CdLk', name: 'Conduct Lock',
+                             text: _lk ? 'Lock' : 'Off', norm: _lk });
                 continue;
             }
-            let _lbl = knobs[k].abbrev || '-';
-            /* Shift+K1 on DELAY bank (melodic): label + value flip to
-             * delay_clock_fb. Drum: K6 already holds clock_fb directly via
-             * remap; no flip needed. */
+            /* Shift+K1 on DELAY bank (melodic): flips to delay_clock_fb.
+             * Drum: K6 already holds clock_fb directly via remap; no flip. */
             const _delayShiftClkF = S.altMode && !_isDrum && bank === 3 && k === 0;
             const _clipDirAlt    = S.altMode && !_isDrum && knobs[k].dspKey === 'clip_playback_dir';
             const _rndAltAlgo    = S.altMode && !_isDrum && (bank === 1 || bank === 3) && k === 7;
-            const RND_ALG_NAMES  = ['Pure', 'Gaus', 'Walk'];
-            if (S.altMode) {
-                if      (knobs[k].dspKey === 'clock_shift')    _lbl = 'Nudg';
-                else if (knobs[k].dspKey === 'clip_resolution') _lbl = 'Zoom';
-                else if (knobs[k].dspKey === 'clip_playback_dir') _lbl = 'Rvrs';
-                else if (_delayShiftClkF)                       _lbl = 'ClkF';
-                else if (_rndAltAlgo)                           _lbl = 'Algo';
+            if (_rndAltAlgo) {
+                const _md = bank === 3 ? (S.midiDlyRandomMode[S.activeTrack] || 0)
+                                       : (S.noteFXRandomMode[S.activeTrack] || 0);
+                cells.push({ kind: 'enumsq', label: 'Algo', name: 'Random Algo',
+                             text: RND_ALG_NAMES[_md], options: RND_ALG_NAMES, sel: _md });
+                continue;
             }
-            print(colX, rowY,      _lbl, hi ? 0 : 1);
-            /* Arp Rate (Rate knob in SEQ ARP / ARP IN) uses 5-char labels for
-             * triplets ('1/16t','1/32t'). Skip the 4-char padding so the 't'
-             * isn't truncated — the cell has ~24px and the raw string fits. */
-            const _rawVal = _rndAltAlgo   ? RND_ALG_NAMES[bank === 3 ? (S.midiDlyRandomMode[S.activeTrack] || 0) : (S.noteFXRandomMode[S.activeTrack] || 0)]
-                          : _delayShiftClkF ? fmtSign(S.delayClockFb[S.activeTrack])
-                          : _clipDirAlt     ? fmtRevStyle(S.clipPlaybackAudioReverse[S.activeTrack][effectiveClip(S.activeTrack)] | 0)
-                          : (knobs[k].abbrev ? knobs[k].fmt(vals[k]) : null);
-            const _txt    = (knobs[k].fmt === fmtArpRate && !_delayShiftClkF) ? (_rawVal || '-') : col4(_rawVal);
-            print(colX, rowY + 12, _txt, hi ? 0 : 1);
+            if (_delayShiftClkF) {
+                const _cv = S.delayClockFb[S.activeTrack] | 0;
+                cells.push({ kind: 'arcbip', label: 'ClkF', name: 'Clock Feedback',
+                             text: fmtSign(_cv), signed: Math.max(-1, Math.min(1, _cv / 127)) });
+                continue;
+            }
+            if (_clipDirAlt) {
+                const _rv = S.clipPlaybackAudioReverse[S.activeTrack][effectiveClip(S.activeTrack)] | 0;
+                cells.push({ kind: 'hbar', label: 'Rvrs', name: 'Reverse Style',
+                             text: fmtRevStyle(_rv), norm: _rv ? 1 : 0 });
+                continue;
+            }
+            const cell = kitCellForKnob(knobs[k], vals[k]);
+            if (S.altMode) {
+                if      (knobs[k].dspKey === 'clock_shift')     { cell.label = 'Nudg'; cell.name = 'Nudge'; }
+                else if (knobs[k].dspKey === 'clip_resolution') { cell.label = 'Zoom'; cell.name = 'Zoom'; }
+            }
+            cells.push(cell);
         }
+        drawKitPage(bankHeaderName(S.activeTrack, bank), cells, bank === 5);
         }
 
     } else if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
@@ -1437,16 +1454,17 @@ export function drawUI() {
         const bankGroup = pg === 0 ? 'Bank:A' : 'Bank:B';
         const bankName  = S.activeBank === 0 ? 'DRUM LANE' : S.activeBank === 1 ? 'NOTE FX' : S.activeBank === 5 ? 'REPEAT GROOVE' : S.activeBank === 6 ? BANKS[6].name : S.activeBank === 7 ? (Math.floor(S.tickCount / 24) % 2 === 0 ? 'ALL' : '   ') + ' LANES' : BANKS[S.activeBank] ? BANKS[S.activeBank].name : '?';
         (S.activeBank === 5 || S.activeBank === 6 ? drawBankHeadingInverted : drawBankHeading)(bankName, false);
-        pixelPrint(4, 10, bankGroup + '  Pad:' + name + oct + ' (' + note + ')', 1);
+        /* info row sits at y=12 — 2px clear of the header rule on row 9 */
+        pixelPrint(4, 12, bankGroup + '  Pad:' + name + oct + ' (' + note + ')', 1);
         const laneBit = 1 << lane;
         if (S.drumLaneSolo[t] & laneBit) {
-            pixelPrint(128 - 4 - 6 * 6, 21, 'SOLOED', 1);
+            pixelPrint(128 - 4 - 6 * 6, 22, 'SOLOED', 1);
         } else if (S.drumLaneMute[t] & laneBit) {
             if (Math.floor(S.tickCount / 50) % 2 === 0)
-                pixelPrint(128 - 4 - 5 * 6, 21, 'MUTED', 1);
+                pixelPrint(128 - 4 - 5 * 6, 22, 'MUTED', 1);
         }
         drawMetroIndicator();
-        drawTrackRow(34);
+        drawTrackRow(35);
         for (let _t = 0; _t < NUM_TRACKS; _t++) {
             const _cx = _t * 16 + 5;
             const _ac = S.trackActiveClip[_t];
@@ -1455,10 +1473,10 @@ export function drawUI() {
                 : S.clipNonEmpty[_t][_ac];
             const _isActive = (S.trackClipPlaying[_t] || S.trackWillRelaunch[_t] || (S.trackQueuedClip[_t] >= 0)) && _hasData;
             if (_isActive) {
-                fill_rect(_cx - 1, 45, 9, 7, 1);
-                pixelPrint(_cx, 46, SCENE_LETTERS[_ac], 0);
+                fill_rect(_cx - 1, 46, 9, 7, 1);
+                pixelPrint(_cx, 47, SCENE_LETTERS[_ac], 0);
             } else {
-                pixelPrint(_cx, 46, SCENE_LETTERS[_ac], 1);
+                pixelPrint(_cx, 47, SCENE_LETTERS[_ac], 1);
             }
         }
         drawDrumPositionBar(t);
@@ -1472,22 +1490,23 @@ export function drawUI() {
         const CHAR_W  = 6;
         const keySclX = 128 - 4 - keyScl.length * CHAR_W;
         (S.activeBank === 5 || S.activeBank === 6 ? drawBankHeadingInverted : drawBankHeading)(bankHeaderName(S.activeTrack, S.activeBank) + recTag, false);
-        pixelPrint(4, 10, octStr, 1);
+        /* info row sits at y=12 — 2px clear of the header rule on row 9 */
+        pixelPrint(4, 12, octStr, 1);
         if (S.bankParams[S.activeTrack][5][0]) {
             if (S.bankParams[S.activeTrack][5][7]) {
                 /* Latch on: invert 'Arp' (black on white chip) — pixelPrint
-                 * uses a 5x5 glyph with 6px step; 'Arp' spans x=52..68, y=10..14.
-                 * Chip pads 1px around: x=51..69 (w=19), y=9..15 (h=7). */
-                fill_rect(51, 9, 19, 7, 1);
-                pixelPrint(52, 10, 'Arp', 0);
+                 * uses a 5x5 glyph with 6px step; 'Arp' spans x=52..68, y=12..16.
+                 * Chip pads 1px around: x=51..69 (w=19), y=11..17 (h=7). */
+                fill_rect(51, 11, 19, 7, 1);
+                pixelPrint(52, 12, 'Arp', 0);
             } else {
-                pixelPrint(52, 10, 'Arp', 1);
+                pixelPrint(52, 12, 'Arp', 1);
             }
         }
-        pixelPrint(keySclX, 10, keyScl, 1);
-        if (S.scaleAware) fill_rect(keySclX, 15, keyScl.length * CHAR_W, 1, 1);
+        pixelPrint(keySclX, 12, keyScl, 1);
+        if (S.scaleAware) fill_rect(keySclX, 17, keyScl.length * CHAR_W, 1, 1);
         drawMetroIndicator();
-        drawTrackRow(34);
+        drawTrackRow(35);
         for (let t = 0; t < NUM_TRACKS; t++) {
             const _cx = t * 16 + 5;
             const _ac = S.trackActiveClip[t];
@@ -1496,10 +1515,10 @@ export function drawUI() {
                 : S.clipNonEmpty[t][_ac];
             const _isActive = (S.trackClipPlaying[t] || S.trackWillRelaunch[t] || (S.trackQueuedClip[t] >= 0)) && _hasData;
             if (_isActive) {
-                fill_rect(_cx - 1, 45, 9, 7, 1);
-                pixelPrint(_cx, 46, SCENE_LETTERS[_ac], 0);
+                fill_rect(_cx - 1, 46, 9, 7, 1);
+                pixelPrint(_cx, 47, SCENE_LETTERS[_ac], 0);
             } else {
-                pixelPrint(_cx, 46, SCENE_LETTERS[_ac], 1);
+                pixelPrint(_cx, 47, SCENE_LETTERS[_ac], 1);
             }
         }
         drawPositionBar(S.activeTrack);

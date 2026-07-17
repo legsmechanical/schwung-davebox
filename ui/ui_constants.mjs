@@ -337,7 +337,7 @@ export const BANKS = [
         p('Ltch', 'Latch',         'tarp_latch',      'track', 0,   1,   0,  fmtBool,     16),
     ]},
     /* 6 — AUTO (pad 98) — per-clip CC + aftertouch (+ PB later) automation; custom handling, no DSP-wired knobs */
-    { name: 'AUTO', knobs: [_X, _X, _X, _X, _X, _X, _X, _X] },
+    { name: 'AUTOMATION', knobs: [_X, _X, _X, _X, _X, _X, _X, _X] },
     /* 7 — ALL LANES (drum pad 92) — macro controls across all 32 drum lanes.
      * K1=Res (all-lane resolution, custom), K2=Stch, K3=Shft (alt=Nudge),
      * K4=Qnt (custom), K5=VelIn (custom), K6=InQ (custom),

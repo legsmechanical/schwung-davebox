@@ -8,6 +8,9 @@ the section into a versioned heading at release time.
 
 ## [Unreleased]
 
+### Features
+- **Redesigned track-view parameter pages.** The knob bank pages now use the Schwung canvaskit look shared with the OB-Xd and Palette editors: graphical widgets per knob (arc knobs, center-tick knobs for ± values, toggle bars, framed option/value squares), and a chunky pixel-font header with a page-indicator line beneath it (one segment per bank, the active one gently flashing). Turning a knob inverts the header to show the parameter's full name while the label under the widget shows its live value; turning a multi-option knob (like Delay Rate or Arp Style) pops up a scrolling list of all its options. Applies to all melodic, drum, and Conductor bank pages.
+
 ### Fixes
 - **Switching tracks while holding an external MIDI note no longer leaves the note stuck on Move.** Holding a key on a Move-routed track and switching the active track stranded the sounding Move voice — its release could no longer reach the right channel, so the note rang until stop/panic. The held note is now released at the moment you switch away from its track (a predictable cut, matching how held co-run drum pads behave).
 - **External MIDI played during the record count-in now lands on the one.** Notes played on an external keyboard during the count-in were dropped entirely — playing "into" the downbeat recorded nothing. They now behave like the pads: presses in the last eighth-note of the count-in are captured and placed exactly at the loop start; earlier warm-up presses are still ignored.
