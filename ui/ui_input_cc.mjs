@@ -2073,7 +2073,7 @@ function _onCC_side(d1, d2) {
  *            KNOB_DELIB detents (an accidental brush must not fire).
  * knobPick() is the shared accumulator for the fixed classes; every knob
  * site routes through ccKnobDelta or knobPick — no private thresholds. */
-const KNOB_PICK = 6, KNOB_DELIB = 16;
+const KNOB_PICK = 6, KNOB_DELIB = 12;
 function knobPick(k, dir, need) {
     if (dir !== S.knobLastDir[k]) { S.knobAccum[k] = 0; S.knobLastDir[k] = dir; }
     S.knobAccum[k]++;
@@ -2101,7 +2101,7 @@ function ccKnobDelta(d2, k) {
     S.knobAccelRun[k]++;
     const run  = S.knobAccelRun[k];
     const gain = run <= 12 ? 1 : run <= 24 ? 2 : run <= 36 ? 4 : 6;
-    const BASE = 3;
+    const BASE = 2;   /* was 3 — 2026-07-18 feel pass: continuous knobs a bit faster */
     S.knobAccelAcc[k] += gain;
     const units = Math.floor(S.knobAccelAcc[k] / BASE);
     if (units === 0) return 0;

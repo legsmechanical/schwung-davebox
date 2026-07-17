@@ -960,8 +960,9 @@ export function drawUI() {
             drawBankHeading(_velPage ? 'Step Vel' : 'Step Pitch');
             if (!_velPage) {
                 /* micro-font hint that Shift flips to the velocity page —
-                 * black on the filled header bar, right-aligned */
-                pf3Print(126 - pf3Width('SHIFT'), 2, 'SHIFT', 0);
+                 * black on the filled header bar, tucked LEFT of the alt
+                 * arrow (which sits at x=121-126) */
+                pf3Print(118 - pf3Width('SHIFT'), 2, 'SHIFT', 0);
             }
         }
         const _colW = 16, _barW = 10, _top = 14, _bot = 54, _numY = 57;

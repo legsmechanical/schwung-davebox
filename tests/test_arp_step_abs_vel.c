@@ -36,6 +36,32 @@ int main(void) {
     HX_ASSERT(inst->tracks[3].clips[tr->active_clip].pfx_params.seq_arp_step_vel[0] == 87,
               "seq_arp_step_vel: 87 not stored");
 
+    /* LIVE ARP (tarp) fire path applies the absolute step velocity — this is
+     * the THIRD copy of the level logic (arp_fire_step + bake are the others)
+     * and it shipped stale once; pin it. Steps all locked at 77, incoming
+     * note vel 120 -> emitted arp notes must be 77. */
+    hx_set_param(h, "t1_padmap",
+        "60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 "
+        "76 77 78 79 80 81 82 83 84 85 86 87 88 89 90 91");  /* arm live input */
+    hx_set_param(h, "t1_tarp_style", "1");       /* Up; flips tarp_on */
+    hx_set_param(h, "t1_tarp_steps_mode", "1");  /* Mute: step_vel applies */
+    for (int i = 0; i < 8; i++) {
+        char b[8];
+        snprintf(b, sizeof b, "%d 77", i);
+        hx_set_param(h, "t1_tarp_step_vel", b);
+    }
+    {
+        const uint8_t on[3] = { 0x90, 68, 120 };  /* pad 0 -> pitch 60, vel 120 */
+        hx_send_midi(h, on, 3, MOVE_MIDI_SOURCE_INTERNAL);
+    }
+    hx_render(h, 64);
+    int tarp77 = 0;
+    for (int i = 0; i < hx_stub_event_count(); i++) {
+        const hx_midi_event *e = hx_stub_event(i);
+        if ((e->bytes[1] & 0xF0) == 0x90 && e->bytes[3] == 77) { tarp77 = 1; break; }
+    }
+    HX_ASSERT(tarp77, "tarp step vel not applied (want 77)");
+
     /* Legacy state migration: saved 5-state levels map to canonical
      * velocities (0->0, 1->32, 2->64, 3->96, 4->Thru); absent keys default
      * to Thru (255). (Sequential instances — the stub host is process-global.) */

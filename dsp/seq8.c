@@ -2952,7 +2952,7 @@ static void tarp_fire_step(seq8_instance_t *inst, seq8_track_t *tr) {
     a->step_pos = (uint8_t)step_idx;
 
     uint8_t level = a->step_vel[step_idx];
-    if (a->steps_mode == 0) level = 4;
+    if (a->steps_mode == 0) level = 255;   /* Off mode: treat as Thru */
     int step_off = (a->steps_mode != 0) && (level == 0);
 
     if (step_off && a->steps_mode == 2) {
@@ -2983,15 +2983,10 @@ static void tarp_fire_step(seq8_instance_t *inst, seq8_track_t *tr) {
     if (a->step_int[step_idx])
         pitch = (uint8_t)scale_transpose(inst, (int)pitch, (int)a->step_int[step_idx]);
 
+    /* ABSOLUTE step velocity, Thru (255) = incoming — mirrors arp_fire_step. */
     int v = (int)base_vel;
-    if (a->steps_mode != 0 && level >= 1 && level <= 4) {
-        if (level == 4) {
-            v = (int)base_vel;
-        } else {
-            int span = (int)base_vel - 10;
-            v = 10 + (span * (level - 1)) / 3;
-        }
-    }
+    if (a->steps_mode != 0 && level >= 1 && level <= 127)
+        v = (int)level;
     if (v < 1)   v = 1;
     if (v > 127) v = 127;
 
