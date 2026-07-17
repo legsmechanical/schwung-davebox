@@ -10,7 +10,7 @@ import { S, PERF_FACTORY_PRESETS } from './ui_state.mjs';
 import {
     BANKS, BANK_RESPONDER, BANK_OCTAVE, BANK_WHEN,
     NOTE_KEYS, NUM_CLIPS, NUM_TRACKS, PAD_MODE_CONDUCT, PAD_MODE_DRUM,
-    POLL_INTERVAL, SCALE_DISPLAY, SCENE_LETTERS, TPS_VALUES,
+    POLL_INTERVAL, SCALE_DISPLAY, SCENE_LETTERS, TPS_VALUES, STEP_ITER_LIST,
     col4, col5, pixelPrint,
     fmtSign, fmtStretch, fmtLen, fmtRes, fmtPct, fmtBool, fmtGateMod,
     fmtArpRate, fmtVelOverride, fmtPlayDir, fmtRevStyle,
@@ -106,6 +106,35 @@ function drawThruBar(x, w, top, bot) {
             set_pixel(xx, yy, 1);
 }
 
+/* Canvaskit step-editor page (drum + melodic step hold): "STEP N" filled
+ * header (touched knob swaps in the param name), kit grid, enum overlay on
+ * top. `noteBox` (melodic) draws the merged Oct/Note box over the K1+K2
+ * widget span; cells === null renders the empty-step notice. */
+function drawStepEditKitPage(title, cells, noteBox) {
+    const t = S.knobTouched;
+    const touched = cells && t >= 0 && cells[t] && cells[t].name ? cells[t] : null;
+    if (touched) {
+        drawKitTouchedHeader(touched.name);
+    } else {
+        drawKitHeader(title, false);
+        fill_rect(0, 9, 128, 1, 1);   /* solid rule (no bank context here) */
+    }
+    if (!cells) {
+        mvPrint(4, 30, 'Empty step', 1);
+        return;
+    }
+    drawKitCells(cells, t);
+    if (noteBox != null) {
+        const hiOP = (t === 0 || t === 1);
+        const BX = 6, BW = 52, BY = MV_ROW0_Y, BH = MV_KH;
+        if (hiOP) fill_rect(BX, BY, BW, BH, 1);
+        else      rectOutline(BX, BY, BW, BH, 1);
+        mvPrint(BX + Math.round((BW - mvWidth(noteBox)) / 2),
+                BY + Math.floor((BH - 5) / 2), noteBox, hiOP ? 0 : 1);
+    }
+    drawKitEnumOverlay(cells, t);
+}
+
 /* Shared canvaskit page entry: touched non-blank cell inverts the header to
  * its full param name (label strip below swaps to the value); resting state
  * goes through the standard heading helpers (C- blink, page bar, alt arrow). */
@@ -128,10 +157,8 @@ function drawAltArrow(x, hdrBgWhite, on) {
     drawKitAltArrow(x, hdrBgWhite, on, S._altBlinkPhase === 1);
 }
 
-function drawStepEditHeader() {
-    pixelPrint(37, 1, 'STEP EDIT', 1);
-    fill_rect(0, 9, 128, 1, 1);
-}
+/* (drawStepEditHeader retired 2026-07-18 — the step editors now use the
+ * canvaskit chrome via drawStepEditKitPage.) */
 
 /* Per-step trig-condition formatters (v=34).
  *   formatStepIter(raw):  0 -> "—"; else "{idx}/{len}" with raw=(len<<4)|idx
@@ -766,92 +793,81 @@ export function drawUI() {
             }
             return;
         } else {
-        drawStepEditHeader();
+        /* Canvaskit step editors (drum + melodic). The kit fonts don't map
+         * the formatters' em dash — normalize to "--". */
+        const _dash = (s) => s === '—' ? '--' : s;
+        const _stepTitle = 'Step ' + (S.heldStep + 1);
         if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM) {
-            /* Drum step edit: 2-row 4-col grid matching melodic layout width.
-             * Row 1: K1 Leng, K2 Vel, K3 Nudg, K4 —.
-             * Row 2: K5 Iter, K6 Prob, K7 Ratch, K8 —. */
-            const t    = S.activeTrack;
-            const lane = S.activeDrumLane[t];
+            /* Drum step edit: K1 Leng, K2 Vel, K3 Nudg, K5 Iter, K6 Prob, K7 Ratch. */
+            const t = S.activeTrack;
             if (S.heldStepNotes.length > 0) {
                 const tps   = S.drumLaneTPS[t] || 24;
                 const _gateSteps = S.stepEditGate / tps;
-                const LABELS = ['Leng', 'Vel', 'Nudg', '--', 'Iter', 'Prob', 'Ratch', '--'];
-                const VALS   = [
-                    _gateSteps % 1 === 0 ? _gateSteps.toFixed(0) : _gateSteps.toFixed(2),
-                    String(S.stepEditVel),
-                    (S.stepEditNudge >= 0 ? '+' : '') + String(S.stepEditNudge),
-                    '',
-                    formatStepIter(S.stepEditIter),
-                    formatStepRand(S.stepEditRand),
-                    formatStepRatch(S.stepEditRatch),
-                    ''
+                const cells = [
+                    { kind: 'valsq', label: 'Leng', name: 'Length',
+                      text: _gateSteps % 1 === 0 ? _gateSteps.toFixed(0) : _gateSteps.toFixed(2) },
+                    { kind: 'arc', label: 'Vel', name: 'Velocity', text: String(S.stepEditVel),
+                      norm: Math.max(0, Math.min(1, S.stepEditVel / 127)) },
+                    { kind: 'arcbip', label: 'Nudg', name: 'Nudge',
+                      text: (S.stepEditNudge >= 0 ? '+' : '') + S.stepEditNudge,
+                      signed: Math.max(-1, Math.min(1, S.stepEditNudge / Math.max(1, tps - 1))) },
+                    { kind: 'blank', label: '' },
+                    { kind: 'enumsq', label: 'Iter', name: 'Iteration',
+                      text: _dash(formatStepIter(S.stepEditIter)),
+                      options: STEP_ITER_LIST.map((v) => _dash(formatStepIter(v))),
+                      sel: Math.max(0, STEP_ITER_LIST.indexOf(S.stepEditIter)) },
+                    { kind: 'arc', label: 'Prob', name: 'Probability',
+                      text: _dash(formatStepRand(S.stepEditRand)),
+                      norm: Math.max(0, Math.min(1, S.stepEditRand / 100)) },
+                    { kind: 'enumsq', label: 'Ratch', name: 'Ratchet',
+                      text: _dash(formatStepRatch(S.stepEditRatch)),
+                      options: [0, 1, 2, 3, 4].map((v) => _dash(formatStepRatch(v))),
+                      sel: S.stepEditRatch | 0 },
+                    { kind: 'blank', label: '' },
                 ];
-                const COL_X = [0, 32, 64, 96];
-                const ROW_Y = [13, 35];
-                const CELL_W = 31, CELL_H = 22;
-                for (let i = 0; i < 8; i++) {
-                    if (i === 3 || i === 7) continue;
-                    const col = i % 4, row = (i / 4) | 0;
-                    const x = COL_X[col], y = ROW_Y[row];
-                    const hi = (S.knobTouched === i);
-                    if (hi) fill_rect(x, y - 3, CELL_W, CELL_H, 1);
-                    print(x + 1, y, LABELS[i], hi ? 0 : 1);
-                    print(x + 1, y + 10, VALS[i], hi ? 0 : 1);
-                }
+                drawStepEditKitPage(_stepTitle, cells, null);
             } else {
-                print(4, 30, '(empty)', 1);
+                drawStepEditKitPage(_stepTitle, null, null);
             }
             return;
         }
         const ac        = effectiveClip(S.activeTrack);
         if (S.heldStepNotes.length > 0) {
-            /* Melodic step edit: 2-row 4-col grid. Row 1: K1 Oct, K2 Note, K3 Leng, K4 Vel.
-             * Row 2: K5 Nudg, K6 Iter, K7 Prob, K8 Ratch. */
+            /* Melodic step edit: K1 Oct + K2 Note share the merged note box
+             * (same idiom as the drum NOTE FX lane box); K3 Leng, K4 Vel,
+             * K5 Nudg, K6 Iter, K7 Prob, K8 Ratch. */
             const root = S.heldStepNotes[0];
             const noteLabel = S.heldStepNotes.length > 1
                 ? midiNoteName(root) + '+' + (S.heldStepNotes.length - 1)
                 : midiNoteName(root);
             const tps = S.clipTPS[S.activeTrack][ac] || 24;
             const _gateSteps = S.stepEditGate / tps;
-            const LABELS = ['Oct', 'Note', 'Leng', 'Vel', 'Nudg', 'Iter', 'Prob', 'Ratch'];
-            const VALS   = [
-                noteLabel,
-                noteLabel,
-                _gateSteps % 1 === 0 ? _gateSteps.toFixed(0) : _gateSteps.toFixed(2),
-                String(S.stepEditVel),
-                (S.stepEditNudge >= 0 ? '+' : '') + String(S.stepEditNudge),
-                formatStepIter(S.stepEditIter),
-                formatStepRand(S.stepEditRand),
-                formatStepRatch(S.stepEditRatch)
+            const cells = [
+                { kind: 'blank', label: 'Oct',  name: 'Note' },
+                { kind: 'blank', label: 'Note', name: 'Note' },
+                { kind: 'valsq', label: 'Leng', name: 'Length',
+                  text: _gateSteps % 1 === 0 ? _gateSteps.toFixed(0) : _gateSteps.toFixed(2) },
+                { kind: 'arc', label: 'Vel', name: 'Velocity', text: String(S.stepEditVel),
+                  norm: Math.max(0, Math.min(1, S.stepEditVel / 127)) },
+                { kind: 'arcbip', label: 'Nudg', name: 'Nudge',
+                  text: (S.stepEditNudge >= 0 ? '+' : '') + S.stepEditNudge,
+                  signed: Math.max(-1, Math.min(1, S.stepEditNudge / Math.max(1, tps - 1))) },
+                { kind: 'enumsq', label: 'Iter', name: 'Iteration',
+                  text: _dash(formatStepIter(S.stepEditIter)),
+                  options: STEP_ITER_LIST.map((v) => _dash(formatStepIter(v))),
+                  sel: Math.max(0, STEP_ITER_LIST.indexOf(S.stepEditIter)) },
+                { kind: 'arc', label: 'Prob', name: 'Probability',
+                  text: _dash(formatStepRand(S.stepEditRand)),
+                  norm: Math.max(0, Math.min(1, S.stepEditRand / 100)) },
+                { kind: 'enumsq', label: 'Ratch', name: 'Ratchet',
+                  text: _dash(formatStepRatch(S.stepEditRatch)),
+                  options: [0, 1, 2, 3, 4].map((v) => _dash(formatStepRatch(v))),
+                  sel: S.stepEditRatch | 0 },
             ];
-            const COL_X = [0, 32, 64, 96];
-            const ROW_Y = [13, 35];
-            const CELL_W = 31, CELL_H = 22;
-            /* Oct + Pit are merged: both knobs edit the same root note, so
-             * one centered note value sits under both labels with a divider line. */
-            {
-                const hiOP = (S.knobTouched === 0 || S.knobTouched === 1);
-                const opX  = COL_X[0];
-                const opW  = COL_X[1] + CELL_W - COL_X[0];
-                if (hiOP) fill_rect(opX, ROW_Y[0] - 3, opW, CELL_H, 1);
-                print(COL_X[0] + 1, ROW_Y[0], 'Oct',  hiOP ? 0 : 1);
-                print(COL_X[1] + 1, ROW_Y[0], 'Note', hiOP ? 0 : 1);
-                fill_rect(opX, ROW_Y[0] + 7, opW, 1, hiOP ? 0 : 1);
-                const _nlx = opX + ((opW - noteLabel.length * 6) >> 1);
-                print(_nlx, ROW_Y[0] + 10, noteLabel, hiOP ? 0 : 1);
-            }
-            for (let i = 2; i < 8; i++) {
-                const col = i % 4, row = (i / 4) | 0;
-                const x = COL_X[col], y = ROW_Y[row];
-                const hi = (S.knobTouched === i);
-                if (hi) fill_rect(x, y - 3, CELL_W, CELL_H, 1);
-                print(x + 1, y, LABELS[i], hi ? 0 : 1);
-                print(x + 1, y + 10, VALS[i], hi ? 0 : 1);
-            }
+            drawStepEditKitPage(_stepTitle, cells, noteLabel);
             return;
         } else if (S.stepWasEmpty) {
-            print(4, 30, '(empty)', 1);
+            drawStepEditKitPage(_stepTitle, null, null);
             return;
         }
         /* non-empty step, notes still loading at hold threshold — fall through to bank/header */
