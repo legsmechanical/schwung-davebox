@@ -339,6 +339,38 @@ export function pollDSP() {
         if (host_module_get_param('clock_follow_fallback') === '1')
             showActionPopup('CLOCK FOLLOW', "Move didn't start", 'Last-known tempo');
     }
+    /* Retrospective capture: mirror the buffered-input count (lights the
+     * Capture LED via the tick LED pass; gates tap = capture-vs-bake). */
+    {
+        const _cp = host_module_get_param('capture_pending');
+        if (_cp !== null) {
+            const _n = parseInt(_cp, 10) | 0;
+            if ((_n > 0) !== (S.capturePending > 0)) S.screenDirty = true;
+            S.capturePending = _n;
+        }
+        /* After a tap-commit, watch capture_info for the result toast. The
+         * countdown bounds the wait in case the commit was a no-op. */
+        if (S.captureCommitAwait > 0) {
+            S.captureCommitAwait--;
+            const _ci = host_module_get_param('capture_info');
+            if (_ci) {
+                const _p   = _ci.split(' ');
+                const _seq = parseInt(_p[0], 10) | 0;
+                /* seq starts at 0 per DSP instance and bumps per commit, so
+                 * any seq > 0 differing from the last toasted one is ours. */
+                if (_seq > 0 && _seq !== S.captureInfoSeq) {
+                    S.captureInfoSeq     = _seq;
+                    S.captureCommitAwait = 0;
+                    if (_p[1] === '1')
+                        showActionPopup('CAPTURED',
+                                        Math.round(parseFloat(_p[2])) + ' BPM',
+                                        _p[5] + ' steps');
+                    else
+                        showActionPopup('CAPTURED', 'Added to clip');
+                }
+            }
+        }
+    }
     const snap = host_module_get_param('state_snapshot');
     if (!snap) return;
     const v = snap.split(' ');

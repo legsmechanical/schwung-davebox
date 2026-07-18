@@ -342,6 +342,9 @@ export const S = {
     muteUsedAsModifier: false,
     captureHeld: false,
     captureUsedAsModifier: false,    /* set true when a Capture-held gesture consumes the press (scene capture, drum lane select, etc.) — bare-tap clip/scene bake suppresses on release */
+    capturePending: 0,               /* retrospective-capture buffered event count for the active track (DSP capture_pending mirror; lights the Capture LED, gates tap = capture-vs-bake) */
+    captureCommitAwait: 0,           /* >0: polls remaining to watch capture_info for the commit toast (set on tap-commit, counts down in pollDSP) */
+    captureInfoSeq: undefined,       /* last seen capture_info commit sequence (toast fires on change) */
     pendingSceneBakePicker: false,   /* Session-View Capture tap → wait for next row/step press to pick scene → opens scene-bake confirm */
     pendingMergePlacement: false,    /* multi-track live merge stopped → wait for row/step press to pick destination scene row */
     metronomeOn: 1,

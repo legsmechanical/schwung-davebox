@@ -154,7 +154,7 @@ Note/Session.
 | Mute | Toggle mute on active track/lane | Mute + pad/step, Mute + Play |
 | Delete | Open clear menu (context-dependent) | Delete + step/clip/lane/jog |
 | Copy | — | Copy + step/clip/lane/scene |
-| Capture | Bake dialog (Track View) / scene-bake (Session View) | Capture + lane pad, Capture + scene |
+| Capture | LED bright: commit buffered play-input to clip (6.7). LED dim: bake dialog (Track View) / scene-bake (Session View) | Capture + lane pad, Capture + scene, Shift + Capture = discard buffered input |
 | Sample | Live Merge arm/stop (Session View) | Sample + scene launcher |
 | Undo | Undo last destructive action | Shift + Undo = redo |
 | Note/Session | Switch views (tap) / peek (hold) | Shift + Note/Session = Global Menu |
@@ -519,6 +519,35 @@ Undo** redoes.
 Undoable actions: step/clip/lane clear, copy/cut/paste, hard reset, live
 recording, bank reset, loop double, bake, legato, scene operations, automation
 clears.
+
+## 6.7 Capture (retrospective recording)
+
+Like Move's own Capture, dAVEBOx is always listening: everything you play on
+the pads (and every FX-bank knob move) while a track is **not** record-armed is
+silently buffered. If you play something you like but forgot to press Record,
+tap **Capture** — the buffered input becomes real clip data. The Capture
+button's LED lights **bright** whenever there is buffered input waiting; while
+it's dim, a tap opens the Bake dialog as before (see 13.1).
+
+**While the transport is running**, tapping Capture overdubs the buffered notes
+into the active track's focused clip at the positions you heard them —
+unquantized, exactly as played. Knob movements land as automation points in the
+clip's AUTOMATION lanes. The clip's length is never changed.
+
+**While the transport is stopped**, tapping Capture treats your first note as
+the start of a new take: dAVEBOx estimates the tempo from your playing, applies
+it, sizes the clip to whole bars, writes the notes and automation, and starts
+the transport so you hear the take immediately. A popup shows the applied BPM
+and clip length. The captured notes play back at the speed you played them,
+whatever tempo is chosen. (Tempo is only estimated when the target clip is
+empty and dAVEBOx owns the tempo — under Clock Follow, Move's tempo stays in
+charge. With fewer than three notes, the current tempo is used.)
+
+Works on melodic and drum tracks alike (drum hits land in their matching
+lanes). To throw the buffered input away instead, hold **Shift** and tap
+**Capture**. The buffer also clears itself whenever the transport starts or
+stops, when a commit lands, and when armed recording takes over (armed input is
+recorded normally, not buffered).
 
 ---
 
@@ -1244,8 +1273,10 @@ saves.
 
 ## 13.1 Bake
 
-The **Capture** button. Bake renders a clip's effects (NOTE FX, HARMONY, DELAY,
-SEQ ARP) into permanent note data, then resets the effects to defaults. The result
+The **Capture** button (when its LED is dim — with buffered play-input waiting,
+a tap commits that instead; see 6.7). Bake renders a clip's effects (NOTE FX,
+HARMONY, DELAY, SEQ ARP) into permanent note data, then resets the effects to
+defaults. The result
 sounds the same without any effects applied — useful for layering new effects on
 top, or for freezing a specific sound.
 

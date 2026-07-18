@@ -86,6 +86,10 @@ static int sp_track_ccauto(sp_ctx_t *cx) {
                 tr->cc_latched |= (uint8_t)(1u << _k);
                 tr->cc_latch_last_snap[_k] = 0xFFFFFFFFu;
             }
+        } else {
+            /* Not armed: buffer the knob motion for retrospective Capture
+             * (capture_push itself re-checks arm state + count-in). */
+            capture_push(inst, tr, CAP_EV_CC, (uint8_t)_k, (uint8_t)_v);
         }
         return 1;
     }

@@ -9,6 +9,7 @@ the section into a versioned heading at release time.
 ## [Unreleased]
 
 ### Features
+- **Capture — retrospective recording, like Move's own Capture button.** dAVEBOx now always listens: pads you play (and FX-knob moves) while not recording are silently buffered, and the Capture button's LED lights up when something is waiting. Tap Capture to keep it: with the transport running, the buffered notes and automation overdub into the focused clip exactly as played (no quantizing); with the transport stopped, your first note becomes the start of a new take — dAVEBOx estimates the tempo from your playing, sizes the clip to whole bars, and starts playback so you hear it immediately (a popup shows the applied BPM). Works on melodic and drum tracks. Shift + Capture discards the buffered input; with nothing buffered, Capture opens the Bake dialog as before.
 - **Browser clips now launch like hardware pads.** Clicking a clip in the browser session grid launches it (respecting launch quantize) and the editor follows it — the same gesture as tapping a session pad on the device. Alt/Shift-click selects a clip for viewing without launching it. (Double-click-to-launch is gone.)
 - **Per-clip menu in the browser session grid.** Hovering a clip shows a ≡ menu with Duplicate (into the track's next empty slot), Copy, Cut (marks the clip; pasting moves it), Paste (between same-type tracks), and Delete.
 - **Drag drum hits between lanes.** In the browser drum roll, dragging a hit vertically moves it to another lane, keeping its velocity, gate, and timing.

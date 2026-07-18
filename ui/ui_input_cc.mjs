@@ -1020,9 +1020,34 @@ function _onCC_buttons(d1, d2) {
             forceRedraw();
         } else {
             S.captureHeld = false;
-            /* Bare-tap release: open clip-bake (Track View) or scene-bake picker
-             * (Session View). Suppressed when Capture was used as a modifier
-             * (scene capture via Capture+row, drum-lane select via Capture+pad). */
+            /* Bare-tap release, three-way (checked in order):
+             *   Shift+Capture           → clear buffered capture input (Move parity)
+             *   buffered capture input  → retrospective Capture commit into the
+             *                             focused clip (Move-style Capture MIDI)
+             *   otherwise               → clip-bake (Track View) / scene-bake
+             *                             picker (Session View), as before.
+             * Suppressed when Capture was used as a modifier (scene capture via
+             * Capture+row, drum-lane select via Capture+pad). */
+            if (!S.captureUsedAsModifier && S.shiftHeld) {
+                if (S.capturePending > 0) {
+                    S.pendingDefaultSetParams.push({
+                        key: 't' + S.activeTrack + '_capture_clear', val: '1' });
+                    S.capturePending = 0;
+                    showActionPopup('CAPTURE', 'Input cleared');
+                }
+                S.captureUsedAsModifier = true;   /* never fall into bake */
+            }
+            if (!S.captureUsedAsModifier && S.capturePending > 0) {
+                const _ct = S.activeTrack;
+                S.pendingDefaultSetParams.push({
+                    key: 't' + _ct + '_capture_commit',
+                    val: String(S.trackActiveClip[_ct]) });
+                S.capturePending     = 0;
+                S.captureCommitAwait = 40;   /* polls to watch for the toast */
+                computePadNoteMap();
+                forceRedraw();
+                return;
+            }
             if (!S.captureUsedAsModifier) {
                 if (S.sessionView) {
                     S.pendingSceneBakePicker = true;

@@ -14,6 +14,22 @@ static int sp_track_record(sp_ctx_t *cx) {
     seq8_track_t *tr = cx->tr;
     const char *sub = cx->sub;
 
+    if (!strcmp(sub, "capture_commit")) {
+        /* tN_capture_commit "C" — commit the retrospective-capture ring for
+         * track N into clip C (see capture_commit in seq8_set_param.c). */
+        int _c = clamp_i(my_atoi(val), 0, NUM_CLIPS - 1);
+        if (capture_commit(inst, tidx, _c))
+            seq8_ilog(inst, "SEQ8 capture: commit");
+        return 1;
+    }
+    if (!strcmp(sub, "capture_clear")) {
+        /* tN_capture_clear — drop all buffered capture input (Shift+Capture).
+         * Track-prefixed only so the key reliably reaches DSP; the ring is
+         * global, tidx is unused. */
+        capture_clear(inst);
+        return 1;
+    }
+
     if (!strcmp(sub, "recording")) {
         int rv = my_atoi(val);
         if (rv) {

@@ -107,6 +107,7 @@ static int sp_globals_state(sp_ctx_t *cx) {
             int t2, c2;
             inst->merge_state = MERGE_STATE_IDLE;
             for (t2 = 0; t2 < NUM_TRACKS; t2++) inst->merge_pending_count[t2] = 0;
+            capture_clear(inst);
             inst->playing        = 0;
             inst->count_in_ticks = 0;
             for (t2 = 0; t2 < NUM_TRACKS; t2++) {

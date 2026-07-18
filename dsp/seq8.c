@@ -211,6 +211,28 @@ typedef struct {
     uint16_t ticks[AT_MAX_LANES][AT_MAX_POINTS];
     uint8_t  vals [AT_MAX_LANES][AT_MAX_POINTS];
 } at_auto_t;
+
+/* Retrospective Capture (Move-style Capture MIDI): a rolling ring of live
+ * input events (pad/ext notes + CC-bank knob turns) recorded while the track
+ * is NOT armed. Commit turns the buffer into clip notes / cc_auto points
+ * (tN_capture_commit); the ring clears on transport edges, explicit clear
+ * (tN_capture_clear), and commit. Transient — never serialized. Events carry
+ * three time bases so commit can map them whether transport was running
+ * (abs_tick / ctick) or stopped (frame, against the free-running rui_frames
+ * device clock, later scaled by the estimated tempo). */
+#define CAP_MAX_EVENTS  2048
+#define CAP_EV_NOTE_ON  0
+#define CAP_EV_NOTE_OFF 1
+#define CAP_EV_CC       2
+typedef struct {
+    uint64_t frame;     /* inst->rui_frames at event time (wall clock, stopped mode) */
+    uint32_t abs_tick;  /* global master tick at event (playing mode) */
+    uint32_t ctick;     /* tr->current_clip_tick at event (playing melodic, active clip) */
+    uint8_t  type;      /* CAP_EV_* */
+    uint8_t  track;
+    uint8_t  a;         /* pitch (notes) / knob index 0-7 (CC) */
+    uint8_t  b;         /* velocity (note-on) / CC value (CC) */
+} cap_ev_t;
 /* Forward decl: at_auto_reset is used in create_instance + seq8_load_state, both
  * defined above the helper bodies. */
 static void at_auto_reset(at_auto_t *a);
@@ -1166,6 +1188,18 @@ typedef struct {
      * changed mid-hold) releases/records on the ORIGINAL press track, not the
      * current active track. 0xFF = no tracked press. */
     uint8_t  ext_press_track[128];
+
+    /* Retrospective Capture ring (see cap_ev_t). head = oldest entry; count
+     * events live at (head+i) % CAP_MAX_EVENTS. Overflow drops the oldest.
+     * cap_bpm_est / cap_last_* describe the most recent stopped-mode commit
+     * (read back by JS via get_param "capture_info" for the BPM toast). */
+    cap_ev_t cap_ring[CAP_MAX_EVENTS];
+    uint16_t cap_head;
+    uint16_t cap_count;
+    double   cap_bpm_est[3];       /* candidate estimates, [0] = applied */
+    uint16_t cap_last_len_steps;   /* clip length written by last stopped commit */
+    uint8_t  cap_last_was_stopped; /* 1 = last commit ran the stopped/tempo path */
+    uint32_t cap_commit_seq;       /* bumped per successful commit (JS toast edge) */
 } seq8_instance_t;
 
 static const host_api_v1_t *g_host = NULL;
@@ -1411,6 +1445,58 @@ static void merge_place(seq8_instance_t *inst, int row) {
     }
     inst->state_dirty = 1;
     inst->merge_state = MERGE_STATE_IDLE;
+}
+
+/* ------------------------------------------------------------------ */
+/* Retrospective Capture ring (Move-style Capture MIDI)                 */
+/* ------------------------------------------------------------------ */
+
+/* Drop all buffered capture input. Called on transport edges (start AND
+ * stop — Move parity: starting then stopping transport clears the input),
+ * on explicit clear (Shift+Capture), after a commit consumes the ring, and
+ * on state load. RT-safe (no alloc/IO). */
+static void capture_clear(seq8_instance_t *inst) {
+    inst->cap_head  = 0;
+    inst->cap_count = 0;
+}
+
+/* Append one live-input event to the capture ring. Called from
+ * live_note_on / live_note_off (both the on_midi RT path and the JS
+ * tN_live_notes fallback funnel through those) and from the cc_send
+ * handler for CC-bank knob turns. Skipped while the track is armed —
+ * armed input is recorded properly by the record path — and during a
+ * count-in (that input belongs to the imminent take). Overflow drops the
+ * oldest event. RT-safe: fixed-size array, no alloc/IO. */
+static void capture_push(seq8_instance_t *inst, seq8_track_t *tr,
+                         uint8_t type, uint8_t a, uint8_t b) {
+    if (tr->recording || tr->record_armed) return;
+    if (inst->count_in_ticks > 0) return;
+    if (inst->cap_count >= CAP_MAX_EVENTS) {
+        inst->cap_head  = (uint16_t)((inst->cap_head + 1) % CAP_MAX_EVENTS);
+        inst->cap_count = CAP_MAX_EVENTS - 1;
+    }
+    cap_ev_t *ev = &inst->cap_ring[(inst->cap_head + inst->cap_count)
+                                   % CAP_MAX_EVENTS];
+    ev->frame    = inst->rui_frames;
+    ev->abs_tick = inst->global_tick * TICKS_PER_STEP + inst->master_tick_in_step;
+    ev->ctick    = tr->current_clip_tick;
+    ev->type     = type;
+    ev->track    = (uint8_t)(tr - inst->tracks);
+    ev->a        = a;
+    ev->b        = b;
+    inst->cap_count++;
+}
+
+/* Count buffered capture events for one track (notes + CC). Drives the
+ * Capture-button LED and the JS tap-context decision (capture vs bake). */
+static int capture_pending_for_track(seq8_instance_t *inst, int tidx) {
+    int i, n = 0;
+    for (i = 0; i < (int)inst->cap_count; i++) {
+        const cap_ev_t *ev = &inst->cap_ring[(inst->cap_head + i) % CAP_MAX_EVENTS];
+        if (ev->track == (uint8_t)tidx &&
+            (ev->type == CAP_EV_NOTE_ON || ev->type == CAP_EV_CC)) n++;
+    }
+    return n;
 }
 
 static void pfx_emit(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2);
@@ -2841,6 +2927,7 @@ static void live_note_on(seq8_instance_t *inst, seq8_track_t *tr,
         if (!dc) return;
         for (int l = 0; l < DRUM_LANES; l++) {
             if (dc->lanes[l].midi_note == pitch) {
+                capture_push(inst, tr, CAP_EV_NOTE_ON, pitch, vel);
                 inst->emit_bypass_swing = 1;
                 drum_pfx_note_on(inst, tr, &tr->drum_lane_pfx[l], pitch, vel);
                 inst->emit_bypass_swing = 0;
@@ -2849,6 +2936,7 @@ static void live_note_on(seq8_instance_t *inst, seq8_track_t *tr,
         }
         return; /* no matching lane — drop silently */
     }
+    capture_push(inst, tr, CAP_EV_NOTE_ON, pitch, vel);
     if (!tr->tarp_on) {
         inst->emit_bypass_swing = 1;
         pfx_note_on(inst, tr, pitch, vel);
@@ -2903,6 +2991,7 @@ static void live_note_on(seq8_instance_t *inst, seq8_track_t *tr,
  * when latch=0 and buffer empties, silences arp output. */
 static void live_note_off(seq8_instance_t *inst, seq8_track_t *tr,
                           uint8_t pitch) {
+    capture_push(inst, tr, CAP_EV_NOTE_OFF, pitch, 0);
     if (tr->pad_mode == PAD_MODE_DRUM) {
         inst->emit_bypass_swing = 1;
         drum_lane_note_off_imm(inst, tr, pitch);
@@ -5881,6 +5970,21 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
                    ? inst->tracks[0].pfx.cached_bpm : (double)BPM_DEFAULT;
         return snprintf(out, out_len, "%.0f", b);
     }
+    /* Retrospective Capture: buffered event count for the active track
+     * (drives the Capture-button LED + the tap-context decision in JS). */
+    if (!strcmp(key, "capture_pending"))
+        return snprintf(out, out_len, "%d",
+                        inst ? capture_pending_for_track(inst, (int)inst->active_track) : 0);
+    /* Last commit's outcome: "seq stopped applied_bpm alt1 alt2 len_steps".
+     * seq increments per successful commit (JS toast fires on the edge). */
+    if (!strcmp(key, "capture_info"))
+        return snprintf(out, out_len, "%u %d %.1f %.1f %.1f %d",
+                        inst ? inst->cap_commit_seq : 0,
+                        inst ? (int)inst->cap_last_was_stopped : 0,
+                        inst ? inst->cap_bpm_est[0] : 0.0,
+                        inst ? inst->cap_bpm_est[1] : 0.0,
+                        inst ? inst->cap_bpm_est[2] : 0.0,
+                        inst ? (int)inst->cap_last_len_steps : 0);
 
     /* state_snapshot: single call returning all poll-loop values.
      * Format: "playing cs0..cs7 ac0..ac7 qc0..qc7 count_in cp0..cp7 wr0..wr7 ps0..ps7 flash_eighth flash_sixteenth metro_beat_count master_pos looper_state merge_state"
