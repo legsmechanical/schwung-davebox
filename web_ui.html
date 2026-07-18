@@ -427,7 +427,10 @@ let M = null;
 let lastRev = null, lastSelKey = null;
 let dragging = false, suppressRefreshUntil = 0, fastUntil = 0;
 /* smooth-playhead anchor: re-set on every accepted poll, extrapolated at BPM by rAF */
-let phAnchorTick = 0, phAnchorT = 0, phPlaying = false, phBpm = 120, phRAF = 0;
+/* playhead estimator: phEst free-runs at BPM rate; phTgt* is the latest pushed
+ * device position (advanced by elapsed time since receipt); phStep slews the
+ * estimate toward the target so bursty WiFi delivery can't make the line jump. */
+let phEst = 0, phEstT = 0, phTgtTick = 0, phTgtT = 0, phPlaying = false, phBpm = 120, phRAF = 0;
 
 /* device track colors (fixed Move palette by track index — mirrors
  * ui_constants.mjs TRACK_COLORS). Clips inherit the track color. */
@@ -1392,6 +1395,9 @@ function snapPitch(pi){ if(!(M&&M.glob&&M.glob.scaleAware)||!M.scaleMask) return
 /* Snap select (ticks) — 0 = Off (free at integer ticks); Shift forces free. */
 function snapTicks(){ const n=+document.getElementById("snap").value; return isNaN(n)?gridTps():n; }
 function snap(t,free){ const s=snapTicks(); if(free||s<=0) return Math.max(0,Math.round(t)); return Math.round(t/s)*s; }
+/* click-to-ADD floors to the cell the pointer is IN — round-to-nearest sent
+ * right-half clicks to the NEXT slot. Moves/nudges keep round-snap (snap()). */
+function snapAdd(t,free){ const s=snapTicks(); if(free||s<=0) return Math.max(0,Math.round(t)); return Math.floor(t/s)*s; }
 function gateDefault(){ return snapTicks()||gridTps(); }
 function noteAreaW(){ return VW-GUTTER; }
 function noteAreaH(){ return VH-RULER-STEPBAND; }
@@ -1495,11 +1501,12 @@ function drawLaneBodies(){ const [r0,r1]=visRows(), n=M.dlanes.length;
 function vline(x,top,bot){ ctx.beginPath(); ctx.moveTo(Math.round(x)+0.5,top); ctx.lineTo(Math.round(x)+0.5,bot); ctx.stroke(); }
 function drawGrid(){ const tps=gridTps(), endT=endTick(), top=RULER, bot=VH-STEPBAND;
   const stepPx=tps*PXPERTICK, beatPx=BEAT_TICKS*PXPERTICK;
-  if(stepPx>=7 && tps<BEAT_TICKS){ ctx.strokeStyle="#1f242d"; ctx.lineWidth=1;
+  /* three-tier contrast: step < beat < bar (brightened per Josh's feedback) */
+  if(stepPx>=7 && tps<BEAT_TICKS){ ctx.strokeStyle="#2e3546"; ctx.lineWidth=1;
     for(let t=0;t<=endT;t+=tps){ if(t%BEAT_TICKS===0) continue; const x=xOfTick(t); if(x<GUTTER-1||x>VW) continue; vline(x,top,bot); } }
-  if(beatPx>=11){ ctx.strokeStyle="#2a3040"; ctx.lineWidth=1;
+  if(beatPx>=11){ ctx.strokeStyle="#455070"; ctx.lineWidth=1;
     for(let t=0;t<=endT;t+=BEAT_TICKS){ if(t%BAR_TICKS===0) continue; const x=xOfTick(t); if(x<GUTTER-1||x>VW) continue; vline(x,top,bot); } }
-  ctx.strokeStyle="#3c4456"; ctx.lineWidth=1;
+  ctx.strokeStyle="#6b7699"; ctx.lineWidth=1;
   for(let t=0;t<=endT;t+=BAR_TICKS){ const x=xOfTick(t); if(x<GUTTER-1||x>VW) continue; vline(x,top,bot); }
 }
 function drawNotes(){ const [r0,r1]=visRows(), tps=gridTps(), ac=rollAccent();
@@ -1757,9 +1764,9 @@ function endPointer(e){ ptrs.delete(e.pointerId); clearLong(); try{cv.releasePoi
   if(!gesture){ dragging=false; return; }
   const [x,y]=localXY(e);
   if(gesture==="add" && !didMove){
-    if(gData.kind==="drum"){ const tk=Math.max(0,Math.min(maxEditTick()-1,snap(tickOfX(x),e.shiftKey)));
+    if(gData.kind==="drum"){ const tk=Math.max(0,Math.min(maxEditTick()-1,snapAdd(tickOfX(x),e.shiftKey)));
       drumAdd(gData.lane,tk); selDrum={lane:gData.lane,tick:tk}; selStep=-1; renderNoteEdit(); }
-    else { const tk=Math.min(maxEditTick()-1,Math.max(0,snap(tickOfX(x),e.shiftKey))), pi=snapPitch(Math.max(0,Math.min(127,pitchAt(y))));
+    else { const tk=Math.min(maxEditTick()-1,Math.max(0,snapAdd(tickOfX(x),e.shiftKey))), pi=snapPitch(Math.max(0,Math.min(127,pitchAt(y))));
       if(!M.notes.some(n=>n.tick===tk&&n.pitch===pi)){ const gate=gateDefault();
         M.notes.push({tick:tk,pitch:pi,vel:100,gate}); selNote={tick:tk,pitch:pi}; selStep=-1; draw(); renderNoteEdit();
         emit("note_add",`${tk} ${pi} 100 ${gate}`); } }
@@ -1976,8 +1983,14 @@ function applyParams(params){
   if(now()<suppressRefreshUntil && M && m.rev<=M.rev) { return; }
   const prevRev=lastRev, prevSel=lastSelKey;
   M=m;
-  /* re-anchor the smooth playhead to the device's authoritative tick every poll */
-  phAnchorTick=M.play.tick; phAnchorT=now(); phBpm=M.play.bpm||120; phPlaying=!!M.play.on;
+  /* Feed the playhead TARGET (not a hard re-anchor): delivery over the Move's
+   * WiFi is BURSTY — pushes generated ~100-300ms apart arrive in same-ms clumps
+   * separated by ~1s silences (measured), so snapping the anchor on every
+   * message made the line machine-gun through stale positions then free-run.
+   * phStep free-runs a local clock at BPM rate and slews toward this target. */
+  const wasPlaying=phPlaying;
+  phTgtTick=M.play.tick; phTgtT=now(); phBpm=M.play.bpm||120; phPlaying=!!M.play.on;
+  if(phPlaying&&!wasPlaying){ phEst=M.play.tick; phEstT=now(); }
   if(phPlaying) startPlayhead(); else stopPlayhead();
   /* drum: land on a lane so the Lane + FX populate immediately instead of a blank
    * "select a lane" prompt on first click (once per clip; device honors the ruisel). */
@@ -2018,14 +2031,22 @@ function phStep(){
   const ph=document.getElementById("playhead");
   if(!ph){ phRAF=0; return; }
   if(!phPlaying || !M || cv.style.display==="none"){ ph.style.display="none"; phRAF=0; return; }
-  /* Wrap within the DEVICE's loop window [ls, ls+len)*tps — the device's
-   * current_clip_tick wraps there (playback_audible_cct = current_step*tps + tick),
-   * NOT at displayTicks() (which rounds up to a whole bar). Wrapping at displayTicks
-   * let the line overshoot the loop end on non-bar-aligned clips, so it appeared to
-   * jump back before finishing. loopTicks() = [ls*tps, (ls+len)*tps]. */
+  /* Free-running local clock + slewed phase correction. The device clock rate
+   * is known (BPM), so between pushes the line advances smoothly on its own;
+   * each push only CORRECTS phase, eased over a few frames (wrap-aware, within
+   * the device loop window [ls, ls+len)*tps that current_clip_tick wraps in).
+   * A huge error (>1/4 window — seek/relaunch) snaps instead of easing. */
+  const t=now(), rate=BEAT_TICKS*phBpm/60000;                         /* ticks/ms */
   const [lsT,leT]=loopTicks(); const win=leT-lsT;
-  let est=phAnchorTick + (now()-phAnchorT)*(BEAT_TICKS*phBpm/60000);  /* ticks/ms at BPM */
-  est = win>0 ? lsT + (((est-lsT)%win)+win)%win : phAnchorTick;       /* loop-window wrap, matches device */
+  let est=phEst + (t-phEstT)*rate;
+  let tgt=phTgtTick + (t-phTgtT)*rate;
+  if(win>0){
+    const wrap=v=>lsT+(((v-lsT)%win)+win)%win;
+    est=wrap(est); tgt=wrap(tgt);
+    let err=tgt-est; if(err>win/2) err-=win; else if(err<-win/2) err+=win;
+    est = Math.abs(err)>win/4 ? tgt : wrap(est+err*0.12);             /* ~200ms ease */
+  } else est=tgt;
+  phEst=est; phEstT=t;
   const x=xOfTick(est);
   if(!Number.isFinite(x)||x<GUTTER||x>VW){ ph.style.display="none"; }
   else { ph.style.display="block"; ph.style.transform="translateX("+x+"px)"; }
