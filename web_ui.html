@@ -428,9 +428,14 @@ let lastRev = null, lastSelKey = null;
 let dragging = false, suppressRefreshUntil = 0, fastUntil = 0;
 /* smooth-playhead anchor: re-set on every accepted poll, extrapolated at BPM by rAF */
 /* playhead estimator: phEst free-runs at BPM rate; phTgt* is the latest pushed
- * device position (advanced by elapsed time since receipt); phStep slews the
- * estimate toward the target so bursty WiFi delivery can't make the line jump. */
-let phEst = 0, phEstT = 0, phTgtTick = 0, phTgtT = 0, phPlaying = false, phBpm = 120, phRAF = 0;
+ * device position; phStep slews the estimate toward the target so bursty WiFi
+ * delivery can't make the line jump. When the push carries a device-clock ms
+ * (phTgtDev), the target is time-based on the DEVICE clock via phOff — the
+ * running minimum of (receiveTime - devms), i.e. clock offset + best-case
+ * latency — so a push delayed by a WiFi burst no longer drags the target
+ * backward (the rubber-banding seen in round 2). phOff re-learns every 30s. */
+let phEst = 0, phEstT = 0, phTgtTick = 0, phTgtT = 0, phTgtDev = 0,
+    phOff = Infinity, phOffT = 0, phPlaying = false, phBpm = 120, phRAF = 0;
 
 /* device track colors (fixed Move palette by track index — mirrors
  * ui_constants.mjs TRACK_COLORS). Clips inherit the track color. */
@@ -466,6 +471,9 @@ function parseModel(){
   if (get("rui_sel") == null) return null;
   const pv = (get("rui_play")||"0:0:120").split(":").map(Number);   /* tolerate short/garbled forms → no NaN into the playhead */
   const pon = pv[0]||0, ptick = Number.isFinite(pv[1])?pv[1]:0, pbpm = Number.isFinite(pv[2])?pv[2]:120;
+  /* 4th field (playing only): device-clock ms for ptick — lets the playhead
+   * time-base corrections on the DEVICE clock so delivery latency is harmless. */
+  const pdev = Number.isFinite(pv[3])&&pv[3]>0 ? pv[3] : 0;
   const [st,sc,sl]       = (get("rui_sel")||"0:0:-1").split(":").map(Number);
   const [cl,ct,cls,cd]   = (get("rui_clip")||"16:24:0:0").split(":").map(Number);
   const tracks = (get("rui_index")||"").split(";").map(seg=>{
@@ -521,7 +529,7 @@ function parseModel(){
   /* rui_trunc:1 when the DSP snapshot dropped notes/CC points at the 64KB budget
    * (dense clip) — drives a non-blocking "some notes hidden" badge. Absent/0 = clean. */
   const trunc = (+(get("rui_trunc")||0))?1:0;
-  return {rev:+(get("rui_rev")||0), play:{on:pon,tick:ptick,bpm:pbpm},
+  return {rev:+(get("rui_rev")||0), play:{on:pon,tick:ptick,bpm:pbpm,dev:pdev},
           sel:{t:st,c:sc,lane:sl}, clip:{len:cl,tps:ct,ls:cls,dir:cd}, tracks, notes,
           dlanes, dnotes, pfx, glob, scaleMask, laneInfo, stepTrig, ccmeta, cc, trunc,
           cond: parseCond(get("rui_cond")||"")};
@@ -1989,7 +1997,10 @@ function applyParams(params){
    * message made the line machine-gun through stale positions then free-run.
    * phStep free-runs a local clock at BPM rate and slews toward this target. */
   const wasPlaying=phPlaying;
-  phTgtTick=M.play.tick; phTgtT=now(); phBpm=M.play.bpm||120; phPlaying=!!M.play.on;
+  phTgtTick=M.play.tick; phTgtT=now(); phTgtDev=M.play.dev||0;
+  phBpm=M.play.bpm||120; phPlaying=!!M.play.on;
+  if(phTgtDev>0){ const off=now()-phTgtDev;         /* clock offset + latency */
+    if(off<phOff || now()-phOffT>30000){ phOff=off; phOffT=now(); } }
   if(phPlaying&&!wasPlaying){ phEst=M.play.tick; phEstT=now(); }
   if(phPlaying) startPlayhead(); else stopPlayhead();
   /* drum: land on a lane so the Lane + FX populate immediately instead of a blank
@@ -2039,12 +2050,23 @@ function phStep(){
   const t=now(), rate=BEAT_TICKS*phBpm/60000;                         /* ticks/ms */
   const [lsT,leT]=loopTicks(); const win=leT-lsT;
   let est=phEst + (t-phEstT)*rate;
-  let tgt=phTgtTick + (t-phTgtT)*rate;
+  /* target: device-clock-based when the push carried devms (delivery latency
+   * then cancels out entirely); receipt-time fallback otherwise. */
+  let tgt=(phTgtDev>0&&Number.isFinite(phOff))
+        ? phTgtTick + ((t-phOff)-phTgtDev)*rate
+        : phTgtTick + (t-phTgtT)*rate;
   if(win>0){
     const wrap=v=>lsT+(((v-lsT)%win)+win)%win;
     est=wrap(est); tgt=wrap(tgt);
     let err=tgt-est; if(err>win/2) err-=win; else if(err<-win/2) err+=win;
-    est = Math.abs(err)>win/4 ? tgt : wrap(est+err*0.12);             /* ~200ms ease */
+    if(Math.abs(err)>win/4) est=tgt;                                  /* seek/relaunch: snap */
+    else{
+      /* slew-capped correction: at most ±15% tempo trim, so catching up reads
+       * as a barely-perceptible rate change, never a visible surge/stall. */
+      const maxStep=rate*(t-phEstT)*0.15;
+      const corr=err*0.12;
+      est=wrap(est+Math.max(-maxStep,Math.min(maxStep,corr)));
+    }
   } else est=tgt;
   phEst=est; phEstT=t;
   const x=xOfTick(est);

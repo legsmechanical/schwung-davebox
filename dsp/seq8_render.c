@@ -192,6 +192,7 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
         memset(out_lr, 0, (size_t)frames * 2 * sizeof(int16_t));
 
     inst->block_count++;
+    if (frames > 0) inst->rui_frames += (uint64_t)frames;  /* device clock (remote UI) */
 
     /* CC latch: on the recording 1->0 edge (any stop path — transport stop,
      * disarm, restart) finalize the latch (decimate latched lanes + clear).

@@ -755,6 +755,8 @@ typedef struct {
     int16_t  rui_sel_lane;    /* -1 melodic, 0..DRUM_LANES-1 drum */
     int8_t   rui_cc_focus;   /* knob 0..7 whose CC breakpoints emit in rui_cc; -1 = none */
     uint32_t rui_rev;         /* monotonic edit counter */
+    uint64_t rui_frames;      /* free-running rendered-frames counter (never resets;
+                               * device clock for remote-UI playhead timestamps) */
 
     /* Targeted re-sync accumulator: which clips changed since the on-device JS
      * last read `rui_dirty`. A bumped rui_rev tells JS "something changed"; the
@@ -5439,8 +5441,17 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
     double bpm = (inst->tracks[0].pfx.cached_bpm > 0)
                  ? inst->tracks[0].pfx.cached_bpm : (double)BPM_DEFAULT;
     APP("{\"rui_rev\":\"%u\"", (unsigned)inst->rui_rev);
-    APP(",\"rui_play\":\"%d:%u:%d\"",
-        inst->playing ? 1 : 0, (unsigned)rui_playhead_tick(inst), (int)bpm);
+    /* 4th field (playing only) = device-clock ms (free-running rendered-frame
+     * counter). The browser uses it to time-base playhead corrections so WiFi
+     * delivery delay can't masquerade as playhead position error. Omitted when
+     * stopped so the stopped digest/snapshot stays byte-stable. */
+    if (inst->playing)
+        APP(",\"rui_play\":\"1:%u:%d:%llu\"",
+            (unsigned)rui_playhead_tick(inst), (int)bpm,
+            (unsigned long long)(inst->rui_frames * 1000ULL / 44100ULL));
+    else
+        APP(",\"rui_play\":\"0:%u:%d\"",
+            (unsigned)rui_playhead_tick(inst), (int)bpm);
     APP(",\"rui_sel\":\"%d:%d:%d\"", t, c, (int)inst->rui_sel_lane);
     APP(",\"rui_clip\":\"%d:%d:%d:%d\"",
         (int)gcl->length, (int)gcl->ticks_per_step, (int)gcl->loop_start,
@@ -5731,8 +5742,16 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
          * playhead. Keeps idle/playing polls off the heavy snapshot path. */
         double pbpm = (inst->tracks[0].pfx.cached_bpm > 0)
                       ? inst->tracks[0].pfx.cached_bpm : (double)BPM_DEFAULT;
-        return snprintf(out, out_len, "%u:%d:%u:%d",
-                        (unsigned)inst->rui_rev, inst->playing ? 1 : 0,
+        /* 5th field (playing only) = device-clock ms; see snapshot rui_play.
+         * Omitted when stopped so the digest is byte-stable at idle (the shim
+         * pushes on digest CHANGE — a always-ticking field would push forever). */
+        if (inst->playing)
+            return snprintf(out, out_len, "%u:1:%u:%d:%llu",
+                            (unsigned)inst->rui_rev,
+                            (unsigned)rui_playhead_tick(inst), (int)pbpm,
+                            (unsigned long long)(inst->rui_frames * 1000ULL / 44100ULL));
+        return snprintf(out, out_len, "%u:0:%u:%d",
+                        (unsigned)inst->rui_rev,
                         (unsigned)rui_playhead_tick(inst), (int)pbpm);
     }
 
