@@ -79,6 +79,18 @@
   .sclip.queued{border-style:dashed;border-color:var(--play)}
   .sclip[draggable=true]{cursor:grab}
   .sclip.drop{outline:2px dashed var(--accent);outline-offset:-1px;z-index:3}
+  .sclip.cutmark{opacity:.55;outline:1px dashed var(--dim);outline-offset:-1px}
+  .sclip-menu{position:absolute;left:1px;top:50%;transform:translateY(-50%);
+    font-size:10px;line-height:1;padding:1px 2px;color:var(--ink);opacity:0;
+    cursor:pointer;user-select:none;border-radius:2px}
+  .sclip:hover .sclip-menu{opacity:.55}
+  .sclip-menu:hover{opacity:1 !important;background:rgba(0,0,0,.35)}
+  .clipmenu{position:fixed;min-width:130px;background:var(--panel2);border:1px solid var(--ctl-br);
+    border-radius:6px;padding:4px;z-index:60;box-shadow:0 6px 18px rgba(0,0,0,.5)}
+  .clipmenu button{display:block;width:100%;text-align:left;background:transparent;border:0;
+    color:var(--ink);font:12px system-ui;padding:5px 8px;border-radius:4px;cursor:pointer}
+  .clipmenu button:hover:not(:disabled){background:var(--ctl)}
+  .clipmenu button:disabled{color:var(--dim);cursor:default;opacity:.5}
   /* ---------- main split ---------- */
   #main{flex:1;display:flex;min-height:0}
   #rollwrap{flex:1;display:flex;flex-direction:column;min-width:0}
@@ -1218,11 +1230,14 @@ function renderSession(){
     html+=`<div class="slaunch" data-scene="${c}" title="Launch scene ${SCENE_LETTERS[c]}">▶${SCENE_LETTERS[c]}</div>`;
     M.tracks.forEach((trk,t)=>{
       const col=trackColor(t), has=trk.has[c];
+      const cutHere=clipClipboard&&clipClipboard.cut&&clipClipboard.t===t&&clipClipboard.c===c;
       const cls="sclip"+(t===M.sel.t&&c===M.sel.c?" sel":"")
-                +(trk.pl&&trk.ac===c?" playing":"")+(trk.qc===c?" queued":"");
+                +(trk.pl&&trk.ac===c?" playing":"")+(trk.qc===c?" queued":"")
+                +(cutHere?" cutmark":"");
       const bg=has?col:hexA(col,0.14);
       html+=`<div class="${cls}" data-t="${t}" data-c="${c}" data-has="${has?1:0}" draggable="${has?'true':'false'}" style="background:${bg}" `+
-            `title="track ${t+1} ${SCENE_LETTERS[c]}${has?' · clip · drag to move (Alt=copy)':' · empty'}"></div>`;
+            `title="track ${t+1} ${SCENE_LETTERS[c]}${has?' · clip · drag to move (Alt=copy)':' · empty'}">`+
+            `<span class="sclip-menu" data-t="${t}" data-c="${c}" title="clip menu">≡</span></div>`;
     });
   }
   grid.innerHTML=html;
@@ -1263,6 +1278,53 @@ function renderSession(){
       if(M.tracks[src.t].pm!==M.tracks[dst.t].pm) return;
       dropClip(src,dst,e.altKey); };
   });
+  grid.querySelectorAll(".sclip-menu").forEach(el=>{
+    el.onclick=e=>{ e.stopPropagation(); openClipMenu(+el.dataset.t,+el.dataset.c,el); };
+    el.ondragstart=e=>e.preventDefault();
+  });
+}
+/* ---------- per-clip burger menu: duplicate / copy / cut / paste / delete ---- */
+let clipClipboard=null;           /* {t,c,pm,cut} — cut = move-on-paste (source marked, cleared at paste) */
+let clipMenuEl=null;
+function closeClipMenu(){ if(clipMenuEl){ clipMenuEl.remove(); clipMenuEl=null;
+  document.removeEventListener("pointerdown",clipMenuOutside,true); } }
+function clipMenuOutside(e){ if(clipMenuEl && !clipMenuEl.contains(e.target)) closeClipMenu(); }
+function clipCopyOp(src,dst){ const drum=M.tracks[src.t].pm===1;
+  R.setParam(P+(drum?"drum_clip_copy":"clip_copy"), `${src.t} ${src.c} ${dst.t} ${dst.c}`); }
+function clipClearOp(t,c){ const drum=M.tracks[t].pm===1;
+  R.setParam(P+(drum?`t${t}_c${c}_drum_clear`:`t${t}_c${c}_clear`),"0"); }
+function openClipMenu(t,c,anchor){
+  const wasOpen=clipMenuEl&&clipMenuEl.dataset.tc===t+":"+c;
+  closeClipMenu(); if(wasOpen) return;
+  const has=!!M.tracks[t].has[c];
+  const cb=clipClipboard;
+  const canPaste=cb&&M.tracks[cb.t].pm===M.tracks[t].pm&&!(cb.t===t&&cb.c===c)&&M.tracks[cb.t].has[cb.c];
+  /* duplicate target: first empty slot after c in this track (wrapping) */
+  let dupC=-1; for(let i=1;i<16;i++){ const cc=(c+i)%16; if(!M.tracks[t].has[cc]){ dupC=cc; break; } }
+  const el=document.createElement("div"); el.className="clipmenu"; el.dataset.tc=t+":"+c;
+  const item=(id,label,dis,title)=>`<button id="${id}"${dis?" disabled":""}${title?` title="${title}"`:""}>${label}</button>`;
+  el.innerHTML=
+    item("cmDup",`Duplicate${dupC>=0?" → "+SCENE_LETTERS[dupC]:""}`,!has||dupC<0,dupC<0?"no empty slot in this track":"copy into the next empty slot")+
+    item("cmCopy","Copy",!has)+
+    item("cmCut","Cut",!has,"marks the clip; pasting moves it")+
+    item("cmPaste","Paste",!canPaste,cb?(canPaste?"":"clipboard clip is a different track type"):"nothing copied")+
+    item("cmDel","Delete",!has);
+  document.body.appendChild(el);
+  const done=()=>{ closeClipMenu(); afterEdit(); renderSession(); pullSoon(); };
+  el.querySelector("#cmDup").onclick=()=>{ clipCopyOp({t,c},{t,c:dupC}); M.tracks[t].has[dupC]=true; done(); };
+  el.querySelector("#cmCopy").onclick=()=>{ clipClipboard={t,c,pm:M.tracks[t].pm,cut:false}; closeClipMenu(); renderSession(); };
+  el.querySelector("#cmCut").onclick=()=>{ clipClipboard={t,c,pm:M.tracks[t].pm,cut:true}; closeClipMenu(); renderSession(); };
+  el.querySelector("#cmPaste").onclick=()=>{ clipCopyOp({t:cb.t,c:cb.c},{t,c});
+    M.tracks[t].has[c]=true;
+    if(cb.cut){ clipClearOp(cb.t,cb.c); M.tracks[cb.t].has[cb.c]=false; clipClipboard=null; }
+    done(); };
+  el.querySelector("#cmDel").onclick=()=>{ clipClearOp(t,c); M.tracks[t].has[c]=false;
+    if(cb&&cb.t===t&&cb.c===c) clipClipboard=null; done(); };
+  const r=anchor.getBoundingClientRect();
+  el.style.left=Math.max(6,Math.min(window.innerWidth-140,r.left))+"px";
+  el.style.top=Math.min(window.innerHeight-190,r.bottom+4)+"px";
+  clipMenuEl=el;
+  setTimeout(()=>document.addEventListener("pointerdown",clipMenuOutside,true),0);
 }
 /* perform a clip move/copy via clip_copy + (move) clearing the source */
 function dropClip(src,dst,copy){
