@@ -930,10 +930,17 @@ function drumDelete(lane,tick){ const arr=M.dnotes[lane]||[]; const i=arr.findIn
   if(i<0) return; arr.splice(i,1); if(M.dlanes[lane]) M.dlanes[lane].has=arr.length>0;
   if(selDrum&&selDrum.lane===lane&&selDrum.tick===tick) selDrum=null;
   draw(); renderNoteEdit(); R.setParam(P+`t${M.sel.t}_l${lane}_note_del`,String(tick)); afterEdit(); }
+/* Map a note tick → its step index the SAME way the device does: the NEAREST
+ * step (round), matching dsp note_step() = (tick + tps/2)/tps. The browser used
+ * to floor() here, so an off-grid note (Input-Quantize-Off / nudged / sub-step)
+ * was filed one step earlier than the device filed it — the step the note was
+ * drawn in couldn't be selected while the neighbour could. All note→step mapping
+ * (draw, counts, highlight, step-pick) goes through this so they stay aligned. */
+function noteStep(tick,tps){ return Math.floor((tick + (tps>>1)) / tps); }
 /* ---------- step-param editor (per-step iter/prob/ratchet/nudge) ---------- */
 function stepCount(s,tps){ let nc=0;
-  if(isDrum()){ (M.dnotes[M.sel.lane]||[]).forEach(h=>{ if(Math.floor(h.tick/tps)===s) nc++; }); }
-  else { M.notes.forEach(n=>{ if(Math.floor(n.tick/tps)===s) nc++; }); }
+  if(isDrum()){ (M.dnotes[M.sel.lane]||[]).forEach(h=>{ if(noteStep(h.tick,tps)===s) nc++; }); }
+  else { M.notes.forEach(n=>{ if(noteStep(n.tick,tps)===s) nc++; }); }
   return nc; }
 function renderStepEdit(){
   const el=document.getElementById("stepedit"); if(!el) return;
@@ -945,7 +952,7 @@ function renderStepEdit(){
   const nc=stepCount(s,tps), tmax=Math.max(1,tps-1);
   const pfx=drum?`t${M.sel.t}_l${M.sel.lane}_step_${s}`:`t${M.sel.t}_c${M.sel.c}_step_${s}`;
   /* seed Vel/Gate from the step's first note (they set ALL notes in the step) */
-  const sNotes=(drum?(M.dnotes[M.sel.lane]||[]):M.notes).filter(nt=>Math.floor(nt.tick/tps)===s);
+  const sNotes=(drum?(M.dnotes[M.sel.lane]||[]):M.notes).filter(nt=>noteStep(nt.tick,tps)===s);
   const svel=sNotes.length?sNotes[0].vel:100, sgate=sNotes.length?sNotes[0].gate:tps;
   let iterOpts=`<option value="0">Every</option>`;
   for(let cl=2;cl<=8;cl++)for(let ci=1;ci<=cl;ci++){const v=(cl<<4)|ci;
@@ -1484,7 +1491,7 @@ function drawGrid(){ const tps=gridTps(), endT=endTick(), top=RULER, bot=VH-STEP
 function drawNotes(){ const [r0,r1]=visRows(), tps=gridTps(), ac=rollAccent();
   M.notes.forEach(nt=>{ const r=rowIdxForPitch(nt.pitch); if(r<r0-1||r>r1+1) return;
     const x=xOfTick(nt.tick), w=Math.max(3,nt.gate*PXPERTICK), y=yOfRow(r); if(x>VW||x+w<GUTTER) return;
-    const sel=isNoteSelected(nt), inStep=selStep>=0 && Math.floor(nt.tick/tps)===selStep;
+    const sel=isNoteSelected(nt), inStep=selStep>=0 && noteStep(nt.tick,tps)===selStep;
     ctx.fillStyle=hexA(ac,0.32+0.68*(nt.vel/127)); ctx.fillRect(x,y+1,w,ROWH-2);
     ctx.strokeStyle=sel?"#ffcf4d":(inStep?"#9d86ff":"#0c2e2c"); ctx.lineWidth=(sel||inStep)?2:1; ctx.strokeRect(x+0.5,y+1.5,Math.max(1,w-1),ROWH-3);
     if(sel && w>18){ ctx.fillStyle="#ffcf4d"; ctx.fillRect(x+w-3,y+1,2,ROWH-2); } });
@@ -1494,7 +1501,7 @@ function drawDrumHits(){ const [r0,r1]=visRows(), tps=gridTps(), n=M.dlanes.leng
     const dim=M.dlanes[l]&&M.dlanes[l].mute?0.32:1, y=yOfRow(row);
     M.dnotes[L].forEach(h=>{ const x=xOfTick(h.tick), w=Math.max(5,h.gate*PXPERTICK); if(x>VW||x+w<GUTTER) return;
       const sel=selDrum&&selDrum.lane===l&&selDrum.tick===h.tick;
-      const inStep=selStep>=0 && l===M.sel.lane && Math.floor(h.tick/tps)===selStep;
+      const inStep=selStep>=0 && l===M.sel.lane && noteStep(h.tick,tps)===selStep;
       ctx.fillStyle=hexA(ac,(0.38+0.62*(h.vel/127))*dim); ctx.fillRect(x,y+2,w,ROWH-4);
       ctx.strokeStyle=sel?"#ffcf4d":(inStep?"#9d86ff":"#0c2e2c"); ctx.lineWidth=(sel||inStep)?2:1; ctx.strokeRect(x+0.5,y+2.5,Math.max(1,w-1),ROWH-5); }); }
 }
@@ -1549,7 +1556,7 @@ function drawStepBand(){ const y0=VH-STEPBAND;
   ctx.fillText("STEP",6,y0+STEPBAND/2-4); ctx.fillText("EDIT",6,y0+STEPBAND/2+6);
   const drum=isDrum(); if(drum && M.sel.lane<0) return;
   const tps=gridTps(), len=gridLen(), noteSet=new Set();
-  (drum?(M.dnotes[M.sel.lane]||[]):M.notes).forEach(n=>noteSet.add(Math.floor(n.tick/tps)));
+  (drum?(M.dnotes[M.sel.lane]||[]):M.notes).forEach(n=>noteSet.add(noteStep(n.tick,tps)));
   const yc=y0+5, hc=STEPBAND-8;
   for(let s=0;s<len;s++){ const xa=xOfTick(s*tps), xb=xOfTick((s+1)*tps); if(xb<GUTTER||xa>VW) continue;
     const x=Math.max(GUTTER+1.5,xa)+1, w=Math.max(2,xb-xa-3);
@@ -1599,7 +1606,7 @@ function pickStep(x){ const drum=isDrum(); if(drum&&M.sel.lane<0) return;
   if(pick<0) return;
   /* empty steps have no notes → nothing to edit → not selectable */
   const notes=drum?(M.dnotes[M.sel.lane]||[]):M.notes;
-  if(!notes.some(nt=>Math.floor(nt.tick/tps)===pick)){ if(selStep>=0){ selStep=-1; draw(); renderStepEdit(); } return; }
+  if(!notes.some(nt=>noteStep(nt.tick,tps)===pick)){ if(selStep>=0){ selStep=-1; draw(); renderStepEdit(); } return; }
   /* note-select and step-select are mutually exclusive */
   selNote=null; selSet.clear(); selDrum=null;
   selStep=(selStep===pick)?-1:pick; draw(); renderNoteEdit(); renderStepEdit(); }
