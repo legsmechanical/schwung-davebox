@@ -67,11 +67,15 @@ the playhead otherwise. Any DSP edit the UI should see must call **`rui_touch(in
 
 ## 3. The `rui_*` snapshot contract (the fragile seam)
 
-Every field below is emitted by `seq8_remote_snapshot()` (`dsp/seq8.c`, ~line 9558) as a
+Every field below is emitted by `seq8_remote_snapshot()` (`dsp/seq8.c`, ~line 5386) as a
 string value in a flat JSON object, and parsed by `parseModel()` (`web_ui.html`, ~line 459).
-**Field order and delimiters are a contract** — the web parser splits on them. All are scoped
-to the *selected* track/clip/lane (`rui_sel`) unless noted. Adding a field is additive; the
-web parser is tolerant of missing/short forms.
+**Field ORDER is NOT a contract** — both the manager (`json.Unmarshal` into a map) and the
+browser (`get()` by key) parse by key, so fields may be emitted in any order and reordered
+freely (that's how `rui_cc` was moved to the tail; see §8 item 2). What *is* a contract is
+each field's **intra-value delimiter format** — the web parser splits each value on its `:` /
+`,` / `;` / `|` separators, so a value's own layout must match the parser. All are scoped to
+the *selected* track/clip/lane (`rui_sel`) unless noted. Adding a field is additive; the web
+parser is tolerant of missing/short forms.
 
 | Field | Format | Notes |
 |---|---|---|
@@ -84,7 +88,6 @@ web parser is tolerant of missing/short forms.
 | `rui_pfx` | 29 colon-sep ints, or `""` | Per-clip FX (Note FX + delay + seq-arp). Order defined at the emit site. Drum → selected lane's pfx. |
 | `rui_lane` | `len:tps:loop_start:dir`, or `""` | Selected **drum lane** geometry. |
 | `rui_ccmeta` | 8 groups `;`, each `assign,type,hasdata,rest,curval,ls,len,tps,restps` | CC-automation overview (always). `type` 0 CC / 1 aftertouch / 2 Schwung-knob; `rest`/`curval` 255 = unset/"—". Drum indexes the active clip. |
-| `rui_cc` | `k\|tick:val,tick:val,…`, or `""` | **Gated** breakpoints for the focused knob only (set via `tN_cC_cc_focus`, bumps rev). Keeps the snapshot lean. |
 | `rui_steps` | sparse `s:iter:rand:ratch:nudge;`, or `""` | Non-default melodic step trig conditions. |
 | `rui_dsteps` | same, selected drum lane | |
 | `rui_index` | 8 records `;`, each `pm:ac:qc:pl:<16 has-bits>:route:chan:mute:solo` | Per-track session state. `pm` 0 melodic / 1 drum / 2 conductor; 16 has-bits (drum scans `drum_clips[]`); `route` 0 Schwung / 1 Move / 2 External; `chan` 1-based; `mute`/`solo` 0/1. |
@@ -92,6 +95,8 @@ web parser is tolerant of missing/short forms.
 | `rui_dlanes` | 32 records `;`, each `note,has,mute,solo,length,loop_start,tps` | Drum mode only. |
 | `rui_dnotes` | `L\|tick:vel:gate,…;L2\|…` | Drum hits per non-empty lane. |
 | `rui_notes` | `tick:pitch:vel:gate;`, or `""` | Melodic clip notes (absolute clip ticks). |
+| `rui_cc` | `k\|tick:val,tick:val,…`, or `""` | **Gated** breakpoints for the focused knob only (set via `tN_cC_cc_focus`, bumps rev). Keeps the snapshot lean. Emitted **last** (after the note content) so an over-large focused CC lane can only starve itself — see §8 item 2. |
+| `rui_trunc` | `1` (JSON number), or absent | Set to `1` only when a reserve-guarded loop (`rui_dnotes` / `rui_notes` / `rui_cc`) dropped content at the 64 KB budget; absent otherwise. Drives the browser's non-blocking "clip too dense — some notes hidden" badge. |
 | `rui_poll` (standalone get_param) | `rev:on:tick:bpm` | Cheap digest for the rev-gated poll; not inside `state`. |
 
 **When you change a format, update the parser in `web_ui.html` *and* the test in
@@ -116,7 +121,9 @@ All writes are `R.setParam(P+key, value)` (P = `"overtake_dsp:"`), each followed
   `tN_all_lanes_*`.
 - **Per-clip (`tN_cC_*`):** `ruisel` (select), `clear`/`hard_reset`, `loop_set` (packed
   `(ls<<16)|len`), `resolution`, `dir`, `pfx_set`, `cond_resp`/`_oct`/`_when`/`_lock`,
-  `cc_focus` (gate `rui_cc` + `rui_touch`), `kK_cc_loop_set`/`cc_lane_*`, `step_S_*`.
+  `cc_focus` (gate `rui_cc` + `rui_touch`), `kK_cc_loop_set`/`cc_lane_*`, `step_S_*`,
+  `notes_op` (atomic multi-op batch — format `"op args;op args;…"` with ops `a`/`d`/`m`/`r`/`v`;
+  the browser's `emitBatch()` packs a whole multi-note edit into one write + one rev bump).
 - **Per-drum-lane (`tN_lL_*`):** `note_add`/`_del`/`_move`/`_resize`/`_vel`, `loop_set`,
   `clear`, `mute`/`solo`, `lane_note`, `euclid_stamp`, `pfx_set`. (The reliable drum-clip
   allocation trigger — see DSP CLAUDE.md.)
@@ -129,7 +136,7 @@ key** (e.g. `loop_set` packs `ls`+`len`); otherwise defer to `tick()` via a pend
 
 ## 5. DSP side (`dsp/seq8.c`)
 
-- **`seq8_remote_snapshot(inst, out, out_len)`** (~9538) — builds the flat JSON with the guarded
+- **`seq8_remote_snapshot(inst, out, out_len)`** (~5386, in a ~6735-line file) — builds the flat JSON with the guarded
   `APP(...)` snprintf-cursor macro. Reads `inst->rui_sel_track`/`_clip`/`_lane` for scoping and
   `inst->rui_cc_focus` for the gated `rui_cc`. Read-only + side-effect free (does not touch
   `state_dirty`).
@@ -230,7 +237,10 @@ bands without breaking alignment).
    (which the manager silently drops → bricked editor). `rui_cc` is emitted **last** (after the structural
    fields + note content) so an over-large focused CC lane can only ever starve itself, not the session grid.
    Field order is NOT load-bearing (manager parses JSON by key; browser `get()` by key), so this reordering
-   is safe. Pinned by the pathological-overflow case in `tests/test_rui_budget.c`.
+   is safe. When any guarded loop truncates, the snapshot emits `rui_trunc:1` before the closing brace
+   (≈14 B, fits inside the reserve) → the browser shows a non-blocking "clip too dense — some notes hidden"
+   badge. Pinned by the pathological-overflow + CC-tail-overflow cases in `tests/test_rui_budget.c` (both
+   assert a valid `}` close and `rui_trunc:1`; the realistic case asserts it is ABSENT).
 3. **Playhead wraps the loop window, not `displayTicks()`.** The device wraps `current_clip_tick`
    in `[loop_start, loop_start+length)·tps` (`playback_audible_cct`). Wrapping the extrapolation
    at the bar-rounded `displayTicks()` made it overshoot/jump on non-bar clips.
