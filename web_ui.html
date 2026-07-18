@@ -96,9 +96,9 @@
   #rollwrap{flex:1;display:flex;flex-direction:column;min-width:0}
   #rollview{flex:1;position:relative;overflow:hidden;background:var(--bg);touch-action:none}
   #rollcanvas{display:block;position:absolute;left:0;top:0;touch-action:none}
-  /* smooth playhead: a thin DOM line over the roll, glided via rAF (top/bottom =
-     RULER / STEPBAND constants so it auto-tracks viewport resize) */
-  #playhead{position:absolute;left:0;top:36px;bottom:28px;width:2px;margin-left:-1px;
+  /* smooth playhead: a thin DOM line over the roll, glided via rAF.
+     top MUST equal the JS RULER constant (24+ZB) and bottom the STEPBAND. */
+  #playhead{position:absolute;left:0;top:42px;bottom:28px;width:2px;margin-left:-1px;
     background:var(--play);box-shadow:0 0 3px rgba(255,207,77,.5);pointer-events:none;
     display:none;will-change:transform}
   /* continuous edge zoom strips — drag bars in the RESERVED empty bands at the top
@@ -106,9 +106,9 @@
      content / loop brace shifted down by ZB, pitch labels shifted right by ZB), so
      the strips never cover the brace, pitch labels, or notes. Top strip: vertical
      drag = horizontal zoom (down=in, up=out). Left strip: horizontal drag = vertical
-     zoom (right=in, left=out). zh: top 0, left=GUTTER(60), height=ZB(12) — spans the
-     note-area width above the ruler content. zv: left 0, top=RULER(36),
-     bottom=STEPBAND(28), width=ZB(12) — left of the gutter, spanning the note rows. */
+     zoom (right=in, left=out). zh: top 0, left=GUTTER(66), height=ZB(18) — spans the
+     note-area width above the ruler content. zv: left 0, top=RULER(42),
+     bottom=STEPBAND(28), width=ZB(18) — left of the gutter, spanning the note rows. */
   .zoomstrip{position:absolute;z-index:7;touch-action:none;user-select:none;
     display:flex;align-items:center;justify-content:center;gap:5px;
     background-color:rgba(57,208,200,.16);box-shadow:inset 0 0 0 1px rgba(57,208,200,.34);
@@ -452,7 +452,7 @@ let dragging = false, suppressRefreshUntil = 0, fastUntil = 0;
  * latency — so a push delayed by a WiFi burst no longer drags the target
  * backward (the rubber-banding seen in round 2). phOff re-learns every 30s. */
 let phEst = 0, phEstT = 0, phTgtTick = 0, phTgtT = 0, phTgtDev = 0,
-    phOff = Infinity, phOffT = 0, phPlaying = false, phBpm = 120, phRAF = 0;
+    phOff = Infinity, phOffT = 0, phLastDev = 0, phPlaying = false, phBpm = 120, phRAF = 0;
 
 /* device track colors (fixed Move palette by track index — mirrors
  * ui_constants.mjs TRACK_COLORS). Clips inherit the track color. */
@@ -1203,6 +1203,7 @@ function renderGlobals(){
  * launch it; ▶ in the left column = launch the whole scene row. */
 let clipDrag=null;   /* {t,c} source while dragging a clip in the session grid */
 function renderSession(){
+  closeClipMenu();   /* a rebuild destroys the menu's anchor — never leave it orphaned */
   const grid=document.getElementById("grid");
   const NT=M.tracks.length||8, NC=16;
   grid.style.gridTemplateColumns=`30px repeat(${NT},minmax(20px,1fr))`;
@@ -1235,7 +1236,7 @@ function renderSession(){
     html+=`<div class="slaunch" data-scene="${c}" title="Launch scene ${SCENE_LETTERS[c]}">▶${SCENE_LETTERS[c]}</div>`;
     M.tracks.forEach((trk,t)=>{
       const col=trackColor(t), has=trk.has[c];
-      const cutHere=clipClipboard&&clipClipboard.cut&&clipClipboard.t===t&&clipClipboard.c===c;
+      const cutHere=clipClipboard&&clipClipboard.cut&&clipClipboard.t===t&&clipClipboard.c===c&&has;
       const cls="sclip"+(t===M.sel.t&&c===M.sel.c?" sel":"")
                 +(trk.pl&&trk.ac===c?" playing":"")+(trk.qc===c?" queued":"")
                 +(cutHere?" cutmark":"");
@@ -2104,27 +2105,42 @@ function firstLaneWithHits(){ if(!M||!M.dnotes) return 0; let best=-1;
   for(const L in M.dnotes){ if(M.dnotes[L]&&M.dnotes[L].length){ const l=+L; if(best<0||l<best) best=l; } }
   return best<0?0:best; }
 function applyParams(params){
-  let touched=false;
-  for(const k in params){ if(k.indexOf(P+"rui_")===0){ kv[k]=params[k]; touched=true; } }
+  /* STAGED merge: the sticky kv cache must only keep values from ACCEPTED
+   * messages. It used to be written before the reject gate, so a WiFi-delayed
+   * pre-edit snapshot — though rejected for rendering — silently poisoned kv,
+   * and the next accepted rui_play-only push rebuilt the model from the stale
+   * cache (the true root of the "fresh note reverts" flicker). On any reject
+   * path the previous values are restored. */
+  const prevKv={}; let touched=false;
+  for(const k in params){ if(k.indexOf(P+"rui_")===0){ prevKv[k]=kv[k]; kv[k]=params[k]; touched=true; } }
   if(!touched) return;
-  if(dragging || clipDrag) return;              /* don't clobber a canvas OR session-grid clip drag */
-  const m=parseModel(); if(!m) return;
+  const revert=()=>{ for(const k in prevKv){ if(prevKv[k]===undefined) delete kv[k]; else kv[k]=prevKv[k]; } };
+  if(dragging || clipDrag){ revert(); return; }   /* don't clobber a canvas OR session-grid clip drag */
+  const m=parseModel(); if(!m){ revert(); return; }
+  /* Playhead/transport target: applied BEFORE the content gate — the post-edit
+   * suppress window must never delay a stop/start edge or a phase correction.
+   * Ordered by the DEVICE clock (devms is monotonic per instance) so a stale
+   * delivery can't rewind it; a large BACKWARD devms jump means the module was
+   * re-instantiated (rui_frames reset) → drop the learned clock offset and
+   * re-learn immediately instead of holding a wrong minimum for 30s. */
+  {
+    const pl=m.play, backJump=pl.dev>0 && phLastDev>0 && pl.dev<phLastDev-5000;
+    if(backJump){ phOff=Infinity; phOffT=0; phLastDev=0; }
+    if(pl.dev===0 || pl.dev>=phLastDev || backJump){
+      if(pl.dev>0) phLastDev=pl.dev;
+      const wasPlaying=phPlaying;
+      phTgtTick=pl.tick; phTgtT=now(); phTgtDev=pl.dev;
+      phBpm=pl.bpm||120; phPlaying=!!pl.on;
+      if(pl.dev>0){ const off=now()-pl.dev;         /* clock offset + latency */
+        if(off<phOff || now()-phOffT>30000){ phOff=off; phOffT=now(); } }
+      if(phPlaying&&!wasPlaying){ phEst=pl.tick; phEstT=now(); }
+      if(phPlaying) startPlayhead(); else stopPlayhead();
+    }
+  }
   /* during the post-edit suppress window, ignore snapshots that haven't caught up */
-  if(now()<suppressRefreshUntil && M && m.rev<=M.rev) { return; }
+  if(now()<suppressRefreshUntil && M && m.rev<=M.rev){ revert(); return; }
   const prevRev=lastRev, prevSel=lastSelKey;
   M=m;
-  /* Feed the playhead TARGET (not a hard re-anchor): delivery over the Move's
-   * WiFi is BURSTY — pushes generated ~100-300ms apart arrive in same-ms clumps
-   * separated by ~1s silences (measured), so snapping the anchor on every
-   * message made the line machine-gun through stale positions then free-run.
-   * phStep free-runs a local clock at BPM rate and slews toward this target. */
-  const wasPlaying=phPlaying;
-  phTgtTick=M.play.tick; phTgtT=now(); phTgtDev=M.play.dev||0;
-  phBpm=M.play.bpm||120; phPlaying=!!M.play.on;
-  if(phTgtDev>0){ const off=now()-phTgtDev;         /* clock offset + latency */
-    if(off<phOff || now()-phOffT>30000){ phOff=off; phOffT=now(); } }
-  if(phPlaying&&!wasPlaying){ phEst=M.play.tick; phEstT=now(); }
-  if(phPlaying) startPlayhead(); else stopPlayhead();
   /* drum: land on a lane so the Lane + FX populate immediately instead of a blank
    * "select a lane" prompt on first click (once per clip; device honors the ruisel). */
   if(isDrum() && M.sel.lane<0){ const ck=M.sel.t+":"+M.sel.c;

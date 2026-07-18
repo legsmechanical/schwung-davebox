@@ -755,8 +755,11 @@ typedef struct {
     int16_t  rui_sel_lane;    /* -1 melodic, 0..DRUM_LANES-1 drum */
     int8_t   rui_cc_focus;   /* knob 0..7 whose CC breakpoints emit in rui_cc; -1 = none */
     uint32_t rui_rev;         /* monotonic edit counter */
-    uint64_t rui_frames;      /* free-running rendered-frames counter (never resets;
-                               * device clock for remote-UI playhead timestamps) */
+    uint64_t rui_frames;      /* free-running rendered-frames counter (device clock
+                               * for remote-UI playhead timestamps). Survives
+                               * state_load (field-wise parse, no memset); resets
+                               * ONLY on full re-instantiation — the browser detects
+                               * the backward devms jump and re-learns its offset. */
 
     /* Targeted re-sync accumulator: which clips changed since the on-device JS
      * last read `rui_dirty`. A bumped rui_rev tells JS "something changed"; the

@@ -230,6 +230,44 @@ static void test_snapshot_index_mute_solo(void) {
     hx_destroy(h);
 }
 
+/* devms device-clock field: PLAYING digests/snapshots carry it (rui_poll 5th
+ * field, rui_play 4th), STOPPED forms omit it (byte-stable digest at idle is
+ * what gates the shim's push-on-change). devms = rui_frames*1000/44100. */
+static void test_playhead_devms_field(void) {
+    hx_t *h = hx_create(NULL);
+    HX_ASSERT(h != NULL, "hx_create returned NULL");
+    char buf[8192];
+
+    /* stopped: rui_poll = "rev:0:tick:bpm" (4 fields), rui_play 3 fields */
+    int len = hx_get_param(h, "rui_poll", buf, (int)sizeof(buf));
+    HX_ASSERT(len > 0, "rui_poll returned no data");
+    int colons = 0; for (int i = 0; i < len; i++) if (buf[i] == ':') colons++;
+    HX_ASSERT(colons == 3, "stopped rui_poll must have 4 fields (no devms)");
+
+    /* playing after 100 rendered blocks: devms = 100*128*1000/44100 = 290 */
+    hx_set_param(h, "transport", "play");
+    hx_render(h, 100);
+    len = hx_get_param(h, "rui_poll", buf, (int)sizeof(buf));
+    HX_ASSERT(len > 0, "rui_poll (playing) returned no data");
+    colons = 0; for (int i = 0; i < len; i++) if (buf[i] == ':') colons++;
+    HX_ASSERT(colons == 4, "playing rui_poll must carry the 5th devms field");
+    HX_ASSERT(strstr(buf, ":290") != NULL, "devms must be rui_frames*1000/44100 (100 blocks = 290ms)");
+
+    len = hx_get_param(h, "state", buf, (int)sizeof(buf));
+    HX_ASSERT(len > 0, "state returned no data");
+    HX_ASSERT(strstr(buf, "\"rui_play\":\"1:") != NULL, "playing rui_play missing");
+    { const char *p = strstr(buf, "\"rui_play\":\"");
+      const char *q = p ? strchr(p + 12, '"') : NULL;
+      int c2 = 0; for (const char *s = p + 12; s && s < q; s++) if (*s == ':') c2++;
+      HX_ASSERT(c2 == 3, "playing rui_play must have 4 fields (devms last)"); }
+
+    hx_set_param(h, "transport", "stop");
+    len = hx_get_param(h, "rui_poll", buf, (int)sizeof(buf));
+    colons = 0; for (int i = 0; i < len; i++) if (buf[i] == ':') colons++;
+    HX_ASSERT(colons == 3, "stopped-again rui_poll must drop devms");
+    hx_destroy(h);
+}
+
 int main(void) {
     test_snapshot_has_selected_clip_notes();
     test_snapshot_selection_switches_clip();
@@ -242,6 +280,7 @@ int main(void) {
     test_snapshot_cond_present();
     test_snapshot_cond_none();
     test_snapshot_index_mute_solo();
-    printf("PASS: remote snapshot (notes round-trip, selection switch, empty index, module_id probe, ccmeta, cc_focus, rui_cond, mute/solo)\n");
+    test_playhead_devms_field();
+    printf("PASS: remote snapshot (notes round-trip, selection switch, empty index, module_id probe, ccmeta, cc_focus, rui_cond, mute/solo, devms)\n");
     return 0;
 }
