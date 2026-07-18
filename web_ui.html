@@ -1798,7 +1798,7 @@ cv.addEventListener("pointerdown",e=>{ if(!M) return; try{cv.setPointerCapture(e
     const hit=drumHitAt(x,y);
     if(erase){ if(hit) drumDelete(lane,hit.tick); gesture="erase"; dragging=true; return; }
     if(hit){ selDrum={lane,tick:hit.tick}; selStep=-1; renderNoteEdit();
-      gesture=hit.edge?"dresize":"dmove"; gData={lane,tick:hit.tick,o:{...M.dnotes[lane][hit.i]},gx:x-xOfTick(hit.tick)};
+      gesture=hit.edge?"dresize":"dmove"; gData={lane,srcLane:lane,tick:hit.tick,o:{...M.dnotes[lane][hit.i]},gx:x-xOfTick(hit.tick)};
       dragging=true; draw(); return; }
     if(tool==="select"){ gesture="pan"; gData={x,y,sx:scrollX,sy:scrollY}; dragging=true; return; }
     gesture="add"; gData={x,y,sx:scrollX,sy:scrollY,kind:"drum",lane}; return; }
@@ -1849,7 +1849,21 @@ cv.addEventListener("pointermove",e=>{ if(!M) return; const p=ptrs.get(e.pointer
   if(gesture==="dmove"||gesture==="dresize"){ const arr=M.dnotes[gData.lane]; if(!arr) return;
     const i=arr.findIndex(h=>h.tick===gData.tick); if(i<0) return; const h=arr[i];
     if(gesture==="dmove"){ const nt=Math.max(0,Math.min(maxEditTick()-1,snap(tickOfX(x-gData.gx),e.shiftKey)));
-      if(arr.some(z=>z!==h&&z.tick===nt)) return; h.tick=nt; gData.tick=nt; if(selDrum) selDrum.tick=nt; }
+      if(arr.some(z=>z!==h&&z.tick===nt)) return; h.tick=nt; gData.tick=nt; if(selDrum) selDrum.tick=nt;
+      /* vertical drag crosses lanes: transfer the hit locally as the pointer
+       * crosses rows (blocked if the destination already has a hit at this
+       * tick). Ticks are absolute time, so the hit keeps its position even if
+       * the destination lane's length/resolution differ; the DSP commit at
+       * drag end is a del(src) + add(dst) with vel+gate carried over. */
+      const dl=laneOfY(y);
+      if(dl>=0 && dl<M.dlanes.length && dl!==gData.lane){
+        const dest=M.dnotes[dl]||(M.dnotes[dl]=[]);
+        if(!dest.some(z=>z.tick===h.tick)){
+          const i2=arr.indexOf(h); if(i2>=0) arr.splice(i2,1);
+          dest.push(h);
+          if(M.dlanes[gData.lane]) M.dlanes[gData.lane].has=arr.length>0;
+          if(M.dlanes[dl]) M.dlanes[dl].has=true;
+          gData.lane=dl; if(selDrum) selDrum.lane=dl; } } }
     else { const end=Math.max(h.tick+1,snap(tickOfX(x),e.shiftKey)); h.gate=Math.max(1,end-h.tick); }
     draw(); return; }
 });
@@ -1881,7 +1895,14 @@ function endPointer(e){ ptrs.delete(e.pointerId); clearLong(); try{cv.releasePoi
     if(nt&&nt.gate!==o.gate) emit("note_resize",`${nt.tick} ${nt.pitch} ${nt.gate}`);
     if(nt){ selNote={tick:nt.tick,pitch:nt.pitch}; renderNoteEdit(); }
   } else if(gesture==="dmove"||gesture==="dresize"){ const arr=M.dnotes[gData.lane]||[], h=arr.find(z=>z.tick===gData.tick), o=gData.o;
-    if(h){ if(gesture==="dmove"&&h.tick!==o.tick) R.setParam(P+`t${M.sel.t}_l${gData.lane}_note_move`,`${o.tick} ${h.tick}`);
+    if(h){ const src=(gData.srcLane!=null)?gData.srcLane:gData.lane;
+      if(gesture==="dmove"&&src!==gData.lane){
+        /* cross-lane move: del from the source lane + add (vel+gate carried)
+         * to the destination — two writes on the serialized slow ring. */
+        R.setParam(P+`t${M.sel.t}_l${src}_note_del`,String(o.tick));
+        R.setParam(P+`t${M.sel.t}_l${gData.lane}_note_add`,`${h.tick} ${h.vel} ${h.gate}`);
+      }
+      else if(gesture==="dmove"&&h.tick!==o.tick) R.setParam(P+`t${M.sel.t}_l${gData.lane}_note_move`,`${o.tick} ${h.tick}`);
       else if(gesture==="dresize"&&h.gate!==o.gate) R.setParam(P+`t${M.sel.t}_l${gData.lane}_note_resize`,`${h.tick} ${h.gate}`);
       afterEdit(); selDrum={lane:gData.lane,tick:h.tick}; renderNoteEdit(); } }
   gesture=null; gData=null; didMove=false; dragging=false;
