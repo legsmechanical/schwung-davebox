@@ -5618,12 +5618,15 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
     }
     APP("\"");
 
-    /* Truncation indicator: if ANY variable-length loop (rui_dnotes / rui_notes
-     * / rui_cc) stopped early on its budget guard, tell the browser so it can
-     * badge "some notes hidden". ~14 B — fits inside RUI_TAIL_RESERVE (96), and
-     * it is emitted before the closing brace, after the last guarded loop, so
-     * it can never itself be starved. */
-    if (trunc) APP(",\"rui_trunc\":1");
+    /* Truncation indicator: 1 if ANY variable-length loop (rui_dnotes /
+     * rui_notes / rui_cc) stopped early on its budget guard, so the browser can
+     * badge "some notes hidden". Emitted UNCONDITIONALLY (0 when clean): the
+     * browser merges snapshot fields into a sticky per-key cache, so an
+     * absent-when-clean key would leave a stale 1 behind after the clip is
+     * thinned. ~15 B — fits inside RUI_TAIL_RESERVE (96), and it sits before
+     * the closing brace, after the last guarded loop, so it can never itself
+     * be starved. */
+    APP(",\"rui_trunc\":%d", trunc);
 
     APP("}");
     #undef APP

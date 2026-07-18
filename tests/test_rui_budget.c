@@ -62,8 +62,11 @@ static void test_rui_budget_realistic_dense(void) {
 
     HX_ASSERT(strstr(buf, "\"rui_dnotes\":\"") != NULL, "missing rui_dnotes (drum hits)");
     HX_ASSERT(strstr(buf, "\"rui_index\":\"") != NULL, "missing rui_index (tracks index)");
-    /* A comfortably-under-budget snapshot must NOT carry the truncation flag. */
-    HX_ASSERT(strstr(buf, "\"rui_trunc\":1") == NULL, "rui_trunc must be ABSENT on a normal snapshot");
+    /* A comfortably-under-budget snapshot must carry rui_trunc:0 — the field is
+     * emitted unconditionally (the browser's per-key cache is sticky; an absent
+     * key would leave a stale 1 behind after a dense clip is thinned). */
+    HX_ASSERT(strstr(buf, "\"rui_trunc\":1") == NULL, "rui_trunc must be 0 on a normal snapshot");
+    HX_ASSERT(strstr(buf, "\"rui_trunc\":0") != NULL, "rui_trunc:0 must be present on a normal snapshot");
 
     printf("PASS: rui budget realistic-dense snapshot size = %d bytes (cap 65536)\n", n);
 
