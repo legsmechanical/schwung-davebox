@@ -157,6 +157,7 @@ static int sp_track_clip(sp_ctx_t *cx) {
                     cl->active = (uint8_t)any;
                 }
                 clip_migrate_to_notes(cl);
+                rui_mark(inst, tidx, cidx);
                 return 1;
             }
 
@@ -204,6 +205,7 @@ static int sp_track_clip(sp_ctx_t *cx) {
                     cl->active = (uint8_t)any;
                     if (tr->recording) LRS_SET(tr, sidx);
                     clip_migrate_to_notes(cl);
+                    rui_mark(inst, tidx, cidx);
                 }
                 return 1;
             }
@@ -226,12 +228,14 @@ static int sp_track_clip(sp_ctx_t *cx) {
                     cl->active = (uint8_t)any;
                 }
                 clip_migrate_to_notes(cl);
+                rui_mark(inst, tidx, cidx);
                 return 1;
             }
             if (!strcmp(q, "_vel")) {
                 if (cl->step_note_count[sidx] == 0) return 1;
                 cl->step_vel[sidx] = (uint8_t)clamp_i(my_atoi(val), 0, 127);
                 clip_migrate_to_notes(cl);
+                rui_mark(inst, tidx, cidx);
                 if (!tr->recording) inst->state_dirty = 1;
                 return 1;
             }
@@ -240,6 +244,7 @@ static int sp_track_clip(sp_ctx_t *cx) {
                 { int gmax = SEQ_STEPS * cl->ticks_per_step; if (gmax > 65535) gmax = 65535;
                 cl->step_gate[sidx] = (uint16_t)clamp_i(my_atoi(val), 1, gmax); }
                 clip_migrate_to_notes(cl);
+                rui_mark(inst, tidx, cidx);
                 if (!tr->recording) inst->state_dirty = 1;
                 return 1;
             }
@@ -254,6 +259,7 @@ static int sp_track_clip(sp_ctx_t *cx) {
                     cl->note_tick_offset[sidx][ni] = (int16_t)clamp_i(o, -tps_m1, tps_m1);
                 } }
                 clip_migrate_to_notes(cl);
+                rui_mark(inst, tidx, cidx);
                 if (!tr->recording) inst->state_dirty = 1;
                 return 1;
             }
@@ -265,16 +271,19 @@ static int sp_track_clip(sp_ctx_t *cx) {
                     if (len < 1 || len > 8 || idx < 1 || idx > len) raw = 0;
                 }
                 cl->step_iter[sidx] = (uint8_t)raw;
+                rui_mark(inst, tidx, cidx);
                 if (!tr->recording) inst->state_dirty = 1;
                 return 1;
             }
             if (!strcmp(q, "_rand")) {
                 cl->step_random[sidx] = (uint8_t)clamp_i(my_atoi(val), 0, 100);
+                rui_mark(inst, tidx, cidx);
                 if (!tr->recording) inst->state_dirty = 1;
                 return 1;
             }
             if (!strcmp(q, "_ratch")) {
                 cl->step_ratchet[sidx] = (uint8_t)clamp_i(my_atoi(val), 0, 4);
+                rui_mark(inst, tidx, cidx);
                 if (!tr->recording) inst->state_dirty = 1;
                 return 1;
             }
@@ -339,6 +348,7 @@ static int sp_track_clip(sp_ctx_t *cx) {
                     cl->active = (uint8_t)any;
                 }
                 clip_migrate_to_notes(cl);
+                rui_mark(inst, tidx, cidx);
                 if (!tr->recording) inst->state_dirty = 1;
                 return 1;
             }
@@ -363,6 +373,7 @@ static int sp_track_clip(sp_ctx_t *cx) {
                     cl->active = (uint8_t)any;
                 }
                 clip_migrate_to_notes(cl);
+                rui_mark(inst, tidx, cidx);
                 inst->state_dirty = 1;
                 return 1;
             }
@@ -373,6 +384,7 @@ static int sp_track_clip(sp_ctx_t *cx) {
                     cl->step_notes[sidx][n] = (uint8_t)clamp_i(
                         (int)cl->step_notes[sidx][n] + delta, 0, 127);
                 clip_migrate_to_notes(cl);
+                rui_mark(inst, tidx, cidx);
                 if (!tr->recording) inst->state_dirty = 1;
                 return 1;
             }
@@ -401,6 +413,7 @@ static int sp_track_clip(sp_ctx_t *cx) {
                         cl->note_tick_offset[sidx][i] = 0;
                     }
                     clip_migrate_to_notes(cl);
+                    rui_mark(inst, tidx, cidx);
                     if (!tr->recording) inst->state_dirty = 1;
                 }
                 return 1;
@@ -485,6 +498,9 @@ static int sp_track_clip(sp_ctx_t *cx) {
                 }
             }
             clip_migrate_to_notes(cl);
+            /* Mirror the _length freeze-fix guard (same adaptive record-path
+             * hazard: no rev bump while this track is live-recording). */
+            if (!tr->recording) rui_mark(inst, tidx, cidx);
             inst->state_dirty = 1;
             return 1;
         }
@@ -504,6 +520,7 @@ static int sp_track_clip(sp_ctx_t *cx) {
                 if (len > 0 && ls + len > SEQ_STEPS) len = SEQ_STEPS - ls;
                 _ca->lane_loop_start[_kidx] = (uint16_t)ls;
                 _ca->lane_length[_kidx] = (uint16_t)len;
+                rui_mark(inst, tidx, cidx);
                 inst->state_dirty = 1;
                 return 1;
             }
@@ -513,6 +530,7 @@ static int sp_track_clip(sp_ctx_t *cx) {
                 uint16_t ls = _ca->lane_loop_start[_kidx];
                 if (len > 0 && (int)ls + len > SEQ_STEPS) len = SEQ_STEPS - (int)ls;
                 _ca->lane_length[_kidx] = (uint16_t)len;
+                rui_mark(inst, tidx, cidx);
                 inst->state_dirty = 1;
                 return 1;
             }
@@ -526,6 +544,7 @@ static int sp_track_clip(sp_ctx_t *cx) {
                         if (tps_val == (int)TPS_VALUES[vi]) { valid = 1; break; }
                     _ca->lane_tps[_kidx] = valid ? (uint16_t)tps_val : 0;
                 }
+                rui_mark(inst, tidx, cidx);
                 inst->state_dirty = 1;
                 return 1;
             }
@@ -539,6 +558,7 @@ static int sp_track_clip(sp_ctx_t *cx) {
                         if (tps_val == (int)TPS_VALUES[vi]) { valid = 1; break; }
                     _ca->lane_res_tps[_kidx] = valid ? (uint16_t)tps_val : 0;
                 }
+                rui_mark(inst, tidx, cidx);
                 inst->state_dirty = 1;
                 return 1;
             }
@@ -548,6 +568,7 @@ static int sp_track_clip(sp_ctx_t *cx) {
                 _ca->lane_length[_kidx] = 0;
                 _ca->lane_tps[_kidx] = 0;
                 _ca->lane_res_tps[_kidx] = 0;
+                rui_mark(inst, tidx, cidx);
                 inst->state_dirty = 1;
                 return 1;
             }
@@ -607,6 +628,7 @@ static int sp_track_clip(sp_ctx_t *cx) {
                   }
                 }
                 _ca->lane_length[_kidx] = _new_len;
+                rui_mark(inst, tidx, cidx);
                 inst->state_dirty = 1;
                 return 1;
             }
@@ -636,11 +658,13 @@ static int sp_track_clip(sp_ctx_t *cx) {
             int vv = (*vp == ' ') ? my_atoi(vp + 1) : 0;
             if (ti >= 0 && ti < NUM_TRACKS)
                 cl->cond_resp[ti] = (uint8_t)(vv ? 1 : 0);
+            rui_mark(inst, tidx, cidx);
             inst->state_dirty = 1;
             return 1;
         }
         if (!strcmp(p, "_cond_lock")) {
             cl->cond_lock = (uint8_t)(my_atoi(val) ? 1 : 0);
+            rui_mark(inst, tidx, cidx);
             inst->state_dirty = 1;
             return 1;
         }
@@ -651,6 +675,7 @@ static int sp_track_clip(sp_ctx_t *cx) {
             int vv = (*vp == ' ') ? my_atoi(vp + 1) : 0;
             if (ti >= 0 && ti < NUM_TRACKS)
                 cl->cond_oct[ti] = (int8_t)clamp_i(vv, -4, 4);
+            rui_mark(inst, tidx, cidx);
             inst->state_dirty = 1;
             return 1;
         }
@@ -661,6 +686,7 @@ static int sp_track_clip(sp_ctx_t *cx) {
             int vv = (*vp == ' ') ? my_atoi(vp + 1) : 0;
             if (ti >= 0 && ti < NUM_TRACKS)
                 cl->cond_when[ti] = (uint8_t)(vv ? 1 : 0);
+            rui_mark(inst, tidx, cidx);
             inst->state_dirty = 1;
             return 1;
         }
@@ -701,6 +727,7 @@ static int sp_track_clip(sp_ctx_t *cx) {
             } else if (tr->queued_clip == cidx) {
                 tr->queued_clip = -1;
             }
+            rui_mark(inst, tidx, cidx);
             inst->state_dirty = 1;
             return 1;
         }
@@ -733,11 +760,8 @@ static int sp_track_clip(sp_ctx_t *cx) {
             tr->rec_pending_count = 0;
             tr->recording = 0;
             if (tr->queued_clip == cidx) tr->queued_clip = -1;
+            rui_mark(inst, tidx, cidx);
             inst->state_dirty = 1;
-            { char _zb[160]; snprintf(_zb, sizeof(_zb),
-                "Z3 _clear_keep DONE t%d c%d nc_after=%u rec=%d",
-                tidx, cidx, (unsigned)cl->note_count, (int)tr->recording);
-              seq8_ilog(inst, _zb); }
             return 1;
         }
         if (!strncmp(p, "_hard_reset", 11) && p[11] == '\0') {
@@ -752,6 +776,7 @@ static int sp_track_clip(sp_ctx_t *cx) {
             tr->rec_pending_count = 0;
             tr->recording = 0;
             if (tr->queued_clip == cidx) tr->queued_clip = -1;
+            rui_mark(inst, tidx, cidx);
             inst->state_dirty = 1;
             return 1;
         }
@@ -795,6 +820,7 @@ static int sp_track_clip(sp_ctx_t *cx) {
                 tr->recording = 0;
                 tr->rec_pending_count = 0;
             }
+            rui_mark(inst, tidx, cidx);
             inst->state_dirty = 1;
             return 1;
         }
@@ -817,6 +843,7 @@ static int sp_track_clip(sp_ctx_t *cx) {
                 tr->rec_pending_count = 0;
             }
             if (tr->queued_clip == cidx) tr->queued_clip = -1;
+            rui_mark(inst, tidx, cidx);
             inst->state_dirty = 1;
             return 1;
         }

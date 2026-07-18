@@ -27,6 +27,7 @@ static int sp_track_ccauto(sp_ctx_t *cx) {
         while (*_p >= '0' && *_p <= '9') { _cc = _cc * 10 + (*_p - '0'); _p++; }
         if (_k < 0 || _k > 7) return 1;
         tr->cc_assign[_k] = (uint8_t)clamp_i(_cc, 0, 127);
+        rui_mark(inst, tidx, (int)tr->active_clip);
         inst->state_dirty = 1;
         return 1;
     }
@@ -43,6 +44,7 @@ static int sp_track_ccauto(sp_ctx_t *cx) {
         if (_k < 0 || _k > 7) return 1;
         tr->cc_type[_k] = (uint8_t)clamp_i(_tp, 0, 2);
         tr->cc_assign[_k] = (uint8_t)clamp_i(_cc, 0, 127);
+        rui_mark(inst, tidx, (int)tr->active_clip);
         inst->state_dirty = 1;
         return 1;
     }
@@ -56,6 +58,7 @@ static int sp_track_ccauto(sp_ctx_t *cx) {
         while (*_p >= '0' && *_p <= '9') { _tp = _tp * 10 + (*_p - '0'); _p++; }
         if (_k < 0 || _k > 7) return 1;
         tr->cc_type[_k] = (uint8_t)clamp_i(_tp, 0, 2);
+        rui_mark(inst, tidx, (int)tr->active_clip);
         inst->state_dirty = 1;
         return 1;
     }
@@ -111,6 +114,7 @@ static int sp_track_ccauto(sp_ctx_t *cx) {
         }
         if (_c == (int)tr->active_clip)
             tr->cc_auto_last_sent[_k] = 0xFF; /* re-assert on next play */
+        rui_mark(inst, tidx, _c);
         inst->state_dirty = 1;
         return 1;
     }
@@ -130,6 +134,7 @@ static int sp_track_ccauto(sp_ctx_t *cx) {
         cc_auto_set_point(&tr->clip_cc_auto[_c], _k,
                           (uint16_t)clamp_i(_tv, 0, 65535),
                           (uint8_t)clamp_i(_vv, 0, 127));
+        rui_mark(inst, tidx, _c);
         inst->state_dirty = 1;
         return 1;
     }
@@ -160,6 +165,7 @@ static int sp_track_ccauto(sp_ctx_t *cx) {
             cc_auto_set_point(&tr->clip_cc_auto[_c], _k, (uint16_t)_t2, (uint8_t)_vv);
         if (_c == (int)tr->active_clip)
             tr->cc_auto_last_sent[_k] = 0xFF;
+        rui_mark(inst, tidx, _c);
         inst->state_dirty = 1;
         return 1;
     }
@@ -184,6 +190,7 @@ static int sp_track_ccauto(sp_ctx_t *cx) {
         tr->clip_cc_auto[_c].rest_val[_k] = 0xFF;   /* reset → "—" */
         if (_c == (int)tr->active_clip)
             tr->cc_auto_last_sent[_k] = 0xFF;
+        rui_mark(inst, tidx, _c);
         inst->state_dirty = 1;
         return 1;
     }
@@ -206,6 +213,7 @@ static int sp_track_ccauto(sp_ctx_t *cx) {
                             (uint16_t)clamp_i(_t2, 0, 65535));
         if (_c == (int)tr->active_clip)
             tr->cc_auto_last_sent[_k] = 0xFF;
+        rui_mark(inst, tidx, _c);
         inst->state_dirty = 1;
         return 1;
     }
@@ -232,6 +240,7 @@ static int sp_track_ccauto(sp_ctx_t *cx) {
                                 (uint16_t)clamp_i(_t2, 0, 65535));
         if (_c == (int)tr->active_clip)
             memset(tr->cc_auto_last_sent, 0xFF, 8);
+        rui_mark(inst, tidx, _c);
         inst->state_dirty = 1;
         return 1;
     }
@@ -246,6 +255,7 @@ static int sp_track_ccauto(sp_ctx_t *cx) {
         cc_auto_reset(&tr->clip_cc_auto[_c]);       /* points + rest → "—" */
         if (_c == (int)tr->active_clip)
             memset(tr->cc_auto_last_sent, 0xFF, 8);
+        rui_mark(inst, tidx, _c);
         inst->state_dirty = 1;
         return 1;
     }

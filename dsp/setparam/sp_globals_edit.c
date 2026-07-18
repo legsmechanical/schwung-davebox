@@ -56,6 +56,7 @@ static int sp_globals_edit(sp_ctx_t *cx) {
             inst->tracks[dstT].clip_at_auto[dstC] = inst->tracks[srcT].clip_at_auto[srcC];
             if ((int)inst->tracks[dstT].active_clip == dstC)
                 pfx_sync_from_clip(&inst->tracks[dstT]);
+            rui_mark(inst, dstT, dstC);   /* only the destination clip changed */
         }
         return 1;
     }
@@ -149,6 +150,7 @@ static int sp_globals_edit(sp_ctx_t *cx) {
                 clip_migrate_to_notes(dc);
             }
         }
+        rui_touch(inst);   /* row copy spans all tracks — full re-sync */
         inst->state_dirty = 1;
         return 1;
     }
@@ -203,6 +205,8 @@ static int sp_globals_edit(sp_ctx_t *cx) {
             srcTr->rec_pending_count = 0;
             srcTr->recording = 0;
             if (srcTr->queued_clip == srcC) srcTr->queued_clip = -1;
+            rui_mark(inst, dstT, dstC);   /* dest filled + src cleared */
+            rui_mark(inst, srcT, srcC);
             inst->state_dirty = 1;
         }
         return 1;
@@ -302,6 +306,7 @@ static int sp_globals_edit(sp_ctx_t *cx) {
                 dsrc->lanes[l].midi_note = src_midi_note;
             }
         }
+        rui_touch(inst);   /* row cut spans all tracks (copy + clear) — full re-sync */
         inst->state_dirty = 1;
         return 1;
     }
@@ -352,6 +357,7 @@ static int sp_globals_edit(sp_ctx_t *cx) {
             }
             if (dstC == (int)inst->tracks[dstT].active_clip)
                 pfx_sync_from_clip(&inst->tracks[dstT]);
+            rui_mark(inst, dstT, dstC);   /* only the destination clip changed */
             inst->state_dirty = 1;
         }
         return 1;
@@ -412,6 +418,9 @@ static int sp_globals_edit(sp_ctx_t *cx) {
                 pfx_sync_from_clip(dstTr);
             if (srcC == (int)srcTr->active_clip)
                 pfx_sync_from_clip(srcTr);
+            /* Both dst (new content) and src (cleared) changed. */
+            rui_mark(inst, dstT, dstC);
+            rui_mark(inst, srcT, srcC);
             inst->state_dirty = 1;
         }
         return 1;
@@ -468,6 +477,9 @@ static int sp_globals_edit(sp_ctx_t *cx) {
                 dc->lanes[l].midi_note = midi_note;
             }
         }
+        /* Clears rowIdx across ALL NUM_TRACKS tracks unconditionally --
+         * spans every track, so a full re-sync is simplest/correct here. */
+        rui_touch(inst);
         inst->state_dirty = 1;
         return 1;
     }
@@ -540,6 +552,7 @@ static int sp_globals_edit(sp_ctx_t *cx) {
                 pfx_sync_from_clip(&inst->tracks[t]);
             inst->drum_undo_valid = 0;
             snprintf(inst->last_restore_info, sizeof(inst->last_restore_info), "d %d %d", t, c);
+            rui_touch(inst);
             return 1;
         }
         if (!inst->undo_valid) return 1;
@@ -594,6 +607,7 @@ static int sp_globals_edit(sp_ctx_t *cx) {
                                      " DR %d", (int)inst->drum_row_redo_clips[_s]);
             }
         }
+        rui_touch(inst);
         return 1;
     }
 
@@ -662,6 +676,7 @@ static int sp_globals_edit(sp_ctx_t *cx) {
                 pfx_sync_from_clip(&inst->tracks[t]);
             inst->drum_redo_valid = 0;
             snprintf(inst->last_restore_info, sizeof(inst->last_restore_info), "d %d %d", t, c);
+            rui_touch(inst);
             return 1;
         }
         if (!inst->redo_valid) return 1;
@@ -716,6 +731,7 @@ static int sp_globals_edit(sp_ctx_t *cx) {
                                      " DR %d", (int)inst->drum_row_undo_clips[_s]);
             }
         }
+        rui_touch(inst);
         return 1;
     }
 

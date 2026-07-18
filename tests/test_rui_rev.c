@@ -21,6 +21,7 @@ static unsigned rev(hx_t *h) {
 int main(void) {
     hx_t *h = hx_create(NULL);
     HX_ASSERT(h, "create failed");
+    seq8_instance_t *inst_ = (seq8_instance_t *)h->inst;   /* white-box, for undo-flag checks */
 
     /* Pin: remote note edit bumps the rev (existing remote-UI contract). */
     unsigned r0 = rev(h);
@@ -95,6 +96,311 @@ int main(void) {
     hx_set_param(h, "t5_c0_length", "32");
     HX_ASSERT(((seq8_instance_t *)h->inst)->state_dirty == 1,
               "remote _length edit sets state_dirty (persists)");
+
+    /* ================================================================
+     * Rev-gate audit fixes: every handler below mutates content the
+     * remote-UI snapshot shows but historically never bumped rui_rev,
+     * leaving the browser (and a 2nd tab / on-device) stale for up to
+     * 30s (the manager backstop). Each assertion pins the bump.
+     * ================================================================ */
+
+    /* ---- sp_track_ccauto.c: track-level knob assign/type (t6) ---- */
+    {
+        unsigned r = rev(h);
+        hx_set_param(h, "t6_cc_assign", "0 10");
+        HX_ASSERT(rev(h) == r + 1, "cc_assign must bump rui_rev");
+    }
+    {
+        unsigned r = rev(h);
+        hx_set_param(h, "t6_cc_type_assign", "1 0 20");
+        HX_ASSERT(rev(h) == r + 1, "cc_type_assign must bump rui_rev");
+    }
+    {
+        unsigned r = rev(h);
+        hx_set_param(h, "t6_cc_type", "2 1");
+        HX_ASSERT(rev(h) == r + 1, "cc_type must bump rui_rev");
+    }
+    /* cc_send is a live transmit, not stored automation -- must NOT bump. */
+    {
+        unsigned r = rev(h);
+        hx_set_param(h, "t6_cc_send", "0 64");
+        HX_ASSERT(rev(h) == r, "cc_send must NOT bump rui_rev (live transmit only)");
+    }
+
+    /* ---- sp_track_ccauto.c: clip-scoped automation edits (t6, clip 3) ---- */
+    {
+        unsigned r = rev(h);
+        hx_set_param(h, "t6_cc_rest", "3 4 50");
+        HX_ASSERT(rev(h) == r + 1, "cc_rest must bump rui_rev");
+    }
+    {
+        unsigned r = rev(h);
+        hx_set_param(h, "t6_cc_auto_set", "3 4 100 60");
+        HX_ASSERT(rev(h) == r + 1, "cc_auto_set must bump rui_rev");
+    }
+    {
+        unsigned r = rev(h);
+        hx_set_param(h, "t6_cc_auto_set2", "3 4 0 50 70");
+        HX_ASSERT(rev(h) == r + 1, "cc_auto_set2 must bump rui_rev");
+    }
+    {
+        unsigned r = rev(h);
+        hx_set_param(h, "t6_cc_auto_clear_k", "3 4");
+        HX_ASSERT(rev(h) == r + 1, "cc_auto_clear_k must bump rui_rev");
+    }
+    {
+        unsigned r = rev(h);
+        hx_set_param(h, "t6_cc_auto_clear_range", "3 4 0 50");
+        HX_ASSERT(rev(h) == r + 1, "cc_auto_clear_range must bump rui_rev");
+    }
+    {
+        unsigned r = rev(h);
+        hx_set_param(h, "t6_cc_auto_clear_step", "3 0 50");
+        HX_ASSERT(rev(h) == r + 1, "cc_auto_clear_step must bump rui_rev");
+    }
+    {
+        unsigned r = rev(h);
+        hx_set_param(h, "t6_cc_auto_clear", "3");
+        HX_ASSERT(rev(h) == r + 1, "cc_auto_clear must bump rui_rev");
+    }
+
+    /* ---- sp_globals_edit.c: clip_copy/drum_clip_copy/drum_clip_cut mark the
+     * DESTINATION clip (drum_clip_cut also marks SRC, since it clears it --
+     * two rui_mark calls => +2). row_clear spans all tracks at one clip
+     * index => rui_touch (full). undo_restore/redo_restore are wholesale
+     * (scope unknown to the handler) => rui_touch. ---- */
+    {
+        unsigned r = rev(h);
+        hx_set_param(h, "clip_copy", "0 0 1 2");
+        HX_ASSERT(rev(h) == r + 1, "clip_copy must bump rui_rev (dest clip)");
+    }
+    {
+        hx_set_param(h, "t5_l0_note_add", "0 100 24");   /* -> t5 drum mode, all 16 clips allocated */
+        unsigned r = rev(h);
+        hx_set_param(h, "drum_clip_copy", "5 4 5 5");
+        HX_ASSERT(rev(h) == r + 1, "drum_clip_copy must bump rui_rev (dest clip)");
+    }
+    {
+        unsigned r = rev(h);
+        hx_set_param(h, "drum_clip_cut", "5 5 5 6");
+        HX_ASSERT(rev(h) == r + 2, "drum_clip_cut must bump rui_rev for BOTH dest and src (cleared)");
+    }
+    {
+        unsigned r = rev(h);
+        hx_set_param(h, "row_clear", "1");
+        HX_ASSERT(rev(h) == r + 1, "row_clear must bump rui_rev (rui_touch: spans all tracks)");
+    }
+    {
+        hx_set_param(h, "t0_c6_note_add", "0 60 100 24");
+        hx_set_param(h, "clip_cut", "0 6 0 7");   /* arms a melodic undo snapshot */
+        HX_ASSERT(inst_->undo_valid == 1, "setup: clip_cut armed undo");
+        unsigned r = rev(h);
+        hx_set_param(h, "undo_restore", "1");
+        HX_ASSERT(rev(h) == r + 1, "undo_restore must bump rui_rev (rui_touch: scope unknown)");
+        r = rev(h);
+        hx_set_param(h, "redo_restore", "1");
+        HX_ASSERT(rev(h) == r + 1, "redo_restore must bump rui_rev (rui_touch: scope unknown)");
+    }
+
+    /* ---- sp_track_clip.c: tN_cC_* melodic clip keys (t2, clip 5) ---- */
+    {
+        unsigned r;
+        r = rev(h); hx_set_param(h, "t2_c5_step_0_toggle", "60");
+        HX_ASSERT(rev(h) == r + 1, "_step_toggle must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t2_c5_step_0_vel", "80");
+        HX_ASSERT(rev(h) == r + 1, "_step_vel must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t2_c5_step_0_gate", "40");
+        HX_ASSERT(rev(h) == r + 1, "_step_gate must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t2_c5_step_0_nudge", "3");
+        HX_ASSERT(rev(h) == r + 1, "_step_nudge must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t2_c5_step_0_iter", "33");
+        HX_ASSERT(rev(h) == r + 1, "_step_iter must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t2_c5_step_0_rand", "50");
+        HX_ASSERT(rev(h) == r + 1, "_step_rand must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t2_c5_step_0_ratch", "2");
+        HX_ASSERT(rev(h) == r + 1, "_step_ratch must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t2_c5_step_0_reassign", "2");
+        HX_ASSERT(rev(h) == r + 1, "_step_reassign must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t2_c5_step_2_copy_to", "4");
+        HX_ASSERT(rev(h) == r + 1, "_step_copy_to must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t2_c5_step_4_pitch", "5");
+        HX_ASSERT(rev(h) == r + 1, "_step_pitch must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t2_c5_step_4_set_notes", "60 64");
+        HX_ASSERT(rev(h) == r + 1, "_step_set_notes must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t2_c5_step_6_add", "70 0 90");
+        HX_ASSERT(rev(h) == r + 1, "_step_add must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t2_c5_step_6_clear", "0");
+        HX_ASSERT(rev(h) == r + 1, "_step_clear must bump rui_rev");
+    }
+    {
+        /* _loop_set mirrors the _length freeze-fix guard: no bump while
+         * this track is live-recording (adaptive record path). */
+        hx_set_param(h, "t2_recording", "1");
+        unsigned r = rev(h);
+        hx_set_param(h, "t2_c5_loop_set", "4");
+        HX_ASSERT(rev(h) == r, "_loop_set during recording must NOT bump rui_rev");
+        hx_set_param(h, "t2_recording", "0");
+        r = rev(h);
+        hx_set_param(h, "t2_c5_loop_set", "8");
+        HX_ASSERT(rev(h) == r + 1, "_loop_set (not recording) must bump rui_rev");
+    }
+    {
+        unsigned r;
+        r = rev(h); hx_set_param(h, "t2_c5_k2_cc_loop_set", "4");
+        HX_ASSERT(rev(h) == r + 1, "_k2_cc_loop_set must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t2_c5_k2_cc_lane_length", "5");
+        HX_ASSERT(rev(h) == r + 1, "_cc_lane_length must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t2_c5_k2_cc_lane_tps", "48");
+        HX_ASSERT(rev(h) == r + 1, "_cc_lane_tps must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t2_c5_k2_cc_lane_res_tps", "48");
+        HX_ASSERT(rev(h) == r + 1, "_cc_lane_res_tps must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t2_c5_k2_cc_lane_reset", "1");
+        HX_ASSERT(rev(h) == r + 1, "_cc_lane_reset must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t2_c5_k2_cc_lane_double_fill", "1");
+        HX_ASSERT(rev(h) == r + 1, "_cc_lane_double_fill must bump rui_rev");
+    }
+    {
+        unsigned r;
+        r = rev(h); hx_set_param(h, "t2_c5_cond_resp", "1 1");
+        HX_ASSERT(rev(h) == r + 1, "_cond_resp must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t2_c5_cond_lock", "1");
+        HX_ASSERT(rev(h) == r + 1, "_cond_lock must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t2_c5_cond_oct", "1 2");
+        HX_ASSERT(rev(h) == r + 1, "_cond_oct must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t2_c5_cond_when", "1 1");
+        HX_ASSERT(rev(h) == r + 1, "_cond_when must bump rui_rev");
+    }
+    {
+        unsigned r;
+        r = rev(h); hx_set_param(h, "t2_c5_clear", "1");
+        HX_ASSERT(rev(h) == r + 1, "_clear must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t2_c5_clear_keep", "1");
+        HX_ASSERT(rev(h) == r + 1, "_clear_keep must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t2_c5_hard_reset", "1");
+        HX_ASSERT(rev(h) == r + 1, "_hard_reset must bump rui_rev");
+    }
+    {
+        /* _drum_clear/_drum_reset key off tr->drum_clips[cidx] on a drum
+         * track (t5 already switched to drum mode above); use a fresh
+         * clip index (3) not touched by the drum_clip_copy/cut tests. */
+        unsigned r;
+        r = rev(h); hx_set_param(h, "t5_c3_drum_clear", "0");
+        HX_ASSERT(rev(h) == r + 1, "_drum_clear must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t5_c3_drum_reset", "0");
+        HX_ASSERT(rev(h) == r + 1, "_drum_reset must bump rui_rev");
+    }
+
+    /* ---- sp_track_drum.c: tN_lL_* drum-lane keys (t3, lane 5) ---- */
+    {
+        hx_set_param(h, "t3_l5_note_add", "0 100 24");   /* -> t3 drum mode + lane 5 content */
+        unsigned r;
+        r = rev(h); hx_set_param(h, "t3_l5_lane_note", "50");
+        HX_ASSERT(rev(h) == r + 1, "_lane_note must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t3_l5_loop_set", "4");
+        HX_ASSERT(rev(h) == r + 1, "lane _loop_set must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t3_l5_loop_double_fill", "1");
+        HX_ASSERT(rev(h) == r + 1, "_loop_double_fill must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t3_l5_copy_to", "6");
+        HX_ASSERT(rev(h) == r + 1, "lane _copy_to must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t3_l5_cut_to", "7");
+        HX_ASSERT(rev(h) == r + 1, "lane _cut_to must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t3_l5_euclid_stamp", "0 4 100");
+        HX_ASSERT(rev(h) == r + 1, "_euclid_stamp must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t3_l5_lgto_apply", "1");
+        HX_ASSERT(rev(h) == r + 1, "_lgto_apply must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t3_l5_pfx_set", "gate_time 150");
+        HX_ASSERT(rev(h) == r + 1, "lane _pfx_set must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t3_l5_clear", "1");
+        HX_ASSERT(rev(h) == r + 1, "lane _clear must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t3_l5_hard_reset", "1");
+        HX_ASSERT(rev(h) == r + 1, "lane _hard_reset must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t3_l5_step_2_toggle", "90");
+        HX_ASSERT(rev(h) == r + 1, "drum _step_toggle must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t3_l5_step_2_vel", "50");
+        HX_ASSERT(rev(h) == r + 1, "drum _step_vel must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t3_l5_step_2_gate", "30");
+        HX_ASSERT(rev(h) == r + 1, "drum _step_gate must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t3_l5_step_2_nudge", "2");
+        HX_ASSERT(rev(h) == r + 1, "drum _step_nudge must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t3_l5_step_2_iter", "33");
+        HX_ASSERT(rev(h) == r + 1, "drum _step_iter must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t3_l5_step_2_rand", "50");
+        HX_ASSERT(rev(h) == r + 1, "drum _step_rand must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t3_l5_step_2_ratch", "2");
+        HX_ASSERT(rev(h) == r + 1, "drum _step_ratch must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t3_l5_step_2_reassign", "3");
+        HX_ASSERT(rev(h) == r + 1, "drum _step_reassign must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t3_l5_step_3_copy_to", "4");
+        HX_ASSERT(rev(h) == r + 1, "drum _step_copy_to must bump rui_rev");
+    }
+
+    /* ---- sp_track_drum2.c: tN_all_lanes_* keys (t3, active_clip 0) ---- */
+    {
+        unsigned r;
+        r = rev(h); hx_set_param(h, "t3_all_lanes_length", "4");
+        HX_ASSERT(rev(h) == r + 1, "all_lanes_length must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t3_all_lanes_loop_set", "4");
+        HX_ASSERT(rev(h) == r + 1, "all_lanes_loop_set must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t3_all_lanes_double_fill", "1");
+        HX_ASSERT(rev(h) == r + 1, "all_lanes_double_fill must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t3_all_lanes_clip_resolution", "2");
+        HX_ASSERT(rev(h) == r + 1, "all_lanes_clip_resolution must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t3_all_lanes_playback_dir", "1");
+        HX_ASSERT(rev(h) == r + 1, "all_lanes_playback_dir must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t3_all_lanes_playback_audio_reverse", "1");
+        HX_ASSERT(rev(h) == r + 1, "all_lanes_playback_audio_reverse must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t3_all_lanes_beat_stretch", "1");
+        HX_ASSERT(rev(h) == r + 1, "all_lanes_beat_stretch must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t3_all_lanes_clock_shift", "1");
+        HX_ASSERT(rev(h) == r + 1, "all_lanes_clock_shift must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t3_all_lanes_nudge", "1");
+        HX_ASSERT(rev(h) == r + 1, "all_lanes_nudge must bump rui_rev");
+    }
+
+    /* ---- handler-tail sweep (2026-07-18): same-class rev-bump gaps left by the
+     * initial Theme-1 sweep — drum lane-config ops (browser-visible via rui_dlanes
+     * / rui_lane / rui_pfx) + globals clip_cut / row_copy / row_cut. ---- */
+    {
+        unsigned r;
+        /* t5 → drum via a lane write; give lane 0 a workable length + content */
+        hx_set_param(h, "t5_l0_note_add", "0 100 24");
+        hx_set_param(h, "t5_l0_clip_length", "8");
+        hx_set_param(h, "t5_l0_step_2_toggle", "100");
+        hx_set_param(h, "t5_l0_step_4_toggle", "100");
+
+        r = rev(h); hx_set_param(h, "t5_l0_mute", "1");
+        HX_ASSERT(rev(h) == r + 1, "drum _mute must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t5_l0_solo", "1");
+        HX_ASSERT(rev(h) == r + 1, "drum _solo must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t5_l0_clip_length", "6");
+        HX_ASSERT(rev(h) == r + 1, "drum _clip_length must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t5_l0_playback_dir", "1");
+        HX_ASSERT(rev(h) == r + 1, "drum _playback_dir must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t5_l0_pfx_reset", "1");
+        HX_ASSERT(rev(h) == r + 1, "drum _pfx_reset must bump rui_rev");
+        /* clip_resolution: two distinct indices so new_tps != old_tps (else early return) */
+        hx_set_param(h, "t5_l0_clip_resolution", "0");
+        r = rev(h); hx_set_param(h, "t5_l0_clip_resolution", "3");
+        HX_ASSERT(rev(h) == r + 1, "drum _clip_resolution must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t5_l0_beat_stretch", "1");
+        HX_ASSERT(rev(h) == r + 1, "drum _beat_stretch must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t5_l0_clock_shift", "1");
+        HX_ASSERT(rev(h) == r + 1, "drum _clock_shift must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t5_l0_nudge", "1");
+        HX_ASSERT(rev(h) == r + 1, "drum _nudge must bump rui_rev");
+        /* _nudge main path also now persists (was missing state_dirty) */
+        ((seq8_instance_t *)h->inst)->state_dirty = 0;
+        hx_set_param(h, "t5_l0_nudge", "1");
+        HX_ASSERT(((seq8_instance_t *)h->inst)->state_dirty == 1, "drum _nudge sets state_dirty (persists)");
+
+        /* globals copy/cut — clip_cut marks dest+src (+2); row_copy/row_cut full rui_touch (+1) */
+        r = rev(h); hx_set_param(h, "clip_cut", "1 0 1 1");
+        HX_ASSERT(rev(h) >= r + 1, "clip_cut must bump rui_rev");
+        r = rev(h); hx_set_param(h, "row_copy", "0 1");
+        HX_ASSERT(rev(h) == r + 1, "row_copy must bump rui_rev");
+        r = rev(h); hx_set_param(h, "row_cut", "0 2");
+        HX_ASSERT(rev(h) == r + 1, "row_cut must bump rui_rev");
+    }
 
     hx_destroy(h);
     printf("PASS: rui_rev bump semantics + rui_dirty targeted-resync accumulator\n");

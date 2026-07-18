@@ -84,6 +84,7 @@ static int sp_track_drum2(sp_ctx_t *cx) {
                 tr->drum_tick_in_step[l_ar] = 0;
             clip_build_steps_from_notes(dlc);
         }
+        rui_mark(inst, tidx, (int)tr->active_clip);
         inst->state_dirty = 1;
         return 1;
     }
@@ -99,6 +100,7 @@ static int sp_track_drum2(sp_ctx_t *cx) {
             dc_ad->lanes[l_ad].clip.pp_dir_state = initial_pp_dir((uint8_t)v);
         }
         silence_track_from_set_param(inst, tr);
+        rui_mark(inst, tidx, (int)tr->active_clip);
         inst->state_dirty = 1;
         return 1;
     }
@@ -112,6 +114,7 @@ static int sp_track_drum2(sp_ctx_t *cx) {
         for (l_av = 0; l_av < DRUM_LANES; l_av++) {
             dc_av->lanes[l_av].clip.playback_audio_reverse = (uint8_t)v;
         }
+        rui_mark(inst, tidx, (int)tr->active_clip);
         inst->state_dirty = 1;
         return 1;
     }
@@ -287,6 +290,7 @@ static int sp_track_drum2(sp_ctx_t *cx) {
                 }
             }
         }
+        rui_mark(inst, tidx, (int)tr->active_clip);
         inst->state_dirty = 1;
         return 1;
     }
@@ -351,6 +355,7 @@ static int sp_track_drum2(sp_ctx_t *cx) {
             }
             clip_migrate_to_notes(dlc);
         }
+        rui_mark(inst, tidx, (int)tr->active_clip);
         inst->state_dirty = 1;
         return 1;
     }
@@ -436,6 +441,7 @@ static int sp_track_drum2(sp_ctx_t *cx) {
             dlc->nudge_pos += (int16_t)dir;
             clip_migrate_to_notes(dlc);
         }
+        rui_mark(inst, tidx, (int)tr->active_clip);
         inst->state_dirty = 1;
         return 1;
     }
@@ -462,6 +468,7 @@ static int sp_track_drum2(sp_ctx_t *cx) {
                 drum_lane_anchor_playhead(inst, tr, l_al, dlc);
             clip_migrate_to_notes(dlc);
         }
+        rui_mark(inst, tidx, (int)tr->active_clip);
         inst->state_dirty = 1;
         return 1;
     }
@@ -495,6 +502,7 @@ static int sp_track_drum2(sp_ctx_t *cx) {
                 drum_lane_anchor_playhead(inst, tr, l_al, dlc);
             clip_migrate_to_notes(dlc);
         }
+        rui_mark(inst, tidx, (int)tr->active_clip);
         inst->state_dirty = 1;
         return 1;
     }
@@ -526,6 +534,7 @@ static int sp_track_drum2(sp_ctx_t *cx) {
             }
             clip_migrate_to_notes(dlc);
         }
+        rui_mark(inst, tidx, (int)tr->active_clip);
         inst->state_dirty = 1;
         return 1;
     }
