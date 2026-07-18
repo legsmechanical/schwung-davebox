@@ -1509,13 +1509,15 @@ function drawLaneBodies(){ const [r0,r1]=visRows(), n=M.dlanes.length;
 function vline(x,top,bot){ ctx.beginPath(); ctx.moveTo(Math.round(x)+0.5,top); ctx.lineTo(Math.round(x)+0.5,bot); ctx.stroke(); }
 function drawGrid(){ const tps=gridTps(), endT=endTick(), top=RULER, bot=VH-STEPBAND;
   const stepPx=tps*PXPERTICK, beatPx=BEAT_TICKS*PXPERTICK;
-  /* three-tier contrast: step < beat < bar (brightened per Josh's feedback) */
-  if(stepPx>=7 && tps<BEAT_TICKS){ ctx.strokeStyle="#2e3546"; ctx.lineWidth=1;
+  /* three-tier contrast: step < beat < bar — deliberately strong (round-2's
+   * subtle bump was still too faint on the device's dark theme per Josh). */
+  if(stepPx>=7 && tps<BEAT_TICKS){ ctx.strokeStyle="#49536b"; ctx.lineWidth=1;
     for(let t=0;t<=endT;t+=tps){ if(t%BEAT_TICKS===0) continue; const x=xOfTick(t); if(x<GUTTER-1||x>VW) continue; vline(x,top,bot); } }
-  if(beatPx>=11){ ctx.strokeStyle="#455070"; ctx.lineWidth=1;
+  if(beatPx>=11){ ctx.strokeStyle="#6e7da3"; ctx.lineWidth=1;
     for(let t=0;t<=endT;t+=BEAT_TICKS){ if(t%BAR_TICKS===0) continue; const x=xOfTick(t); if(x<GUTTER-1||x>VW) continue; vline(x,top,bot); } }
-  ctx.strokeStyle="#6b7699"; ctx.lineWidth=1;
+  ctx.strokeStyle="#9aa8d0"; ctx.lineWidth=2;
   for(let t=0;t<=endT;t+=BAR_TICKS){ const x=xOfTick(t); if(x<GUTTER-1||x>VW) continue; vline(x,top,bot); }
+  ctx.lineWidth=1;
 }
 function drawNotes(){ const [r0,r1]=visRows(), tps=gridTps(), ac=rollAccent();
   M.notes.forEach(nt=>{ const r=rowIdxForPitch(nt.pitch); if(r<r0-1||r>r1+1) return;
