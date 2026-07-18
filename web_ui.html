@@ -80,9 +80,9 @@
   .sclip[draggable=true]{cursor:pointer}
   .sclip.drop{outline:2px dashed var(--accent);outline-offset:-1px;z-index:3}
   .sclip.cutmark{opacity:.55;outline:1px dashed var(--dim);outline-offset:-1px}
-  .sclip-menu{position:absolute;right:1px;top:50%;transform:translateY(-50%);
-    font-size:10px;line-height:1;padding:1px 2px;color:#000;opacity:0;
-    cursor:pointer;user-select:none;border-radius:2px}
+  .sclip-menu{position:absolute;right:0;top:50%;transform:translateY(-50%);
+    font-size:11px;line-height:1;padding:2px 6px;color:#000;opacity:0;
+    cursor:pointer;user-select:none;border-radius:2px;text-align:center}
   .sclip:hover .sclip-menu{opacity:1}
   .sclip-menu:hover{background:rgba(255,255,255,.25)}
   .clipmenu{position:fixed;min-width:130px;background:var(--panel2);border:1px solid var(--ctl-br);
@@ -102,7 +102,7 @@
     background:var(--play);box-shadow:0 0 3px rgba(255,207,77,.5);pointer-events:none;
     display:none;will-change:transform}
   /* continuous edge zoom strips — drag bars in the RESERVED empty bands at the top
-     of the ruler + left of the gutter (the JS reserves a ZB=12px band there: ruler
+     of the ruler + left of the gutter (the JS reserves a ZB=18px band there: ruler
      content / loop brace shifted down by ZB, pitch labels shifted right by ZB), so
      the strips never cover the brace, pitch labels, or notes. Top strip: vertical
      drag = horizontal zoom (down=in, up=out). Left strip: horizontal drag = vertical
@@ -115,8 +115,8 @@
     color:rgba(150,238,230,.92);font-size:8px;font-weight:700;letter-spacing:1px;
     transition:background-color .12s}
   .zoomstrip:hover,.zoomstrip:active{background-color:rgba(57,208,200,.34)}
-  .zoomstrip.zh{top:0;left:60px;right:0;height:18px;cursor:ns-resize}
-  .zoomstrip.zv{top:36px;bottom:28px;left:0;width:18px;cursor:ew-resize;flex-direction:column}
+  .zoomstrip.zh{top:0;left:66px;right:0;height:18px;cursor:ns-resize}   /* left = GUTTER (48+ZB) */
+  .zoomstrip.zv{top:42px;bottom:28px;left:0;width:18px;cursor:ew-resize;flex-direction:column}   /* top = RULER (24+ZB) */
   /* docked context editor (selected note / step) */
   #editbar{flex:0 0 auto;border-top:2px solid var(--accent-dim);background:var(--panel2);padding:10px 14px;
            display:flex;gap:10px 24px;align-items:center;flex-wrap:wrap;min-height:50px;row-gap:8px}
@@ -1411,7 +1411,7 @@ let selSet=new Set();            /* multi-selection (Select tool): keys "tick:pi
 let marquee=null;                /* {x0,y0,x1,y1} during a Select-tool drag */
 const nKey=n=>n.tick+":"+n.pitch;
 function isNoteSelected(n){ return (selSet.size&&selSet.has(nKey(n))) || (selNote&&selNote.tick===n.tick&&selNote.pitch===n.pitch); }
-const ZB=12;                                  /* px: edge zoom-band thickness reserved at top of ruler / left of gutter for the zoom strips */
+const ZB=18;                                  /* px: edge zoom-band thickness reserved at top of ruler / left of gutter for the zoom strips (must match .zoomstrip zh height / zv width) */
 const GUTTER=48+ZB, RULER=24+ZB, STEPBAND=28; /* px: left gutter, top ruler (+loop brace), bottom step-edit band — gutter/ruler each gain ZB so the zoom strips sit in an empty band clear of the brace + pitch labels */
 let VW=880, VH=400, VVW=880, VVH=56;          /* css px of the main + velocity canvases */
 let PXPERTICK=0.6, ROWH=14, scrollX=0, scrollY=0;
