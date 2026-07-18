@@ -819,10 +819,8 @@ export function drawUI() {
                     { kind: 'arc', label: 'Prob', name: 'Probability',
                       text: (S.stepEditRand === 0 ? 100 : S.stepEditRand) + '%',
                       norm: (S.stepEditRand === 0 ? 100 : S.stepEditRand) / 100 },
-                    { kind: 'enumsq', label: 'Ratch', name: 'Ratchet',
-                      text: S.stepEditRatch <= 1 ? '--' : String(S.stepEditRatch),
-                      options: [0, 1, 2, 3, 4].map((v) => v <= 1 ? '--' : String(v)),
-                      sel: S.stepEditRatch | 0 },
+                    { kind: 'valsq', label: 'Ratch', name: 'Ratchet',
+                      text: S.stepEditRatch <= 1 ? '--' : String(S.stepEditRatch) },
                     { kind: 'blank', label: '' },
                 ];
                 drawStepEditKitPage(_stepTitle, cells, null);
@@ -859,10 +857,8 @@ export function drawUI() {
                 { kind: 'arc', label: 'Prob', name: 'Probability',
                   text: (S.stepEditRand === 0 ? 100 : S.stepEditRand) + '%',
                   norm: (S.stepEditRand === 0 ? 100 : S.stepEditRand) / 100 },
-                { kind: 'enumsq', label: 'Ratch', name: 'Ratchet',
-                  text: S.stepEditRatch <= 1 ? '--' : String(S.stepEditRatch),
-                  options: [0, 1, 2, 3, 4].map((v) => v <= 1 ? '--' : String(v)),
-                  sel: S.stepEditRatch | 0 },
+                { kind: 'valsq', label: 'Ratch', name: 'Ratchet',
+                  text: S.stepEditRatch <= 1 ? '--' : String(S.stepEditRatch) },
             ];
             drawStepEditKitPage(_stepTitle, cells, noteLabel);
             return;
