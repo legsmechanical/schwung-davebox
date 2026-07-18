@@ -15,7 +15,7 @@
   #top{display:flex;gap:10px;align-items:center;padding:0 12px;height:46px;background:var(--panel);
        border-bottom:1px solid #000;flex:0 0 auto}
   #top .brand{font-weight:700;letter-spacing:.5px;font-size:14px}
-  #top .brand .dot{color:var(--accent)}
+  #top .brand .dot{color:inherit}   /* the x matches the rest of the wordmark */
   .badge{padding:3px 10px;border-radius:20px;background:#0b0d11;color:var(--dim);font-size:12px;
     font-variant-numeric:tabular-nums;white-space:nowrap}
   .badge.play{color:var(--play)}
@@ -248,7 +248,7 @@
     <button class="ghost" id="sync" title="Re-pull from device"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3.5v6h-6"/></svg></button>
     <button id="auto" class="on sm" title="Auto-refresh from device">Auto</button>
   </div>
-  <div id="session"><div id="grid" title="tracks × scenes — click a clip to edit, ▶ launches a scene"></div></div>
+  <div id="session"><div id="grid" title="tracks × scenes — click a clip to launch it (editor follows, like the hardware); Alt/Shift-click to view without launching; ▶ launches a scene"></div></div>
   <div id="main">
     <div id="rollwrap">
       <div id="rollview">
@@ -1241,8 +1241,13 @@ function renderSession(){
   });
   grid.querySelectorAll(".slaunch").forEach(el=>el.onclick=()=>launchScene(+el.dataset.scene));
   grid.querySelectorAll(".sclip").forEach(el=>{
-    el.onclick=()=>selectClip(+el.dataset.t,+el.dataset.c);
-    el.ondblclick=()=>launchClip(+el.dataset.t,+el.dataset.c);
+    /* hardware parity: tapping a clip LAUNCHES it (and the editor follows it,
+     * like the device where the launched clip is the active/edit clip).
+     * Alt/Shift-click = view-only select (remote-editor extra: inspect a clip
+     * without triggering it). */
+    el.onclick=e=>{ const t=+el.dataset.t,c=+el.dataset.c;
+      if(e.altKey||e.shiftKey){ selectClip(t,c); return; }
+      launchClip(t,c); selectClip(t,c); };
     /* drag a clip to another slot: move (Alt = copy); only between same-mode tracks */
     el.ondragstart=e=>{ if(el.dataset.has!=="1"){ e.preventDefault(); return; }
       clipDrag={t:+el.dataset.t,c:+el.dataset.c}; e.dataTransfer.effectAllowed="copyMove"; };
@@ -1508,11 +1513,14 @@ function drawLaneBodies(){ const [r0,r1]=visRows(), n=M.dlanes.length;
  * resolution; light step lines only when they're distinct from beats and there's room. */
 function vline(x,top,bot){ ctx.beginPath(); ctx.moveTo(Math.round(x)+0.5,top); ctx.lineTo(Math.round(x)+0.5,bot); ctx.stroke(); }
 function drawGrid(){ const tps=gridTps(), endT=endTick(), top=RULER, bot=VH-STEPBAND;
-  const stepPx=tps*PXPERTICK, beatPx=BEAT_TICKS*PXPERTICK;
+  /* the fine tier follows the toolbar Snap setting (falls back to the clip's
+   * step size when Snap is free/unset) so what you see is where notes land */
+  const sn=snapTicks(), fine=(sn>0?sn:tps);
+  const stepPx=fine*PXPERTICK, beatPx=BEAT_TICKS*PXPERTICK;
   /* three-tier contrast: step < beat < bar — deliberately strong (round-2's
    * subtle bump was still too faint on the device's dark theme per Josh). */
-  if(stepPx>=7 && tps<BEAT_TICKS){ ctx.strokeStyle="#49536b"; ctx.lineWidth=1;
-    for(let t=0;t<=endT;t+=tps){ if(t%BEAT_TICKS===0) continue; const x=xOfTick(t); if(x<GUTTER-1||x>VW) continue; vline(x,top,bot); } }
+  if(stepPx>=5 && fine<BEAT_TICKS){ ctx.strokeStyle="#49536b"; ctx.lineWidth=1;
+    for(let t=0;t<=endT;t+=fine){ if(t%BEAT_TICKS===0) continue; const x=xOfTick(t); if(x<GUTTER-1||x>VW) continue; vline(x,top,bot); } }
   if(beatPx>=11){ ctx.strokeStyle="#6e7da3"; ctx.lineWidth=1;
     for(let t=0;t<=endT;t+=BEAT_TICKS){ if(t%BAR_TICKS===0) continue; const x=xOfTick(t); if(x<GUTTER-1||x>VW) continue; vline(x,top,bot); } }
   ctx.strokeStyle="#9aa8d0"; ctx.lineWidth=2;
@@ -2085,7 +2093,7 @@ R.onParamChange && R.onParamChange(applyParams);
 let auto=true;
 document.getElementById("auto").onclick=e=>{auto=!auto;e.target.classList.toggle("on",auto);};
 document.getElementById("sync").onclick=()=>{ suppressRefreshUntil=0; refresh(); };
-document.getElementById("snap").onchange=()=>{};
+document.getElementById("snap").onchange=()=>draw();   /* grid's fine tier follows Snap */
 /* ⚙ global-settings popover (+ scrim) and ▦ session-grid toggle */
 (function(){
   const gear=document.getElementById("gear"), pop=document.getElementById("globalpop"), scrim=document.getElementById("scrim");
