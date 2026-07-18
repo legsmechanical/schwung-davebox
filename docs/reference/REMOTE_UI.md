@@ -80,7 +80,7 @@ parser is tolerant of missing/short forms.
 | Field | Format | Notes |
 |---|---|---|
 | `rui_rev` | `<uint>` | Monotonic edit counter (`rui_touch()`); drives the rev-gated poll. |
-| `rui_play` | `on:tick:bpm` | `on` 0/1; `tick` = selected track's `current_clip_tick` (u32, wraps in the **loop window**); `bpm` int. |
+| `rui_play` | `on:tick:bpm[:devms]` | `on` 0/1; `tick` = playhead via `rui_playhead_tick()` (melodic: `current_clip_tick`; drum: the DISPLAYED lane's own clock — `rui_sel_lane`, else lane 0 — audible-mapped; u32, wraps in the **loop window**); `bpm` int; `devms` (PLAYING only) = device-clock ms (`rui_frames*1000/44100`, free-running, resets only on re-instantiation) — the browser time-bases playhead corrections on it so delivery latency cancels. |
 | `rui_sel` | `track:clip:lane` | Selection. `lane` = −1 melodic, else drum lane index. |
 | `rui_clip` | `len:tps:loop_start:dir` | Grid-reference clip (drum → active drum clip lane 0; melodic → selected clip). Steps + ticks/step. |
 | `rui_glob` | `key:scale:swing_amt:swing_res:launch_quant:scale_aware` | Globals, all ints. |
@@ -96,8 +96,8 @@ parser is tolerant of missing/short forms.
 | `rui_dnotes` | `L\|tick:vel:gate,…;L2\|…` | Drum hits per non-empty lane. |
 | `rui_notes` | `tick:pitch:vel:gate;`, or `""` | Melodic clip notes (absolute clip ticks). |
 | `rui_cc` | `k\|tick:val,tick:val,…`, or `""` | **Gated** breakpoints for the focused knob only (set via `tN_cC_cc_focus`, bumps rev). Keeps the snapshot lean. Emitted **last** (after the note content) so an over-large focused CC lane can only starve itself — see §8 item 2. |
-| `rui_trunc` | `1` (JSON number), or absent | Set to `1` only when a reserve-guarded loop (`rui_dnotes` / `rui_notes` / `rui_cc`) dropped content at the 64 KB budget; absent otherwise. Drives the browser's non-blocking "clip too dense — some notes hidden" badge. |
-| `rui_poll` (standalone get_param) | `rev:on:tick:bpm` | Cheap digest for the rev-gated poll; not inside `state`. |
+| `rui_trunc` | `0` or `1` (JSON number, ALWAYS emitted) | `1` when a reserve-guarded loop (`rui_dnotes` / `rui_notes` / `rui_cc`) dropped content at the 64 KB budget. Emitted unconditionally: the browser's per-key cache is sticky, so an absent-when-clean key would pin a stale `1`. Drives the "clip too dense — some notes hidden" badge. |
+| `rui_poll` (standalone get_param) | `rev:on:tick:bpm[:devms]` | Cheap digest for the rev-gated poll; not inside `state`. `devms` PLAYING only — the stopped digest must stay **byte-stable** (the shim pushes on digest *change*; an always-ticking field would push forever at idle). |
 
 **When you change a format, update the parser in `web_ui.html` *and* the test in
 `tests/test_remote_snapshot.c` in the same commit.** This is the seam a regression harness
@@ -128,9 +128,13 @@ All writes are `R.setParam(P+key, value)` (P = `"overtake_dsp:"`), each followed
   `clear`, `mute`/`solo`, `lane_note`, `euclid_stamp`, `pfx_set`. (The reliable drum-clip
   allocation trigger — see DSP CLAUDE.md.)
 
-**Coalescing constraint:** only the **last** `set_param` per audio buffer reaches the DSP, and
-`shadow_send_midi_to_dsp` shares that channel. Multi-field operations must be a **single atomic
-key** (e.g. `loop_set` packs `ls`+`len`); otherwise defer to `tick()` via a pending variable.
+**Coalescing constraint — ON-DEVICE PATH ONLY:** the on-device JS channel keeps only the **last**
+`set_param` per audio buffer, and `shadow_send_midi_to_dsp` shares it — there, multi-field
+operations must be a **single atomic key** (e.g. `loop_set` packs `ls`+`len`) or defer to `tick()`.
+The REMOTE path is different (verified in the host shim): browser `overtake_dsp:` writes ride the
+slow shadow_param ring as **serialized synchronous round-trips — no coalescing** — which is why the
+cross-lane drum move can safely send `_note_del` + `_note_add` as two writes. Remote code still
+prefers atomic keys (`notes_op`) for atomicity and fewer round-trips, not because of coalescing.
 
 ---
 

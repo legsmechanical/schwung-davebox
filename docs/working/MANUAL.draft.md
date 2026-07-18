@@ -49,6 +49,7 @@ USB-A.
 18. [Cheat Sheet](#18-cheat-sheet)
 19. [Parameter Reference](#19-parameter-reference)
 20. [LED & OLED Reference](#20-led--oled-reference)
+21. [The Remote UI (browser editor)](#21-the-remote-ui-browser-editor)
 
 ---
 
@@ -2086,3 +2087,48 @@ playhead. 1px ticks at edges signal content outside window.
 | Volume encoder is master-only | Per-track volume: adjust on destination. |
 | CC automation lanes are not swung | By design — keeps automation on the grid. |
 | Powering off from within dAVEBOx causes a brief hang | — |
+
+---
+
+# 21. The Remote UI (browser editor)
+
+With dAVEBOx loaded, open the Schwung web manager (`http://move.local:7700`) → **Remote UI → Tool
+tab** for a full clip editor in the browser. It mirrors the device live in both directions:
+edits you make in the browser appear on the hardware immediately, and hardware edits appear in
+the browser. A **⚠ clip too dense** badge appears if a clip holds more notes than the editor can
+load at once (thin it on-device to edit the hidden part).
+
+## 21.1 Session grid
+
+Tracks are columns, scenes are rows — like Session View rotated to match a DAW.
+
+- **Click a clip** to launch it (respects Launch Quantize), exactly like tapping a session pad
+  on the device; the editor follows the launched clip. **Alt/Shift-click** views a clip in the
+  editor *without* launching it. **▶ A–P** launches a whole scene.
+- **Drag a clip** to another slot to move it (**Alt-drag** copies). Same-type tracks only.
+- Hover a clip and click its **≡ menu** for **Duplicate** (into the track's next empty slot),
+  **Copy**, **Cut** (marks the clip; pasting completes the move), **Paste**, and **Delete**.
+- Track headers: **click** = mute, **right-click** = solo, **☰** = route/MIDI-channel settings.
+
+## 21.2 Piano roll
+
+- **Draw tool**: click an empty cell to add a note (placed in the cell under the pointer,
+  honoring the toolbar **Snap** setting — the fine grid lines always show the current Snap
+  spacing); drag a note to move it; drag its right edge to resize; right-click/Alt-click or the
+  **Erase** tool deletes. **Select** tool: marquee-select, then drag/nudge/velocity-edit the
+  whole selection at once.
+- **Drum tracks**: lanes are rows; drag a hit **vertically to move it to another lane**
+  (velocity, gate, and timing carried; blocked if the target lane already has a hit there).
+- The **step band** at the bottom selects a step for per-step trig conditions (iteration,
+  probability, ratchet, nudge, velocity, gate) — same semantics as holding a step on-device.
+- **Zoom** with the drag strips above the ruler (horizontal) and left of the note names
+  (vertical), or pinch/wheel.
+- The **velocity** and **automation** lanes resize by dragging their top edge (remembered),
+  show a value axis on the left, and read out exact values on hover.
+
+## 21.3 Transport & sync
+
+The header shows transport, position, and BPM; the play button starts/stops the device. The
+playhead runs on a clock synchronized to the device's own timestamps, so it stays smooth even
+over congested WiFi. If the browser and device ever disagree after heavy simultaneous editing,
+the **sync** button forces a full re-read.
