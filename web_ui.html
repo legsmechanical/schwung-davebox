@@ -20,6 +20,7 @@
     font-variant-numeric:tabular-nums;white-space:nowrap}
   .badge.play{color:var(--play)}
   .badge.clip{color:var(--ink);border:1px solid var(--line);background:transparent;font:12px ui-monospace,monospace}
+  .badge.warn{color:#ffcf4d;border:1px solid #6a5320;background:#241d09}
   .spacer{flex:1}
   label{color:var(--dim);font-size:12px;display:flex;gap:5px;align-items:center}
   select,button,input[type=number],input[type=text]{background:var(--ctl);color:var(--ink);
@@ -225,6 +226,7 @@
     <span class="badge play" id="transport">—</span>
     <span id="globals"></span>
     <span class="badge clip" id="clipname">—</span>
+    <span class="badge warn" id="trunc" title="This clip has more notes/automation than the editor can load — some are hidden. Thin the clip on-device to edit them." style="display:none">⚠ clip too dense — some notes hidden</span>
     <span class="spacer"></span>
     <span class="seg tools" title="Edit tool — B Draw · V Select · E Erase · Del removes selection · arrows nudge · ⌘A all">
       <button id="toolDraw" class="on" title="Draw (B) — tap to add, drag to move, edge to resize"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l3.6-.9L18 8.7 15.3 6 4.9 16.4 4 20z"/><path d="M13.4 7.9l2.7 2.7"/></svg></button>
@@ -513,9 +515,12 @@ function parseModel(){
   });
   const ccmeta=parseCcMeta(get("rui_ccmeta")||"");
   const cc=parseCc(get("rui_cc")||"");
+  /* rui_trunc:1 when the DSP snapshot dropped notes/CC points at the 64KB budget
+   * (dense clip) — drives a non-blocking "some notes hidden" badge. Absent/0 = clean. */
+  const trunc = (+(get("rui_trunc")||0))?1:0;
   return {rev:+(get("rui_rev")||0), play:{on:pon,tick:ptick,bpm:pbpm},
           sel:{t:st,c:sc,lane:sl}, clip:{len:cl,tps:ct,ls:cls,dir:cd}, tracks, notes,
-          dlanes, dnotes, pfx, glob, scaleMask, laneInfo, stepTrig, ccmeta, cc,
+          dlanes, dnotes, pfx, glob, scaleMask, laneInfo, stepTrig, ccmeta, cc, trunc,
           cond: parseCond(get("rui_cond")||"")};
 }
 const isDrum = ()=> M && M.tracks[M.sel.t] && M.tracks[M.sel.t].pm===1;
@@ -573,6 +578,8 @@ function renderChrome(){
   const bi=document.getElementById("bpmIn"); if(bi && document.activeElement!==bi) bi.value=M.play.bpm|0;
   const lane=(isDrum()&&M.sel.lane>=0)?(" · lane "+M.sel.lane):"";
   document.getElementById("clipname").textContent=(isDrum()?"D":"M")+(M.sel.t+1)+" · "+SCENE_LETTERS[M.sel.c]+lane;
+  /* truncation badge: the DSP snapshot dropped notes/CC at the 64KB budget. */
+  const tb=document.getElementById("trunc"); if(tb) tb.style.display=(M&&M.trunc)?"":"none";
 }
 /* rebuild the side panel (clip controls + FX). Skipped while a side input is
  * focused so polls don't clobber in-progress typing. */
@@ -1624,12 +1631,14 @@ function regionAt(x,y){ if(x<GUTTER&&y<RULER) return "corner";
 function emit(op,val){ R.setParam(P+`t${M.sel.t}_c${M.sel.c}_${op}`, val); afterEdit(); }
 function afterEdit(){ suppressRefreshUntil=now()+250; fastUntil=now()+1400; }
 /* Batch several melodic note ops into ONE atomic tN_cC_notes_op set_param.
- * Per-audio-buffer coalescing collapses N separate note-op set_params to the
- * last one reaching the DSP, so a multi-note edit (shift-vel, move-all, multi-
- * delete, box-nudge) would silently drop all but one and the next snapshot would
- * revert the rest. The DSP _notes_op handler applies the whole
- * "<op> args;<op> args;..." string and finalizes once (bumps the rev).
- * ops = [[opChar,argStr],...]; opChar in a/d/m/r/v. */
+ * Rationale (NOT per-buffer coalescing — remote overtake_dsp: set_params ride
+ * the slow shadow_param ring as serialized synchronous round-trips in the host
+ * shim, no coalescing there): (1) atomicity — a multi-note edit (shift-vel,
+ * move-all, multi-delete, box-nudge) applies all-or-nothing, so a partial
+ * round-trip failure can't leave half the notes moved; (2) one round trip
+ * instead of N; (3) one rev bump / snapshot push instead of N. The DSP
+ * _notes_op handler applies the whole "<op> args;<op> args;..." string and
+ * finalizes once (bumps the rev). ops = [[opChar,argStr],...]; opChar in a/d/m/r/v. */
 function emitBatch(ops){ if(!ops||!ops.length) return;
   R.setParam(P+`t${M.sel.t}_c${M.sel.c}_notes_op`, ops.map(o=>`${o[0]} ${o[1]}`).join(";"));
   afterEdit(); }
@@ -1753,10 +1762,10 @@ function endPointer(e){ ptrs.delete(e.pointerId); clearLong(); try{cv.releasePoi
     M.notes.forEach(n=>{ const nx=xOfTick(n.tick), nw=Math.max(3,n.gate*PXPERTICK), ny=yOfRow(rowIdxForPitch(n.pitch));
       if(nx+nw>=x0&&nx<=x1&&ny+ROWH>=y0&&ny<=y1) selSet.add(nKey(n)); });
     marquee=null; renderNoteEdit();
-  } else if(gesture==="selmove"){ let any=false;
-    gData.orig.forEach(o=>{ if(o.ref.tick!==o.t||o.ref.pitch!==o.p){ any=true;
-      emit("note_move",`${o.t} ${o.p} ${o.ref.tick} ${o.ref.pitch}`); } });
-    renderNoteEdit();
+  } else if(gesture==="selmove"){ const ops=[];
+    gData.orig.forEach(o=>{ if(o.ref.tick!==o.t||o.ref.pitch!==o.p){
+      ops.push(["m",`${o.t} ${o.p} ${o.ref.tick} ${o.ref.pitch}`]); } });
+    emitBatch(ops); renderNoteEdit();
   } else if(gesture==="move"){ const nt=M.notes[gData.i], o=gData.o;
     if(nt&&(nt.tick!==o.tick||nt.pitch!==o.pitch)) emit("note_move",`${o.tick} ${o.pitch} ${nt.tick} ${nt.pitch}`);
     if(nt){ selNote={tick:nt.tick,pitch:nt.pitch}; renderNoteEdit(); }
@@ -1804,8 +1813,8 @@ function vAdjust(mx,my){ const drum=isDrum();
     let best=-1,bd=1e9; sel.forEach((n,i)=>{ const d=Math.abs(xOfTick(n.tick)-mx); if(d<bd){bd=d;best=i;} });
     if(best<0||bd>22) return; const delta=vel-sel[best].vel; if(!delta) return;
     sel.forEach(n=>{ n.vel=Math.max(1,Math.min(127,n.vel+delta)); });
-    /* one atomic batch of ABSOLUTE vels per move → coalescing keeps the last =
-     * final state = correct (vs N per-note writes where only one survived). */
+    /* one atomic batch of ABSOLUTE vels per move → applied all-or-nothing in one
+     * round trip + one rev bump (see emitBatch; not per-buffer coalescing). */
     emitBatch(sel.map(n=>["v",`${n.tick} ${n.pitch} ${n.vel}`]));
     draw(); renderNoteEdit(); return; }
   const notes=drum?(M.sel.lane>=0?(M.dnotes[M.sel.lane]||[]):[]):M.notes;
@@ -1985,7 +1994,7 @@ function refresh(force){
   if(typeof R.resubscribe==="function"){ R.resubscribe(); return; }
   if(window.parent){ window.parent.postMessage({type:"subscribe"},"*"); }
   const keys=["rui_rev","rui_play","rui_sel","rui_clip","rui_glob","rui_scale","rui_index",
-              "rui_notes","rui_pfx","rui_lane","rui_dlanes","rui_dnotes","rui_cond"];
+              "rui_notes","rui_pfx","rui_lane","rui_dlanes","rui_dnotes","rui_cond","rui_trunc"];
   Promise.all(keys.map(k=>R.getParam(P+k).then(v=>[P+k,v]).catch(()=>null)))
     .then(pairs=>{ const o={}; pairs.forEach(p=>{if(p&&p[1]!=null)o[p[0]]=p[1];}); applyParams(o); });
 }
