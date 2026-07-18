@@ -15,6 +15,9 @@ static const int BAKE_STAGES[2] = { BAKE_STAGE_MIDI_DLY, BAKE_STAGE_ARP_OUT };
 
 typedef struct {
     uint32_t tick; uint16_t gate; uint8_t pitch; uint8_t vel;
+    uint8_t prim;   /* group-primary pitch: scale-aware delay feedback applies the
+                       PRIMARY notes degree-delta to every harmony copy (live:
+                       seq8_pfx.c pfx_sched_delay_ons) */
 } bake_note_t;
 
 #define BAKE_BUF  MAX_NOTES_PER_CLIP
@@ -60,7 +63,7 @@ static int bake_stage_midi_dly(seq8_instance_t *inst, int scale_aware,
                 int rng = fx->fb_note_random;
                 int lim = rng;
                 if (scale_aware) {
-                    int sc = (int)SCALE_SIZES[inst->pad_scale < 14 ? inst->pad_scale : 0];
+                    int sc = (int)SCALE_SIZES[eff_pad_scale(inst)];
                     if (lim > sc) lim = sc;
                 }
                 switch (fx->fb_note_random_mode) {
@@ -87,9 +90,16 @@ static int bake_stage_midi_dly(seq8_instance_t *inst, int scale_aware,
                 if (scale_aware) cumul_deg   += fx->fb_note;
                 else             cumul_pitch += fx->fb_note;
             }
-            int echo_pitch = scale_aware
-                ? scale_transpose(inst, (int)in[ni].pitch, cumul_deg)
-                : clamp_i((int)in[ni].pitch + cumul_pitch, 0, 127);
+            int echo_pitch;
+            if (scale_aware) {
+                /* live computes the degree delta from the group PRIMARY and
+                 * applies it to every copy (pfx_sched_delay_ons) */
+                int _prim = (int)in[ni].prim;
+                int _delta = scale_transpose(inst, _prim, cumul_deg) - _prim;
+                echo_pitch = clamp_i((int)in[ni].pitch + _delta, 0, 127);
+            } else {
+                echo_pitch = clamp_i((int)in[ni].pitch + cumul_pitch, 0, 127);
+            }
             if (rep > 0) rep_vel += fx->fb_velocity;
             rep_vel = clamp_i(rep_vel, 1, 127);
             /* Echo gate: fb_gate_time>0 → fixed gate; else the live default echo
@@ -99,10 +109,12 @@ static int bake_stage_midi_dly(seq8_instance_t *inst, int scale_aware,
              * once same-pitch legalization can't mask it, e.g. random-pitch delay). */
             uint32_t eg = fx->fb_gate_time > 0
                 ? (uint32_t)GATE_FIXED_TICKS[fx->fb_gate_time - 1]
-                : (uint32_t)((GATE_TICKS * (fx->gate_time > 0 ? fx->gate_time : 100)) / 100);
+                : fx->gate_time > 0 ? (uint32_t)((GATE_TICKS * fx->gate_time) / 100)
+                : 1;   /* live pfx_gate_smp(0) = instant off; 1 tick is the closest bakeable */
             if (eg < 1) eg = 1; if (eg > 65535u) eg = 65535u;
             out[oc++] = (bake_note_t){ echo_tick, (uint16_t)eg,
-                                       (uint8_t)echo_pitch, (uint8_t)rep_vel };
+                                       (uint8_t)echo_pitch, (uint8_t)rep_vel,
+                                       (uint8_t)echo_pitch };
             cur_delay *= (1.0 + fx->fb_clock / 100.0);
             if (cur_delay < 1.0) cur_delay = 1.0;
         }
@@ -127,7 +139,7 @@ static int bake_stage_arp_out(seq8_instance_t *inst, play_fx_t *fx, uint32_t cli
     a.octaves    = fx->arp.octaves;
     a.gate_pct   = fx->arp.gate_pct;
     a.steps_mode = fx->arp.steps_mode;
-    a.retrigger  = 1;
+    a.retrigger  = fx->arp.retrigger ? 1 : 0;   /* honor the param (was forced ON) */
     memcpy(a.step_vel, fx->arp.step_vel, sizeof(a.step_vel));
     memcpy(a.step_int, fx->arp.step_int, sizeof(a.step_int));   /* Arp Steps interval offsets */
     a.step_loop_len = fx->arp.step_loop_len ? fx->arp.step_loop_len : 8;
@@ -190,7 +202,7 @@ static int bake_stage_arp_out(seq8_instance_t *inst, play_fx_t *fx, uint32_t cli
             if (gate < 1) gate = 1;
             if (gate >= rate) gate = rate - 1;
             if (oc < out_max)
-                out[oc++] = (bake_note_t){ tick, (uint16_t)gate, pitch, (uint8_t)v };
+                out[oc++] = (bake_note_t){ tick, (uint16_t)gate, pitch, (uint8_t)v, pitch };
         } else if (step_off) {
             /* Mute mode: advance cycle */
             uint8_t dp, dv;
@@ -390,7 +402,7 @@ static int render_melodic_clip(seq8_instance_t *inst, int t, int c, int loops,
                     if (_sub_tick >= cycle_ticks) break;
                     for (gi = 0; gi < gc && a_count < BAKE_BUF; gi++)
                         rmc_a[a_count++] = (bake_note_t){ _sub_tick, _final_gate,
-                                                          gen[gi], (uint8_t)vel };
+                                                          gen[gi], (uint8_t)vel, gen[0] };
                 }
             }
         }
@@ -680,7 +692,7 @@ static void bake_clip(seq8_instance_t *inst, int t, int c, int loops, int wrap,
                     if (_sub_tick >= cycle_ticks) break;
                     for (gi = 0; gi < gc && a_count < BAKE_BUF; gi++)
                         bake_a[a_count++] = (bake_note_t){ _sub_tick, _final_gate,
-                                                           gen[gi], (uint8_t)vel };
+                                                           gen[gi], (uint8_t)vel, gen[0] };
                 }
             }
         }
@@ -722,6 +734,18 @@ static void bake_clip(seq8_instance_t *inst, int t, int c, int loops, int wrap,
 
     /* Write results back; clip_init also clears pfx_params + resets playback_dir
      * to Forward (direction is now "frozen" into the note positions). */
+    /* Pin CC-automation cadence BEFORE the length change: lanes inheriting the
+     * clip length (lane_length==0) would stretch/underrun across the unrolled
+     * clip; pinning them to the pre-bake length keeps the note<->automation
+     * alignment the user heard. (AT lanes have no per-lane length — they
+     * hold their last value across the extension; documented limitation.) */
+    if (new_length != cl->length) {
+        cc_auto_t *_ca = &tr->clip_cc_auto[c];
+        int _k;
+        for (_k = 0; _k < 8; _k++)
+            if (_ca->count[_k] > 0 && _ca->lane_length[_k] == 0)
+                _ca->lane_length[_k] = cl->length;
+    }
     clip_init(cl);
     cl->ticks_per_step = tps;
     cl->length         = new_length;
@@ -843,7 +867,7 @@ static void bake_drum_lane(seq8_instance_t *inst, int t, int c, int lane, int lo
                         uint32_t _sub_tick = eff_tick + (uint32_t)_k * _sub_interval;
                         if (_sub_tick >= cycle_ticks) break;
                         dl_a[a_count++] = (bake_note_t){ _sub_tick, _final_gate,
-                                                         dl->midi_note, (uint8_t)vel };
+                                                         dl->midi_note, (uint8_t)vel, dl->midi_note };
                     }
                 }
             }
@@ -995,7 +1019,7 @@ static int render_drum_lane_nd(seq8_instance_t *inst, int t, int c, int lane,
                     uint32_t _sub_tick = eff_tick + (uint32_t)_k * _sub_interval;
                     if (_sub_tick >= cycle_ticks) break;
                     dnd_a[a_count++] = (bake_note_t){ _sub_tick, _final_gate,
-                                                      dl->midi_note, (uint8_t)vel };
+                                                      dl->midi_note, (uint8_t)vel, dl->midi_note };
                 }
             }
         }
@@ -1146,7 +1170,11 @@ static void bake_drum_clip(seq8_instance_t *inst, int t, int c, int loops, int w
                 int vel = (int)nn->vel + fx.velocity_offset;
                 if (vel < 1) vel = 1; if (vel > 127) vel = 127;
                 uint8_t gen[MAX_GEN_NOTES];
-                int gc = pfx_build_gen_notes(inst, scale_aware, &fx, (int)nn->pitch, gen);
+                /* Live drum playback ignores stored note pitch and always
+                 * emits the lane's CURRENT midi_note (render_block) — use it
+                 * here too, so notes survive a lane re-tune instead of being
+                 * dropped by the stale-pitch route-back below. */
+                int gc = pfx_build_gen_notes(inst, scale_aware, &fx, (int)dl->midi_note, gen);
 
                 uint32_t emit_ticks[2];
                 int emit_count = compute_bake_emit_positions(pdir, paud, length, tps,
@@ -1166,7 +1194,7 @@ static void bake_drum_clip(seq8_instance_t *inst, int t, int c, int loops, int w
                         if (_sub_tick >= cycle_ticks) break;
                         for (gi = 0; gi < gc && a_count < BAKE_BUF; gi++)
                             dc_a[a_count++] = (bake_note_t){ _sub_tick, _final_gate,
-                                                             gen[gi], (uint8_t)vel };
+                                                             gen[gi], (uint8_t)vel, gen[0] };
                     }
                 }
             }
