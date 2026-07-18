@@ -24,7 +24,8 @@ Off-branch (gitignored `notes/tech-changelog.md`) has the exhaustive per-handler
 ## Status
 - **Off-device tested:** `tests/run.sh` 24/24 native + JS green; `web_ui.html` node-syntax clean.
 - **Deployed to device 2026-07-18** (WiFi, md5-verified): `dsp.so` + `web_ui.html`. Running for hands-on test.
-- **NOT merged to `main`, NOT pushed.**
+- **Merged to `main` (fast-forward) 2026-07-18; NOT pushed.** Hands-on device verification (checklist below) is
+  still owed — merged on Josh's call ahead of it.
 
 ## Device test checklist (owed)
 - [ ] Multi-note edits stick (select several notes → shift vel / nudge / move / delete — all change, none snap back).
