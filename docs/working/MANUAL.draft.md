@@ -441,12 +441,14 @@ Values: `1/2, 2/2, 1/3, 2/3, 3/3, … 8/8`. Example: `2/3` means "play on cycle 
 of every 3," silent on cycles 1 and 3. The cycle counter is per-clip and resets
 only on cold transport start (Stop → Play).
 
-**Prob (Probability)** — per-step play chance, 0–100%. The roll is per-note: on a
-chord step set to 50%, each note independently has a 50% chance, so voicings vary
+**Prob (Probability)** — per-step play chance, shown as a knob that defaults to
+**100%** (always plays) and sweeps down to 1%. The roll is per-note: on a chord
+step set to 50%, each note independently has a 50% chance, so voicings vary
 naturally.
 
-**Ratch (Ratchet)** — retriggers the step x2, x3, or x4 times within one step
-slot. Sub-hits are evenly spaced. Each runs through the full effects chain.
+**Ratch (Ratchet)** — retriggers the step 2, 3, or 4 times within one step
+slot (`--` = off). Sub-hits are evenly spaced. Each runs through the full
+effects chain.
 
 **How they interact:** Iter is checked first — if it says skip, no sub-hits fire.
 Prob rolls once per note; if a note passes, all its ratchet sub-hits play.
