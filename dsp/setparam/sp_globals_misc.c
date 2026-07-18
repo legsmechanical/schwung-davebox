@@ -202,6 +202,7 @@ static int sp_globals_misc(sp_ctx_t *cx) {
             inst->mute[t] = 0;
             inst->solo[t] = 0;
         }
+        rui_touch(inst);   /* rui_index mute/solo (all tracks) */
         return 1;
     }
 
@@ -244,6 +245,7 @@ static int sp_globals_misc(sp_ctx_t *cx) {
             inst->tracks[t].drum_lane_solo = 0;
         }
         silence_muted_tracks(inst);
+        rui_touch(inst);   /* rui_index mute/solo (snapshot recall, all tracks) */
         return 1;
     }
 

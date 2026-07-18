@@ -89,6 +89,7 @@ static int sp_track_config(sp_ctx_t *cx) {
             tr->queued_clip      = -1;
             tr->pending_page_stop = 0;
             tr->will_relaunch    = 0;
+            rui_mark(inst, tidx, new_cidx);   /* rui_index ac/qc/pl */
         } else {
             /* Quantized or stopped: queue for next boundary. When stopped
              * with launch_quant=Now, also set will_relaunch so the next
@@ -106,6 +107,7 @@ static int sp_track_config(sp_ctx_t *cx) {
                 tr->active_clip = (uint8_t)new_cidx;
                 pfx_sync_from_clip(tr);
             }
+            rui_mark(inst, tidx, new_cidx);   /* rui_index ac/qc/pl */
         }
         return 1;
     }
@@ -133,6 +135,7 @@ static int sp_track_config(sp_ctx_t *cx) {
         inst->mute[tidx] = (val[0] == '1') ? 1 : 0;
         if (inst->mute[tidx]) inst->solo[tidx] = 0;
         silence_muted_tracks(inst);
+        rui_mark(inst, tidx, tr->active_clip);   /* rui_index mute/solo */
         return 1;
     }
 
@@ -145,12 +148,14 @@ static int sp_track_config(sp_ctx_t *cx) {
         inst->solo[tidx] = (val[0] == '1') ? 1 : 0;
         if (inst->solo[tidx]) inst->mute[tidx] = 0;
         silence_muted_tracks(inst);
+        rui_mark(inst, tidx, tr->active_clip);   /* rui_index mute/solo */
         return 1;
     }
 
     /* tN_channel: set MIDI channel for this track (1-indexed in, 0-indexed stored) */
     if (!strcmp(sub, "channel")) {
         tr->channel = (uint8_t)clamp_i(my_atoi(val) - 1, 0, 15);
+        rui_mark(inst, tidx, tr->active_clip);   /* rui_index chan */
         return 1;
     }
 
@@ -163,6 +168,7 @@ static int sp_track_config(sp_ctx_t *cx) {
         else return 1;
         tr->pfx.route = rt;
         { int _rl; for (_rl = 0; _rl < DRUM_LANES; _rl++) tr->drum_lane_pfx[_rl].route = rt; }
+        rui_mark(inst, tidx, tr->active_clip);   /* rui_index route */
         return 1;
     }
 

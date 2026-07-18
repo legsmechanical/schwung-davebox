@@ -114,7 +114,9 @@ static int sp_track_drum2(sp_ctx_t *cx) {
         for (l_av = 0; l_av < DRUM_LANES; l_av++) {
             dc_av->lanes[l_av].clip.playback_audio_reverse = (uint8_t)v;
         }
-        rui_mark(inst, tidx, (int)tr->active_clip);
+        /* No rui_mark: playback_audio_reverse is not emitted by the snapshot
+         * (matches the single-lane _playback_audio_reverse handler, skipped in
+         * the f3ceff1 sweep). Bumping rev here forces a spurious re-read. */
         inst->state_dirty = 1;
         return 1;
     }

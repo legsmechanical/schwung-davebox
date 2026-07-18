@@ -458,16 +458,19 @@ static int sp_globals_transport(sp_ctx_t *cx) {
     /* --- Global pad tonality --- */
     if (!strcmp(key, "key")) {
         inst->pad_key = (uint8_t)clamp_i(my_atoi(val), 0, 11);
+        rui_touch(inst);   /* rui_glob key + rui_scale */
         inst->state_dirty = 1;
         return 1;
     }
     if (!strcmp(key, "scale")) {
         inst->pad_scale = (uint8_t)clamp_i(my_atoi(val), 0, 13);
+        rui_touch(inst);   /* rui_glob scale + rui_scale */
         inst->state_dirty = 1;
         return 1;
     }
     if (!strcmp(key, "scale_aware")) {
         inst->scale_aware = my_atoi(val) ? 1 : 0;
+        rui_touch(inst);   /* rui_glob scale_aware */
         inst->state_dirty = 1;
         return 1;
     }
@@ -478,11 +481,13 @@ static int sp_globals_transport(sp_ctx_t *cx) {
     }
     if (!strcmp(key, "swing_amt")) {
         inst->swing_amt = (uint8_t)clamp_i(my_atoi(val), 0, 100);
+        rui_touch(inst);   /* rui_glob swing_amt */
         inst->state_dirty = 1;
         return 1;
     }
     if (!strcmp(key, "swing_res")) {
         inst->swing_res = (uint8_t)clamp_i(my_atoi(val), 0, 1);
+        rui_touch(inst);   /* rui_glob swing_res */
         inst->state_dirty = 1;
         return 1;
     }
@@ -521,6 +526,7 @@ static int sp_globals_transport(sp_ctx_t *cx) {
                 }
             }
         }
+        rui_touch(inst);   /* rui_glob launch_quant */
         inst->state_dirty = 1;
         return 1;
     }

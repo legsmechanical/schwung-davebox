@@ -347,8 +347,10 @@ int main(void) {
         HX_ASSERT(rev(h) == r + 1, "all_lanes_clip_resolution must bump rui_rev");
         r = rev(h); hx_set_param(h, "t3_all_lanes_playback_dir", "1");
         HX_ASSERT(rev(h) == r + 1, "all_lanes_playback_dir must bump rui_rev");
+        /* playback_audio_reverse is NOT emitted by the snapshot (matches the
+         * single-lane handler skipped in f3ceff1) — it must NOT bump rui_rev. */
         r = rev(h); hx_set_param(h, "t3_all_lanes_playback_audio_reverse", "1");
-        HX_ASSERT(rev(h) == r + 1, "all_lanes_playback_audio_reverse must bump rui_rev");
+        HX_ASSERT(rev(h) == r, "all_lanes_playback_audio_reverse must NOT bump rui_rev (not snapshot-visible)");
         r = rev(h); hx_set_param(h, "t3_all_lanes_beat_stretch", "1");
         HX_ASSERT(rev(h) == r + 1, "all_lanes_beat_stretch must bump rui_rev");
         r = rev(h); hx_set_param(h, "t3_all_lanes_clock_shift", "1");
@@ -400,6 +402,59 @@ int main(void) {
         HX_ASSERT(rev(h) == r + 1, "row_copy must bump rui_rev");
         r = rev(h); hx_set_param(h, "row_cut", "0 2");
         HX_ASSERT(rev(h) == r + 1, "row_cut must bump rui_rev");
+    }
+
+    /* ================================================================
+     * Rev-gate sweep #2 (audit2): three more files mutate snapshot-
+     * visible state with no rui_ call. Pin each family.
+     * ================================================================ */
+
+    /* ---- sp_globals_transport.c: globals surfaced in rui_glob (key/scale also
+     * drive rui_scale). All wholesale rui_touch. ---- */
+    {
+        unsigned r;
+        r = rev(h); hx_set_param(h, "key", "5");
+        HX_ASSERT(rev(h) == r + 1, "key must bump rui_rev (rui_glob + rui_scale)");
+        r = rev(h); hx_set_param(h, "scale", "3");
+        HX_ASSERT(rev(h) == r + 1, "scale must bump rui_rev (rui_glob + rui_scale)");
+        r = rev(h); hx_set_param(h, "scale_aware", "1");
+        HX_ASSERT(rev(h) == r + 1, "scale_aware must bump rui_rev (rui_glob)");
+        r = rev(h); hx_set_param(h, "swing_amt", "50");
+        HX_ASSERT(rev(h) == r + 1, "swing_amt must bump rui_rev (rui_glob)");
+        r = rev(h); hx_set_param(h, "swing_res", "1");
+        HX_ASSERT(rev(h) == r + 1, "swing_res must bump rui_rev (rui_glob)");
+        r = rev(h); hx_set_param(h, "launch_quant", "2");
+        HX_ASSERT(rev(h) == r + 1, "launch_quant must bump rui_rev (rui_glob)");
+    }
+
+    /* ---- sp_track_config.c: rui_index fields (mute/solo/channel/route) +
+     * clip launch (active/queued clip). t1 melodic, transport stopped. ---- */
+    {
+        unsigned r;
+        r = rev(h); hx_set_param(h, "t1_mute", "1");
+        HX_ASSERT(rev(h) == r + 1, "tN_mute must bump rui_rev (rui_index)");
+        r = rev(h); hx_set_param(h, "t1_solo", "1");
+        HX_ASSERT(rev(h) == r + 1, "tN_solo must bump rui_rev (rui_index)");
+        r = rev(h); hx_set_param(h, "t1_channel", "3");
+        HX_ASSERT(rev(h) == r + 1, "tN_channel must bump rui_rev (rui_index)");
+        r = rev(h); hx_set_param(h, "t1_route", "move");
+        HX_ASSERT(rev(h) == r + 1, "tN_route must bump rui_rev (rui_index)");
+        r = rev(h); hx_set_param(h, "t1_launch_clip", "2");
+        HX_ASSERT(rev(h) == r + 1, "tN_launch_clip must bump rui_rev (rui_index ac/qc)");
+    }
+
+    /* ---- sp_globals_misc.c: mute_all_clear + snapshot recall rewrite
+     * inst->mute[]/solo[] (rui_index). Both wholesale rui_touch. snap_save
+     * only STORES (not snapshot-visible) so it must NOT bump. ---- */
+    {
+        unsigned r;
+        r = rev(h); hx_set_param(h, "mute_all_clear", "1");
+        HX_ASSERT(rev(h) == r + 1, "mute_all_clear must bump rui_rev (rui_index)");
+        /* Store a snapshot into slot 0 (N m0..m7 s0..s7 dm0..dm7 = 25 tokens). */
+        r = rev(h); hx_set_param(h, "snap_save", "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0");
+        HX_ASSERT(rev(h) == r, "snap_save must NOT bump rui_rev (store only, not shown)");
+        r = rev(h); hx_set_param(h, "snap_load", "0");
+        HX_ASSERT(rev(h) == r + 1, "snap_load must bump rui_rev (rui_index recall)");
     }
 
     hx_destroy(h);
