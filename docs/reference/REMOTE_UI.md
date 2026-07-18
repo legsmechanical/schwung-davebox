@@ -223,9 +223,14 @@ bands without breaking alignment).
 ## 8. Invariants & gotchas (hard-won)
 
 1. **Display = snapshot fields only.** No live `getParam` round-trip. New UI data ⇒ new `rui_*` field.
-2. **64 KB snapshot budget.** Gate large per-clip data (automation curves via `rui_cc` focus) so a
-   full snapshot stays small. `rui_cc` is emitted *before* `rui_notes`; a pathological over-large
-   field would truncate later fields → invalid JSON.
+2. **64 KB snapshot budget — truncation-safe.** Gate large per-clip data (automation curves via `rui_cc`
+   focus) so a full snapshot stays small. `seq8_remote_snapshot` reserves `RUI_TAIL_RESERVE` (96 B) of tail
+   headroom: the unbounded loops (`rui_dnotes`, `rui_notes`, `rui_cc`) stop before the buffer end so the
+   closing `"}` ALWAYS fits — an over-large clip degrades to fewer notes, never a mid-token truncation
+   (which the manager silently drops → bricked editor). `rui_cc` is emitted **last** (after the structural
+   fields + note content) so an over-large focused CC lane can only ever starve itself, not the session grid.
+   Field order is NOT load-bearing (manager parses JSON by key; browser `get()` by key), so this reordering
+   is safe. Pinned by the pathological-overflow case in `tests/test_rui_budget.c`.
 3. **Playhead wraps the loop window, not `displayTicks()`.** The device wraps `current_clip_tick`
    in `[loop_start, loop_start+length)·tps` (`playback_audible_cct`). Wrapping the extrapolation
    at the bar-rounded `displayTicks()` made it overshoot/jump on non-bar clips.

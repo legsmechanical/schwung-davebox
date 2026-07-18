@@ -68,8 +68,58 @@ static void test_rui_budget_realistic_dense(void) {
     hx_destroy(h);
 }
 
+/* Pathological overflow: pack far more drum hits than fit in 64 KB and assert
+ * the snapshot is STILL valid JSON (closed with '}', never past the buffer).
+ * Pre-fix this truncated mid-token → invalid JSON → the manager dropped the
+ * whole snapshot → the remote editor bricked for that clip. The tail-reserve
+ * guard in seq8_remote_snapshot() now stops the rui_dnotes/rui_notes/rui_cc
+ * loops before the closers so it degrades to fewer notes, never garbage. */
+static void test_rui_budget_pathological_overflow(void) {
+    hx_t *h = hx_create(NULL);
+    HX_ASSERT(h != NULL, "hx_create returned NULL");
+
+    /* 24 drum lanes, each hits at EVERY tick 0..511. note_add clamps tick to
+     * length*tps and dedups same-tick adds, so we first enlarge each lane's loop
+     * (packed (ls<<16)|len) to 2048 ticks and space hits by 1 → ~512 distinct
+     * hits/lane × 24 ≈ 12k hits ≈ 150+ KB of rui_dnotes, well past 64 KB.
+     * note_add is also the documented drum-clip alloc trigger. */
+    for (int l = 0; l < 24; l++) {
+        char key[64], v[32];
+        snprintf(key, sizeof(key), "t0_l%d_loop_set", l);
+        hx_set_param(h, key, "2048");                       /* ls=0, len=2048 */
+        for (int s = 0; s < 512; s++) {
+            snprintf(key, sizeof(key), "t0_l%d_note_add", l);
+            snprintf(v, sizeof(v), "%d 100 12", s);         /* tick vel gate */
+            hx_set_param(h, key, v);
+        }
+    }
+    hx_set_param(h, "t0_c0_ruisel", "");
+
+    static char buf[65536];
+    int n = hx_get_param(h, "state", buf, (int)sizeof(buf));
+
+    HX_ASSERT(n > 0, "get_param state returned no data");
+    HX_ASSERT(n <= 65535, "snapshot must never exceed the buffer");
+    /* Prove the test actually reached the overflow regime (the tail-reserve guard
+     * engaged near the cap) — otherwise the '}' assertion below is vacuous. */
+    HX_ASSERT(n > 60000, "test did not actually overflow the budget — density too low to exercise the fix");
+    /* THE FIX: valid JSON even when the content overflows the budget. */
+    HX_ASSERT(buf[n - 1] == '}', "overflowed snapshot must still close with '}' (valid JSON)");
+    /* Structural fields are emitted BEFORE the note content, so they survive the
+     * overflow — the browser can still navigate even if some hits are dropped. */
+    HX_ASSERT(strstr(buf, "\"rui_index\":\"") != NULL, "structural rui_index lost under overflow");
+    HX_ASSERT(strstr(buf, "\"rui_dlanes\":\"") != NULL, "structural rui_dlanes lost under overflow");
+    /* rui_cc is emitted last but its wrapper must still fit in the reserve. */
+    HX_ASSERT(strstr(buf, "\"rui_cc\":\"") != NULL, "rui_cc wrapper lost under overflow");
+
+    printf("PASS: rui budget pathological-overflow snapshot stays valid JSON at %d bytes\n", n);
+
+    hx_destroy(h);
+}
+
 int main(void) {
     test_rui_budget_realistic_dense();
-    printf("PASS: rui budget (realistic-dense snapshot under 64KB, well-formed)\n");
+    test_rui_budget_pathological_overflow();
+    printf("PASS: rui budget (realistic-dense + pathological-overflow, both well-formed)\n");
     return 0;
 }

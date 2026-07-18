@@ -5402,6 +5402,16 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
     int n = 0;  /* cursor; snprintf returns intended length, so guard each append */
     #define APP(...) do { if (n < out_len) n += snprintf(out + n, out_len - n, __VA_ARGS__); } while (0)
 
+    /* Tail headroom (bytes). The variable-length fields (rui_dnotes, rui_notes,
+     * rui_cc) can in a pathological session exceed the 64 KB buffer; if they
+     * truncate mid-token the closing quote+brace never get written, the JSON is
+     * invalid, and the manager drops the whole snapshot silently — bricking the
+     * remote editor for that clip until it is thinned on-device. Every unbounded
+     * loop below stops once the cursor reaches out_len - RUI_TAIL_RESERVE, so the
+     * remaining fixed field-wrappers and the closing "} always fit and the
+     * snapshot is ALWAYS valid JSON (it degrades to fewer notes, never garbage). */
+    const int RUI_TAIL_RESERVE = 96;
+
     double bpm = (inst->tracks[0].pfx.cached_bpm > 0)
                  ? inst->tracks[0].pfx.cached_bpm : (double)BPM_DEFAULT;
     APP("{\"rui_rev\":\"%u\"", (unsigned)inst->rui_rev);
@@ -5472,18 +5482,6 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
                 (int)ca->lane_loop_start[k], (int)ca->lane_length[k],
                 (int)ca->lane_tps[k], (int)ca->lane_res_tps[k]);
         }
-    }
-    APP("\"");
-
-    /* rui_cc: breakpoints "k|tick:val,tick:val" for the focused knob only.
-     * Emitted for melodic AND drum (keyed by cc_clip) when a knob is focused. */
-    APP(",\"rui_cc\":\"");
-    if (inst->rui_cc_focus >= 0 && inst->rui_cc_focus < 8) {
-        int k = inst->rui_cc_focus;
-        cc_auto_t *ca = &tr->clip_cc_auto[cc_clip];
-        APP("%d|", k);
-        for (int i = 0; i < (int)ca->count[k]; i++)
-            APP("%s%d:%d", i ? "," : "", (int)ca->ticks[k][i], (int)ca->vals[k][i]);
     }
     APP("\"");
 
@@ -5571,11 +5569,13 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
         APP(",\"rui_dnotes\":\"");
         int firstlane = 1;
         for (int l = 0; l < DRUM_LANES; l++) {
+            if (n >= out_len - RUI_TAIL_RESERVE) break;   /* keep JSON closable */
             clip_t *lc = &dclip->lanes[l].clip;
             int wrote = 0;
             for (uint16_t k = 0; k < lc->note_count; k++) {
                 note_t *nt = &lc->notes[k];
                 if (!nt->active) continue;
+                if (n >= out_len - RUI_TAIL_RESERVE) break;
                 if (!wrote) { APP("%s%d|%u:%d:%d", firstlane ? "" : ";", l,
                                   (unsigned)nt->tick, (int)nt->vel, (int)nt->gate);
                               firstlane = 0; wrote = 1; }
@@ -5590,10 +5590,28 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
         for (uint16_t k = 0; k < gcl->note_count; k++) {
             note_t *nt = &gcl->notes[k];
             if (!nt->active) continue;
+            if (n >= out_len - RUI_TAIL_RESERVE) break;
             APP("%u:%d:%d:%d;", (unsigned)nt->tick, (int)nt->pitch, (int)nt->vel, (int)nt->gate);
         }
         APP("\"");
     }
+
+    /* rui_cc: breakpoints "k|tick:val,tick:val" for the focused knob only.
+     * Emitted LAST — after the structural fields (index/cond/dlanes) and the
+     * note content — so an over-large focused CC lane (up to CC_AUTO_MAX_POINTS)
+     * can only ever starve ITSELF, never the session grid or notes. The point
+     * loop stops before the final closers so the JSON always closes cleanly. */
+    APP(",\"rui_cc\":\"");
+    if (inst->rui_cc_focus >= 0 && inst->rui_cc_focus < 8) {
+        int k = inst->rui_cc_focus;
+        cc_auto_t *ca = &tr->clip_cc_auto[cc_clip];
+        APP("%d|", k);
+        for (int i = 0; i < (int)ca->count[k]; i++) {
+            if (n >= out_len - 8) break;   /* room for closing quote + brace */
+            APP("%s%d:%d", i ? "," : "", (int)ca->ticks[k][i], (int)ca->vals[k][i]);
+        }
+    }
+    APP("\"");
 
     APP("}");
     #undef APP
