@@ -459,7 +459,8 @@ function parseCond(s){ if(!s) return {trk:-1, resp:[]};
 function parseModel(){
   const get = k => kv[P+k];
   if (get("rui_sel") == null) return null;
-  const [pon,ptick,pbpm] = (get("rui_play")||"0:0:120").split(":").map(Number);
+  const pv = (get("rui_play")||"0:0:120").split(":").map(Number);   /* tolerate short/garbled forms → no NaN into the playhead */
+  const pon = pv[0]||0, ptick = Number.isFinite(pv[1])?pv[1]:0, pbpm = Number.isFinite(pv[2])?pv[2]:120;
   const [st,sc,sl]       = (get("rui_sel")||"0:0:-1").split(":").map(Number);
   const [cl,ct,cls,cd]   = (get("rui_clip")||"16:24:0:0").split(":").map(Number);
   const tracks = (get("rui_index")||"").split(";").map(seg=>{
@@ -828,23 +829,23 @@ function renderMultiEdit(el){ const notes=selectedNotes(), n=notes.length;
     `<button class="sm" id="meOU" title="octave up">8va</button>`+
     `<button class="sm danger" id="meDel">Delete</button>`;
   /* velocity is RELATIVE across the selection — preserves each note's balance */
-  function shiftVel(d){ selectedNotes().forEach(nt=>{ const nv=Math.max(1,Math.min(127,nt.vel+d));
-    if(nv!==nt.vel){ nt.vel=nv; emit("note_vel",`${nt.tick} ${nt.pitch} ${nv}`); } }); draw(); }
+  function shiftVel(d){ const ops=[]; selectedNotes().forEach(nt=>{ const nv=Math.max(1,Math.min(127,nt.vel+d));
+    if(nv!==nt.vel){ nt.vel=nv; ops.push(["v",`${nt.tick} ${nt.pitch} ${nv}`]); } }); emitBatch(ops); draw(); }
   el.querySelector("#meVD").onclick=()=>shiftVel(-5);
   el.querySelector("#meVU").onclick=()=>shiftVel(5);
   el.querySelector("#meLen").onchange=e=>{ const v=Math.max(1,+e.target.value|0); if(!v) return;
-    selectedNotes().forEach(nt=>{ nt.gate=v; emit("note_resize",`${nt.tick} ${nt.pitch} ${v}`); }); draw(); };
-  function moveAll(dt,dp){ const ns=selectedNotes();
+    const ops=[]; selectedNotes().forEach(nt=>{ nt.gate=v; ops.push(["r",`${nt.tick} ${nt.pitch} ${v}`]); }); emitBatch(ops); draw(); };
+  function moveAll(dt,dp){ const ns=selectedNotes(), ops=[];
     ns.forEach(nt=>{ const o={tick:nt.tick,pitch:nt.pitch};
       nt.tick=Math.max(0,Math.min(maxEditTick()-1,nt.tick+dt)); nt.pitch=Math.max(0,Math.min(127,nt.pitch+dp));
-      emit("note_move",`${o.tick} ${o.pitch} ${nt.tick} ${nt.pitch}`); });
-    selSet.clear(); ns.forEach(nt=>selSet.add(nKey(nt))); draw(); renderNoteEdit(); }
+      ops.push(["m",`${o.tick} ${o.pitch} ${nt.tick} ${nt.pitch}`]); });
+    emitBatch(ops); selSet.clear(); ns.forEach(nt=>selSet.add(nKey(nt))); draw(); renderNoteEdit(); }
   el.querySelector("#meNL").onclick=()=>moveAll(-1,0);
   el.querySelector("#meNR").onclick=()=>moveAll(1,0);
   el.querySelector("#meOD").onclick=()=>moveAll(0,-12);
   el.querySelector("#meOU").onclick=()=>moveAll(0,12);
-  el.querySelector("#meDel").onclick=()=>{ selectedNotes().forEach(nt=>{ const k=M.notes.indexOf(nt); if(k>=0) M.notes.splice(k,1);
-    emit("note_del",`${nt.tick} ${nt.pitch}`); }); selSet.clear(); draw(); renderNoteEdit(); };
+  el.querySelector("#meDel").onclick=()=>{ const ops=[]; selectedNotes().forEach(nt=>{ const k=M.notes.indexOf(nt); if(k>=0) M.notes.splice(k,1);
+    ops.push(["d",`${nt.tick} ${nt.pitch}`]); }); emitBatch(ops); selSet.clear(); draw(); renderNoteEdit(); };
 }
 function renderNoteEdit(){
   const el=document.getElementById("noteedit"); if(!el) return;
@@ -980,7 +981,13 @@ function laneEmit(suffix,val,allKey){
   } else R.setParam(P+`t${M.sel.t}_l${M.sel.lane}_${suffix}`,val);
   afterEdit();
 }
-function pullSoon(){ setTimeout(()=>{ suppressRefreshUntil=0; refresh(); }, 130); }
+/* Schedule a reconcile ~130ms after an edit. Do NOT zero the suppress window
+ * here: a poll that was already in flight BEFORE the edit can land in the
+ * 130..250ms gap, and if the window were torn down it would clobber the
+ * optimistic model with pre-edit data (the edit visibly reverts for a frame).
+ * refresh(true) forces THIS reconcile to run past the window; applyParams still
+ * rejects any snapshot whose rev hasn't caught up, so stale polls can't win. */
+function pullSoon(){ setTimeout(()=>refresh(true), 130); }
 /* per-clip / per-drum-lane FX. Melodic → tN_cC_pfx_set; drum (lane selected) →
  * tN_lL_pfx_set. The snapshot's rui_pfx already targets the selected lane. */
 /* compact one-line summaries shown on a collapsed FX sub-group */
@@ -1212,6 +1219,7 @@ function renderSession(){
       if(!ok){ e.dataTransfer.dropEffect="none"; return; }
       e.preventDefault(); e.dataTransfer.dropEffect=e.altKey?"copy":"move"; el.classList.add("drop"); };
     el.ondragleave=()=>el.classList.remove("drop");
+    el.ondragend=()=>{ clipDrag=null; el.classList.remove("drop"); };  /* abandoned drag → clear so polls resume */
     el.ondrop=e=>{ e.preventDefault(); el.classList.remove("drop");
       const dst={t:+el.dataset.t,c:+el.dataset.c}; const src=clipDrag; clipDrag=null;
       if(!src||(src.t===dst.t&&src.c===dst.c)) return;
@@ -1608,6 +1616,16 @@ function regionAt(x,y){ if(x<GUTTER&&y<RULER) return "corner";
 /* ---------- emit (per-track-prefixed, ≤255B) ---------- */
 function emit(op,val){ R.setParam(P+`t${M.sel.t}_c${M.sel.c}_${op}`, val); afterEdit(); }
 function afterEdit(){ suppressRefreshUntil=now()+250; fastUntil=now()+1400; }
+/* Batch several melodic note ops into ONE atomic tN_cC_notes_op set_param.
+ * Per-audio-buffer coalescing collapses N separate note-op set_params to the
+ * last one reaching the DSP, so a multi-note edit (shift-vel, move-all, multi-
+ * delete, box-nudge) would silently drop all but one and the next snapshot would
+ * revert the rest. The DSP _notes_op handler applies the whole
+ * "<op> args;<op> args;..." string and finalizes once (bumps the rev).
+ * ops = [[opChar,argStr],...]; opChar in a/d/m/r/v. */
+function emitBatch(ops){ if(!ops||!ops.length) return;
+  R.setParam(P+`t${M.sel.t}_c${M.sel.c}_notes_op`, ops.map(o=>`${o[0]} ${o[1]}`).join(";"));
+  afterEdit(); }
 function selectLane(lane){ if(lane<0||lane>=M.dlanes.length) return;
   M.sel.lane=lane; selStep=-1; selDrum=null;   /* lane change → drop step + hit selection (per-lane) */
   R.setParam(P+`t${M.sel.t}_c${M.sel.c}_ruisel`, String(lane));
@@ -1778,7 +1796,10 @@ function vAdjust(mx,my){ const drum=isDrum();
   if(!drum && selSet.size>1){ const sel=selectedNotes();
     let best=-1,bd=1e9; sel.forEach((n,i)=>{ const d=Math.abs(xOfTick(n.tick)-mx); if(d<bd){bd=d;best=i;} });
     if(best<0||bd>22) return; const delta=vel-sel[best].vel; if(!delta) return;
-    sel.forEach(n=>{ const nv=Math.max(1,Math.min(127,n.vel+delta)); if(nv!==n.vel){ n.vel=nv; emit("note_vel",`${n.tick} ${n.pitch} ${nv}`); } });
+    sel.forEach(n=>{ n.vel=Math.max(1,Math.min(127,n.vel+delta)); });
+    /* one atomic batch of ABSOLUTE vels per move → coalescing keeps the last =
+     * final state = correct (vs N per-note writes where only one survived). */
+    emitBatch(sel.map(n=>["v",`${n.tick} ${n.pitch} ${n.vel}`]));
     draw(); renderNoteEdit(); return; }
   const notes=drum?(M.sel.lane>=0?(M.dnotes[M.sel.lane]||[]):[]):M.notes;
   let best=-1,bd=1e9; notes.forEach((n,i)=>{ const d=Math.abs(xOfTick(n.tick)-mx); if(d<bd){bd=d;best=i;} });
@@ -1926,7 +1947,7 @@ function applyParams(params){
   let touched=false;
   for(const k in params){ if(k.indexOf(P+"rui_")===0){ kv[k]=params[k]; touched=true; } }
   if(!touched) return;
-  if(dragging) return;                          /* don't clobber an active drag */
+  if(dragging || clipDrag) return;              /* don't clobber a canvas OR session-grid clip drag */
   const m=parseModel(); if(!m) return;
   /* during the post-edit suppress window, ignore snapshots that haven't caught up */
   if(now()<suppressRefreshUntil && M && m.rev<=M.rev) { return; }
@@ -1951,8 +1972,9 @@ function applyParams(params){
 }
 
 /* ---------- refresh ---------- */
-function refresh(){
-  if(dragging || now()<suppressRefreshUntil) return;
+function refresh(force){
+  if(dragging) return;
+  if(!force && now()<suppressRefreshUntil) return;
   if(typeof R.resubscribe==="function"){ R.resubscribe(); return; }
   if(window.parent){ window.parent.postMessage({type:"subscribe"},"*"); }
   const keys=["rui_rev","rui_play","rui_sel","rui_clip","rui_glob","rui_scale","rui_index",
@@ -1982,7 +2004,7 @@ function phStep(){
   let est=phAnchorTick + (now()-phAnchorT)*(BEAT_TICKS*phBpm/60000);  /* ticks/ms at BPM */
   est = win>0 ? lsT + (((est-lsT)%win)+win)%win : phAnchorTick;       /* loop-window wrap, matches device */
   const x=xOfTick(est);
-  if(x<GUTTER||x>VW){ ph.style.display="none"; }
+  if(!Number.isFinite(x)||x<GUTTER||x>VW){ ph.style.display="none"; }
   else { ph.style.display="block"; ph.style.transform="translateX("+x+"px)"; }
   phRAF=requestAnimationFrame(phStep);
 }
@@ -2061,9 +2083,9 @@ document.getElementById("xport").onclick=()=>{ if(!M) return;
   R.setParam(P+"transport", M.play.on ? "stop" : "play"); afterEdit(); pullSoon(); };
 /* ---------- keyboard shortcuts ---------- */
 function deleteSelection(){ if(isDrum()){ if(selDrum) drumDelete(selDrum.lane,selDrum.tick); return; }
-  const ns=selectedNotes(); if(!ns.length) return;
-  ns.forEach(nt=>{ const k=M.notes.indexOf(nt); if(k>=0) M.notes.splice(k,1); emit("note_del",`${nt.tick} ${nt.pitch}`); });
-  selSet.clear(); selNote=null; draw(); renderNoteEdit(); }
+  const ns=selectedNotes(); if(!ns.length) return; const ops=[];
+  ns.forEach(nt=>{ const k=M.notes.indexOf(nt); if(k>=0) M.notes.splice(k,1); ops.push(["d",`${nt.tick} ${nt.pitch}`]); });
+  emitBatch(ops); selSet.clear(); selNote=null; draw(); renderNoteEdit(); }
 function nudgeSelection(key,big){
   if(isDrum()){ if(!selDrum) return; const arr=M.dnotes[selDrum.lane]||[], h=arr.find(z=>z.tick===selDrum.tick); if(!h) return;
     if(key==="ArrowLeft"||key==="ArrowRight"){ const d=(key==="ArrowRight"?1:-1)*(big?1:(snapTicks()||1));
@@ -2073,9 +2095,10 @@ function nudgeSelection(key,big){
   const ns=selectedNotes(); if(!ns.length) return; let dt=0,dp=0;
   if(key==="ArrowLeft") dt=-(big?1:(snapTicks()||1)); else if(key==="ArrowRight") dt=(big?1:(snapTicks()||1));
   else if(key==="ArrowUp") dp=big?12:1; else if(key==="ArrowDown") dp=big?-12:-1; else return;
-  ns.forEach(nt=>{ const o={tick:nt.tick,pitch:nt.pitch};
+  const ops=[]; ns.forEach(nt=>{ const o={tick:nt.tick,pitch:nt.pitch};
     nt.tick=Math.max(0,Math.min(maxEditTick()-1,nt.tick+dt)); nt.pitch=Math.max(0,Math.min(127,nt.pitch+dp));
-    emit("note_move",`${o.tick} ${o.pitch} ${nt.tick} ${nt.pitch}`); });
+    ops.push(["m",`${o.tick} ${o.pitch} ${nt.tick} ${nt.pitch}`]); });
+  emitBatch(ops);
   if(selSet.size){ selSet.clear(); ns.forEach(nt=>selSet.add(nKey(nt))); }
   if(selNote) selNote={tick:ns[0].tick,pitch:ns[0].pitch};
   draw(); renderNoteEdit(); }
