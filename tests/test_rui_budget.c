@@ -62,6 +62,8 @@ static void test_rui_budget_realistic_dense(void) {
 
     HX_ASSERT(strstr(buf, "\"rui_dnotes\":\"") != NULL, "missing rui_dnotes (drum hits)");
     HX_ASSERT(strstr(buf, "\"rui_index\":\"") != NULL, "missing rui_index (tracks index)");
+    /* A comfortably-under-budget snapshot must NOT carry the truncation flag. */
+    HX_ASSERT(strstr(buf, "\"rui_trunc\":1") == NULL, "rui_trunc must be ABSENT on a normal snapshot");
 
     printf("PASS: rui budget realistic-dense snapshot size = %d bytes (cap 65536)\n", n);
 
@@ -111,8 +113,65 @@ static void test_rui_budget_pathological_overflow(void) {
     HX_ASSERT(strstr(buf, "\"rui_dlanes\":\"") != NULL, "structural rui_dlanes lost under overflow");
     /* rui_cc is emitted last but its wrapper must still fit in the reserve. */
     HX_ASSERT(strstr(buf, "\"rui_cc\":\"") != NULL, "rui_cc wrapper lost under overflow");
+    /* Truncation must be flagged so the browser can badge "some notes hidden". */
+    HX_ASSERT(strstr(buf, "\"rui_trunc\":1") != NULL, "rui_trunc:1 must be present when a loop truncated");
 
     printf("PASS: rui budget pathological-overflow snapshot stays valid JSON at %d bytes\n", n);
+
+    hx_destroy(h);
+}
+
+/* rui_cc tail-guard overflow (FIX 1 regression pin): the drum hits fill the
+ * buffer to the tail reserve, THEN a focused CC lane packed to CC_AUTO_MAX_POINTS
+ * (1024 points) tries to emit last. Pre-fix, rui_cc's guard reserved only 8 bytes
+ * — its 10-byte max point token plus the closing "} could overrun, emitting
+ * UNTERMINATED JSON that the manager silently drops (bricked editor). The reserve
+ * now matches the other loops (RUI_TAIL_RESERVE), so the snapshot always closes.
+ * The existing overflow test only exercises rui_dnotes — this pins rui_cc. */
+static void test_rui_budget_cc_tail_overflow(void) {
+    hx_t *h = hx_create(NULL);
+    HX_ASSERT(h != NULL, "hx_create returned NULL");
+
+    /* Same overflowing drum clip as the pathological case (fills to the reserve). */
+    for (int l = 0; l < 24; l++) {
+        char key[64], v[32];
+        snprintf(key, sizeof(key), "t0_l%d_loop_set", l);
+        hx_set_param(h, key, "2048");
+        for (int s = 0; s < 512; s++) {
+            snprintf(key, sizeof(key), "t0_l%d_note_add", l);
+            snprintf(v, sizeof(v), "%d 100 12", s);
+            hx_set_param(h, key, v);
+        }
+    }
+
+    /* Pack knob 0's CC automation lane on t0's active clip (clip 0) to the max
+     * point count, each a distinct tick with the widest possible token (,T:127). */
+    for (int p = 0; p < 1024; p++) {
+        char v[48];
+        snprintf(v, sizeof(v), "0 0 %d 127", p);   /* clip knob tick val */
+        hx_set_param(h, "t0_cc_auto_set", v);
+    }
+    /* Focus knob 0 so rui_cc actually emits the packed lane (it is gated). */
+    hx_set_param(h, "t0_c0_cc_focus", "0");
+    hx_set_param(h, "t0_c0_ruisel", "");
+
+    static char buf[65536];
+    int n = hx_get_param(h, "state", buf, (int)sizeof(buf));
+
+    HX_ASSERT(n > 0, "get_param state returned no data");
+    HX_ASSERT(n <= 65535, "snapshot must never exceed the buffer");
+    HX_ASSERT(n > 60000, "test did not overflow the budget — density too low to exercise the guard");
+    /* THE FIX: the snapshot always terminates cleanly even with rui_cc emitting last. */
+    HX_ASSERT(buf[n - 1] == '}', "rui_cc tail overflow must still close with '}' (valid JSON)");
+    /* Parseable-shaped: the rui_cc field wrapper survived and closed with a quote
+     * before the brace (no mid-token truncation of the CC lane). */
+    HX_ASSERT(strstr(buf, "\"rui_cc\":\"") != NULL, "rui_cc wrapper lost under CC-lane overflow");
+    /* The rui_cc field must close with a quote before whatever follows it (the
+     * trunc flag / brace) — i.e. no mid-token truncation of the CC point list. */
+    HX_ASSERT(strstr(buf, "\",\"rui_trunc\":1}") != NULL, "rui_cc did not close cleanly before rui_trunc/brace");
+    HX_ASSERT(strstr(buf, "\"rui_trunc\":1") != NULL, "rui_trunc:1 must flag the CC-lane truncation");
+
+    printf("PASS: rui budget CC-tail-overflow snapshot stays valid JSON at %d bytes\n", n);
 
     hx_destroy(h);
 }
@@ -120,6 +179,7 @@ static void test_rui_budget_pathological_overflow(void) {
 int main(void) {
     test_rui_budget_realistic_dense();
     test_rui_budget_pathological_overflow();
-    printf("PASS: rui budget (realistic-dense + pathological-overflow, both well-formed)\n");
+    test_rui_budget_cc_tail_overflow();
+    printf("PASS: rui budget (realistic-dense + pathological-overflow + cc-tail-overflow, all well-formed)\n");
     return 0;
 }

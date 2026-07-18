@@ -5411,6 +5411,7 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
      * remaining fixed field-wrappers and the closing "} always fit and the
      * snapshot is ALWAYS valid JSON (it degrades to fewer notes, never garbage). */
     const int RUI_TAIL_RESERVE = 96;
+    int trunc = 0;  /* set when any reserve-guarded loop stops early on the budget */
 
     double bpm = (inst->tracks[0].pfx.cached_bpm > 0)
                  ? inst->tracks[0].pfx.cached_bpm : (double)BPM_DEFAULT;
@@ -5569,13 +5570,13 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
         APP(",\"rui_dnotes\":\"");
         int firstlane = 1;
         for (int l = 0; l < DRUM_LANES; l++) {
-            if (n >= out_len - RUI_TAIL_RESERVE) break;   /* keep JSON closable */
+            if (n >= out_len - RUI_TAIL_RESERVE) { trunc = 1; break; }   /* keep JSON closable */
             clip_t *lc = &dclip->lanes[l].clip;
             int wrote = 0;
             for (uint16_t k = 0; k < lc->note_count; k++) {
                 note_t *nt = &lc->notes[k];
                 if (!nt->active) continue;
-                if (n >= out_len - RUI_TAIL_RESERVE) break;
+                if (n >= out_len - RUI_TAIL_RESERVE) { trunc = 1; break; }
                 if (!wrote) { APP("%s%d|%u:%d:%d", firstlane ? "" : ";", l,
                                   (unsigned)nt->tick, (int)nt->vel, (int)nt->gate);
                               firstlane = 0; wrote = 1; }
@@ -5590,7 +5591,7 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
         for (uint16_t k = 0; k < gcl->note_count; k++) {
             note_t *nt = &gcl->notes[k];
             if (!nt->active) continue;
-            if (n >= out_len - RUI_TAIL_RESERVE) break;
+            if (n >= out_len - RUI_TAIL_RESERVE) { trunc = 1; break; }
             APP("%u:%d:%d:%d;", (unsigned)nt->tick, (int)nt->pitch, (int)nt->vel, (int)nt->gate);
         }
         APP("\"");
@@ -5607,11 +5608,22 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
         cc_auto_t *ca = &tr->clip_cc_auto[cc_clip];
         APP("%d|", k);
         for (int i = 0; i < (int)ca->count[k]; i++) {
-            if (n >= out_len - 8) break;   /* room for closing quote + brace */
+            /* Reserve the full tail headroom (not a bare few bytes): the max
+             * point token here is ",65535:127" (10 B) and the closing "}
+             * plus the optional ,"rui_trunc":1 (~14 B) must all still fit —
+             * an unterminated snapshot is silently dropped by the manager. */
+            if (n >= out_len - RUI_TAIL_RESERVE) { trunc = 1; break; }
             APP("%s%d:%d", i ? "," : "", (int)ca->ticks[k][i], (int)ca->vals[k][i]);
         }
     }
     APP("\"");
+
+    /* Truncation indicator: if ANY variable-length loop (rui_dnotes / rui_notes
+     * / rui_cc) stopped early on its budget guard, tell the browser so it can
+     * badge "some notes hidden". ~14 B — fits inside RUI_TAIL_RESERVE (96), and
+     * it is emitted before the closing brace, after the last guarded loop, so
+     * it can never itself be starved. */
+    if (trunc) APP(",\"rui_trunc\":1");
 
     APP("}");
     #undef APP
