@@ -951,9 +951,15 @@ function stepCount(s,tps){ let nc=0;
   return nc; }
 function renderStepEdit(){
   const el=document.getElementById("stepedit"); if(!el) return;
+  /* showing/hiding this strip changes the roll container's height, but the
+   * canvas only re-measures in layout() — without a re-layout the step band
+   * at the canvas bottom gets clipped out of view the moment the strip
+   * appears. Re-layout + redraw whenever content presence flips. */
+  const hadContent=!!el.innerHTML;
+  const relayout=()=>{ if(hadContent!==!!el.innerHTML){ layout(); draw(); } };
   const drum=isDrum();
   const len=drum?(M.laneInfo?M.laneInfo.len:0):M.clip.len;
-  if(selStep<0||selStep>=len||(drum&&M.sel.lane<0)){ if(selStep>=len) selStep=-1; el.innerHTML=""; return; }
+  if(selStep<0||selStep>=len||(drum&&M.sel.lane<0)){ if(selStep>=len) selStep=-1; el.innerHTML=""; relayout(); return; }
   const s=selStep, tps=drum?(M.laneInfo?M.laneInfo.tps:M.clip.tps):M.clip.tps;
   const tr=M.stepTrig[s]||{iter:0,rand:0,ratch:0,nudge:0};
   const nc=stepCount(s,tps), tmax=Math.max(1,tps-1);
@@ -982,6 +988,7 @@ function renderStepEdit(){
   el.querySelector("#seVel").onchange=e=>{ const v=Math.max(1,Math.min(127,+e.target.value|0)); R.setParam(P+pfx+"_vel",String(v)); afterEdit(); pullSoon(); };
   el.querySelector("#seGate").onchange=e=>{ const v=Math.max(1,+e.target.value|0); R.setParam(P+pfx+"_gate",String(v)); afterEdit(); pullSoon(); };
   el.querySelector("#seClr").onclick=()=>{ R.setParam(P+pfx+"_clear",""); selStep=-1; afterEdit(); pullSoon(); renderStepEdit(); };
+  relayout();
 }
 const RES_TPS=[12,24,48,96,192,384], RES_LAB=["1/32","1/16","1/8","1/4","1/2","1/1"];
 const DIR_LAB=["Fwd","Bwd","PP-Fwd","PP-Bwd"];

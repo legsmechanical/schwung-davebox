@@ -233,6 +233,17 @@ int main(void) {
         HX_ASSERT(rev(h) == r + 1, "_step_clear must bump rui_rev");
     }
     {
+        /* _ruisel changes the snapshot's content selector (rui_sel_*), so it
+         * MUST bump — without it the manager's rev gate never re-reads and the
+         * browser shows the previously selected clip until an unrelated edit. */
+        unsigned r = rev(h);
+        hx_set_param(h, "t1_c3_ruisel", "");
+        HX_ASSERT(rev(h) == r + 1, "_ruisel must bump rui_rev");
+        r = rev(h);
+        hx_set_param(h, "t2_c5_ruisel", "-1");
+        HX_ASSERT(rev(h) == r + 1, "_ruisel (back) must bump rui_rev");
+    }
+    {
         /* _loop_set mirrors the _length freeze-fix guard: no bump while
          * this track is live-recording (adaptive record path). */
         hx_set_param(h, "t2_recording", "1");

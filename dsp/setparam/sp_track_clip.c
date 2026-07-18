@@ -39,12 +39,18 @@ static int sp_track_clip(sp_ctx_t *cx) {
         clip_t *cl = &tr->clips[cidx];
 
         /* tN_cC_ruisel "[lane]": select this clip as the remote-UI snapshot
-         * target. Optional arg = drum lane index (-1/absent = melodic). */
+         * target. Optional arg = drum lane index (-1/absent = melodic).
+         * MUST bump rev: the snapshot's content is keyed on rui_sel_*, so a
+         * selection change changes what "state" returns — without a bump the
+         * manager's rev gate never re-reads and the browser shows the OLD
+         * clip until an unrelated edit (the browser's own reseed is rejected
+         * inside its post-edit suppress window at an unchanged rev). */
         if (!strcmp(p, "_ruisel")) {
             inst->rui_sel_track = (uint8_t)tidx;
             inst->rui_sel_clip  = (uint8_t)cidx;
             inst->rui_sel_lane  = (val && val[0] && val[0] != '-') ?
                                       (int16_t)clamp_i(my_atoi(val), 0, DRUM_LANES - 1) : -1;
+            rui_mark(inst, tidx, cidx);
             return 1;
         }
 

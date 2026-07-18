@@ -5383,6 +5383,29 @@ static int rui_emit_steps(char *out, int n, int out_len, clip_t *cl) {
     return n;
 }
 
+/* Track-level playhead tick for the remote UI (rui_poll digest + rui_play).
+ * Melodic tracks refresh tr->current_clip_tick every render tick, but the DRUM
+ * advance branch only steps the per-lane clocks and never writes it — so for a
+ * drum track that field is frozen at a stale melodic value, and the browser
+ * (which interpolates from the last anchor, then re-anchors on every push)
+ * visibly snaps back to the same spot ~10×/s. Derive the drum tick from the
+ * DISPLAYED lane's own clock instead (rui_sel_lane when set, else lane 0 —
+ * matching the snapshot's lane-0 grid reference), audible-mapped like the
+ * melodic path so playback direction is honored. Read-side only: render-state
+ * consumers of current_clip_tick (recording snapshots etc.) are untouched. */
+static uint32_t rui_playhead_tick(seq8_instance_t *inst) {
+    int t = inst->rui_sel_track; if (t < 0 || t >= NUM_TRACKS) t = 0;
+    seq8_track_t *tr = &inst->tracks[t];
+    if (tr->pad_mode == PAD_MODE_DRUM && tr->drum_clips[tr->active_clip]) {
+        int l = (inst->rui_sel_lane >= 0 && inst->rui_sel_lane < DRUM_LANES)
+                ? (int)inst->rui_sel_lane : 0;
+        clip_t *dlc = &tr->drum_clips[tr->active_clip]->lanes[l].clip;
+        return playback_audible_cct(dlc, tr->drum_current_step[l],
+                                    tr->drum_tick_in_step[l]);
+    }
+    return tr->current_clip_tick;
+}
+
 static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
     if (!inst || !out || out_len <= 0) return -1;
     int t = inst->rui_sel_track; if (t < 0 || t >= NUM_TRACKS) t = 0;
@@ -5417,7 +5440,7 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
                  ? inst->tracks[0].pfx.cached_bpm : (double)BPM_DEFAULT;
     APP("{\"rui_rev\":\"%u\"", (unsigned)inst->rui_rev);
     APP(",\"rui_play\":\"%d:%u:%d\"",
-        inst->playing ? 1 : 0, (unsigned)tr->current_clip_tick, (int)bpm);
+        inst->playing ? 1 : 0, (unsigned)rui_playhead_tick(inst), (int)bpm);
     APP(",\"rui_sel\":\"%d:%d:%d\"", t, c, (int)inst->rui_sel_lane);
     APP(",\"rui_clip\":\"%d:%d:%d:%d\"",
         (int)gcl->length, (int)gcl->ticks_per_step, (int)gcl->loop_start,
@@ -5706,13 +5729,11 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
          * reads this every browser poll and only does the full get_param("state")
          * read when rev changes (content edit); while playing it pushes just the
          * playhead. Keeps idle/playing polls off the heavy snapshot path. */
-        int pt = inst->rui_sel_track; if (pt < 0 || pt >= NUM_TRACKS) pt = 0;
-        seq8_track_t *ptr = &inst->tracks[pt];
         double pbpm = (inst->tracks[0].pfx.cached_bpm > 0)
                       ? inst->tracks[0].pfx.cached_bpm : (double)BPM_DEFAULT;
         return snprintf(out, out_len, "%u:%d:%u:%d",
                         (unsigned)inst->rui_rev, inst->playing ? 1 : 0,
-                        (unsigned)ptr->current_clip_tick, (int)pbpm);
+                        (unsigned)rui_playhead_tick(inst), (int)pbpm);
     }
 
     if (!strcmp(key, "module_id")) {
