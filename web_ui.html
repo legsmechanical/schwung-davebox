@@ -129,6 +129,11 @@
   .ebgrp select{font-size:12.5px;padding:6px 8px}
   .eb-empty{color:var(--faint);font-size:12.5px;font-style:italic}
   #velwrap{flex:0 0 74px;border-top:1px solid #000;background:#0e1014;position:relative;overflow:hidden;touch-action:none}
+  .lane-rs{position:absolute;left:0;right:0;top:0;height:6px;cursor:ns-resize;z-index:5;touch-action:none}
+  .lane-rs:hover,.lane-rs.on{background:rgba(57,208,200,0.25)}
+  #lanetip{position:fixed;pointer-events:none;background:rgba(6,8,12,0.92);color:var(--ink);
+    font:11px ui-monospace,monospace;padding:2px 6px;border-radius:3px;z-index:70;display:none;
+    border:1px solid var(--ctl-br)}
   #velcanvas{display:block;position:absolute;left:0;top:0;cursor:ns-resize;touch-action:none}
   #vellabel{position:absolute;left:6px;top:3px;font:10px ui-monospace,monospace;color:var(--faint);pointer-events:none}
   #drumph{position:absolute;inset:0;display:none;flex-direction:column;gap:6px;
@@ -274,11 +279,11 @@
         <div class="zoomstrip zv" id="zstripV" title="Zoom vertically — drag right to zoom in, left to zoom out">↔</div>
       </div>
       <div class="bandhdr" id="velhdr" title="Show / hide the velocity lane"><span class="tw">▼</span><span class="bl">Velocity</span></div>
-      <div id="velwrap"><canvas id="velcanvas"></canvas></div>
+      <div id="velwrap"><div class="lane-rs" data-for="velwrap" title="drag to resize"></div><canvas id="velcanvas"></canvas></div>
       <div class="bandhdr" id="autohdr" title="Show / hide CC automation (per clip)"><span class="tw">▶</span><span class="bl">Automation</span><span class="bsum" id="autohsum"></span></div>
       <div id="autopick"></div>
       <div id="autoctl"></div>
-      <div id="autowrap"><canvas id="autocanvas"></canvas></div>
+      <div id="autowrap"><div class="lane-rs" data-for="autowrap" title="drag to resize"></div><canvas id="autocanvas"></canvas></div>
       <div id="editbar">
         <div id="noteedit" class="ebgrp"></div>
         <div id="stepedit" class="ebgrp"></div>
@@ -1686,8 +1691,17 @@ function drawGutterDrum(){ ctx.fillStyle="#171a20"; ctx.fillRect(0,RULER,GUTTER,
   /* (step-band gutter + STEP label are painted by drawStepBand) */
 }
 function drawVel(){ if(!velOpen) return; vctx.clearRect(0,0,VVW,VVH); vctx.fillStyle="#0e1014"; vctx.fillRect(0,0,VVW,VVH);
+  /* faint value reference lines at 127 / 64 / 1 */
+  [127,64,1].forEach(v=>{ const y=VVH-3-(v/127)*(VVH-10);
+    vctx.strokeStyle="rgba(74,85,110,0.35)"; vctx.beginPath(); vctx.moveTo(GUTTER,y); vctx.lineTo(VVW,y); vctx.stroke(); });
   vctx.fillStyle="#171a20"; vctx.fillRect(0,0,GUTTER,VVH);
   vctx.fillStyle="#5a606c"; vctx.font="9px ui-monospace,monospace"; vctx.textBaseline="middle"; vctx.fillText("VEL",6,VVH/2);
+  /* value axis in the gutter */
+  vctx.font="8px ui-monospace,monospace"; vctx.textAlign="right";
+  vctx.fillText("127",GUTTER-3,Math.max(6,VVH-3-(VVH-10)));
+  if(VVH>=64) vctx.fillText("64",GUTTER-3,VVH-3-(64/127)*(VVH-10));
+  vctx.fillText("1",GUTTER-3,VVH-4);
+  vctx.textAlign="left";
   if(!M) return; const drum=isDrum(), ac=rollAccent();
   const notes = drum ? (M.sel.lane>=0?(M.dnotes[M.sel.lane]||[]):[]) : M.notes;
   const tps=gridTps(), len=gridLen();
@@ -2012,10 +2026,18 @@ function drawAuto(){
     actx.stroke();
     pts.forEach(p=>{ const x=xOfTick(p.tick), y=ccYofV(p.val); if(x<GUTTER-5||x>AVW+5) return;
       actx.fillStyle=accent; actx.beginPath(); actx.arc(x,y,4.5,0,7); actx.fill(); }); }
+  /* faint value reference lines at 127 / 64 / 0 */
+  [127,64,0].forEach(v=>{ const y=ccYofV(v);
+    actx.strokeStyle="rgba(74,85,110,0.35)"; actx.beginPath(); actx.moveTo(GUTTER,y); actx.lineTo(AVW,y); actx.stroke(); });
   /* gutter label painted last (sits above the grid) */
   actx.fillStyle="#171a20"; actx.fillRect(0,0,GUTTER,AVH);
   actx.fillStyle="#5a606c"; actx.font="9px ui-monospace,monospace"; actx.textBaseline="middle";
   actx.fillText(ccLabel(meta),6,AVH/2);
+  /* value axis in the gutter */
+  actx.font="8px ui-monospace,monospace"; actx.textAlign="right";
+  actx.fillText("127",GUTTER-3,Math.max(6,ccYofV(127)));
+  actx.fillText("0",GUTTER-3,Math.min(AVH-5,ccYofV(0)));
+  actx.textAlign="left";
 }
 /* edit gestures (draw / drag / erase) — driven by the roll's tool state */
 function ccPointAt(mx){ if(!M.cc||M.cc.k!==ccSel) return null; let best=null,bd=1e9;
@@ -2149,6 +2171,40 @@ function phStep(){
 function startPlayhead(){ if(!phRAF) phRAF=requestAnimationFrame(phStep); }
 function stopPlayhead(){ if(phRAF){ cancelAnimationFrame(phRAF); phRAF=0; }
   const ph=document.getElementById("playhead"); if(ph) ph.style.display="none"; }
+
+/* ---------- lane resize + hover value readout (vel + automation) ---------- */
+const laneTip=document.createElement("div"); laneTip.id="lanetip"; document.body.appendChild(laneTip);
+function laneTipShow(e,txt){ laneTip.textContent=txt; laneTip.style.display="block";
+  laneTip.style.left=Math.min(window.innerWidth-90,e.clientX+12)+"px"; laneTip.style.top=(e.clientY-26)+"px"; }
+function laneTipHide(){ laneTip.style.display="none"; }
+function velOfY(y){ return Math.max(1,Math.min(127,Math.round((VVH-3-y)*127/Math.max(1,VVH-10)))); }
+vc.addEventListener("pointermove",e=>{ if(!M) return; const r=vc.getBoundingClientRect();
+  const x=e.clientX-r.left,y=e.clientY-r.top; if(x<GUTTER){ laneTipHide(); return; }
+  const drum=isDrum();
+  const notes=drum?(M.sel.lane>=0?(M.dnotes[M.sel.lane]||[]):[]):M.notes;
+  let best=null,bd=1e9; notes.forEach(n=>{ const d=Math.abs(xOfTick(n.tick)-x); if(d<bd){bd=d;best=n;} });
+  laneTipShow(e,(best&&bd<=22)?("Vel "+best.vel):("Vel "+velOfY(y))); });
+vc.addEventListener("pointerleave",laneTipHide);
+ac.addEventListener("pointermove",e=>{ if(!M||ccSel<0) return; const r=ac.getBoundingClientRect();
+  const x=e.clientX-r.left,y=e.clientY-r.top; if(x<GUTTER){ laneTipHide(); return; }
+  const hit=ccPointAt(x);
+  laneTipShow(e,(hit?hit.val:Math.max(0,Math.min(127,ccVofY(y))))+(hit?" ●":"")); });
+ac.addEventListener("pointerleave",laneTipHide);
+/* drag the handle at a lane's top edge to resize it (persisted) */
+document.querySelectorAll(".lane-rs").forEach(h=>{
+  const wrap=document.getElementById(h.dataset.for), key="dbx_h_"+h.dataset.for;
+  const saved=+localStorage.getItem(key); if(saved>=40&&saved<=280) wrap.style.flexBasis=saved+"px";
+  let rs=null;
+  h.addEventListener("pointerdown",e=>{ e.preventDefault(); e.stopPropagation();
+    try{h.setPointerCapture(e.pointerId);}catch(_){}
+    rs={y:e.clientY,h:wrap.getBoundingClientRect().height}; h.classList.add("on"); });
+  h.addEventListener("pointermove",e=>{ if(!rs) return;
+    const nh=Math.max(40,Math.min(280,rs.h+(rs.y-e.clientY)));
+    wrap.style.flexBasis=nh+"px"; layout(); draw(); drawVel(); drawAuto(); });
+  const end=e=>{ if(!rs) return; rs=null; h.classList.remove("on");
+    localStorage.setItem(key,String(Math.round(wrap.getBoundingClientRect().height))); };
+  h.addEventListener("pointerup",end); h.addEventListener("pointercancel",end);
+});
 
 /* ---------- wire ---------- */
 R.onParamChange && R.onParamChange(applyParams);
