@@ -2211,7 +2211,13 @@ function _onCC_stepedit(d1, d2) {
             /* K6 Prob: 0..100 with accel */
             const acc = ccKnobDelta(d2, knobIdx);
             if (acc !== 0) {
-                S.stepEditRand = Math.max(0, Math.min(100, S.stepEditRand + acc));
+                {
+                    /* raw 0 = unset sentinel = 100%: sweep as a real 1-100 knob,
+                     * storing 100 back as the 0 sentinel (DSP semantics unchanged) */
+                    const _eff = S.stepEditRand === 0 ? 100 : S.stepEditRand;
+                    const _nv = Math.max(1, Math.min(100, _eff + acc));
+                    S.stepEditRand = _nv === 100 ? 0 : _nv;
+                }
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param('t' + t + '_l' + lane + '_step_' + S.heldStep + '_rand', String(S.stepEditRand));
             }
@@ -2311,7 +2317,13 @@ function _onCC_stepedit(d1, d2) {
             /* K7 Rand: 0..100 with accel */
             const acc = ccKnobDelta(d2, knobIdx);
             if (acc !== 0) {
-                S.stepEditRand = Math.max(0, Math.min(100, S.stepEditRand + acc));
+                {
+                    /* raw 0 = unset sentinel = 100%: sweep as a real 1-100 knob,
+                     * storing 100 back as the 0 sentinel (DSP semantics unchanged) */
+                    const _eff = S.stepEditRand === 0 ? 100 : S.stepEditRand;
+                    const _nv = Math.max(1, Math.min(100, _eff + acc));
+                    S.stepEditRand = _nv === 100 ? 0 : _nv;
+                }
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param(pfx + '_rand', String(S.stepEditRand));
             }
