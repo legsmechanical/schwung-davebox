@@ -346,9 +346,11 @@ export const S = {
     captureArmed: false,             /* capturePending>0 AND a tap would actually commit (playing, or stopped in an empty session) — drives the Capture LED blink so it never flashes when a stopped commit would be refused */
     captureCommitAwait: 0,           /* >0: polls remaining to watch capture_info for the commit toast (set on tap-commit, counts down in pollDSP) */
     captureInfoSeq: undefined,       /* last seen capture_info commit sequence (toast fires on change) */
-    tempoSelectActive: false,        /* Move-style post-capture tempo chooser is open (DSP cap_select_active mirror) */
-    tempoSelectIdx: 0,               /* which BPM candidate (0..2) is applied */
-    tempoSelectBpms: [0, 0, 0],      /* the 3 candidate BPMs (ascending) */
+    tempoSelectActive: false,        /* Move-style post-capture chooser is open (DSP cap_select_active mirror) */
+    tempoSelectWarp: false,          /* 0 = tempo chooser (bpm), 1 = warp chooser (bars) */
+    tempoSelectIdx: 0,               /* which candidate is applied */
+    tempoSelectBpms: [0, 0, 0],      /* candidate values (BPMs, or bar counts in warp mode) */
+    capturePlaceTrack: -1,           /* >=0: stopped capture awaiting a destination-clip pick on this track (Session View, empty clips blink) */
     tempoSelectTrack: 0,             /* track whose take is being tempo-chosen */
     tempoSelectClip: 0,              /* clip the take was committed into */
     pendingSceneBakePicker: false,   /* Session-View Capture tap → wait for next row/step press to pick scene → opens scene-bake confirm */

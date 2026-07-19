@@ -1220,11 +1220,14 @@ typedef struct {
     cap_take_ev_t cap_take[CAP_MAX_EVENTS];
     uint16_t cap_take_count;
     uint64_t cap_take_first;
+    uint64_t cap_take_span;        /* take duration in frames (for warp mode) */
     uint8_t  cap_take_is_drum;
     uint8_t  cap_select_active;
+    uint8_t  cap_select_warp;      /* 0 = tempo chooser (bpm), 1 = warp chooser (bars) */
     uint8_t  cap_select_track;
     uint8_t  cap_select_clip;
-    uint8_t  cap_select_idx;       /* which candidate is currently applied (0..2) */
+    uint8_t  cap_select_idx;       /* index of the applied candidate */
+    uint16_t cap_bar_cand[CAP_MAX_CAND];  /* warp mode: candidate lengths in bars */
 } seq8_instance_t;
 
 static const host_api_v1_t *g_host = NULL;
@@ -6006,23 +6009,29 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
     if (!strcmp(key, "capture_pending"))
         return snprintf(out, out_len, "%d",
                         inst ? capture_pending_for_track(inst, (int)inst->active_track) : 0);
-    /* Last commit + tempo-selector state:
-     * "seq stopped len select_active select_idx count bpm0 bpm1 ... bpmN"
-     * count = number of candidate tempos (ascending); select_idx = applied one.
+    /* Last commit + selector state:
+     * "seq stopped len select_active select_idx count warp v0 v1 ... vN"
+     * warp: 0 = tempo chooser (v = BPM), 1 = warp chooser (v = bar count).
      * seq increments per successful commit (JS toast fires on the edge). */
     if (!strcmp(key, "capture_info")) {
-        if (!inst) return snprintf(out, out_len, "0 0 0 0 0 1 120.0");
-        int pos = snprintf(out, out_len, "%u %d %d %d %d %d",
+        if (!inst) return snprintf(out, out_len, "0 0 0 0 0 1 0 120.0");
+        int pos = snprintf(out, out_len, "%u %d %d %d %d %d %d",
                            inst->cap_commit_seq,
                            (int)inst->cap_last_was_stopped,
                            (int)inst->cap_last_len_steps,
                            (int)inst->cap_select_active,
                            (int)inst->cap_select_idx,
-                           (int)inst->cap_bpm_count);
+                           (int)inst->cap_bpm_count,
+                           (int)inst->cap_select_warp);
         int c;
-        for (c = 0; c < (int)inst->cap_bpm_count && c < CAP_MAX_CAND; c++)
-            pos += snprintf(out + pos, (size_t)(out_len - pos),
-                            " %.1f", inst->cap_bpm_est[c]);
+        for (c = 0; c < (int)inst->cap_bpm_count && c < CAP_MAX_CAND; c++) {
+            if (inst->cap_select_warp)
+                pos += snprintf(out + pos, (size_t)(out_len - pos),
+                                " %d", (int)inst->cap_bar_cand[c]);
+            else
+                pos += snprintf(out + pos, (size_t)(out_len - pos),
+                                " %.1f", inst->cap_bpm_est[c]);
+        }
         return pos;
     }
 

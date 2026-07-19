@@ -571,19 +571,33 @@ static int cap_take_find_off(seq8_instance_t *inst, int i, uint8_t pitch,
     return -1;
 }
 
-/* (Re-)derive the frozen stopped-capture take (cap_take[]) into clip `clip` at
- * `bpm`: wipes the clip, maps each event's wall-clock frame to a tick via the
- * frames-per-tick at `bpm`, sets a bar-rounded length, and applies `bpm` to the
- * transport. The take's real-time timing is preserved at every BPM — only the
- * tick grid / loop length changes (Move parity). Returns 1 if anything wrote. */
-static int capture_write_take(seq8_instance_t *inst, int tidx, int clip, double bpm) {
+/* (Re-)derive the frozen stopped-capture take (cap_take[]) into clip `clip`.
+ * Two modes:
+ *   target_len_steps == 0  — TEMPO mode: frames→ticks at `bpm`, bar-rounded
+ *     length, and `bpm` applied to the transport. Real-time timing preserved
+ *     at every BPM; only the grid / loop length changes.
+ *   target_len_steps  > 0  — WARP mode: the take is linearly stretched/squeezed
+ *     to fill exactly that many steps at the EXISTING tempo (bpm unchanged) —
+ *     compress if played longer, expand if shorter. No grid snapping.
+ * Returns 1 if anything wrote. */
+static int capture_write_take(seq8_instance_t *inst, int tidx, int clip,
+                              double bpm, int target_len_steps) {
     if (!inst || tidx < 0 || tidx >= NUM_TRACKS) return 0;
     if (clip < 0 || clip >= NUM_CLIPS) return 0;
     seq8_track_t *tr = &inst->tracks[tidx];
     int is_drum = inst->cap_take_is_drum;
     clip_t *mcl = &tr->clips[clip];
     uint16_t tps = mcl->ticks_per_step ? mcl->ticks_per_step : TICKS_PER_STEP;
-    double fpt = (double)inst->sample_rate * 60.0 / (bpm * (double)tps * 4.0);
+    int warp = (target_len_steps > 0);
+    double fpt;
+    if (warp) {
+        /* Stretch the take's whole span onto target_len_steps*tps ticks. */
+        double span = (double)inst->cap_take_span;
+        if (span < 1.0) span = 1.0;
+        fpt = span / ((double)target_len_steps * (double)tps);
+    } else {
+        fpt = (double)inst->sample_rate * 60.0 / (bpm * (double)tps * 4.0);
+    }
     if (fpt <= 0.0) fpt = 1.0;
 
     /* Wipe the target so re-tempo is a clean rewrite. */
@@ -637,9 +651,14 @@ static int capture_write_take(seq8_instance_t *inst, int tidx, int clip, double 
         }
     }
 
-    /* Bar-round the length. */
-    uint32_t bar = (uint32_t)tps * 16u;
-    uint32_t len_steps = ((span_end + bar - 1) / bar) * 16u;
+    /* Length: warp mode is exactly the target; tempo mode bar-rounds the span. */
+    uint32_t len_steps;
+    if (warp) {
+        len_steps = (uint32_t)target_len_steps;
+    } else {
+        uint32_t bar = (uint32_t)tps * 16u;
+        len_steps = ((span_end + bar - 1) / bar) * 16u;
+    }
     if (len_steps < 16)  len_steps = 16;
     if (len_steps > 256) len_steps = 256;
     inst->cap_last_len_steps = (uint16_t)len_steps;
@@ -667,7 +686,7 @@ static int capture_write_take(seq8_instance_t *inst, int tidx, int clip, double 
             tr->cc_auto_last_sent[k] = 0xFF;
         }
     }
-    capture_apply_bpm(inst, bpm);
+    if (!warp) capture_apply_bpm(inst, bpm);   /* warp keeps the session tempo */
     inst->state_dirty = 1;
     rui_mark(inst, tidx, clip);
     return wrote;
@@ -788,16 +807,17 @@ static int capture_commit(seq8_instance_t *inst, int tidx, int clip) {
         return 1;
     }
 
-    /* ---- Transport stopped: blank-session first-take + tempo detection ---- */
-    /* Stopped capture is the blank-session "first take + set tempo" mode only.
-     * If ANY clip in the session has content, refuse (keep the ring) — the user
-     * should start playback and overdub instead. */
-    if (!capture_session_empty(inst)) return 0;
+    /* ---- Transport stopped ----
+     * Empty session (and not clock-follow) → detect + SET the tempo (candidates
+     * = BPMs). Otherwise the tempo is already established, so WARP the take to
+     * fit it (candidates = bar lengths; tempo never changed). The destination
+     * clip is empty either way (JS commits to the focused clip when empty, else
+     * has the user pick an empty one). */
 
-    /* Scan the ring: first event = clip start; gather inter-onset intervals for
-     * tempo detection; snapshot the take into cap_take[] (frame-stamped) so the
-     * tempo selector can re-derive it at any BPM without cumulative rounding. */
-    uint64_t first_frame = 0;
+    /* Snapshot the take into cap_take[] (frame-stamped) so the selector can
+     * re-derive it at any tempo / bar length without cumulative rounding, and
+     * record its span (frames) for warp mode. */
+    uint64_t first_frame = 0, last_frame = 0;
     int      have_first  = 0;
     inst->cap_take_count = 0;
     for (i = 0; i < (int)inst->cap_count; i++) {
@@ -806,6 +826,7 @@ static int capture_commit(seq8_instance_t *inst, int tidx, int clip) {
         if (!have_first && (ev->type == CAP_EV_NOTE_ON || ev->type == CAP_EV_CC)) {
             first_frame = ev->frame; have_first = 1;
         }
+        if (ev->frame > last_frame) last_frame = ev->frame;
         if (inst->cap_take_count < CAP_MAX_EVENTS) {
             cap_take_ev_t *te = &inst->cap_take[inst->cap_take_count++];
             te->frame = ev->frame;
@@ -816,35 +837,58 @@ static int capture_commit(seq8_instance_t *inst, int tidx, int clip) {
     }
     if (!have_first) return 0;
     inst->cap_take_first   = first_frame;
+    inst->cap_take_span    = (last_frame > first_frame) ? (last_frame - first_frame) : 1;
     inst->cap_take_is_drum = (uint8_t)is_drum;
-
-    /* Tempo detection (grid-fit; see capture_estimate_tempos). Fills the
-     * candidate list + picks the best-fitting default. Under clock-follow, or
-     * with too little rhythm to estimate, fall back to the current tempo with
-     * no selector. */
-    double base = (double)tr->pfx.cached_bpm;
-    if (base < 20.0 || base > 400.0) base = 120.0;
-    int have_estimate = 0;
-    int best = inst->clock_follow_on ? -1 : capture_estimate_tempos(inst);
-    if (best >= 0 && inst->cap_bpm_count >= 1) {
-        inst->cap_select_idx = (uint8_t)best;
-        have_estimate = (inst->cap_bpm_count >= 2);   /* selector only if a real choice */
-    } else {
-        inst->cap_bpm_est[0] = base;
-        inst->cap_bpm_count  = 1;
-        inst->cap_select_idx = 0;
-    }
 
     if (!is_drum) undo_begin_single(inst, tidx, clip);
     if (is_drum && !tr->drum_clips[clip]) drum_clips_alloc(inst, tr);
 
-    wrote = capture_write_take(inst, tidx, clip,
-                               inst->cap_bpm_est[inst->cap_select_idx]);
+    int tempo_mode = capture_session_empty(inst) && !inst->clock_follow_on;
+    int have_selector = 0;
+    if (tempo_mode) {
+        inst->cap_select_warp = 0;
+        int best = capture_estimate_tempos(inst);
+        if (best >= 0 && inst->cap_bpm_count >= 1) {
+            inst->cap_select_idx = (uint8_t)best;
+            have_selector = (inst->cap_bpm_count >= 2);
+        } else {
+            double base = (double)tr->pfx.cached_bpm;
+            if (base < 20.0 || base > 400.0) base = 120.0;
+            inst->cap_bpm_est[0] = base;
+            inst->cap_bpm_count  = 1;
+            inst->cap_select_idx = 0;
+        }
+        wrote = capture_write_take(inst, tidx, clip,
+                                   inst->cap_bpm_est[inst->cap_select_idx], 0);
+    } else {
+        /* WARP: candidate bar lengths bracketing the take's natural length at
+         * the established tempo; default = the closest fit (least stretch). */
+        inst->cap_select_warp = 1;
+        double sbpm = (double)tr->pfx.cached_bpm;
+        if (sbpm < 20.0 || sbpm > 400.0) sbpm = 120.0;
+        double bar_frames = (double)inst->sample_rate * 60.0 / sbpm * 4.0;
+        double natural = bar_frames > 0.0
+            ? (double)inst->cap_take_span / bar_frames : 1.0;
+        static const int BARSET[8] = { 1, 2, 3, 4, 6, 8, 12, 16 };
+        int nb = 0, bi;
+        for (bi = 0; bi < 8; bi++)
+            if (BARSET[bi] * 16 <= 256)
+                inst->cap_bar_cand[nb++] = (uint16_t)BARSET[bi];
+        inst->cap_bpm_count = (uint8_t)nb;
+        int bidx = 0; double bd = 1e9;
+        for (bi = 0; bi < nb; bi++) {
+            double d = cap_fabs((double)inst->cap_bar_cand[bi] - natural);
+            if (d < bd) { bd = d; bidx = bi; }
+        }
+        inst->cap_select_idx = (uint8_t)bidx;
+        wrote = capture_write_take(inst, tidx, clip, sbpm,
+                                   (int)inst->cap_bar_cand[bidx] * 16);
+        have_selector = (nb >= 2);
+    }
     inst->cap_last_was_stopped = 1;
     if (!wrote) return 0;
 
-    /* Arm the committed clip and roll the transport so the take plays back
-     * immediately (Move parity). */
+    /* Arm the committed clip and roll the transport so the take plays back. */
     tr->active_clip   = (uint8_t)clip;
     tr->queued_clip   = -1;
     tr->will_relaunch = 1;
@@ -852,9 +896,7 @@ static int capture_commit(seq8_instance_t *inst, int tidx, int clip) {
     if (inst->clock_follow_on) follow_request_start(inst, 1);
     else                       ext_transport_start(inst);
 
-    /* Open the tempo selector when we actually estimated a tempo (>1 candidate
-     * worth choosing). The frozen take in cap_take[] backs re-tempo. */
-    inst->cap_select_active = (uint8_t)(have_estimate ? 1 : 0);
+    inst->cap_select_active = (uint8_t)(have_selector ? 1 : 0);
     inst->cap_select_track  = (uint8_t)tidx;
     inst->cap_select_clip   = (uint8_t)clip;
 

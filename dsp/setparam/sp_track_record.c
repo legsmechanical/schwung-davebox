@@ -37,8 +37,17 @@ static int sp_track_record(sp_ctx_t *cx) {
             int _hi = (int)inst->cap_bpm_count - 1;
             if (_hi < 0) _hi = 0;
             int _i = clamp_i(my_atoi(val), 0, _hi);
-            capture_write_take(inst, (int)inst->cap_select_track,
-                               (int)inst->cap_select_clip, inst->cap_bpm_est[_i]);
+            if (inst->cap_select_warp) {
+                double _sbpm =
+                    (double)inst->tracks[inst->cap_select_track].pfx.cached_bpm;
+                capture_write_take(inst, (int)inst->cap_select_track,
+                                   (int)inst->cap_select_clip, _sbpm,
+                                   (int)inst->cap_bar_cand[_i] * 16);
+            } else {
+                capture_write_take(inst, (int)inst->cap_select_track,
+                                   (int)inst->cap_select_clip,
+                                   inst->cap_bpm_est[_i], 0);
+            }
             inst->cap_select_idx = (uint8_t)_i;
         }
         return 1;

@@ -210,24 +210,36 @@ int main(void) {
     HX_ASSERT(inst->playing == 1, "transport started after drum commit");
     hx_destroy(h);
 
-    /* ---- 7. Stopped capture REFUSED when the session already has content ---- */
+    /* ---- 7. Stopped capture on a NON-empty session WARPS to fit the tempo ---- */
     h = hx_create(NULL);
     HX_ASSERT(h, "create failed");
     inst = I(h);
-    /* Seed a note on track 2 clip 3 → session no longer empty. */
+    /* Seed a note on track 2 clip 3 → session no longer empty; tempo established. */
     clip_insert_note(&inst->tracks[2].clips[3], 0, 24, 60, 100);
     HX_ASSERT(capture_session_empty(inst) == 0, "session sees seeded content");
+    double bpm_before = inst->tracks[1].pfx.cached_bpm;
     hx_render(h, 4);
     tap(h, 1, 60, 100, 40, 132);
     tap(h, 1, 62, 100, 40, 132);
-    HX_ASSERT(capture_pending_for_track(inst, 1) == 2, "buffered while stopped");
+    tap(h, 1, 64, 100, 40, 132);
+    hx_set_param(h, "t1_capture_commit", "0");   /* into empty focused clip 0 */
+    HX_ASSERT(inst->tracks[1].clips[0].note_count == 3, "warp wrote the 3 notes");
+    HX_ASSERT(inst->tracks[1].pfx.cached_bpm == bpm_before, "session tempo NOT changed");
+    HX_ASSERT(inst->cap_select_active == 1 && inst->cap_select_warp == 1,
+              "warp selector opened");
+    HX_ASSERT((inst->tracks[1].clips[0].length % 16) == 0, "warped to whole bars");
+    HX_ASSERT(inst->playing == 1, "transport started");
+    /* Re-warp to a different bar length → note count preserved, length changes. */
     {
-        uint32_t seq = inst->cap_commit_seq;
-        hx_set_param(h, "t1_capture_commit", "0");
-        HX_ASSERT(inst->cap_commit_seq == seq, "stopped commit refused (non-empty session)");
-        HX_ASSERT(inst->tracks[1].clips[0].note_count == 0, "no notes written");
-        HX_ASSERT(capture_pending_for_track(inst, 1) == 2, "ring kept for later");
-        HX_ASSERT(inst->playing == 0, "transport not started");
+        uint16_t len0 = inst->tracks[1].clips[0].length;
+        /* candidate 0 = 1 bar, candidate for a longer length differs. */
+        hx_set_param(h, "t1_capture_retempo", "0");
+        HX_ASSERT(inst->tracks[1].clips[0].length == 16, "retempo to 1 bar");
+        HX_ASSERT(inst->tracks[1].clips[0].note_count == 3, "notes kept across warp");
+        HX_ASSERT(inst->tracks[1].pfx.cached_bpm == bpm_before, "tempo still untouched");
+        (void)len0;
+        hx_set_param(h, "t1_capture_confirm", "");
+        HX_ASSERT(inst->cap_select_active == 0, "warp selector closed on confirm");
     }
     hx_destroy(h);
 

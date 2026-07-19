@@ -58,15 +58,16 @@ function triRight(x, y, w, h) {
     }
 }
 
-/* Shared "< NNN bpm >" tempo line — number in MCUFONT ×2, smaller "bpm" unit,
- * chevrons flanking (jog-changeable), the group centered at cx. Used by both
- * the tap-tempo screen and the post-capture tempo selector. */
-export function drawBpmLine(cx, topY, bpm) {
-    const num = String(Math.round(bpm || 0));
+/* Shared "< NNN unit >" value line — number in MCUFONT ×2, smaller unit label,
+ * chevrons flanking (jog-changeable), the group centered at cx. Used by the
+ * tap-tempo screen (unit 'bpm') and the post-capture chooser ('bpm' or 'bars'). */
+export function drawBpmLine(cx, topY, value, unit) {
+    const num = String(Math.round(value || 0));
+    const u   = unit || 'bpm';
     const nS = 2, uS = 1;
     const nCW = 5 * nS + nS, uCW = 5 * uS + uS;
     const nW  = num.length * nCW - nS;
-    const uW  = 3 * uCW - uS;
+    const uW  = u.length * uCW - uS;
     const aW = 5, aH = 9, aGap = 5, uGap = 3;
     const total = aW + aGap + nW + uGap + uW + aGap + aW;
     let x = cx - Math.round(total / 2);
@@ -74,7 +75,7 @@ export function drawBpmLine(cx, topY, bpm) {
     const nH = 5 * nS;
     triLeft(x, topY + Math.round((nH - aH) / 2), aW, aH); x += aW + aGap;
     pixelPrintMcu(x, topY, num, nS, 1); x += nW + uGap;
-    pixelPrintMcu(x, topY + (nH - 5 * uS), 'bpm', uS, 1); x += uW + aGap;
+    pixelPrintMcu(x, topY + (nH - 5 * uS), u, uS, 1); x += uW + aGap;
     triRight(x, topY + Math.round((nH - aH) / 2), aW, aH);
 }
 

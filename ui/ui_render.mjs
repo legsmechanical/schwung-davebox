@@ -505,8 +505,9 @@ function drawTempoSelect() {
     const bpms = S.tempoSelectBpms;
     const isDrum = S.trackPadMode[t] === PAD_MODE_DRUM;
 
-    /* "< 120 bpm >" — shared tempo line (identical to the tap-tempo screen). */
-    drawBpmLine(64, 6, bpms[idx]);
+    /* "< 120 bpm >" (empty-session tempo) or "< 2 bars >" (warp-to-fit) —
+     * shared value line (same look as the tap-tempo screen). */
+    drawBpmLine(64, 6, bpms[idx], S.tempoSelectWarp ? 'bars' : 'bpm');
 
     /* BAR view. */
     const BX = 4, BW = 120, BY = 34, BH = 19;
@@ -603,6 +604,14 @@ export function drawUI() {
         print(4, 8,  'MERGED TAKE',        1);
         print(4, 22, 'Tap a blinking clip', 1);
         print(4, 34, 'on track ' + (S.mergeSoloPlacement + 1) + ' to save', 1);
+        print(4, 50, 'Rec cancels',         1);
+        return;
+    }
+    if (S.capturePlaceTrack >= 0) {
+        clear_screen();
+        print(4, 8,  'CAPTURED TAKE',       1);
+        print(4, 22, 'Tap a blinking clip', 1);
+        print(4, 34, 'on track ' + (S.capturePlaceTrack + 1) + ' to save', 1);
         print(4, 50, 'Rec cancels',         1);
         return;
     }

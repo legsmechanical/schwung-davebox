@@ -1058,20 +1058,37 @@ function _onCC_buttons(d1, d2) {
                 S.captureUsedAsModifier = true;   /* consume the tap */
             }
             if (!S.captureUsedAsModifier) {
+                const _ct = S.activeTrack;
+                const _fc = S.trackActiveClip[_ct];
                 if (S.capturePending <= 0) {
                     showActionPopup('CAPTURE', 'Nothing buffered', 'Play pads first');
-                } else if (!S.playing && sessionHasAnyContent()) {
-                    /* Stopped capture is the blank-session first-take-+-set-tempo
-                     * mode only. With existing clips, the tempo is already set —
-                     * the user should overdub during playback. Keep the buffer. */
-                    showActionPopup('CAPTURE', 'Start playback', 'to overdub');
-                } else {
-                    const _ct = S.activeTrack;
+                } else if (S.playing) {
+                    /* Overdub into the focused clip (raw timing, no quantize). */
                     S.pendingDefaultSetParams.push({
-                        key: 't' + _ct + '_capture_commit',
-                        val: String(S.trackActiveClip[_ct]) });
+                        key: 't' + _ct + '_capture_commit', val: String(_fc) });
                     S.capturePending     = 0;
-                    S.captureCommitAwait = 40;   /* polls to watch for the toast */
+                    S.captureCommitAwait = 40;
+                } else if (!trackClipHasContent(_ct, _fc)) {
+                    /* Stopped, focused clip empty → commit there (empty session =
+                     * detect+set tempo; non-empty session = warp to fit tempo;
+                     * the DSP picks the mode). */
+                    S.pendingDefaultSetParams.push({
+                        key: 't' + _ct + '_capture_commit', val: String(_fc) });
+                    S.capturePending     = 0;
+                    S.captureCommitAwait = 40;
+                } else {
+                    /* Stopped, focused clip occupied → pick an empty destination
+                     * (Session View, empty clips on this track blink). */
+                    S.capturePlaceTrack = _ct;
+                    if (!S.sessionView) {
+                        S.sessionView     = true;
+                        S.heldStep        = -1; S.heldStepBtn = -1;
+                        S.heldStepNotes   = []; S.stepWasEmpty = false;
+                        S.stepWasHeld     = false;
+                        S.sessionStepHeld = -1; S.sessionStepHeldCtx = 0;
+                    }
+                    invalidateLEDCache();
+                    S.screenDirty = true;
                 }
             }
             computePadNoteMap();
@@ -3374,6 +3391,14 @@ export function _onCCMsg(d1, d2) {
         S.pendingMergePlacement = false;
         S.mergeSoloPlacement    = -1;
         S.pendingDefaultSetParams.push({ key: 'merge_cancel', val: '1' });
+        S._modalSwallowCC = d1;
+        forceRedraw();
+        return;
+    }
+    /* Capture placement: Record cancels the pick (buffered input is kept, so
+     * the user can try again or Shift+Capture to discard). */
+    if (S.capturePlaceTrack >= 0 && d2 === 127 && d1 === MoveRec) {
+        S.capturePlaceTrack = -1;
         S._modalSwallowCC = d1;
         forceRedraw();
         return;

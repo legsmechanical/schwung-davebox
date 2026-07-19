@@ -776,6 +776,20 @@ export function _onPadPress(status, d1, d2) {
                         forceRedraw();
                         return;
                     }
+                    /* Capture placement: pick an empty destination clip on the
+                     * capture track for a stopped warp/tempo commit. */
+                    if (S.capturePlaceTrack >= 0) {
+                        const clipIdx = S.sceneRow + row;
+                        if (t === S.capturePlaceTrack && !clipHasContent(t, clipIdx)) {
+                            S.pendingDefaultSetParams.push(
+                                { key: 't' + t + '_capture_commit', val: String(clipIdx) });
+                            S.captureCommitAwait = 40;
+                            S.capturePending     = 0;
+                            S.capturePlaceTrack  = -1;
+                        }
+                        forceRedraw();
+                        return;
+                    }
                     if (S.muteHeld) {
                         /* Mute-held + pad: toggle mute/solo on that track's column */
                         if (S.shiftHeld) setTrackSolo(t, !S.trackSoloed[t]);

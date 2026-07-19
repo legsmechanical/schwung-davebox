@@ -350,13 +350,12 @@ export function pollDSP() {
             if ((_n > 0) !== (S.capturePending > 0)) S.screenDirty = true;
             S.capturePending = _n;
         }
-        /* "Armed" = a Capture tap would actually commit: playing (overdub) or
-         * stopped in an empty session (first-take). Stopped + non-empty is a
-         * no-op (hint only), so the LED must not blink there. */
-        S.captureArmed = S.capturePending > 0 &&
-            (S.playing || !sessionHasAnyContent());
-        /* Watch capture_info for a commit and mirror the tempo-selector state.
-         * Format: "seq stopped len select_active select_idx count bpm0 bpm1 ..." */
+        /* "Armed" = a Capture tap would commit buffered input. Every state now
+         * does something (playing = overdub; stopped-empty = tempo; stopped +
+         * content = warp), so the LED blinks whenever input is buffered. */
+        S.captureArmed = S.capturePending > 0;
+        /* Watch capture_info for a commit + mirror the selector state. Format:
+         * "seq stopped len select_active select_idx count warp v0 v1 ...". */
         const _ci = host_module_get_param('capture_info');
         if (_ci) {
             const _p    = _ci.split(' ');
@@ -365,25 +364,28 @@ export function pollDSP() {
             const _sel  = _p[3] === '1';
             const _sidx = parseInt(_p[4], 10) | 0;
             const _cnt  = parseInt(_p[5], 10) | 0;
-            const _bpms = [];
-            for (let k = 0; k < _cnt && (6 + k) < _p.length; k++)
-                _bpms.push(parseFloat(_p[6 + k]));
+            const _warp = _p[6] === '1';
+            const _vals = [];
+            for (let k = 0; k < _cnt && (7 + k) < _p.length; k++)
+                _vals.push(parseFloat(_p[7 + k]));
             /* Commit edge: seq bumped since we last handled it. */
             if (S.captureCommitAwait > 0 && _seq > 0 && _seq !== S.captureInfoSeq) {
                 S.captureInfoSeq     = _seq;
                 S.captureCommitAwait = 0;
                 if (_sel) {
-                    /* Stopped capture with a real tempo estimate → open the
-                     * on-device tempo chooser (wheel to audition, click to keep). */
+                    /* Open the on-device chooser (wheel to audition, click to keep):
+                     * tempo (BPM) in an empty session, warp (bars) otherwise. */
                     S.tempoSelectActive = true;
+                    S.tempoSelectWarp   = _warp;
                     S.tempoSelectIdx    = _sidx;
-                    S.tempoSelectBpms   = _bpms;
+                    S.tempoSelectBpms   = _vals;
                     S.tempoSelectTrack  = S.activeTrack;
                     S.tempoSelectClip   = S.trackActiveClip[S.activeTrack];
                     S.screenDirty = true;
                 } else if (_p[1] === '1') {
                     showActionPopup('CAPTURED',
-                                    Math.round(_bpms[_sidx] || 0) + ' BPM',
+                                    _warp ? ((_vals[_sidx] | 0) + ' bars')
+                                          : (Math.round(_vals[_sidx] || 0) + ' BPM'),
                                     _len + ' steps');
                 } else {
                     showActionPopup('CAPTURED', 'Added to clip');
@@ -398,8 +400,12 @@ export function pollDSP() {
                     S.tempoSelectActive = false;
                     S.screenDirty = true;
                 } else {
+                    S.tempoSelectWarp = _warp;
                     S.tempoSelectIdx  = _sidx;
-                    if (_bpms.length) S.tempoSelectBpms = _bpms;
+                    if (_vals.length) S.tempoSelectBpms = _vals;
+                    /* Track the committed (now-active) clip — for a pick-
+                     * destination warp it isn't the clip that was focused. */
+                    S.tempoSelectClip = S.trackActiveClip[S.tempoSelectTrack];
                 }
             }
         }
