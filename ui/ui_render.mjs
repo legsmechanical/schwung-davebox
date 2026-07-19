@@ -11,21 +11,21 @@ import {
     BANKS, BANK_RESPONDER, BANK_OCTAVE, BANK_WHEN,
     NOTE_KEYS, NUM_CLIPS, NUM_TRACKS, PAD_MODE_CONDUCT, PAD_MODE_DRUM,
     POLL_INTERVAL, SCALE_DISPLAY, SCENE_LETTERS, TPS_VALUES, STEP_ITER_LIST,
-    col4, col5, pixelPrint,
+    col4, col5, pixelPrint, pixelPrintC,
     fmtSign, fmtStretch, fmtLen, fmtRes, fmtPct, fmtBool, fmtGateMod,
     fmtArpRate, fmtVelOverride, fmtPlayDir, fmtRevStyle,
     fmtDly, fmtArpStyle, fmtArpSteps, fmtDiq, fmtPlain, fmtLgto
 } from './ui_constants.mjs';
 import {
     drawKitHeader, drawKitTouchedHeader, drawKitPageBar, drawKitAltArrow,
-    drawKitCells, drawKitEnumOverlay, mvPrint, mvWidth, mvPrintScaled, rectOutline,
+    drawKitCells, drawKitEnumOverlay, mvPrint, mvWidth, rectOutline,
     pf3Print, pf3Width,
     MV_ROW0_Y, MV_KH
 } from './ui_movy.mjs';
 import {
     drawGlobalMenu, drawStateWipeConfirm, drawRecordBlockedDialog, drawBpmMoveInfo,
     drawLgtoConfirm, drawBakeConfirm, drawInheritPicker, drawSnapshotPicker,
-    drawClearAutoMenu, drawBakeSceneConfirm, drawXposeConfirm
+    drawClearAutoMenu, drawBakeSceneConfirm, drawXposeConfirm, pixelPrintMcu
 } from './ui_dialogs.mjs';
 import { ensureGlobalMenuFresh } from './ui_menu.mjs';
 import { bankCyclePos } from './ui_pure.mjs';
@@ -521,19 +521,22 @@ function drawTempoSelect() {
     const bpms = S.tempoSelectBpms;
     const isDrum = S.trackPadMode[t] === PAD_MODE_DRUM;
 
-    /* Big tempo + "< >" arrows, centered. Pick the largest scale that fits. */
+    /* "<  120 bpm  >" — number in the tap-tempo BPM font (MCUFONT ×3), a
+     * smaller "bpm" after it, chevrons flanking, the whole group centered. */
     {
         const num = String(Math.round(bpms[idx] || 0));
-        const aW = 7, aH = 13, gap = 7;           /* arrow box + spacing */
-        let scale = 5;
-        while (scale > 2 && mvWidth(num) * scale + 2 * (aW + gap) > 124) scale--;
-        const nW = mvWidth(num) * scale, nH = 5 * scale;
-        const total = aW + gap + nW + gap + aW;
+        const nS = 3, uS = 2;                     /* number + unit scales */
+        const nCW = 5 * nS + nS, uCW = 5 * uS + uS;
+        const nW  = num.length * nCW - nS;        /* number width */
+        const uW  = 3 * uCW - uS;                 /* "bpm" width */
+        const aW = 7, aH = 13, aGap = 6, uGap = 4;
+        const total = aW + aGap + nW + uGap + uW + aGap + aW;
         let x = Math.max(1, Math.round((128 - total) / 2));
-        const topY = 3, midY = topY + Math.round((nH - aH) / 2);
-        triLeft(x, midY, aW, aH); x += aW + gap;
-        mvPrintScaled(x, topY, num, 1, scale); x += nW + gap;
-        triRight(x, midY, aW, aH);
+        const topY = 4, nH = 5 * nS;
+        triLeft(x, topY + Math.round((nH - aH) / 2), aW, aH); x += aW + aGap;
+        pixelPrintMcu(x, topY, num, nS, 1); x += nW + uGap;
+        pixelPrintMcu(x, topY + (nH - 5 * uS), 'bpm', uS, 1); x += uW + aGap;  /* baseline-aligned */
+        triRight(x, topY + Math.round((nH - aH) / 2), aW, aH);
     }
 
     /* BAR view. */
@@ -570,7 +573,7 @@ function drawTempoSelect() {
     const px  = BX + Math.round((ph / len) * BW);
     for (let yy = BY; yy < BY + BH; yy++) set_pixel(Math.min(px, BX + BW - 1), yy, 1);
 
-    print(4, 56, 'Click to set', 1);
+    pixelPrintC(64, 56, 'Click to set', 1);
 }
 
 export function drawUI() {

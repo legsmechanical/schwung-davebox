@@ -10,7 +10,7 @@ import {
 } from './ui_persistence.mjs';
 import { effectiveClip, invalidateLEDCache } from './ui_leds.mjs';
 
-function pixelPrintMcu(x, y, text, scale, color) {
+export function pixelPrintMcu(x, y, text, scale, color) {
     const charW = 5 * scale + scale;
     for (let ci = 0; ci < text.length; ci++) {
         const g = MCUFONT[text[ci]];
