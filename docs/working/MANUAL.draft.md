@@ -535,14 +535,23 @@ into the active track's focused clip at the positions you heard them —
 unquantized, exactly as played. Knob movements land as automation points in the
 clip's AUTOMATION lanes. The clip's length is never changed.
 
-**While the transport is stopped**, tapping Capture treats your first note as
-the start of a new take: dAVEBOx estimates the tempo from your playing, applies
-it, sizes the clip to whole bars, writes the notes and automation, and starts
-the transport so you hear the take immediately. A popup shows the applied BPM
-and clip length. The captured notes play back at the speed you played them,
-whatever tempo is chosen. (Tempo is only estimated when the target clip is
-empty and dAVEBOx owns the tempo — under Clock Follow, Move's tempo stays in
-charge. With fewer than three notes, the current tempo is used.)
+**While the transport is stopped** (only in a brand-new, empty session —
+that's when there's no tempo yet to inherit), tapping Capture treats your first
+note as the start of a new take: dAVEBOx estimates the tempo from your playing,
+applies it, sizes the clip to whole bars, writes the notes and automation, and
+starts the transport so you hear the take immediately. Once you already have
+clips, the tempo is set — start playback and overdub instead (dAVEBOx will
+remind you).
+
+**Choosing the tempo.** After a stopped capture, a **tempo chooser** opens: the
+big number is the applied BPM, with the three candidate tempos below it and a
+note strip showing your take against a beat/bar grid with a moving playhead.
+**Turn the wheel** to audition the other candidates — playback keeps rolling, so
+you can hear and see how the take lines up under each — and **click the wheel**
+to keep the one you want. The candidates are octave-related (half / double), so
+the notes always play back at the speed you performed them; only the loop length
+and grid alignment change. (No chooser appears under Clock Follow, where Move
+owns the tempo, or when there wasn't enough rhythm to estimate.)
 
 Works on melodic and drum tracks alike (drum hits land in their matching
 lanes). To throw the buffered input away instead, hold **Shift** and tap
