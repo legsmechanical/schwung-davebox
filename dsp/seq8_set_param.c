@@ -743,14 +743,46 @@ static int capture_commit(seq8_instance_t *inst, int tidx, int clip) {
                          + inst->master_tick_in_step;
         if (!is_drum) undo_begin_single(inst, tidx, clip);
         if (is_drum && !tr->drum_clips[clip]) drum_clips_alloc(inst, tr);
+
+        /* If the target clip is EMPTY, this is a first take: lay the phrase out
+         * from the first played note to the last (sized to fit), rather than
+         * wrapping into the clip's default 1-bar window. Non-empty = true
+         * overdub: notes land at their heard position and the length is kept. */
+        int mcl_empty;
+        if (!is_drum) {
+            mcl_empty = (mcl->note_count == 0);
+        } else {
+            mcl_empty = 1;
+            if (tr->drum_clips[clip]) { int l;
+                for (l = 0; l < DRUM_LANES; l++)
+                    if (tr->drum_clips[clip]->lanes[l].clip.note_count > 0) { mcl_empty = 0; break; }
+            }
+        }
+        /* First event's absolute tick + its clip-tick (where the phrase begins
+         * in the loop). Empty-clip notes are laid out from there, unwrapped, so
+         * a phrase longer than the clip extends it instead of wrapping. */
+        uint32_t first_abs = 0, first_ct = 0; int have_first = 0;
+        for (i = 0; i < (int)inst->cap_count; i++) {
+            const cap_ev_t *ev = &inst->cap_ring[(inst->cap_head + i) % CAP_MAX_EVENTS];
+            if (ev->track != (uint8_t)tidx) continue;
+            if (ev->type == CAP_EV_NOTE_ON || ev->type == CAP_EV_CC) {
+                first_abs = ev->abs_tick; first_ct = ev->ctick; have_first = 1; break;
+            }
+        }
+        int fresh = mcl_empty && have_first;
+        uint32_t span_end = 0;
+
         for (i = 0; i < (int)inst->cap_count; i++) {
             const cap_ev_t *ev = &inst->cap_ring[(inst->cap_head + i) % CAP_MAX_EVENTS];
             if (ev->track != (uint8_t)tidx) continue;
             if (ev->type == CAP_EV_CC) {
-                uint32_t ct = ws + (wl ? (ev->abs_tick % wl) : 0);
+                uint32_t ct = fresh
+                    ? first_ct + (ev->abs_tick - first_abs)
+                    : ws + (wl ? (ev->abs_tick % wl) : 0);
                 cc_auto_set_point(&tr->clip_cc_auto[clip], ev->a,
                                   (uint16_t)(ct <= 65534 ? ct : 65534), ev->b);
                 cc_touched |= (uint8_t)(1u << (ev->a & 7));
+                if (ct + 1 > span_end) span_end = ct + 1;
                 wrote = 1;
             } else if (ev->type == CAP_EV_NOTE_ON) {
                 int j = cap_find_off(inst, tidx, i, ev->a, off_used);
@@ -761,10 +793,13 @@ static int capture_commit(seq8_instance_t *inst, int tidx, int clip) {
                 if (gate < 1)      gate = 1;
                 if (gate > 65535u) gate = 65535u;
                 if (!is_drum) {
-                    uint32_t ct = (clip == (int)tr->active_clip && tr->clip_playing)
-                        ? ev->ctick
-                        : ws + (wl ? (ev->abs_tick % wl) : 0);
+                    uint32_t ct = fresh
+                        ? first_ct + (ev->abs_tick - first_abs)
+                        : (clip == (int)tr->active_clip && tr->clip_playing)
+                            ? ev->ctick
+                            : ws + (wl ? (ev->abs_tick % wl) : 0);
                     clip_insert_note(mcl, ct, (uint16_t)gate, ev->a, ev->b);
+                    if (ct + gate > span_end) span_end = ct + gate;
                     wrote = 1;
                 } else if (tr->drum_clips[clip]) {
                     int l;
@@ -775,13 +810,31 @@ static int capture_commit(seq8_instance_t *inst, int tidx, int clip) {
                                       ? ln->clip.ticks_per_step : TICKS_PER_STEP;
                         uint32_t lws  = (uint32_t)ln->clip.loop_start * ltps;
                         uint32_t lwl  = (uint32_t)ln->clip.length * ltps;
-                        clip_insert_note(&ln->clip,
-                                         lws + (lwl ? (ev->abs_tick % lwl) : 0),
-                                         (uint16_t)gate, ev->a, ev->b);
+                        uint32_t ct = fresh
+                            ? lws + (ev->abs_tick - first_abs)
+                            : lws + (lwl ? (ev->abs_tick % lwl) : 0);
+                        clip_insert_note(&ln->clip, ct, (uint16_t)gate, ev->a, ev->b);
+                        if (ct + gate > span_end) span_end = ct + gate;
                         wrote = 1;
                         break;
                     }
                 }
+            }
+        }
+        /* Empty first-take: grow the clip to a whole number of bars spanning
+         * the phrase (default 1-bar wrap otherwise). */
+        if (fresh && wrote) {
+            uint32_t bar = (uint32_t)tps * 16u;
+            uint32_t span = span_end > 0 ? span_end : 1;
+            uint32_t len_steps = ((span + bar - 1) / bar) * 16u;
+            if (len_steps < 16)  len_steps = 16;
+            if (len_steps > 256) len_steps = 256;
+            if (!is_drum) {
+                mcl->length = (uint16_t)len_steps;
+            } else if (tr->drum_clips[clip]) {
+                int l;
+                for (l = 0; l < DRUM_LANES; l++)
+                    tr->drum_clips[clip]->lanes[l].clip.length = (uint16_t)len_steps;
             }
         }
         inst->cap_last_was_stopped = 0;

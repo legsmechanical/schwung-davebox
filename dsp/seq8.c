@@ -1208,6 +1208,7 @@ typedef struct {
     cap_ev_t cap_ring[CAP_MAX_EVENTS];
     uint16_t cap_head;
     uint16_t cap_count;
+    uint64_t cap_last_frame;       /* rui_frames of the last buffered event (new-take gap timer) */
     double   cap_bpm_est[CAP_MAX_CAND];  /* candidate tempos, sorted ascending */
     uint8_t  cap_bpm_count;        /* how many of cap_bpm_est[] are valid (>=1) */
     uint16_t cap_last_len_steps;   /* clip length written by last stopped commit */
@@ -1505,6 +1506,21 @@ static void capture_push(seq8_instance_t *inst, seq8_track_t *tr,
     if (tr->recording || tr->record_armed) return;
     if (inst->count_in_ticks > 0) return;
     if (inst->cap_select_active) return;   /* tempo selector owns the take */
+    /* New-take gap: if enough silence elapsed since the last buffered event,
+     * the old input is stale — drop it and start a fresh take. Threshold is
+     * ~2 bars at the current tempo, clamped to [2s, 8s]. */
+    if (inst->cap_count > 0) {
+        double bpm = (double)tr->pfx.cached_bpm;
+        if (bpm < 20.0 || bpm > 400.0) bpm = 120.0;
+        double gap = 2.0 * ((double)inst->sample_rate * 60.0 / bpm * 4.0);
+        double lo  = (double)inst->sample_rate * 2.0;
+        double hi  = (double)inst->sample_rate * 8.0;
+        if (gap < lo) gap = lo;
+        if (gap > hi) gap = hi;
+        if ((double)(inst->rui_frames - inst->cap_last_frame) > gap)
+            capture_clear(inst);
+    }
+    inst->cap_last_frame = inst->rui_frames;
     if (inst->cap_count >= CAP_MAX_EVENTS) {
         inst->cap_head  = (uint16_t)((inst->cap_head + 1) % CAP_MAX_EVENTS);
         inst->cap_count = CAP_MAX_EVENTS - 1;

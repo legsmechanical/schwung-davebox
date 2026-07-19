@@ -129,27 +129,22 @@ int main(void) {
     hx_set_param(h, "transport", "play");
     HX_ASSERT(inst->playing == 1, "transport running");
     hx_render(h, 100);
-    /* Track 1's clip isn't launched (clip_playing=0), so commit maps the
-     * note via abs-master-tick mod the clip window — the transport-aligned
-     * position the user heard. */
-    uint32_t abs_at_press = inst->global_tick * TICKS_PER_STEP
-                          + inst->master_tick_in_step;
-    uint32_t tick_at_play = abs_at_press
-        % ((uint32_t)inst->tracks[1].clips[0].length
-           * inst->tracks[1].clips[0].ticks_per_step);
+    /* Capturing over an EMPTY clip while playing = a first take: the note lands
+     * at the clip playhead where it was played (its captured clip-tick), and the
+     * clip is sized to fit — no wrap into a default 1-bar window. */
+    uint32_t tick_at_play = inst->tracks[1].current_clip_tick;
     live_note_on(inst, &inst->tracks[1], 61, 90);
     hx_render(h, 10);
     live_note_off(inst, &inst->tracks[1], 61);
     HX_ASSERT(capture_pending_for_track(inst, 1) == 1, "1 pending while playing");
-    uint16_t len_before = inst->tracks[1].clips[0].length;
     hx_set_param(h, "t1_capture_commit", "0");
     cl = &inst->tracks[1].clips[0];
     HX_ASSERT(cl->note_count == 1, "overdub wrote 1 note");
-    HX_ASSERT(cl->length == len_before, "overdub keeps clip length");
+    HX_ASSERT((cl->length % 16) == 0, "clip sized to whole bars");
     {
         int d = (int)cl->notes[0].tick - (int)tick_at_play;
         if (d < 0) d = -d;
-        HX_ASSERT(d < 24, "note lands near the tick it was played at");
+        HX_ASSERT(d < 24, "note lands where it was played (clip playhead)");
     }
     HX_ASSERT(inst->playing == 1, "playing commit leaves transport running");
 
@@ -159,6 +154,43 @@ int main(void) {
     HX_ASSERT(capture_pending_for_track(inst, 1) == 1, "buffered");
     hx_set_param(h, "transport", "stop");
     HX_ASSERT(inst->cap_count == 0, "stop cleared capture ring");
+    hx_destroy(h);
+
+    /* ---- 2b. Multi-bar phrase over an empty clip GROWS it (no 1-bar wrap) ---- */
+    h = hx_create(NULL);
+    HX_ASSERT(h, "create failed");
+    inst = I(h);
+    hx_set_param(h, "transport", "play");
+    HX_ASSERT(inst->tracks[1].clips[0].length == 16, "clip starts at 1 bar");
+    /* Big gaps (each below the new-take reset threshold so they stay one phrase). */
+    tap(h, 1, 60, 100, 20, 500);
+    tap(h, 1, 62, 100, 20, 500);
+    tap(h, 1, 64, 100, 20, 500);
+    tap(h, 1, 65, 100, 20, 500);
+    hx_set_param(h, "t1_capture_commit", "0");
+    {
+        clip_t *c2 = &inst->tracks[1].clips[0];
+        HX_ASSERT(c2->note_count == 4, "all 4 notes kept (not wrapped/overwritten)");
+        HX_ASSERT(c2->length > 16, "empty clip grew past 1 bar to fit the phrase");
+        int i; uint32_t prev = 0;
+        for (i = 0; i < c2->note_count; i++) {
+            HX_ASSERT(c2->notes[i].tick >= prev, "notes laid out in order (unwrapped)");
+            prev = c2->notes[i].tick;
+        }
+    }
+    hx_destroy(h);
+
+    /* ---- 2c. New-take gap: long silence between notes starts a fresh buffer ---- */
+    h = hx_create(NULL);
+    HX_ASSERT(h, "create failed");
+    inst = I(h);
+    hx_set_param(h, "transport", "play");
+    tap(h, 1, 60, 100, 20, 20);
+    HX_ASSERT(capture_pending_for_track(inst, 1) == 1, "first note buffered");
+    hx_render(h, 3000);   /* > gap threshold (>=2s at 44.1k/128) of silence */
+    tap(h, 1, 62, 100, 20, 20);
+    HX_ASSERT(capture_pending_for_track(inst, 1) == 1,
+              "gap dropped the old note; only the new one is buffered");
     hx_destroy(h);
 
     /* ---- 4. CC knob capture (stopped) ---- */

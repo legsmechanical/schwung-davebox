@@ -508,9 +508,10 @@ function drawTempoSelect() {
     /* "< 120 bpm >" (empty-session tempo) or "< 2 bars >" (warp-to-fit) —
      * shared value line (same look as the tap-tempo screen). */
     drawBpmLine(64, 6, bpms[idx], S.tempoSelectWarp ? 'bars' : 'bpm');
+    if (S.tempoSelectWarp) pixelPrintC(64, 22, 'Shift = Fine adjust', 1);
 
     /* BAR view. */
-    const BX = 4, BW = 120, BY = 34, BH = 19;
+    const BX = 4, BW = 120, BY = 28, BH = 19;
     const len = Math.max(1, (isDrum ? (S.drumLaneLength[t] | 0)
                                     : (S.clipLength[t][c] | 0)) || 16);
     const bars = Math.max(1, Math.round(len / 16));
