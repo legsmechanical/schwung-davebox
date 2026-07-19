@@ -1,5 +1,5 @@
 import { S } from './ui_state.mjs';
-import { MCUFONT, STATE_VERSION, NOTE_KEYS, SCALE_DISPLAY } from './ui_constants.mjs';
+import { MCUFONT, STATE_VERSION, NOTE_KEYS, SCALE_DISPLAY, pixelPrintC } from './ui_constants.mjs';
 import {
     drawMenuHeader, drawMenuList, menuLayoutDefaults
 } from '/data/UserData/schwung/shared/menu_layout.mjs';
@@ -82,7 +82,7 @@ function drawTapTempoScreen() {
     clear_screen();
     drawMenuHeader('TAP TEMPO');
     drawBpmLine(64, 24, S.tapTempoBpm);
-    print(4, 50, 'Tap any pad. Jog=BPM', 1);
+    pixelPrintC(64, 50, 'Tap any pad', 1);
 }
 
 function drawClearSessionConfirm() {
