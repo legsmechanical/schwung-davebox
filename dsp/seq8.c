@@ -5999,6 +5999,11 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         return snprintf(out, out_len, "%d", inst ? (int)inst->swing_res : 0);
     if (!strcmp(key, "version"))
         return snprintf(out, out_len, "6");
+    /* Host capability: the remote-UI "state" snapshot is read-only and render
+     * never frees/reallocs note memory, so the host may serve it off the audio
+     * thread (avoids the RT-thread serialization hitch on browser pulls). */
+    if (!strcmp(key, "remote_snapshot_rt_safe"))
+        return snprintf(out, out_len, "1");
     if (!strcmp(key, "instance_id"))
         return snprintf(out, out_len, "%u", inst ? inst->instance_nonce : 0);
     if (!strcmp(key, "state_version_mismatch"))
