@@ -545,9 +545,11 @@ export function _tickImpl() {
         }
         reapplyPalette();
         setButtonLED(MovePlay,   S.playing ? Green : LED_OFF, true);
-        /* Rec carries Live Merge state (Shift+Rec): green capturing, red armed. */
+        /* Rec carries Live Merge state (Shift+Rec): red armed, green capturing.
+         * CAPTURED (4 — capture stopped, awaiting placement) reverts to OFF so
+         * both Play and Rec go dark when the merge ends. */
         setButtonLED(MoveRec,    (S.recordArmed || S.recordScheduledStop) ? Red
-                                 : S.dspMergeState >= 2 ? Green
+                                 : (S.dspMergeState === 2 || S.dspMergeState === 3) ? Green
                                  : S.dspMergeState === 1 ? Red : LED_OFF, true);
         setButtonLED(MoveSample, DarkGrey, true);
         /* reapplyPalette reset the buttonCache — force-resend the 8 knob LEDs
@@ -1204,10 +1206,14 @@ export function _tickImpl() {
             /* recordScheduledStop = waiting for end-of-page to stop; recordPendingPage =
              * waiting for next page boundary for DSP to flip recording=1. Both blink. */
             setButtonLED(MoveRec, Math.floor(S.tickCount / 8) % 2 === 0 ? Red : LED_OFF);
-        } else if (S.dspMergeState !== 0) {
-            /* Live Merge (Shift+Rec): green while capturing, red while armed. */
-            setButtonLED(MoveRec, S.dspMergeState >= 2 ? Green : Red);
+        } else if (S.dspMergeState === 2 || S.dspMergeState === 3) {
+            /* Live Merge capturing (Shift+Rec): green. */
+            setButtonLED(MoveRec, Green);
+        } else if (S.dspMergeState === 1) {
+            /* Live Merge armed, waiting for the bar boundary: red. */
+            setButtonLED(MoveRec, Red);
         } else {
+            /* Idle or CAPTURED (capture ended → LED off with Play). */
             setButtonLED(MoveRec, S.recordArmed ? Red : LED_OFF);
         }
         /* Sample = bake, always available: dim ambient (same as Capture idle). */

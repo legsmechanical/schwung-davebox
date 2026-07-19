@@ -81,11 +81,13 @@ static int sp_globals_misc(sp_ctx_t *cx) {
         if (inst->merge_solo_track != 0xFF) {
             /* Single-track (Track-View) merge: finalize immediately in set_param
              * context (→ CAPTURED, no render-thread page-boundary wait, so no
-             * STOPPING race), then wait for the user to pick a destination clip
-             * on the merge track (JS switches to Session View + blinks the
-             * empty clips). merge_place_row does the write; merge_solo_track
-             * stays set so JS knows this is a single-clip placement. */
+             * STOPPING race), stop playback (ending a merge always halts the
+             * transport), then wait for the user to pick a destination clip on
+             * the merge track (JS switches to Session View + blinks the empty
+             * clips). ext_transport_stop's merge_finalize is a no-op on CAPTURED,
+             * so the captured take + merge_solo_track survive for placement. */
             merge_finalize(inst);   /* ARMED→IDLE; CAPTURING/STOPPING→CAPTURED */
+            ext_transport_stop(inst);
             return 1;
         }
         if (inst->merge_state == MERGE_STATE_CAPTURING)

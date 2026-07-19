@@ -460,6 +460,11 @@ export function pollDSP() {
      * the merge track's empty clips so the user taps where to save it. Scene
      * merge → the all-tracks placement dialog (pick a row). */
     if (_prevMergeState !== 4 && S.dspMergeState === 4) {
+        /* Ending a merge always stops playback. Solo already stopped DSP-side on
+         * merge_stop; this catches the scene path (finalizes at a page boundary)
+         * and is a no-op when the transport is already stopped. */
+        if (S.playing)
+            S.pendingDefaultSetParams.push({ key: 'transport', val: 'stop' });
         if (_soloTrack >= 0) {
             S.mergeSoloPlacement = _soloTrack;
             if (!S.sessionView) {
