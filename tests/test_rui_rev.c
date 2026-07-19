@@ -17,6 +17,10 @@
 static unsigned rev(hx_t *h) {
     return (unsigned)((seq8_instance_t *)h->inst)->rui_rev;
 }
+/* Browser-facing content counter (superset — see rui_content in seq8.c). */
+static unsigned crev(hx_t *h) {
+    return (unsigned)((seq8_instance_t *)h->inst)->rui_content_rev;
+}
 
 int main(void) {
     hx_t *h = hx_create(NULL);
@@ -466,6 +470,65 @@ int main(void) {
         HX_ASSERT(rev(h) == r, "snap_save must NOT bump rui_rev (store only, not shown)");
         r = rev(h); hx_set_param(h, "snap_load", "0");
         HX_ASSERT(rev(h) == r + 1, "snap_load must bump rui_rev (rui_index recall)");
+    }
+
+    /* ---- sp_track_record.c / sp_track_drum2.c: LIVE-RECORDED notes are
+     * BROWSER-visible content — record_note_on/off (melodic) and
+     * drum_record_note_on/off must bump rui_content_rev so the browser
+     * re-pulls (missing bump = the 2026-07-19 "remote UI lags far behind"
+     * class), while rui_rev stays UNBUMPED (the device JS records these
+     * itself; a bump would resync mid-recording — the 2026-07-06 hang). ---- */
+    {
+        unsigned r, c;
+        /* The launch_clip row above left t1 with queued_clip=2; arming then
+         * only sets record_armed (recording waits for the launch). Clear the
+         * queue white-box so the arm starts recording immediately. */
+        inst_->tracks[1].queued_clip = -1;
+        hx_set_param(h, "t1_recording", "1");
+        r = rev(h); c = crev(h); hx_set_param(h, "t1_record_note_on", "60 100");
+        HX_ASSERT(crev(h) == c + 1, "record_note_on must bump rui_content_rev");
+        HX_ASSERT(rev(h) == r,      "record_note_on must NOT bump rui_rev");
+        r = rev(h); c = crev(h); hx_set_param(h, "t1_record_note_off", "60");
+        HX_ASSERT(crev(h) == c + 1, "record_note_off must bump rui_content_rev");
+        HX_ASSERT(rev(h) == r,      "record_note_off must NOT bump rui_rev");
+        hx_set_param(h, "t1_recording", "0");
+        /* drum record on the default-drum track 0 */
+        hx_set_param(h, "t0_recording", "1");
+        c = crev(h); hx_set_param(h, "t0_drum_record_note_on", "36 100");
+        HX_ASSERT(crev(h) == c + 1, "drum_record_note_on must bump rui_content_rev");
+        c = crev(h); hx_set_param(h, "t0_drum_record_note_off", "36");
+        HX_ASSERT(crev(h) == c + 1, "drum_record_note_off must bump rui_content_rev");
+        hx_set_param(h, "t0_recording", "0");
+    }
+
+    /* ---- sp_track_misc.c / sp_track_config2.c / sp_globals_state.c:
+     * destructive clip transforms, the pfx_set catch-all, resolution changes
+     * and whole-set loads are all remote-visible; NONE of them bumped before
+     * (the "remote UI lags far behind the device" root cause — these are the
+     * ops the device UI and browser toolbars actually fire). ---- */
+    {
+        unsigned r;
+        r = rev(h); hx_set_param(h, "t1_clock_shift", "1");
+        HX_ASSERT(rev(h) == r + 1, "clock_shift must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t1_nudge", "1");
+        HX_ASSERT(rev(h) == r + 1, "nudge must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t1_beat_stretch", "1");
+        HX_ASSERT(rev(h) == r + 1, "beat_stretch must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t1_lgto_apply", "1");
+        HX_ASSERT(rev(h) == r + 1, "lgto_apply must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t1_clip_length", "8");
+        HX_ASSERT(rev(h) == r + 1, "clip_length must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t1_pfx_gate", "50");
+        HX_ASSERT(rev(h) == r + 1, "pfx_set catch-all must bump rui_rev");
+        r = rev(h); hx_set_param(h, "t1_clip_resolution", "0");
+        HX_ASSERT(rev(h) == r + 1, "clip_resolution must bump rui_rev");
+        /* state_load: content-only — the browser re-pulls, but the device JS
+         * (which initiated the load and runs its own pendingDspSync) must not
+         * be told to resync again. */
+        { unsigned c2;
+          r = rev(h); c2 = crev(h); hx_set_param(h, "state_load", "");
+          HX_ASSERT(crev(h) == c2 + 1, "state_load must bump rui_content_rev");
+          HX_ASSERT(rev(h) == r,       "state_load must NOT bump rui_rev"); }
     }
 
     hx_destroy(h);

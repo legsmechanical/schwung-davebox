@@ -321,6 +321,11 @@ static int sp_track_record(sp_ctx_t *cx) {
             if (tr->pfx.route == ROUTE_MOVE && !inst->dsp_inbound_enabled)
                 live_note_on(inst, tr, (uint8_t)pitch, (uint8_t)vel);
         }
+        /* Recorded notes are browser-visible content — without this the
+         * browser's piano roll only caught up on the next unrelated rev bump.
+         * CONTENT-ONLY bump (not rui_mark): the device JS records these itself
+         * and must not resync mid-recording (2026-07-06 record-disarm hang). */
+        rui_content(inst);
         return 1;
     }
 
@@ -427,6 +432,7 @@ static int sp_track_record(sp_ctx_t *cx) {
             if (tr->pfx.route == ROUTE_MOVE && !inst->dsp_inbound_enabled)
                 live_note_off(inst, tr, (uint8_t)pitch);
         }
+        rui_content(inst);   /* recorded gates changed (content-only, see note_on) */
         return 1;
     }
 

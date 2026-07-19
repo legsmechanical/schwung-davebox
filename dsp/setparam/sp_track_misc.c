@@ -30,6 +30,7 @@ static int sp_track_misc(sp_ctx_t *cx) {
             if (tr->current_step < cl->loop_start || tr->current_step >= _le)
                 tr->current_step = cl->loop_start;
         }
+        rui_mark(inst, tidx, (int)tr->active_clip);
         return 1;
     }
 
@@ -43,6 +44,7 @@ static int sp_track_misc(sp_ctx_t *cx) {
         cl->pp_dir_state = initial_pp_dir(cl->playback_dir);
         silence_track_from_set_param(inst, tr);
         inst->state_dirty = 1;
+        rui_mark(inst, tidx, (int)tr->active_clip);
         return 1;
     }
     /* Playback style for active melodic clip: 0=Step, 1=Audio (note-on at
@@ -107,6 +109,7 @@ static int sp_track_misc(sp_ctx_t *cx) {
         for (i = 0; i < len; i++) if (cl->steps[i]) { any = 1; break; }
         cl->active = (uint8_t)any;
         clip_migrate_to_notes(cl);
+        rui_mark(inst, tidx, (int)tr->active_clip);
         return 1;
     }
 
@@ -188,6 +191,7 @@ static int sp_track_misc(sp_ctx_t *cx) {
         }
         cl->nudge_pos += (int16_t)dir;
         clip_migrate_to_notes(cl);
+        rui_mark(inst, tidx, (int)tr->active_clip);
         return 1;
     }
 
@@ -336,6 +340,7 @@ static int sp_track_misc(sp_ctx_t *cx) {
         cl->active = (uint8_t)any;
         clip_migrate_to_notes(cl);
 
+        rui_mark(inst, tidx, (int)tr->active_clip);
         return 1;
     }
 
@@ -371,6 +376,7 @@ static int sp_track_misc(sp_ctx_t *cx) {
         }
         clip_migrate_to_notes(cl);
         inst->state_dirty = 1;
+        rui_mark(inst, tidx, (int)tr->active_clip);
         return 1;
     }
 
@@ -382,6 +388,7 @@ static int sp_track_misc(sp_ctx_t *cx) {
         apply_legato_to_clip(&tr->clips[tr->active_clip]);
         pfx_sync_from_clip(tr);
         inst->state_dirty = 1;
+        rui_mark(inst, tidx, (int)tr->active_clip);
         return 1;
     }
 
@@ -391,5 +398,11 @@ static int sp_track_misc(sp_ctx_t *cx) {
         undo_begin_single(inst, tidx, (int)tr->active_clip);
     /* All play effects params */
     pfx_set(inst, tr, &tr->clips[tr->active_clip].pfx_params, sub, val);
+    /* pfx values are snapshot-visible (rui_pfx) — every catch-all edit must
+     * notify the remote UI (this whole handler previously never bumped:
+     * clip_length/dir/clock_shift/nudge/beat_stretch/legato/pfx edits were
+     * invisible to the browser until an unrelated rev bump — the 2026-07-19
+     * "remote UI lags far behind the device" root cause). */
+    rui_mark(inst, tidx, (int)tr->active_clip);
     return 1;
 }

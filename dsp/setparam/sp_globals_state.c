@@ -209,6 +209,12 @@ static int sp_globals_state(sp_ctx_t *cx) {
           }
         }
         seq8_load_state(inst);
+        /* Whole-set content swap (incl. Clear Session via v=0 file): the
+         * BROWSER must re-pull or it keeps showing the old set. CONTENT-ONLY
+         * bump — the device JS initiated this load and runs its own
+         * pendingDspSync; an rui_rev bump here would trigger a second,
+         * redundant full resync (the 4.3s frozen-tick class). */
+        rui_content(inst);
         return 1;
     }
 

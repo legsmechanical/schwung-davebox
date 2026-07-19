@@ -784,7 +784,18 @@ typedef struct {
     uint8_t  rui_sel_clip;    /* 0..NUM_CLIPS-1 */
     int16_t  rui_sel_lane;    /* -1 melodic, 0..DRUM_LANES-1 drum */
     int8_t   rui_cc_focus;   /* knob 0..7 whose CC breakpoints emit in rui_cc; -1 = none */
-    uint32_t rui_rev;         /* monotonic edit counter */
+    uint32_t rui_rev;         /* monotonic edit counter (REMOTE-edit signal for the
+                               * on-device JS: a bump makes it re-read rui_dirty
+                               * clips — never bumped by local recording, see
+                               * rui_content below) */
+    uint32_t rui_content_rev; /* monotonic CONTENT counter (browser-facing):
+                               * superset of rui_rev — bumped on EVERY content
+                               * change incl. local recording / arp record /
+                               * state load. Drives the rui_poll digest + the
+                               * "state" snapshot rev so the browser re-pulls,
+                               * WITHOUT triggering the device JS resync
+                               * machinery (whose full-sync fallback is the
+                               * 4.3s frozen-tick hazard). */
     uint64_t rui_frames;      /* free-running rendered-frames counter (device clock
                                * for remote-UI playhead timestamps). Survives
                                * state_load (field-wise parse, no memset); resets
@@ -1250,6 +1261,8 @@ static void ext_transport_start(seq8_instance_t *inst);
 static void ext_transport_stop(seq8_instance_t *inst);
 static void clip_init(clip_t *cl);
 static void drum_pfx_params_init(drum_pfx_params_t *p);
+static inline void rui_mark(seq8_instance_t *inst, int t, int c);
+static inline void rui_content(seq8_instance_t *inst);
 
 static void drum_clips_alloc(seq8_instance_t *inst, seq8_track_t *tr) {
     int c, l;
@@ -3236,6 +3249,10 @@ static void tarp_fire_step(seq8_instance_t *inst, seq8_track_t *tr) {
                         LRS_SET(tr, sidx);
                     }
                 }
+                /* Arp output recorded into the clip is browser-visible content.
+                 * Content-only bump: the device JS records this itself and must
+                 * not resync mid-recording. RT-safe (single increment). */
+                rui_content(inst);
             }
         }
     }
@@ -3809,7 +3826,16 @@ static int clip_insert_note(clip_t *cl, uint32_t tick, uint16_t gate,
 static inline void rui_touch(seq8_instance_t *inst) {
     if (!inst) return;
     inst->rui_rev++;
+    inst->rui_content_rev++;
     inst->rui_dirty_full = 1;
+}
+
+/* Bump ONLY the browser-facing content rev — for content changes the device
+ * JS must NOT resync on (its own live recording / arp record / state loads it
+ * initiated). RT-safe: a single increment. */
+static inline void rui_content(seq8_instance_t *inst) {
+    if (!inst) return;
+    inst->rui_content_rev++;
 }
 
 /* Bump the revision AND record clip (t,c) as dirty for a targeted on-device
@@ -3817,6 +3843,7 @@ static inline void rui_touch(seq8_instance_t *inst) {
 static inline void rui_mark(seq8_instance_t *inst, int t, int c) {
     if (!inst) return;
     inst->rui_rev++;
+    inst->rui_content_rev++;
     if (inst->rui_dirty_full) return;
     if (t < 0 || t >= NUM_TRACKS || c < 0 || c >= NUM_CLIPS) { inst->rui_dirty_full = 1; return; }
     for (uint8_t i = 0; i < inst->rui_dirty_n; i++)
@@ -5605,7 +5632,8 @@ static int seq8_remote_snapshot(seq8_instance_t *inst, char *out, int out_len) {
 
     double bpm = (inst->tracks[0].pfx.cached_bpm > 0)
                  ? inst->tracks[0].pfx.cached_bpm : (double)BPM_DEFAULT;
-    APP("{\"rui_rev\":\"%u\"", (unsigned)inst->rui_rev);
+    /* Browser-facing content rev (superset of rui_rev — see rui_content). */
+    APP("{\"rui_rev\":\"%u\"", (unsigned)inst->rui_content_rev);
     /* 4th field (playing only) = device-clock ms (free-running rendered-frame
      * counter). The browser uses it to time-base playhead corrections so WiFi
      * delivery delay can't masquerade as playhead position error. Omitted when
@@ -5912,11 +5940,11 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
          * pushes on digest CHANGE — a always-ticking field would push forever). */
         if (inst->playing)
             return snprintf(out, out_len, "%u:1:%u:%d:%llu",
-                            (unsigned)inst->rui_rev,
+                            (unsigned)inst->rui_content_rev,
                             (unsigned)rui_playhead_tick(inst), (int)pbpm,
                             (unsigned long long)(inst->rui_frames * 1000ULL / 44100ULL));
         return snprintf(out, out_len, "%u:0:%u:%d",
-                        (unsigned)inst->rui_rev,
+                        (unsigned)inst->rui_content_rev,
                         (unsigned)rui_playhead_tick(inst), (int)pbpm);
     }
 

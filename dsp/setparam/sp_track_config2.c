@@ -49,6 +49,7 @@ static int sp_track_config2(sp_ctx_t *cx) {
         /* Rebuild step arrays from rescaled notes */
         clip_build_steps_from_notes(cl);
         inst->state_dirty = 1;
+        rui_mark(inst, tidx, (int)tr->active_clip);   /* rui_clip notes/tps */
         return 1;
     }
 
@@ -76,6 +77,7 @@ static int sp_track_config2(sp_ctx_t *cx) {
         }
         clip_build_steps_from_notes(cl);
         inst->state_dirty = 1;
+        rui_mark(inst, tidx, (int)tr->active_clip);   /* rui_clip notes/tps/len */
         return 1;
     }
 
@@ -92,21 +94,27 @@ static int sp_track_config2(sp_ctx_t *cx) {
             drum_clips_reset(tr);  /* clear-and-keep: snapshot may read concurrently */
         tr->pad_mode = new_mode;
         tarp_silence(inst, tr);
+        rui_mark(inst, tidx, (int)tr->active_clip);   /* melodic vs drum view */
         return 1;
     }
     /* Track-type conversion: translate note content AND flip pad_mode
      * atomically (single set_param, no coalescing drop). Idempotent guards
      * make a redundant push a no-op. */
     if (!strcmp(sub, "convert_to_drum")) {
-        if (tr->pad_mode != PAD_MODE_DRUM)
+        if (tr->pad_mode != PAD_MODE_DRUM) {
             convert_track_melodic_to_drum(inst, tidx);
+            rui_mark(inst, tidx, (int)tr->active_clip);   /* content translated */
+        }
         return 1;
     }
     if (!strcmp(sub, "convert_to_melodic")) {
-        if (tr->pad_mode == PAD_MODE_DRUM)
+        if (tr->pad_mode == PAD_MODE_DRUM) {
             convert_track_drum_to_melodic(inst, tidx);
-        else if (tr->pad_mode == PAD_MODE_CONDUCT)
+            rui_mark(inst, tidx, (int)tr->active_clip);   /* content translated */
+        } else if (tr->pad_mode == PAD_MODE_CONDUCT) {
             tr->pad_mode = PAD_MODE_MELODIC_SCALE;  /* note data already melodic */
+            rui_mark(inst, tidx, (int)tr->active_clip);
+        }
         /* Leaving the Conductor role: clear the one-Conductor latch. */
         if (inst->conductor_track == tidx) {
             inst->conductor_track = -1;
@@ -123,6 +131,7 @@ static int sp_track_config2(sp_ctx_t *cx) {
         convert_track_to_conduct(inst, tidx);
         inst->conductor_track = (int8_t)tidx;
         inst->state_dirty = 1;
+        rui_mark(inst, tidx, (int)tr->active_clip);   /* rui_cond + content */
         return 1;
     }
 

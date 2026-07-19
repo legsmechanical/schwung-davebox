@@ -885,6 +885,10 @@ static int sp_track_drum2(sp_ctx_t *cx) {
                 }
             }
         }
+        /* Recorded drum hits are browser-visible content (rui_dnotes).
+         * CONTENT-ONLY bump: device JS records these itself, no mid-record
+         * resync (2026-07-06 record-disarm hang class). */
+        rui_content(inst);
         return 1;
     }
 
@@ -942,6 +946,7 @@ static int sp_track_drum2(sp_ctx_t *cx) {
                 }
             }
         }
+        rui_content(inst);   /* recorded gates changed (content-only, see note_on) */
         return 1;
     }
     return 0;

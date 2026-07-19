@@ -1843,7 +1843,9 @@ int main(void) {
             hx_set_param(h, "t7_clip_length", "37");
             HX_ASSERT(xt->clips[10].length == 37, "clip_length: active clip10 length->37");
             HX_ASSERT(xt->clips[12].length != 37, "clip_length: non-active clip12 untouched (follows active_clip)");
-            HX_ASSERT(inst->rui_rev == rev0, "clip_length: does NOT rui_touch (vs tN_cC_length)");
+            /* 2026-07-19: clip_length is remote-visible content — it now
+             * rui_marks (the old no-bump behavior left the browser stale). */
+            HX_ASSERT(inst->rui_rev == rev0 + 1, "clip_length: rui_marks (remote-visible)");
             hx_set_param(h, "t7_clip_length", "999");
             HX_ASSERT(xt->clips[10].length == SEQ_STEPS, "clip_length: clamps to SEQ_STEPS - loop_start (loop_start 0)");
         }
