@@ -33,7 +33,8 @@ import { showActionPopup, writeSidecar, uuidToStatePath, uuidToUiStatePath,
     updateNameIndex } from './ui_persistence.mjs';
 import { computePadNoteMap, setActiveDrumLane, syncDrumClipContent,
     syncDrumLaneSteps, syncDrumLanesMeta, syncDrumRepeatState } from './ui_drummodel.mjs';
-import { effectiveClip, forceRedraw } from './ui_leds.mjs';
+import { effectiveClip, forceRedraw, invalidateLEDCache } from './ui_leds.mjs';
+import { sessionHasAnyContent } from './ui_scene.mjs';
 import { exitSchwungCoRun, exitMoveNativeCoRun,
     CORUN_TARGET_CHAIN_EDIT, CORUN_TARGET_MOVE_NATIVE } from './ui_corun.mjs';
 /* Intentional ES-module cycle with ui_record.mjs (it imports liveSendNote +
@@ -349,6 +350,11 @@ export function pollDSP() {
             if ((_n > 0) !== (S.capturePending > 0)) S.screenDirty = true;
             S.capturePending = _n;
         }
+        /* "Armed" = a Capture tap would actually commit: playing (overdub) or
+         * stopped in an empty session (first-take). Stopped + non-empty is a
+         * no-op (hint only), so the LED must not blink there. */
+        S.captureArmed = S.capturePending > 0 &&
+            (S.playing || !sessionHasAnyContent());
         /* Watch capture_info for a commit and mirror the tempo-selector state.
          * Format: "seq stopped bpm0 bpm1 bpm2 len select_active select_idx". */
         const _ci = host_module_get_param('capture_info');
@@ -449,15 +455,24 @@ export function pollDSP() {
     /* Arm confirmation: no longer fails on "no empty slot" — placement is
      * deferred until the user picks a row, so arm always succeeds. */
     if (S.pendingMergeArm) S.pendingMergeArm = false;
-    /* Capture-done transition: DSP went into CAPTURED (4). Single-clip merge
-     * places DSP-side (merge_stop), so reaching CAPTURED here means either the
-     * scene flow (→ placement dialog) or a solo merge whose transport was
-     * stopped before merge_stop (→ auto-place into the solo track's clip). */
+    /* Capture-done transition: DSP went into CAPTURED (4). Single-clip (Track
+     * View) merge → pick-a-destination mode: switch to Session View and blink
+     * the merge track's empty clips so the user taps where to save it. Scene
+     * merge → the all-tracks placement dialog (pick a row). */
     if (_prevMergeState !== 4 && S.dspMergeState === 4) {
         if (_soloTrack >= 0) {
-            S.pendingDefaultSetParams.push({
-                key: 'merge_place_row',
-                val: String(S.trackActiveClip[_soloTrack]) });
+            S.mergeSoloPlacement = _soloTrack;
+            if (!S.sessionView) {
+                /* Minimal view switch (importing _switchViewCleanup would cross
+                 * an existing module cycle). Clear the Track-View step-hold
+                 * state that shouldn't leak into Session View. */
+                S.sessionView     = true;
+                S.heldStep        = -1; S.heldStepBtn = -1;
+                S.heldStepNotes   = []; S.stepWasEmpty = false;
+                S.stepWasHeld     = false;
+                S.sessionStepHeld = -1; S.sessionStepHeldCtx = 0;
+                invalidateLEDCache();
+            }
         } else {
             S.pendingMergePlacement = true;
         }
@@ -475,8 +490,9 @@ export function pollDSP() {
         /* Solo (single-track) merge places DSP-side on merge_stop, so JS sees
          * CAPTURING/STOPPING → IDLE directly; the mirror is the reliable tell
          * at this point (DSP already reset its solo field to 255). */
-        const _wasSolo = S.mergeSingleTrack >= 0;
-        S.mergeSingleTrack = -1;
+        const _wasSolo = S.mergeSingleTrack >= 0 || S.mergeSoloPlacement >= 0;
+        S.mergeSingleTrack   = -1;
+        S.mergeSoloPlacement = -1;
         if (_wasSolo)
             showActionPopup('LIVE MERGE', 'Printed to clip');
         else if (_prevMergeState === 2)

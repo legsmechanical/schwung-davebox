@@ -763,6 +763,19 @@ export function _onPadPress(status, d1, d2) {
                 const rowBase = 92 - row * 8;
                 if (d1 >= rowBase && d1 < rowBase + NUM_TRACKS) {
                     const t = d1 - rowBase;
+                    /* Single-clip merge placement: pick a destination clip on
+                     * the merge track. Only an empty clip on that track commits;
+                     * any other clip-pad press is swallowed (Record cancels). */
+                    if (S.mergeSoloPlacement >= 0) {
+                        const clipIdx = S.sceneRow + row;
+                        if (t === S.mergeSoloPlacement && !clipHasContent(t, clipIdx)) {
+                            S.pendingDefaultSetParams.push(
+                                { key: 'merge_place_row', val: String(clipIdx) });
+                            /* mode + LEDs cleared when DSP → IDLE (pollDSP). */
+                        }
+                        forceRedraw();
+                        return;
+                    }
                     if (S.muteHeld) {
                         /* Mute-held + pad: toggle mute/solo on that track's column */
                         if (S.shiftHeld) setTrackSolo(t, !S.trackSoloed[t]);

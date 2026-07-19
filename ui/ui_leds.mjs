@@ -440,6 +440,14 @@ export function updateSessionLEDs() {
                 const isSrcDrumClip = (S.copySrc.kind === 'drum_clip' || S.copySrc.kind === 'cut_drum_clip') && S.copySrc.track === t && S.copySrc.clip === sceneIdx;
                 if (isSrcClip || isSrcRow || isSrcDrumClip) color = (Math.floor(S.tickCount / 24) % 2) ? White : LED_OFF;
             }
+            /* Single-clip merge placement: blink the empty destination clips on
+             * the merge track; dim everything else so the choice is obvious. */
+            if (S.mergeSoloPlacement >= 0) {
+                if (t === S.mergeSoloPlacement && !hasContent)
+                    color = (Math.floor(S.tickCount / 24) % 2) ? trackColor(t) : LED_OFF;
+                else
+                    color = LED_OFF;
+            }
             cachedSetLED(note, color);
         }
     }

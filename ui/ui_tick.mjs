@@ -1252,11 +1252,11 @@ export function _tickImpl() {
             }
             setButtonLED(MoveLoop, loopColor);
         }
-        /* Capture: blink White while retrospective-capture input is buffered
-         * (tap commits it), dim ambient otherwise. Blink reads far more
-         * clearly than steady White vs DarkGrey on this button. */
+        /* Capture: blink White only when a tap would actually commit buffered
+         * input (S.captureArmed — playing, or stopped in an empty session), dim
+         * ambient otherwise. Blinking on stopped+non-empty (a no-op) misled. */
         setButtonLED(MoveCapture,
-            S.capturePending > 0
+            S.captureArmed
                 ? ((Math.floor(S.tickCount / 24) % 2) ? White : LED_OFF)
                 : DarkGrey);
         {

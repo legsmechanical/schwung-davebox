@@ -598,6 +598,14 @@ export function drawUI() {
         return;
     }
     if (S.tempoSelectActive) { drawTempoSelect(); return; }
+    if (S.mergeSoloPlacement >= 0) {
+        clear_screen();
+        print(4, 8,  'MERGED TAKE',        1);
+        print(4, 22, 'Tap a blinking clip', 1);
+        print(4, 34, 'on track ' + (S.mergeSoloPlacement + 1) + ' to save', 1);
+        print(4, 50, 'Rec cancels',         1);
+        return;
+    }
     if (S.confirmStateWipe) { drawStateWipeConfirm(); return; }
     if (S.bpmMoveInfo) { drawBpmMoveInfo(); return; }
     if (S.recordBlockedDialog) { drawRecordBlockedDialog(); return; }

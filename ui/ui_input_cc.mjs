@@ -1622,7 +1622,7 @@ function _onCC_transport(d1, d2) {
             S.mergeSingleTrack = _mt;
             S.pendingDefaultSetParams.push({ key: 'merge_arm', val: 't' + _mt });
             S.pendingMergeArm = true;
-            showActionPopup('LIVE MERGE', 'This track to its', 'clip. Shift+Rec', 'again to stop.');
+            showActionPopup('LIVE MERGE', 'This track. Shift+', 'Rec to stop, then', 'pick a clip.');
             S.actionPopupEndTick = S.tickCount + 280;
         }
         return;
@@ -3362,9 +3362,11 @@ export function _onCCMsg(d1, d2) {
             return;
         }
     }
-    /* Live-merge placement: Record cancels (matches the dialog text). */
-    if (S.pendingMergePlacement && d2 === 127 && d1 === MoveRec) {
+    /* Live-merge placement (scene or single-clip): Record cancels (dialog text). */
+    if ((S.pendingMergePlacement || S.mergeSoloPlacement >= 0) &&
+            d2 === 127 && d1 === MoveRec) {
         S.pendingMergePlacement = false;
+        S.mergeSoloPlacement    = -1;
         S.pendingDefaultSetParams.push({ key: 'merge_cancel', val: '1' });
         S._modalSwallowCC = d1;
         forceRedraw();

@@ -342,7 +342,8 @@ export const S = {
     muteUsedAsModifier: false,
     captureHeld: false,
     captureUsedAsModifier: false,    /* set true when a Capture-held gesture consumes the press (scene capture, drum lane select, etc.) — bare-tap clip/scene bake suppresses on release */
-    capturePending: 0,               /* retrospective-capture buffered event count for the active track (DSP capture_pending mirror; lights the Capture LED, gates tap = capture-vs-bake) */
+    capturePending: 0,               /* retrospective-capture buffered event count for the active track (DSP capture_pending mirror; gates tap = capture-vs-bake) */
+    captureArmed: false,             /* capturePending>0 AND a tap would actually commit (playing, or stopped in an empty session) — drives the Capture LED blink so it never flashes when a stopped commit would be refused */
     captureCommitAwait: 0,           /* >0: polls remaining to watch capture_info for the commit toast (set on tap-commit, counts down in pollDSP) */
     captureInfoSeq: undefined,       /* last seen capture_info commit sequence (toast fires on change) */
     tempoSelectActive: false,        /* Move-style post-capture tempo chooser is open (DSP cap_select_active mirror) */
@@ -352,7 +353,8 @@ export const S = {
     tempoSelectClip: 0,              /* clip the take was committed into */
     pendingSceneBakePicker: false,   /* Session-View Capture tap → wait for next row/step press to pick scene → opens scene-bake confirm */
     pendingMergePlacement: false,    /* multi-track live merge stopped → wait for row/step press to pick destination scene row */
-    mergeSingleTrack: -1,            /* >=0: Track-View single-clip merge armed on this track — on CAPTURED, auto-place into its focused clip (no placement dialog) */
+    mergeSingleTrack: -1,            /* >=0: Track-View single-clip merge armed on this track (DSP merge_solo_track); on CAPTURED → pick-destination mode */
+    mergeSoloPlacement: -1,          /* >=0: single-clip merge captured, awaiting a destination-clip pick on this track (Session View, empty clips blink) */
     _modalSwallowCC: -1,             /* button CC whose press was consumed by a modal guard in _onCCMsg; its release is swallowed too */
     metronomeOn: 1,
     metronomeOnLast: 1,
