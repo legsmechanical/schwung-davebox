@@ -42,10 +42,46 @@ function pixelPrintLargeC(cx, y, text, scale, color) {
     }
 }
 
+/* Left/right filled triangle "arrows" (the wheel-changeable "< >" indicator). */
+function triLeft(x, y, w, h) {
+    const mid = (h - 1) / 2;
+    for (let r = 0; r < h; r++) {
+        const c0 = Math.round((Math.abs(r - mid) / mid) * (w - 1));
+        for (let c = c0; c < w; c++) set_pixel(x + c, y + r, 1);
+    }
+}
+function triRight(x, y, w, h) {
+    const mid = (h - 1) / 2;
+    for (let r = 0; r < h; r++) {
+        const c1 = Math.round((1 - Math.abs(r - mid) / mid) * (w - 1));
+        for (let c = 0; c <= c1; c++) set_pixel(x + c, y + r, 1);
+    }
+}
+
+/* Shared "< NNN bpm >" tempo line — number in MCUFONT ×2, smaller "bpm" unit,
+ * chevrons flanking (jog-changeable), the group centered at cx. Used by both
+ * the tap-tempo screen and the post-capture tempo selector. */
+export function drawBpmLine(cx, topY, bpm) {
+    const num = String(Math.round(bpm || 0));
+    const nS = 2, uS = 1;
+    const nCW = 5 * nS + nS, uCW = 5 * uS + uS;
+    const nW  = num.length * nCW - nS;
+    const uW  = 3 * uCW - uS;
+    const aW = 5, aH = 9, aGap = 5, uGap = 3;
+    const total = aW + aGap + nW + uGap + uW + aGap + aW;
+    let x = cx - Math.round(total / 2);
+    if (x < 1) x = 1;
+    const nH = 5 * nS;
+    triLeft(x, topY + Math.round((nH - aH) / 2), aW, aH); x += aW + aGap;
+    pixelPrintMcu(x, topY, num, nS, 1); x += nW + uGap;
+    pixelPrintMcu(x, topY + (nH - 5 * uS), 'bpm', uS, 1); x += uW + aGap;
+    triRight(x, topY + Math.round((nH - aH) / 2), aW, aH);
+}
+
 function drawTapTempoScreen() {
     clear_screen();
     drawMenuHeader('TAP TEMPO');
-    pixelPrintLargeC(64, 22, String(S.tapTempoBpm), 3, 1);
+    drawBpmLine(64, 24, S.tapTempoBpm);
     print(4, 50, 'Tap any pad. Jog=BPM', 1);
 }
 

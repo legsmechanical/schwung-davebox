@@ -25,7 +25,7 @@ import {
 import {
     drawGlobalMenu, drawStateWipeConfirm, drawRecordBlockedDialog, drawBpmMoveInfo,
     drawLgtoConfirm, drawBakeConfirm, drawInheritPicker, drawSnapshotPicker,
-    drawClearAutoMenu, drawBakeSceneConfirm, drawXposeConfirm, pixelPrintMcu
+    drawClearAutoMenu, drawBakeSceneConfirm, drawXposeConfirm, drawBpmLine
 } from './ui_dialogs.mjs';
 import { ensureGlobalMenuFresh } from './ui_menu.mjs';
 import { bankCyclePos } from './ui_pure.mjs';
@@ -492,22 +492,6 @@ function drawPerfModeOled() {
     }
 }
 
-/* Left/right filled triangle "arrows" (the "< >" changeable indicator). */
-function triLeft(x, y, w, h) {
-    const mid = (h - 1) / 2;
-    for (let r = 0; r < h; r++) {
-        const c0 = Math.round((Math.abs(r - mid) / mid) * (w - 1));
-        for (let c = c0; c < w; c++) set_pixel(x + c, y + r, 1);
-    }
-}
-function triRight(x, y, w, h) {
-    const mid = (h - 1) / 2;
-    for (let r = 0; r < h; r++) {
-        const c1 = Math.round((1 - Math.abs(r - mid) / mid) * (w - 1));
-        for (let c = 0; c <= c1; c++) set_pixel(x + c, y + r, 1);
-    }
-}
-
 /* Post-capture tempo chooser (Move-style). A big scaled tempo flanked by "< >"
  * (wheel to change), and a BAR view — the loop drawn as numbered bars with
  * bright dividers, the notes, the loop end, and a live playhead sweeping at the
@@ -521,23 +505,8 @@ function drawTempoSelect() {
     const bpms = S.tempoSelectBpms;
     const isDrum = S.trackPadMode[t] === PAD_MODE_DRUM;
 
-    /* "<  120 bpm  >" — number in the tap-tempo BPM font (MCUFONT ×3), a
-     * smaller "bpm" after it, chevrons flanking, the whole group centered. */
-    {
-        const num = String(Math.round(bpms[idx] || 0));
-        const nS = 2, uS = 1;                     /* number + unit scales */
-        const nCW = 5 * nS + nS, uCW = 5 * uS + uS;
-        const nW  = num.length * nCW - nS;        /* number width */
-        const uW  = 3 * uCW - uS;                 /* "bpm" width */
-        const aW = 5, aH = 9, aGap = 5, uGap = 3;
-        const total = aW + aGap + nW + uGap + uW + aGap + aW;
-        let x = Math.max(1, Math.round((128 - total) / 2));
-        const topY = 6, nH = 5 * nS;
-        triLeft(x, topY + Math.round((nH - aH) / 2), aW, aH); x += aW + aGap;
-        pixelPrintMcu(x, topY, num, nS, 1); x += nW + uGap;
-        pixelPrintMcu(x, topY + (nH - 5 * uS), 'bpm', uS, 1); x += uW + aGap;  /* baseline-aligned */
-        triRight(x, topY + Math.round((nH - aH) / 2), aW, aH);
-    }
+    /* "< 120 bpm >" — shared tempo line (identical to the tap-tempo screen). */
+    drawBpmLine(64, 6, bpms[idx]);
 
     /* BAR view. */
     const BX = 4, BW = 120, BY = 34, BH = 19;
