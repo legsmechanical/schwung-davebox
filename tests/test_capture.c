@@ -53,15 +53,18 @@ int main(void) {
     HX_ASSERT(inst->tracks[1].clip_playing == 1, "committed clip armed+playing");
     HX_ASSERT(inst->cap_last_was_stopped == 1, "stopped path taken");
     {
-        /* Candidates are sorted ascending; the applied one is at cap_select_idx.
-         * 4 quarter notes at ~120 → candidates ≈ [40(clamped), 60, 120], applied
-         * = nearest 120 = the top one. */
+        /* Grid-fit estimator: candidates sorted ascending, applied at
+         * cap_select_idx. 4 steady quarter notes at ~120 → the best-fit default
+         * is ~120 (comfort tiebreak among octave-equivalent fits). */
         double bpm = inst->cap_bpm_est[inst->cap_select_idx];
         HX_ASSERT(bpm > 117.0 && bpm < 123.0, "applied BPM near 120");
         HX_ASSERT(inst->tracks[1].pfx.cached_bpm == bpm, "tempo applied");
         HX_ASSERT(inst->cap_select_active == 1, "tempo selector opened");
-        HX_ASSERT(inst->cap_bpm_est[0] <= inst->cap_bpm_est[1] &&
-                  inst->cap_bpm_est[1] <= inst->cap_bpm_est[2], "candidates sorted");
+        HX_ASSERT(inst->cap_bpm_count >= 2, "multiple candidates offered");
+        int _k;
+        for (_k = 1; _k < (int)inst->cap_bpm_count; _k++)
+            HX_ASSERT(inst->cap_bpm_est[_k - 1] <= inst->cap_bpm_est[_k],
+                      "candidates sorted ascending");
     }
     /* First note at clip start; later onsets near 96-tick (quarter) spacing. */
     HX_ASSERT(cl->notes[0].tick <= 2, "first note aligns to clip start");

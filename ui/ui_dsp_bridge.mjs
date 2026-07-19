@@ -356,13 +356,18 @@ export function pollDSP() {
         S.captureArmed = S.capturePending > 0 &&
             (S.playing || !sessionHasAnyContent());
         /* Watch capture_info for a commit and mirror the tempo-selector state.
-         * Format: "seq stopped bpm0 bpm1 bpm2 len select_active select_idx". */
+         * Format: "seq stopped len select_active select_idx count bpm0 bpm1 ..." */
         const _ci = host_module_get_param('capture_info');
         if (_ci) {
             const _p    = _ci.split(' ');
             const _seq  = parseInt(_p[0], 10) | 0;
-            const _sel  = _p.length > 6 ? (_p[6] === '1') : false;
-            const _sidx = _p.length > 7 ? (parseInt(_p[7], 10) | 0) : 0;
+            const _len  = _p[2];
+            const _sel  = _p[3] === '1';
+            const _sidx = parseInt(_p[4], 10) | 0;
+            const _cnt  = parseInt(_p[5], 10) | 0;
+            const _bpms = [];
+            for (let k = 0; k < _cnt && (6 + k) < _p.length; k++)
+                _bpms.push(parseFloat(_p[6 + k]));
             /* Commit edge: seq bumped since we last handled it. */
             if (S.captureCommitAwait > 0 && _seq > 0 && _seq !== S.captureInfoSeq) {
                 S.captureInfoSeq     = _seq;
@@ -372,14 +377,14 @@ export function pollDSP() {
                      * on-device tempo chooser (wheel to audition, click to keep). */
                     S.tempoSelectActive = true;
                     S.tempoSelectIdx    = _sidx;
-                    S.tempoSelectBpms   = [parseFloat(_p[2]), parseFloat(_p[3]), parseFloat(_p[4])];
+                    S.tempoSelectBpms   = _bpms;
                     S.tempoSelectTrack  = S.activeTrack;
                     S.tempoSelectClip   = S.trackActiveClip[S.activeTrack];
                     S.screenDirty = true;
                 } else if (_p[1] === '1') {
                     showActionPopup('CAPTURED',
-                                    Math.round(parseFloat(_p[2 + _sidx])) + ' BPM',
-                                    _p[5] + ' steps');
+                                    Math.round(_bpms[_sidx] || 0) + ' BPM',
+                                    _len + ' steps');
                 } else {
                     showActionPopup('CAPTURED', 'Added to clip');
                 }
@@ -394,7 +399,7 @@ export function pollDSP() {
                     S.screenDirty = true;
                 } else {
                     S.tempoSelectIdx  = _sidx;
-                    S.tempoSelectBpms = [parseFloat(_p[2]), parseFloat(_p[3]), parseFloat(_p[4])];
+                    if (_bpms.length) S.tempoSelectBpms = _bpms;
                 }
             }
         }

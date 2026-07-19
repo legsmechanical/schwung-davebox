@@ -421,15 +421,89 @@ static void follow_request_start(seq8_instance_t *inst, uint8_t kind) {
 /* Retrospective Capture commit (Move-style Capture MIDI)               */
 /* ------------------------------------------------------------------ */
 
-/* Median of the first n entries of v (v is scratch — sorted in place). */
-static uint64_t cap_median_u64(uint64_t *v, int n) {
-    int i, j;
-    for (i = 1; i < n; i++) {
-        uint64_t x = v[i];
-        for (j = i; j > 0 && v[j - 1] > x; j--) v[j] = v[j - 1];
-        v[j] = x;
+/* Manual |x| (no math.h in this TU). */
+static double cap_fabs(double x) { return x < 0.0 ? -x : x; }
+
+/* Estimate tempo candidates for the frozen take (cap_take[] note onsets):
+ * fill inst->cap_bpm_est[] (ascending) + cap_bpm_count, and return the default
+ * candidate index (best fit), or -1 when there isn't enough rhythm.
+ *
+ * Method (closer to native than the old median-IOI guess): score every integer
+ * BPM in [CAP_BPM_MIN, CAP_BPM_MAX] by how well the onsets fit a 1/16 grid,
+ * measured in BEAT units so faster tempos aren't unfairly favored, plus a bonus
+ * for the take spanning near-integer bars (so the loop lands cleanly) and a mild
+ * pull toward a comfortable tempo to break octave ties. The distinct local
+ * minima of that score become the candidates the user can wheel through. */
+#define CAP_BPM_MIN 60
+#define CAP_BPM_MAX 200
+static int capture_estimate_tempos(seq8_instance_t *inst) {
+    static double onset[512];
+    int n = 0, i, j;
+    double span = 1.0;
+    for (i = 0; i < (int)inst->cap_take_count; i++) {
+        double rel = (double)(inst->cap_take[i].frame - inst->cap_take_first);
+        if (rel > span) span = rel;   /* full take duration incl. note-offs */
+        if (inst->cap_take[i].type == CAP_EV_NOTE_ON && n < 512) onset[n++] = rel;
     }
-    return v[n / 2];
+    if (n < 3) { inst->cap_bpm_count = 0; return -1; }
+
+    double sr = (double)inst->sample_rate;
+    static double score[CAP_BPM_MAX - CAP_BPM_MIN + 1];
+    int b;
+    for (b = CAP_BPM_MIN; b <= CAP_BPM_MAX; b++) {
+        double fpb  = sr * 60.0 / (double)b;         /* frames per quarter */
+        double gerr = 0.0;
+        for (i = 0; i < n; i++) {
+            double bp = onset[i] / fpb;              /* position in beats */
+            double q  = (double)((int)(bp * 4.0 + 0.5)) / 4.0;  /* nearest 1/16 */
+            gerr += cap_fabs(bp - q);
+        }
+        gerr /= (double)n;                           /* avg 1/16 error (beats) */
+        /* Grid fit dominates. Evenly-spaced input fits many tempos on a 1/16
+         * grid (120-quarters == 150-at-5/16 == 90-dotted-8ths…), so a comfort
+         * pull toward ~120 breaks those octave/ratio ties; a small bar-fit term
+         * nudges toward a clean loop length without overriding grid alignment. */
+        double bars  = (span / fpb) / 4.0;           /* take span in 4/4 bars */
+        double berr  = cap_fabs(bars - (double)((int)(bars + 0.5)));
+        double comf  = cap_fabs((double)b - 120.0) / 120.0;
+        score[b - CAP_BPM_MIN] = gerr + 0.01 * berr + 0.03 * comf;
+    }
+
+    /* Distinct local minima → candidates (keep the best CAP_MAX_CAND). */
+    double cand[CAP_MAX_CAND], csc[CAP_MAX_CAND];
+    int nc = 0;
+    for (b = CAP_BPM_MIN; b <= CAP_BPM_MAX; b++) {
+        int idx = b - CAP_BPM_MIN;
+        double s = score[idx];
+        int lo = (idx == 0)         || score[idx - 1] >= s;
+        int hi = (b == CAP_BPM_MAX) || score[idx + 1] >  s;
+        if (!(lo && hi)) continue;
+        int dup = 0, k;
+        for (k = 0; k < nc; k++) {
+            double r = cand[k] > (double)b ? cand[k] / (double)b : (double)b / cand[k];
+            if (r < 1.03) { dup = 1; break; }        /* within 3% — same tempo */
+        }
+        if (dup) continue;
+        if (nc < CAP_MAX_CAND) { cand[nc] = (double)b; csc[nc] = s; nc++; }
+        else {
+            int worst = 0;
+            for (k = 1; k < nc; k++) if (csc[k] > csc[worst]) worst = k;
+            if (s < csc[worst]) { cand[worst] = (double)b; csc[worst] = s; }
+        }
+    }
+    if (nc == 0) { inst->cap_bpm_count = 0; return -1; }
+
+    for (i = 0; i < nc; i++) for (j = i + 1; j < nc; j++)
+        if (cand[j] < cand[i]) {
+            double t = cand[i]; cand[i] = cand[j]; cand[j] = t;
+            t = csc[i]; csc[i] = csc[j]; csc[j] = t;
+        }
+    int best = 0;
+    for (i = 1; i < nc; i++) if (csc[i] < csc[best]) best = i;
+
+    for (i = 0; i < nc; i++) inst->cap_bpm_est[i] = cand[i];
+    inst->cap_bpm_count = (uint8_t)nc;
+    return best;
 }
 
 /* Find the matching note-off for the note-on at ring offset i (same track,
@@ -684,13 +758,11 @@ static int capture_commit(seq8_instance_t *inst, int tidx, int clip) {
             }
         }
         inst->cap_last_was_stopped = 0;
-        inst->cap_bpm_est[0] = inst->cap_bpm_est[1] = inst->cap_bpm_est[2] =
-            (double)tr->pfx.cached_bpm;
-        inst->cap_last_len_steps = mcl->length;
-        inst->cap_last_was_stopped = 0;
-        inst->cap_bpm_est[0] = inst->cap_bpm_est[1] = inst->cap_bpm_est[2] =
-            (double)tr->pfx.cached_bpm;
-        inst->cap_last_len_steps = mcl->length;
+        inst->cap_select_active    = 0;   /* overdub never opens the selector */
+        inst->cap_bpm_est[0]       = (double)tr->pfx.cached_bpm;
+        inst->cap_bpm_count        = 1;
+        inst->cap_select_idx       = 0;
+        inst->cap_last_len_steps   = mcl->length;
 
         if (!wrote) return 0;
         if (!is_drum && mcl->note_count > 0) clip_build_steps_from_notes(mcl);
@@ -727,23 +799,12 @@ static int capture_commit(seq8_instance_t *inst, int tidx, int clip) {
      * tempo selector can re-derive it at any BPM without cumulative rounding. */
     uint64_t first_frame = 0;
     int      have_first  = 0;
-    uint64_t iois[64];
-    int      n_ioi = 0;
-    uint64_t prev_on = 0;
-    int      have_prev = 0;
     inst->cap_take_count = 0;
     for (i = 0; i < (int)inst->cap_count; i++) {
         const cap_ev_t *ev = &inst->cap_ring[(inst->cap_head + i) % CAP_MAX_EVENTS];
         if (ev->track != (uint8_t)tidx) continue;
         if (!have_first && (ev->type == CAP_EV_NOTE_ON || ev->type == CAP_EV_CC)) {
             first_frame = ev->frame; have_first = 1;
-        }
-        if (ev->type == CAP_EV_NOTE_ON) {
-            if (have_prev && n_ioi < 64) {
-                uint64_t d = ev->frame - prev_on;
-                if (d >= (uint64_t)(inst->sample_rate * 0.045)) iois[n_ioi++] = d;
-            }
-            prev_on = ev->frame; have_prev = 1;
         }
         if (inst->cap_take_count < CAP_MAX_EVENTS) {
             cap_take_ev_t *te = &inst->cap_take[inst->cap_take_count++];
@@ -757,33 +818,20 @@ static int capture_commit(seq8_instance_t *inst, int tidx, int clip) {
     inst->cap_take_first   = first_frame;
     inst->cap_take_is_drum = (uint8_t)is_drum;
 
-    /* Three octave candidates from the median IOI, sorted ascending. Initial
-     * selection = the one nearest 120 BPM in log space (Move parity). Falls
-     * back to the current tempo when there's too little rhythm to estimate. */
+    /* Tempo detection (grid-fit; see capture_estimate_tempos). Fills the
+     * candidate list + picks the best-fitting default. Under clock-follow, or
+     * with too little rhythm to estimate, fall back to the current tempo with
+     * no selector. */
     double base = (double)tr->pfx.cached_bpm;
     if (base < 20.0 || base > 400.0) base = 120.0;
-    inst->cap_bpm_est[0] = inst->cap_bpm_est[1] = inst->cap_bpm_est[2] = base;
     int have_estimate = 0;
-    if (!inst->clock_follow_on && n_ioi >= 2) {
-        double med = (double)cap_median_u64(iois, n_ioi);
-        double cand[3];
-        cand[0] = (double)inst->sample_rate * 60.0 / (med * 4.0); /* 16th → lowest */
-        cand[1] = (double)inst->sample_rate * 60.0 / (med * 2.0); /* 8th          */
-        cand[2] = (double)inst->sample_rate * 60.0 /  med;        /* 1/4 → highest */
-        int ci;
-        for (ci = 0; ci < 3; ci++) {
-            if (cand[ci] < 40.0)  cand[ci] = 40.0;
-            if (cand[ci] > 250.0) cand[ci] = 250.0;
-            inst->cap_bpm_est[ci] = cand[ci];
-        }
-        int best = 0; double bestd = 1e9;
-        for (ci = 0; ci < 3; ci++) {
-            double r = cand[ci] > 120.0 ? cand[ci] / 120.0 : 120.0 / cand[ci];
-            if (r < bestd) { bestd = r; best = ci; }
-        }
+    int best = inst->clock_follow_on ? -1 : capture_estimate_tempos(inst);
+    if (best >= 0 && inst->cap_bpm_count >= 1) {
         inst->cap_select_idx = (uint8_t)best;
-        have_estimate = 1;
+        have_estimate = (inst->cap_bpm_count >= 2);   /* selector only if a real choice */
     } else {
+        inst->cap_bpm_est[0] = base;
+        inst->cap_bpm_count  = 1;
         inst->cap_select_idx = 0;
     }
 

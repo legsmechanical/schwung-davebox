@@ -1204,10 +1204,12 @@ typedef struct {
      * events live at (head+i) % CAP_MAX_EVENTS. Overflow drops the oldest.
      * cap_bpm_est / cap_last_* describe the most recent stopped-mode commit
      * (read back by JS via get_param "capture_info" for the BPM toast). */
+#define CAP_MAX_CAND 8         /* tempo candidates offered by the selector */
     cap_ev_t cap_ring[CAP_MAX_EVENTS];
     uint16_t cap_head;
     uint16_t cap_count;
-    double   cap_bpm_est[3];       /* the 3 octave candidates, sorted ascending */
+    double   cap_bpm_est[CAP_MAX_CAND];  /* candidate tempos, sorted ascending */
+    uint8_t  cap_bpm_count;        /* how many of cap_bpm_est[] are valid (>=1) */
     uint16_t cap_last_len_steps;   /* clip length written by last stopped commit */
     uint8_t  cap_last_was_stopped; /* 1 = last commit ran the stopped/tempo path */
     uint32_t cap_commit_seq;       /* bumped per successful commit (JS toast edge) */
@@ -6005,19 +6007,24 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         return snprintf(out, out_len, "%d",
                         inst ? capture_pending_for_track(inst, (int)inst->active_track) : 0);
     /* Last commit + tempo-selector state:
-     * "seq stopped bpm0 bpm1 bpm2 len select_active select_idx".
-     * bpm0..2 = the 3 candidates (ascending); select_idx = applied one.
+     * "seq stopped len select_active select_idx count bpm0 bpm1 ... bpmN"
+     * count = number of candidate tempos (ascending); select_idx = applied one.
      * seq increments per successful commit (JS toast fires on the edge). */
-    if (!strcmp(key, "capture_info"))
-        return snprintf(out, out_len, "%u %d %.1f %.1f %.1f %d %d %d",
-                        inst ? inst->cap_commit_seq : 0,
-                        inst ? (int)inst->cap_last_was_stopped : 0,
-                        inst ? inst->cap_bpm_est[0] : 0.0,
-                        inst ? inst->cap_bpm_est[1] : 0.0,
-                        inst ? inst->cap_bpm_est[2] : 0.0,
-                        inst ? (int)inst->cap_last_len_steps : 0,
-                        inst ? (int)inst->cap_select_active : 0,
-                        inst ? (int)inst->cap_select_idx : 0);
+    if (!strcmp(key, "capture_info")) {
+        if (!inst) return snprintf(out, out_len, "0 0 0 0 0 1 120.0");
+        int pos = snprintf(out, out_len, "%u %d %d %d %d %d",
+                           inst->cap_commit_seq,
+                           (int)inst->cap_last_was_stopped,
+                           (int)inst->cap_last_len_steps,
+                           (int)inst->cap_select_active,
+                           (int)inst->cap_select_idx,
+                           (int)inst->cap_bpm_count);
+        int c;
+        for (c = 0; c < (int)inst->cap_bpm_count && c < CAP_MAX_CAND; c++)
+            pos += snprintf(out + pos, (size_t)(out_len - pos),
+                            " %.1f", inst->cap_bpm_est[c]);
+        return pos;
+    }
 
     /* state_snapshot: single call returning all poll-loop values.
      * Format: "playing cs0..cs7 ac0..ac7 qc0..qc7 count_in cp0..cp7 wr0..wr7 ps0..ps7 flash_eighth flash_sixteenth metro_beat_count master_pos looper_state merge_state merge_solo_track"

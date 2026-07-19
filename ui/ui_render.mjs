@@ -492,57 +492,72 @@ function drawPerfModeOled() {
     }
 }
 
-/* Post-capture tempo chooser (Move-style). Shows the applied BPM + the three
- * candidates, and a note strip with beat/bar grid + a live playhead so the
- * user can see how the take aligns to the grid under each tempo while it
- * plays. Wheel auditions candidates; jog click keeps the current one. */
+/* Post-capture tempo chooser (Move-style). Shows the applied BPM + a strip of
+ * all candidate tempos, and a BAR view — the loop drawn as numbered bars with
+ * bright bar dividers, the notes, the loop end, and a live playhead sweeping at
+ * the selected tempo — so the user sees where the bar breaks and loop point
+ * fall relative to what they hear. Wheel auditions; jog click keeps. */
 function drawTempoSelect() {
     clear_screen();
     const t    = S.tempoSelectTrack;
     const c    = S.tempoSelectClip;
     const idx  = S.tempoSelectIdx | 0;
     const bpms = S.tempoSelectBpms;
+    const nC   = bpms.length || 1;
+    const isDrum = S.trackPadMode[t] === PAD_MODE_DRUM;
 
     print(4, 1, 'CAPTURE TEMPO', 1);
+    { const pos = (idx + 1) + '/' + nC; print(128 - pos.length * 6 - 2, 1, pos, 1); }
 
-    /* Applied BPM, large-ish (movy font), + the 3 candidates as a chip row. */
-    const appl = Math.round(bpms[idx] || 0);
-    mvPrint(4, 12, appl + ' BPM', 1);
-    let cx = 4;
-    for (let i = 0; i < 3; i++) {
-        const lab = String(Math.round(bpms[i] || 0));
-        const w   = lab.length * 6 + 4;
-        if (i === idx) { fill_rect(cx, 26, w, 10, 1); print(cx + 2, 28, lab, 0); }
-        else           { rectOutline(cx, 26, w, 10, 1); print(cx + 2, 28, lab, 1); }
-        cx += w + 4;
-    }
+    /* Applied BPM, large (movy font). */
+    mvPrint(4, 11, Math.round(bpms[idx] || 0) + ' BPM', 1);
 
-    /* Note strip with beat/bar grid + playhead. */
-    const SX = 4, SW = 120, SY = 42, SH = 12;
-    rectOutline(SX, SY, SW, SH, 1);
-    const len = Math.max(1, S.clipLength[t][c] | 0);
-    /* Beat lines every 4 steps, brighter every 16 (bar). */
-    for (let s = 4; s < len; s += 4) {
-        const x = SX + Math.round((s / len) * SW);
-        const bar = (s % 16) === 0;
-        for (let yy = SY + 1; yy < SY + SH - 1; yy += (bar ? 1 : 2))
-            set_pixel(x, yy, 1);
-    }
-    /* Note dots (melodic clip step occupancy). */
-    if (S.trackPadMode[t] !== PAD_MODE_DRUM) {
-        const steps = S.clipSteps[t][c];
-        for (let s = 0; s < len && s < steps.length; s++) {
-            if (!steps[s]) continue;
-            const x = SX + Math.round((s / len) * SW);
-            fill_rect(Math.min(x, SX + SW - 2), SY + 4, 2, 4, 1);
+    /* Candidate strip: one mark per candidate across the width, current filled.
+     * Scales to any count (3..8). */
+    {
+        const DY = 24, DX = 4, DW = 120;
+        for (let i = 0; i < nC; i++) {
+            const x = nC > 1 ? DX + Math.round(i / (nC - 1) * (DW - 4)) : DX;
+            if (i === idx) fill_rect(x, DY, 4, 6, 1);
+            else { set_pixel(x, DY, 1); set_pixel(x, DY + 2, 1); set_pixel(x, DY + 4, 1); }
         }
     }
-    /* Playhead. */
-    const ph = ((S.trackCurrentStep[t] | 0) % len + len) % len;
-    const px = SX + Math.round((ph / len) * SW);
-    for (let yy = SY; yy < SY + SH; yy++) set_pixel(Math.min(px, SX + SW - 1), yy, 1);
 
-    print(4, 57, 'wheel:tempo  click:keep', 1);
+    /* BAR view. */
+    const BX = 4, BW = 120, BY = 34, BH = 19;
+    const len = Math.max(1, (isDrum ? (S.drumLaneLength[t] | 0)
+                                    : (S.clipLength[t][c] | 0)) || 16);
+    const bars = Math.max(1, Math.round(len / 16));
+    rectOutline(BX, BY, BW, BH, 1);
+    /* Bar dividers (bright, full height) + faint beat marks. */
+    for (let s = 4; s < len; s += 4) {
+        const x = BX + Math.round((s / len) * BW);
+        if (s % 16 === 0) for (let yy = BY; yy < BY + BH; yy++) set_pixel(x, yy, 1);
+        else for (let yy = BY + 2; yy < BY + BH - 2; yy += 3) set_pixel(x, yy, 1);
+    }
+    /* Bar numbers along the top-inside of each bar segment (if they fit). */
+    if (BW / bars >= 10) {
+        for (let bi = 0; bi < bars; bi++) {
+            const x = BX + Math.round((bi * 16 / len) * BW) + 2;
+            print(x, BY + 1, String(bi + 1), 1);
+        }
+    }
+    /* Note ticks (melodic clip, or the active drum lane). */
+    const steps = isDrum ? S.drumLaneSteps[t][S.activeDrumLane[t]] : S.clipSteps[t][c];
+    if (steps) {
+        for (let s = 0; s < len && s < steps.length; s++) {
+            if (!steps[s] || steps[s] === '0') continue;
+            const x = BX + Math.round((s / len) * BW);
+            fill_rect(Math.min(x, BX + BW - 2), BY + BH - 6, 2, 4, 1);
+        }
+    }
+    /* Playhead sweeping at the selected tempo. */
+    const cur = isDrum ? (S.drumCurrentStep[t] | 0) : (S.trackCurrentStep[t] | 0);
+    const ph  = ((cur % len) + len) % len;
+    const px  = BX + Math.round((ph / len) * BW);
+    for (let yy = BY; yy < BY + BH; yy++) set_pixel(Math.min(px, BX + BW - 1), yy, 1);
+
+    print(4, 56, 'wheel tempo   click keep', 1);
 }
 
 export function drawUI() {

@@ -34,7 +34,9 @@ static int sp_track_record(sp_ctx_t *cx) {
          * the frozen take at candidate BPM I (0..2) and apply that tempo.
          * Playback keeps rolling so the user hears the new alignment. */
         if (inst->cap_select_active) {
-            int _i = clamp_i(my_atoi(val), 0, 2);
+            int _hi = (int)inst->cap_bpm_count - 1;
+            if (_hi < 0) _hi = 0;
+            int _i = clamp_i(my_atoi(val), 0, _hi);
             capture_write_take(inst, (int)inst->cap_select_track,
                                (int)inst->cap_select_clip, inst->cap_bpm_est[_i]);
             inst->cap_select_idx = (uint8_t)_i;
