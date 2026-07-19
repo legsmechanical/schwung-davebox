@@ -89,6 +89,15 @@ int main(void) {
         for (_k = 1; _k < (int)inst->cap_bpm_count; _k++)
             HX_ASSERT(inst->cap_bpm_est[_k - 1] <= inst->cap_bpm_est[_k],
                       "candidates sorted ascending");
+        /* Half-time of the best (~60) must be an offered option (in range). */
+        double half = bpm * 0.5;
+        int have_half = 0;
+        for (_k = 0; _k < (int)inst->cap_bpm_count; _k++) {
+            double d = inst->cap_bpm_est[_k] - half;
+            if (d < 0) d = -d;
+            if (d < 2.0) have_half = 1;
+        }
+        HX_ASSERT(have_half, "half-time equivalent of best is offered");
     }
     /* First note at clip start; later onsets near 96-tick (quarter) spacing. */
     HX_ASSERT(cl->notes[0].tick <= 2, "first note aligns to clip start");

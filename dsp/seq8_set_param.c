@@ -493,13 +493,43 @@ static int capture_estimate_tempos(seq8_instance_t *inst) {
     }
     if (nc == 0) { inst->cap_bpm_count = 0; return -1; }
 
+    /* Guarantee the double/half-time equivalents of the best fit are offered
+     * (when in range) — they're the expected alternatives to a best guess. If a
+     * grid-fit candidate already sits near an octave (e.g. 174 vs 2x87), snap it
+     * to the exact octave so the user gets the tempo they expect. */
+    int best0 = 0, k;
+    for (i = 1; i < nc; i++) if (csc[i] < csc[best0]) best0 = i;
+    double best_bpm = cand[best0];
+    double octs[2] = { (double)((int)(best_bpm * 0.5 + 0.5)), best_bpm * 2.0 };
+    for (i = 0; i < 2; i++) {
+        double v = octs[i];
+        if (v < (double)CAP_BPM_MIN || v > (double)CAP_BPM_MAX) continue;
+        int hit = -1;
+        for (k = 0; k < nc; k++) {
+            double r = cand[k] > v ? cand[k] / v : v / cand[k];
+            if (r < 1.03) { hit = k; break; }
+        }
+        if (hit >= 0) {
+            if (hit != best0) cand[hit] = v;           /* snap neighbor to the exact octave */
+        } else if (nc < CAP_MAX_CAND) {
+            cand[nc] = v; csc[nc] = csc[best0] + 1.0; nc++;
+        } else {
+            int worst = -1; double wsc = -1.0;
+            for (k = 0; k < nc; k++) {
+                if (k == best0) continue;
+                if (csc[k] > wsc) { wsc = csc[k]; worst = k; }
+            }
+            if (worst >= 0) { cand[worst] = v; csc[worst] = csc[best0] + 1.0; }
+        }
+    }
+
     for (i = 0; i < nc; i++) for (j = i + 1; j < nc; j++)
         if (cand[j] < cand[i]) {
             double t = cand[i]; cand[i] = cand[j]; cand[j] = t;
             t = csc[i]; csc[i] = csc[j]; csc[j] = t;
         }
     int best = 0;
-    for (i = 1; i < nc; i++) if (csc[i] < csc[best]) best = i;
+    for (i = 0; i < nc; i++) if (cand[i] == best_bpm) best = i;
 
     for (i = 0; i < nc; i++) inst->cap_bpm_est[i] = cand[i];
     inst->cap_bpm_count = (uint8_t)nc;
