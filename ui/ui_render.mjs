@@ -525,14 +525,14 @@ function drawTempoSelect() {
      * smaller "bpm" after it, chevrons flanking, the whole group centered. */
     {
         const num = String(Math.round(bpms[idx] || 0));
-        const nS = 3, uS = 2;                     /* number + unit scales */
+        const nS = 2, uS = 1;                     /* number + unit scales */
         const nCW = 5 * nS + nS, uCW = 5 * uS + uS;
         const nW  = num.length * nCW - nS;        /* number width */
         const uW  = 3 * uCW - uS;                 /* "bpm" width */
-        const aW = 7, aH = 13, aGap = 6, uGap = 4;
+        const aW = 5, aH = 9, aGap = 5, uGap = 3;
         const total = aW + aGap + nW + uGap + uW + aGap + aW;
         let x = Math.max(1, Math.round((128 - total) / 2));
-        const topY = 4, nH = 5 * nS;
+        const topY = 6, nH = 5 * nS;
         triLeft(x, topY + Math.round((nH - aH) / 2), aW, aH); x += aW + aGap;
         pixelPrintMcu(x, topY, num, nS, 1); x += nW + uGap;
         pixelPrintMcu(x, topY + (nH - 5 * uS), 'bpm', uS, 1); x += uW + aGap;  /* baseline-aligned */
