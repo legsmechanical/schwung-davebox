@@ -57,11 +57,17 @@ static int sp_globals_misc(sp_ctx_t *cx) {
         return 1;
     }
     if (!strcmp(key, "merge_arm")) {
-        /* Multi-track arm: capture all 8 tracks at once. Destination scene
-         * row is chosen post-stop via merge_place_row. TPS is global at
-         * TICKS_PER_STEP so all tracks share a coherent timeline. */
+        /* Arm live merge. val "tN" = single-track mode: capture ONLY track
+         * N's output (Track-View single-clip merge; JS auto-places into the
+         * focused clip on CAPTURED). Any other val (legacy "1") = capture
+         * all 8 tracks, destination scene row chosen post-stop via
+         * merge_place_row. TPS is global at TICKS_PER_STEP so all tracks
+         * share a coherent timeline. */
         int t;
         for (t = 0; t < NUM_TRACKS; t++) inst->merge_pending_count[t] = 0;
+        inst->merge_solo_track = (val && val[0] == 't')
+            ? (uint8_t)clamp_i(my_atoi(val + 1), 0, NUM_TRACKS - 1)
+            : 0xFF;
         inst->merge_tps = (uint32_t)TICKS_PER_STEP;
         if (inst->playing && inst->master_tick_in_step == 0) {
             inst->merge_state     = MERGE_STATE_CAPTURING;
@@ -86,7 +92,8 @@ static int sp_globals_misc(sp_ctx_t *cx) {
         /* Discard any captured pending notes without writing to clips. */
         int t;
         for (t = 0; t < NUM_TRACKS; t++) inst->merge_pending_count[t] = 0;
-        inst->merge_state = MERGE_STATE_IDLE;
+        inst->merge_state      = MERGE_STATE_IDLE;
+        inst->merge_solo_track = 0xFF;
         return 1;
     }
     if (!strcmp(key, "bake")) {

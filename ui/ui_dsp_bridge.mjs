@@ -416,10 +416,17 @@ export function pollDSP() {
     /* Arm confirmation: no longer fails on "no empty slot" — placement is
      * deferred until the user picks a row, so arm always succeeds. */
     if (S.pendingMergeArm) S.pendingMergeArm = false;
-    /* Capture-done transition: DSP went into CAPTURED (4) — show placement
-     * dialog so the user can tap a row to commit. */
+    /* Capture-done transition: DSP went into CAPTURED (4). Single-clip merge
+     * (Track View Shift+Rec) auto-places into the armed track's focused clip;
+     * scene merge shows the placement dialog for a row pick. */
     if (_prevMergeState !== 4 && S.dspMergeState === 4) {
-        S.pendingMergePlacement = true;
+        if (S.mergeSingleTrack >= 0) {
+            S.pendingDefaultSetParams.push({
+                key: 'merge_place_row',
+                val: String(S.trackActiveClip[S.mergeSingleTrack]) });
+        } else {
+            S.pendingMergePlacement = true;
+        }
         S.screenDirty = true;
     }
     /* Placement complete: DSP transitioned CAPTURED→IDLE (merge_place_row
@@ -431,6 +438,9 @@ export function pollDSP() {
         /* Merge state lives on the Rec LED now (Shift+Rec); drop it back to
          * the record-arm state immediately (tick pass would catch up anyway). */
         setButtonLED(MoveRec, S.recordArmed ? Red : LED_OFF);
+        if (S.mergeSingleTrack >= 0 && _prevMergeState === 4)
+            showActionPopup('LIVE MERGE', 'Printed to clip');
+        S.mergeSingleTrack = -1;
         if (_prevMergeState === 2) showActionPopup('MAX LENGTH', 'REACHED');
         syncClipsFromDsp();
         S.screenDirty = true;

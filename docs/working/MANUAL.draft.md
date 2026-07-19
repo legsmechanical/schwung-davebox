@@ -149,12 +149,12 @@ Note/Session.
 | Button | On its own | As a modifier (held) |
 |---|---|---|
 | Play | Start / stop transport | — |
-| Record | Start / stop live recording | Shift + Record = Live Merge arm/stop |
+| Record | Start / stop live recording | Shift + Record = Live Merge (Track View: this track to its clip; Session View: all 8 tracks to a row) |
 | Loop | Track View: hold for loop view. Session View: Performance Mode | Loop + jog, Loop + step, etc. |
 | Mute | Toggle mute on active track/lane | Mute + pad/step, Mute + Play |
 | Delete | Open clear menu (context-dependent) | Delete + step/clip/lane/jog |
 | Copy | — | Copy + step/clip/lane/scene |
-| Capture | Commit buffered play-input to clip (6.7); LED bright when input is waiting | Capture + lane pad, Capture + scene, Shift + Capture = discard buffered input |
+| Capture | Commit buffered play-input to clip (6.7); LED bright when input is waiting | Capture + scene = snapshot to row, Shift + Capture = discard buffered input |
 | Sample | Bake dialog (Track View) / scene-bake picker (Session View) | Sample + scene launcher = direct scene bake |
 | Undo | Undo last destructive action | Shift + Undo = redo |
 | Note/Session | Switch views (tap) / peek (hold) | Shift + Note/Session = Global Menu |
@@ -585,7 +585,6 @@ semitones. The OLED shows the lane's note name and number (e.g. `Pad: C3 (48)`).
 Tap a lane pad to select it, then tap steps 1–16 to place or remove hits for that
 lane. The step buttons always show the selected lane's pattern.
 
-**Capture + lane pad** selects a lane silently (no trigger).
 
 ## 7.2 Per-lane loops (polyrhythm)
 
@@ -662,8 +661,7 @@ Available when a repeat mode is active — see
 
 - **Copy + lane pad** → tap another lane to paste. Destination MIDI note
   preserved. Shift + Copy = cut.
-- **Mute + lane pad** mutes. **Shift + Mute + lane pad** solos. **Capture + lane
-  pad** selects silently.
+- **Mute + lane pad** mutes. **Shift + Mute + lane pad** solos.
 
 ---
 
@@ -1319,20 +1317,26 @@ is required.
 
 ## 13.2 Live Merge
 
-Live Merge records the actual output of all 8 tracks simultaneously as they play —
-capturing a live performance, effects and all, into new clips.
+Live Merge records the actual output of tracks as they play — capturing a live
+performance, effects and all, into clips. The view you arm from sets the scope:
+
+- **Session View**: all 8 tracks at once, committed to a scene row you pick.
+- **Track View**: just the **active track**, printed straight into its focused
+  clip when you stop — no row pick. A quick way to resample one track's
+  performance (arps, delays, knob rides) into solid notes. Note it overwrites
+  that clip's existing pattern.
 
 | Step | Control |
 |---|---|
-| Arm | **Shift + Record** (either view) |
+| Arm | **Shift + Record** |
 | Capture starts | Next bar boundary (or on transport start) |
-| Stop | **Shift + Record** again (finalizes at the next page boundary) |
+| Stop | **Shift + Record** again (finalizes at the next page boundary; Track View then commits immediately) |
 | Auto-stop | Reaching the 256-step max clip length |
-| Place | After stop, tap a scene row to commit |
-| Cancel | Tap **Capture** instead of a row |
+| Place (Session View) | After stop, tap a scene row to commit |
+| Cancel (Session View) | Press **Record** instead of a row |
 
-Tracks that captured notes overwrite their clip at the target row. Tracks that
-captured nothing leave the existing clip untouched.
+In Session View, tracks that captured notes overwrite their clip at the target
+row; tracks that captured nothing leave the existing clip untouched.
 
 ## 13.3 Export to Ableton Live
 
@@ -1776,7 +1780,6 @@ that set the next time it launches.
 | Control | Action |
 |---|---|
 | Lane pad | Trigger + select lane |
-| Capture + lane pad | Select silently |
 | Up / Down | Switch lane bank A ↔ B |
 | Shift + Step 8 | Cycle right-pad mode (Vel/Rpt1/Rpt2) |
 | Step hold | Drum step edit (K1 Leng, K2 Vel, K3 Nudg, K5 Iter, K6 Prob, K7 Ratch) |

@@ -21,8 +21,11 @@ import { SCALE_INTERVALS } from './ui_pure.mjs';
  * track view while the menu is open (user confirmed 2026-05-17). */
 export function _padDispatchMutedNow() {
     if (S.sessionView) return true;
+    /* captureHeld no longer mutes pads: the Capture+pad lane-select gesture
+     * was removed (Capture is capture-only); Capture+scene is Session View,
+     * where the sessionView check above already mutes. */
     if (S.shiftHeld || S.deleteHeld || S.muteHeld || S.copyHeld
-        || S.captureHeld || S.loopHeld || S.tapTempoOpen) return true;
+        || S.loopHeld || S.tapTempoOpen) return true;
     if ((S.activeBank === 4 || S.activeBank === 5)
         && S.knobTouched === 4
         && S.bankParams[S.activeTrack]

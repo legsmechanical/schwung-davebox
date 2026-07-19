@@ -916,6 +916,9 @@ typedef struct {
     uint8_t  merge_state;
     uint32_t merge_start_abs;    /* abs master tick (global_tick*TPS + master_tick_in_step) */
     uint32_t merge_tps;          /* TPS used for captured timing (TICKS_PER_STEP for all tracks) */
+    uint8_t  merge_solo_track;   /* 0xFF = capture all 8 tracks (scene mode); else only this
+                                  * track's output is captured (Track-View single-clip merge).
+                                  * Set on every merge_arm; only read while a merge is active. */
     uint32_t merge_end_abs;      /* abs tick at finalize — used to size destination clips */
     /* gate=0 while the note is still held (closed at merge_stop with the
      * elapsed tick); non-zero once the matching note-off arrived during
@@ -1444,7 +1447,8 @@ static void merge_place(seq8_instance_t *inst, int row) {
         inst->merge_pending_count[t] = 0;
     }
     inst->state_dirty = 1;
-    inst->merge_state = MERGE_STATE_IDLE;
+    inst->merge_state      = MERGE_STATE_IDLE;
+    inst->merge_solo_track = 0xFF;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1591,6 +1595,10 @@ static void pfx_send(play_fx_t *fx, uint8_t status, uint8_t d1, uint8_t d2) {
                    g_inst->merge_state == MERGE_STATE_STOPPING)) {
         uint8_t st  = status & 0xF0;
         uint8_t tri = fx->track_idx;
+        /* Single-clip merge (Track View Shift+Rec): only the solo track's
+         * output is captured; other tracks play through untouched. */
+        if (g_inst->merge_solo_track != 0xFF && tri != g_inst->merge_solo_track)
+            st = 0;   /* fails the note filter below — event not captured */
         if (tri < NUM_TRACKS && (st == 0x90 || st == 0x80)) {
             uint32_t abs_now = g_inst->global_tick * TICKS_PER_STEP
                                + g_inst->master_tick_in_step;

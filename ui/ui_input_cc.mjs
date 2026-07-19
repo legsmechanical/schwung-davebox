@@ -18,7 +18,7 @@ import {
 } from '/data/UserData/schwung/shared/menu_nav.mjs';
 import {
     MoveNoteSession, MoveUndo, MoveLoop, MoveCopy, MoveRec,
-    MoveCapture, MoveSample, MoveMainKnob,
+    MoveCapture, MoveSample, MoveMainKnob, MoveMainTouch, MoveMainButton,
     LED_OFF, NUM_TRACKS, NUM_CLIPS,
     TRACK_PAD_BASE, TPS_VALUES,
     BANKS, PAD_MODE_DRUM, PAD_MODE_CONDUCT,
@@ -1005,14 +1005,9 @@ function _onCC_buttons(d1, d2) {
         if (d2 === 127) {
             S.captureHeld           = true;
             S.captureUsedAsModifier = false;
-            /* Press also cancels in-flight dialogs/pickers/merge — symmetric
-             * with Sample's press behavior. */
-            if (S.pendingSceneBakePicker) { S.pendingSceneBakePicker = false; S.captureUsedAsModifier = true; }
-            if (S.pendingMergePlacement)  {
-                S.pendingMergePlacement = false;
-                S.captureUsedAsModifier = true;
-                S.pendingDefaultSetParams.push({ key: 'merge_cancel', val: '1' });
-            }
+            /* Press also cancels in-flight bake dialogs — symmetric with
+             * Sample's press behavior. (Scene-bake-picker cancel lives in the
+             * any-button guard in _onCCMsg; merge-placement cancel is Record.) */
             if (S.confirmBake)            { S.confirmBake            = false; S.captureUsedAsModifier = true;
                                             S.confirmBakeDrumLoopOpen = false; S.confirmBakeWrapPhase = false; }
             if (S.confirmBakeScene)       { S.confirmBakeScene       = false; S.captureUsedAsModifier = true; }
@@ -1572,21 +1567,32 @@ function _onCC_transport(d1, d2) {
 
     /* Record button (CC 86): toggle arm/disarm */
     /* Shift+Record: Live Merge arm/stop (moved off Sample — Sample is now
-     * bake-only, Capture is capture-only). Works in both views; the DSP flow
-     * (merge_arm → bar-boundary start → merge_stop → placement dialog) is
-     * unchanged. Merge state shows on the Record LED (red armed, green
-     * capturing). */
+     * bake-only, Capture is capture-only). View decides the scope:
+     *   Session View → classic all-8-tracks capture; destination scene row
+     *     picked post-stop via the placement dialog.
+     *   Track View   → SINGLE-CLIP merge: only the active track's output is
+     *     captured (DSP merge_arm "tN" solo mode) and on stop it commits
+     *     straight into that track's focused clip — no placement dialog.
+     * Merge state shows on the Record LED (red armed, green capturing). */
     if (d1 === MoveRec && d2 === 127 && S.shiftHeld) {
         if (S.dspMergeState !== 0) {
             S.pendingDefaultSetParams.push({ key: 'merge_stop', val: '1' });
             /* LED stays green until DSP finalizes at page boundary. */
-        } else {
+        } else if (S.sessionView) {
+            S.mergeSingleTrack = -1;
             S.pendingDefaultSetParams.push({ key: 'merge_arm', val: '1' });
             S.pendingMergeArm = true;
             /* Explain what's happening — multi-track merge is non-obvious
              * and the user needs time to read. Override the standard popup
              * window to ~3 seconds. */
             showActionPopup('LIVE MERGE', 'Capturing all 8', 'tracks. Shift+Rec', 'again to stop.');
+            S.actionPopupEndTick = S.tickCount + 280;
+        } else {
+            const _mt = S.activeTrack;
+            S.mergeSingleTrack = _mt;
+            S.pendingDefaultSetParams.push({ key: 'merge_arm', val: 't' + _mt });
+            S.pendingMergeArm = true;
+            showActionPopup('LIVE MERGE', 'This track to its', 'clip. Shift+Rec', 'again to stop.');
             S.actionPopupEndTick = S.tickCount + 280;
         }
         return;
@@ -3302,6 +3308,38 @@ function _switchViewCleanup() {
 }
 
 export function _onCCMsg(d1, d2) {
+    /* Swallow the release of a button whose press was consumed by a modal
+     * guard below, so tap-on-release handlers (Capture, Sample, ...) don't
+     * fire from a press they never saw. */
+    if (S._modalSwallowCC >= 0 && d1 === S._modalSwallowCC) {
+        if (d2 === 0) S._modalSwallowCC = -1;
+        return;
+    }
+    /* Scene-bake picker: "any other btn cancels". The picking controls are
+     * the scene launchers (40-43) and session step buttons (16-31); knobs,
+     * knob touches, jog and the master knob aren't buttons. Any OTHER
+     * button press (Shift excepted — plain modifier) dismisses the picker
+     * and is swallowed, press + release. */
+    if (S.pendingSceneBakePicker && d2 === 127) {
+        const _pick = (d1 >= 40 && d1 <= 43) || (d1 >= 16 && d1 <= 31);
+        const _nonBtn = (d1 >= 71 && d1 <= 78) || (d1 >= 102 && d1 <= 109)
+            || d1 === MoveMainKnob || d1 === MoveMainTouch
+            || d1 === MoveMainButton || d1 === 79 || d1 === MoveShift;
+        if (!_pick && !_nonBtn) {
+            S.pendingSceneBakePicker = false;
+            S._modalSwallowCC = d1;
+            forceRedraw();
+            return;
+        }
+    }
+    /* Live-merge placement: Record cancels (matches the dialog text). */
+    if (S.pendingMergePlacement && d2 === 127 && d1 === MoveRec) {
+        S.pendingMergePlacement = false;
+        S.pendingDefaultSetParams.push({ key: 'merge_cancel', val: '1' });
+        S._modalSwallowCC = d1;
+        forceRedraw();
+        return;
+    }
     _onCC_jog(d1, d2);
     _onCC_buttons(d1, d2);
     _onCC_transport(d1, d2);

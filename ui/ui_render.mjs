@@ -541,7 +541,7 @@ export function drawUI() {
         print(4, 8,  'PLACE MERGED CLIPS',  1);
         print(4, 22, 'Tap row or scene step', 1);
         print(4, 34, 'to pick destination',  1);
-        print(4, 50, 'Capture cancels',      1);
+        print(4, 50, 'Rec cancels',          1);
         return;
     }
     if (S.confirmStateWipe) { drawStateWipeConfirm(); return; }

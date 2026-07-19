@@ -105,7 +105,8 @@ static int sp_globals_state(sp_ctx_t *cx) {
         /* Reset internal state without MIDI panic to avoid flooding the MIDI buffer. */
         {
             int t2, c2;
-            inst->merge_state = MERGE_STATE_IDLE;
+            inst->merge_state      = MERGE_STATE_IDLE;
+            inst->merge_solo_track = 0xFF;
             for (t2 = 0; t2 < NUM_TRACKS; t2++) inst->merge_pending_count[t2] = 0;
             capture_clear(inst);
             inst->playing        = 0;

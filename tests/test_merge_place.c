@@ -37,6 +37,36 @@ int main(void) {
     HX_ASSERT(inst->merge_pending_count[0] == 0, "pending count not cleared");
 
     hx_destroy(h);
-    printf("PASS: merge_place onto empty (NULL) drum slot\n");
+
+    /* ---- Single-track (solo) merge: merge_arm "tN" captures only track N's
+     * output; other tracks' pfx_send traffic is ignored. ---- */
+    h = hx_create(NULL);
+    HX_ASSERT(h, "create failed");
+    inst = (seq8_instance_t *)h->inst;
+
+    hx_set_param(h, "merge_arm", "t1");
+    HX_ASSERT(inst->merge_solo_track == 1, "solo track parsed from t1");
+    inst->merge_state     = MERGE_STATE_CAPTURING;   /* force straight to capture */
+    inst->merge_start_abs = 0;
+
+    /* Emit a note-on/off pair through track 1's pfx AND track 2's pfx. */
+    pfx_send(&inst->tracks[1].pfx, 0x90, 60, 100);
+    pfx_send(&inst->tracks[1].pfx, 0x80, 60, 0);
+    pfx_send(&inst->tracks[2].pfx, 0x90, 64, 100);
+    pfx_send(&inst->tracks[2].pfx, 0x80, 64, 0);
+    HX_ASSERT(inst->merge_pending_count[1] == 1, "solo track captured");
+    HX_ASSERT(inst->merge_pending_count[2] == 0, "non-solo track filtered");
+
+    hx_set_param(h, "merge_stop", "1");
+    HX_ASSERT(inst->merge_state == MERGE_STATE_STOPPING, "stopping until page boundary");
+    merge_finalize(inst);   /* render does this at the next 16-step boundary */
+    HX_ASSERT(inst->merge_state == MERGE_STATE_CAPTURED, "finalized");
+    hx_set_param(h, "merge_place_row", "5");
+    HX_ASSERT(inst->tracks[1].clips[5].note_count == 1, "placed into t1 c5");
+    HX_ASSERT(inst->merge_solo_track == 0xFF, "solo reset after place");
+    HX_ASSERT(inst->merge_state == MERGE_STATE_IDLE, "idle after place");
+
+    hx_destroy(h);
+    printf("PASS: merge_place onto empty (NULL) drum slot + solo-track merge\n");
     return 0;
 }

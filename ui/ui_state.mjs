@@ -347,6 +347,8 @@ export const S = {
     captureInfoSeq: undefined,       /* last seen capture_info commit sequence (toast fires on change) */
     pendingSceneBakePicker: false,   /* Session-View Capture tap → wait for next row/step press to pick scene → opens scene-bake confirm */
     pendingMergePlacement: false,    /* multi-track live merge stopped → wait for row/step press to pick destination scene row */
+    mergeSingleTrack: -1,            /* >=0: Track-View single-clip merge armed on this track — on CAPTURED, auto-place into its focused clip (no placement dialog) */
+    _modalSwallowCC: -1,             /* button CC whose press was consumed by a modal guard in _onCCMsg; its release is swallowed too */
     metronomeOn: 1,
     metronomeOnLast: 1,
     metronomeVol: 100,
