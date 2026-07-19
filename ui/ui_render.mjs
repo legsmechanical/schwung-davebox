@@ -492,6 +492,59 @@ function drawPerfModeOled() {
     }
 }
 
+/* Post-capture tempo chooser (Move-style). Shows the applied BPM + the three
+ * candidates, and a note strip with beat/bar grid + a live playhead so the
+ * user can see how the take aligns to the grid under each tempo while it
+ * plays. Wheel auditions candidates; jog click keeps the current one. */
+function drawTempoSelect() {
+    clear_screen();
+    const t    = S.tempoSelectTrack;
+    const c    = S.tempoSelectClip;
+    const idx  = S.tempoSelectIdx | 0;
+    const bpms = S.tempoSelectBpms;
+
+    print(4, 1, 'CAPTURE TEMPO', 1);
+
+    /* Applied BPM, large-ish (movy font), + the 3 candidates as a chip row. */
+    const appl = Math.round(bpms[idx] || 0);
+    mvPrint(4, 12, appl + ' BPM', 1);
+    let cx = 4;
+    for (let i = 0; i < 3; i++) {
+        const lab = String(Math.round(bpms[i] || 0));
+        const w   = lab.length * 6 + 4;
+        if (i === idx) { fill_rect(cx, 26, w, 10, 1); print(cx + 2, 28, lab, 0); }
+        else           { rectOutline(cx, 26, w, 10, 1); print(cx + 2, 28, lab, 1); }
+        cx += w + 4;
+    }
+
+    /* Note strip with beat/bar grid + playhead. */
+    const SX = 4, SW = 120, SY = 42, SH = 12;
+    rectOutline(SX, SY, SW, SH, 1);
+    const len = Math.max(1, S.clipLength[t][c] | 0);
+    /* Beat lines every 4 steps, brighter every 16 (bar). */
+    for (let s = 4; s < len; s += 4) {
+        const x = SX + Math.round((s / len) * SW);
+        const bar = (s % 16) === 0;
+        for (let yy = SY + 1; yy < SY + SH - 1; yy += (bar ? 1 : 2))
+            set_pixel(x, yy, 1);
+    }
+    /* Note dots (melodic clip step occupancy). */
+    if (S.trackPadMode[t] !== PAD_MODE_DRUM) {
+        const steps = S.clipSteps[t][c];
+        for (let s = 0; s < len && s < steps.length; s++) {
+            if (!steps[s]) continue;
+            const x = SX + Math.round((s / len) * SW);
+            fill_rect(Math.min(x, SX + SW - 2), SY + 4, 2, 4, 1);
+        }
+    }
+    /* Playhead. */
+    const ph = ((S.trackCurrentStep[t] | 0) % len + len) % len;
+    const px = SX + Math.round((ph / len) * SW);
+    for (let yy = SY; yy < SY + SH; yy++) set_pixel(Math.min(px, SX + SW - 1), yy, 1);
+
+    print(4, 57, 'wheel:tempo  click:keep', 1);
+}
+
 export function drawUI() {
     /* CO-RUN: shadow_ui's chain editor owns the OLED while this is active.
      * Skip every dAVEBOx draw path so it doesn't fight the chain editor's
@@ -544,6 +597,7 @@ export function drawUI() {
         print(4, 50, 'Rec cancels',          1);
         return;
     }
+    if (S.tempoSelectActive) { drawTempoSelect(); return; }
     if (S.confirmStateWipe) { drawStateWipeConfirm(); return; }
     if (S.bpmMoveInfo) { drawBpmMoveInfo(); return; }
     if (S.recordBlockedDialog) { drawRecordBlockedDialog(); return; }

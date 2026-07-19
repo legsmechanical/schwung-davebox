@@ -1252,9 +1252,13 @@ export function _tickImpl() {
             }
             setButtonLED(MoveLoop, loopColor);
         }
-        /* Capture: bright while retrospective-capture input is buffered
-         * (tap would commit it — Move parity), dim ambient otherwise. */
-        setButtonLED(MoveCapture, S.capturePending > 0 ? White : DarkGrey);
+        /* Capture: blink White while retrospective-capture input is buffered
+         * (tap commits it), dim ambient otherwise. Blink reads far more
+         * clearly than steady White vs DarkGrey on this button. */
+        setButtonLED(MoveCapture,
+            S.capturePending > 0
+                ? ((Math.floor(S.tickCount / 24) % 2) ? White : LED_OFF)
+                : DarkGrey);
         {
             const _muted      = S.trackMuted[S.activeTrack];
             const _soloed     = S.trackSoloed[S.activeTrack];

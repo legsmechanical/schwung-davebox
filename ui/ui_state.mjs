@@ -345,6 +345,11 @@ export const S = {
     capturePending: 0,               /* retrospective-capture buffered event count for the active track (DSP capture_pending mirror; lights the Capture LED, gates tap = capture-vs-bake) */
     captureCommitAwait: 0,           /* >0: polls remaining to watch capture_info for the commit toast (set on tap-commit, counts down in pollDSP) */
     captureInfoSeq: undefined,       /* last seen capture_info commit sequence (toast fires on change) */
+    tempoSelectActive: false,        /* Move-style post-capture tempo chooser is open (DSP cap_select_active mirror) */
+    tempoSelectIdx: 0,               /* which BPM candidate (0..2) is applied */
+    tempoSelectBpms: [0, 0, 0],      /* the 3 candidate BPMs (ascending) */
+    tempoSelectTrack: 0,             /* track whose take is being tempo-chosen */
+    tempoSelectClip: 0,              /* clip the take was committed into */
     pendingSceneBakePicker: false,   /* Session-View Capture tap → wait for next row/step press to pick scene → opens scene-bake confirm */
     pendingMergePlacement: false,    /* multi-track live merge stopped → wait for row/step press to pick destination scene row */
     mergeSingleTrack: -1,            /* >=0: Track-View single-clip merge armed on this track — on CAPTURED, auto-place into its focused clip (no placement dialog) */

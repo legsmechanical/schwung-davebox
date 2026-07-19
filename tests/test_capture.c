@@ -53,9 +53,15 @@ int main(void) {
     HX_ASSERT(inst->tracks[1].clip_playing == 1, "committed clip armed+playing");
     HX_ASSERT(inst->cap_last_was_stopped == 1, "stopped path taken");
     {
-        double bpm = inst->cap_bpm_est[0];
-        HX_ASSERT(bpm > 117.0 && bpm < 123.0, "BPM estimate near 120");
+        /* Candidates are sorted ascending; the applied one is at cap_select_idx.
+         * 4 quarter notes at ~120 → candidates ≈ [40(clamped), 60, 120], applied
+         * = nearest 120 = the top one. */
+        double bpm = inst->cap_bpm_est[inst->cap_select_idx];
+        HX_ASSERT(bpm > 117.0 && bpm < 123.0, "applied BPM near 120");
         HX_ASSERT(inst->tracks[1].pfx.cached_bpm == bpm, "tempo applied");
+        HX_ASSERT(inst->cap_select_active == 1, "tempo selector opened");
+        HX_ASSERT(inst->cap_bpm_est[0] <= inst->cap_bpm_est[1] &&
+                  inst->cap_bpm_est[1] <= inst->cap_bpm_est[2], "candidates sorted");
     }
     /* First note at clip start; later onsets near 96-tick (quarter) spacing. */
     HX_ASSERT(cl->notes[0].tick <= 2, "first note aligns to clip start");
@@ -73,6 +79,19 @@ int main(void) {
         uint32_t seq = inst->cap_commit_seq;
         hx_set_param(h, "t1_capture_commit", "0");
         HX_ASSERT(inst->cap_commit_seq == seq, "empty ring: commit no-op");
+    }
+    /* Tempo selector: re-tempo to the lowest candidate → clip gets longer (more
+     * ticks for the same real-time take), playback speed constant, then confirm. */
+    {
+        uint16_t len_hi = cl->length;
+        hx_set_param(h, "t1_capture_retempo", "0");   /* lowest bpm */
+        HX_ASSERT(inst->tracks[1].pfx.cached_bpm == inst->cap_bpm_est[0],
+                  "retempo applied candidate 0");
+        HX_ASSERT(inst->cap_select_idx == 0, "select idx moved to 0");
+        HX_ASSERT(cl->note_count == 4, "note count preserved across retempo");
+        HX_ASSERT(cl->length <= len_hi, "lower bpm → shorter-or-equal clip in bars");
+        hx_set_param(h, "t1_capture_confirm", "");
+        HX_ASSERT(inst->cap_select_active == 0, "selector closed on confirm");
     }
     hx_destroy(h);
 
@@ -162,6 +181,27 @@ int main(void) {
                   "3 notes in drum lane");
     }
     HX_ASSERT(inst->playing == 1, "transport started after drum commit");
+    hx_destroy(h);
+
+    /* ---- 7. Stopped capture REFUSED when the session already has content ---- */
+    h = hx_create(NULL);
+    HX_ASSERT(h, "create failed");
+    inst = I(h);
+    /* Seed a note on track 2 clip 3 → session no longer empty. */
+    clip_insert_note(&inst->tracks[2].clips[3], 0, 24, 60, 100);
+    HX_ASSERT(capture_session_empty(inst) == 0, "session sees seeded content");
+    hx_render(h, 4);
+    tap(h, 1, 60, 100, 40, 132);
+    tap(h, 1, 62, 100, 40, 132);
+    HX_ASSERT(capture_pending_for_track(inst, 1) == 2, "buffered while stopped");
+    {
+        uint32_t seq = inst->cap_commit_seq;
+        hx_set_param(h, "t1_capture_commit", "0");
+        HX_ASSERT(inst->cap_commit_seq == seq, "stopped commit refused (non-empty session)");
+        HX_ASSERT(inst->tracks[1].clips[0].note_count == 0, "no notes written");
+        HX_ASSERT(capture_pending_for_track(inst, 1) == 2, "ring kept for later");
+        HX_ASSERT(inst->playing == 0, "transport not started");
+    }
     hx_destroy(h);
 
     printf("PASS: capture\n");

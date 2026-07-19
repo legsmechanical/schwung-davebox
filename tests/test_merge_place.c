@@ -46,6 +46,7 @@ int main(void) {
 
     hx_set_param(h, "merge_arm", "t1");
     HX_ASSERT(inst->merge_solo_track == 1, "solo track parsed from t1");
+    inst->tracks[1].active_clip = 5;                 /* focused clip = commit target */
     inst->merge_state     = MERGE_STATE_CAPTURING;   /* force straight to capture */
     inst->merge_start_abs = 0;
 
@@ -57,14 +58,13 @@ int main(void) {
     HX_ASSERT(inst->merge_pending_count[1] == 1, "solo track captured");
     HX_ASSERT(inst->merge_pending_count[2] == 0, "non-solo track filtered");
 
+    /* Solo merge_stop finalizes AND places into the solo track's focused clip
+     * immediately (set_param context) — no page-boundary wait, straight to IDLE. */
     hx_set_param(h, "merge_stop", "1");
-    HX_ASSERT(inst->merge_state == MERGE_STATE_STOPPING, "stopping until page boundary");
-    merge_finalize(inst);   /* render does this at the next 16-step boundary */
-    HX_ASSERT(inst->merge_state == MERGE_STATE_CAPTURED, "finalized");
-    hx_set_param(h, "merge_place_row", "5");
-    HX_ASSERT(inst->tracks[1].clips[5].note_count == 1, "placed into t1 c5");
+    HX_ASSERT(inst->tracks[1].clips[5].note_count == 1, "placed into t1 focused clip 5");
+    HX_ASSERT(inst->tracks[2].clips[5].note_count == 0, "non-solo track untouched");
     HX_ASSERT(inst->merge_solo_track == 0xFF, "solo reset after place");
-    HX_ASSERT(inst->merge_state == MERGE_STATE_IDLE, "idle after place");
+    HX_ASSERT(inst->merge_state == MERGE_STATE_IDLE, "idle after solo place");
 
     hx_destroy(h);
     printf("PASS: merge_place onto empty (NULL) drum slot + solo-track merge\n");

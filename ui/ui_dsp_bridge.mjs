@@ -349,25 +349,46 @@ export function pollDSP() {
             if ((_n > 0) !== (S.capturePending > 0)) S.screenDirty = true;
             S.capturePending = _n;
         }
-        /* After a tap-commit, watch capture_info for the result toast. The
-         * countdown bounds the wait in case the commit was a no-op. */
-        if (S.captureCommitAwait > 0) {
-            S.captureCommitAwait--;
-            const _ci = host_module_get_param('capture_info');
-            if (_ci) {
-                const _p   = _ci.split(' ');
-                const _seq = parseInt(_p[0], 10) | 0;
-                /* seq starts at 0 per DSP instance and bumps per commit, so
-                 * any seq > 0 differing from the last toasted one is ours. */
-                if (_seq > 0 && _seq !== S.captureInfoSeq) {
-                    S.captureInfoSeq     = _seq;
-                    S.captureCommitAwait = 0;
-                    if (_p[1] === '1')
-                        showActionPopup('CAPTURED',
-                                        Math.round(parseFloat(_p[2])) + ' BPM',
-                                        _p[5] + ' steps');
-                    else
-                        showActionPopup('CAPTURED', 'Added to clip');
+        /* Watch capture_info for a commit and mirror the tempo-selector state.
+         * Format: "seq stopped bpm0 bpm1 bpm2 len select_active select_idx". */
+        const _ci = host_module_get_param('capture_info');
+        if (_ci) {
+            const _p    = _ci.split(' ');
+            const _seq  = parseInt(_p[0], 10) | 0;
+            const _sel  = _p.length > 6 ? (_p[6] === '1') : false;
+            const _sidx = _p.length > 7 ? (parseInt(_p[7], 10) | 0) : 0;
+            /* Commit edge: seq bumped since we last handled it. */
+            if (S.captureCommitAwait > 0 && _seq > 0 && _seq !== S.captureInfoSeq) {
+                S.captureInfoSeq     = _seq;
+                S.captureCommitAwait = 0;
+                if (_sel) {
+                    /* Stopped capture with a real tempo estimate → open the
+                     * on-device tempo chooser (wheel to audition, click to keep). */
+                    S.tempoSelectActive = true;
+                    S.tempoSelectIdx    = _sidx;
+                    S.tempoSelectBpms   = [parseFloat(_p[2]), parseFloat(_p[3]), parseFloat(_p[4])];
+                    S.tempoSelectTrack  = S.activeTrack;
+                    S.tempoSelectClip   = S.trackActiveClip[S.activeTrack];
+                    S.screenDirty = true;
+                } else if (_p[1] === '1') {
+                    showActionPopup('CAPTURED',
+                                    Math.round(parseFloat(_p[2 + _sidx])) + ' BPM',
+                                    _p[5] + ' steps');
+                } else {
+                    showActionPopup('CAPTURED', 'Added to clip');
+                }
+            } else if (S.captureCommitAwait > 0) {
+                S.captureCommitAwait--;
+            }
+            /* Keep the live selector view in sync; close it if the DSP did
+             * (e.g. transport stopped out from under it). */
+            if (S.tempoSelectActive) {
+                if (!_sel) {
+                    S.tempoSelectActive = false;
+                    S.screenDirty = true;
+                } else {
+                    S.tempoSelectIdx  = _sidx;
+                    S.tempoSelectBpms = [parseFloat(_p[2]), parseFloat(_p[3]), parseFloat(_p[4])];
                 }
             }
         }
@@ -413,17 +434,24 @@ export function pollDSP() {
     if (v.length >= 55) S.dspLooperState  = parseInt(v[54], 10) | 0;
     const _prevMergeState = S.dspMergeState;
     if (v.length >= 56) S.dspMergeState   = parseInt(v[55], 10) | 0;
+    /* DSP's authoritative solo-track (0xFF/255 = scene mode). Read it rather
+     * than trusting the JS mirror to survive — the single-track flow places
+     * DSP-side on merge_stop, so this mostly backs the transport-stop edge. */
+    const _dspSolo = (v.length >= 57) ? (parseInt(v[56], 10) | 0) : 255;
+    const _soloTrack = _dspSolo !== 255 ? _dspSolo
+                     : (S.mergeSingleTrack >= 0 ? S.mergeSingleTrack : -1);
     /* Arm confirmation: no longer fails on "no empty slot" — placement is
      * deferred until the user picks a row, so arm always succeeds. */
     if (S.pendingMergeArm) S.pendingMergeArm = false;
     /* Capture-done transition: DSP went into CAPTURED (4). Single-clip merge
-     * (Track View Shift+Rec) auto-places into the armed track's focused clip;
-     * scene merge shows the placement dialog for a row pick. */
+     * places DSP-side (merge_stop), so reaching CAPTURED here means either the
+     * scene flow (→ placement dialog) or a solo merge whose transport was
+     * stopped before merge_stop (→ auto-place into the solo track's clip). */
     if (_prevMergeState !== 4 && S.dspMergeState === 4) {
-        if (S.mergeSingleTrack >= 0) {
+        if (_soloTrack >= 0) {
             S.pendingDefaultSetParams.push({
                 key: 'merge_place_row',
-                val: String(S.trackActiveClip[S.mergeSingleTrack]) });
+                val: String(S.trackActiveClip[_soloTrack]) });
         } else {
             S.pendingMergePlacement = true;
         }
@@ -438,10 +466,15 @@ export function pollDSP() {
         /* Merge state lives on the Rec LED now (Shift+Rec); drop it back to
          * the record-arm state immediately (tick pass would catch up anyway). */
         setButtonLED(MoveRec, S.recordArmed ? Red : LED_OFF);
-        if (S.mergeSingleTrack >= 0 && _prevMergeState === 4)
-            showActionPopup('LIVE MERGE', 'Printed to clip');
+        /* Solo (single-track) merge places DSP-side on merge_stop, so JS sees
+         * CAPTURING/STOPPING → IDLE directly; the mirror is the reliable tell
+         * at this point (DSP already reset its solo field to 255). */
+        const _wasSolo = S.mergeSingleTrack >= 0;
         S.mergeSingleTrack = -1;
-        if (_prevMergeState === 2) showActionPopup('MAX LENGTH', 'REACHED');
+        if (_wasSolo)
+            showActionPopup('LIVE MERGE', 'Printed to clip');
+        else if (_prevMergeState === 2)
+            showActionPopup('MAX LENGTH', 'REACHED');
         syncClipsFromDsp();
         S.screenDirty = true;
     }

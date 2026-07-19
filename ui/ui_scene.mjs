@@ -9,6 +9,15 @@ export function trackClipHasContent(t, sceneIdx) {
         : S.clipNonEmpty[t][sceneIdx];
 }
 
+/* True when any clip on any track (all 16 scenes) holds content — the
+ * blank-session test that gates stopped-transport retrospective Capture. */
+export function sessionHasAnyContent() {
+    for (let s = 0; s < 16; s++)
+        for (let t = 0; t < NUM_TRACKS; t++)
+            if (trackClipHasContent(t, s)) return true;
+    return false;
+}
+
 function groupHasContent(group) {
     for (let row = 0; row < 4; row++) {
         const sceneIdx = group * 4 + row;

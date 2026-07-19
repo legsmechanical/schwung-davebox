@@ -78,6 +78,19 @@ static int sp_globals_misc(sp_ctx_t *cx) {
         return 1;
     }
     if (!strcmp(key, "merge_stop")) {
+        if (inst->merge_solo_track != 0xFF) {
+            /* Single-track (Track-View) merge: finalize + place into the solo
+             * track's focused clip immediately. set_param context, so the
+             * alloc merge_place may do is safe (unlike the render-thread
+             * page-boundary finalize the scene path uses). No STOPPING wait,
+             * no CAPTURED dialog state — goes straight to IDLE. */
+            int solo = (int)inst->merge_solo_track;
+            merge_finalize(inst);   /* ARMED→IDLE; CAPTURING/STOPPING→CAPTURED */
+            if (inst->merge_state == MERGE_STATE_CAPTURED)
+                merge_place(inst, (int)inst->tracks[solo].active_clip); /* →IDLE */
+            inst->merge_solo_track = 0xFF;
+            return 1;
+        }
         if (inst->merge_state == MERGE_STATE_CAPTURING)
             inst->merge_state = MERGE_STATE_STOPPING;
         else

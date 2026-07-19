@@ -233,6 +233,14 @@ typedef struct {
     uint8_t  a;         /* pitch (notes) / knob index 0-7 (CC) */
     uint8_t  b;         /* velocity (note-on) / CC value (CC) */
 } cap_ev_t;
+
+/* Frozen snapshot of a stopped-capture take, kept while the tempo selector is
+ * open so re-tempo can re-derive the clip from the original wall-clock timing
+ * (exact, no cumulative rounding) at any candidate BPM. */
+typedef struct {
+    uint64_t frame;
+    uint8_t  type, a, b;
+} cap_take_ev_t;
 /* Forward decl: at_auto_reset is used in create_instance + seq8_load_state, both
  * defined above the helper bodies. */
 static void at_auto_reset(at_auto_t *a);
@@ -1199,10 +1207,22 @@ typedef struct {
     cap_ev_t cap_ring[CAP_MAX_EVENTS];
     uint16_t cap_head;
     uint16_t cap_count;
-    double   cap_bpm_est[3];       /* candidate estimates, [0] = applied */
+    double   cap_bpm_est[3];       /* the 3 octave candidates, sorted ascending */
     uint16_t cap_last_len_steps;   /* clip length written by last stopped commit */
     uint8_t  cap_last_was_stopped; /* 1 = last commit ran the stopped/tempo path */
     uint32_t cap_commit_seq;       /* bumped per successful commit (JS toast edge) */
+
+    /* Tempo selector (Move-style post-capture BPM chooser). While active, the
+     * frozen take lives in cap_take[] and tN_capture_retempo re-derives the
+     * clip at cap_bpm_est[cap_select_idx]; tN_capture_confirm closes it. */
+    cap_take_ev_t cap_take[CAP_MAX_EVENTS];
+    uint16_t cap_take_count;
+    uint64_t cap_take_first;
+    uint8_t  cap_take_is_drum;
+    uint8_t  cap_select_active;
+    uint8_t  cap_select_track;
+    uint8_t  cap_select_clip;
+    uint8_t  cap_select_idx;       /* which candidate is currently applied (0..2) */
 } seq8_instance_t;
 
 static const host_api_v1_t *g_host = NULL;
@@ -1475,6 +1495,7 @@ static void capture_push(seq8_instance_t *inst, seq8_track_t *tr,
                          uint8_t type, uint8_t a, uint8_t b) {
     if (tr->recording || tr->record_armed) return;
     if (inst->count_in_ticks > 0) return;
+    if (inst->cap_select_active) return;   /* tempo selector owns the take */
     if (inst->cap_count >= CAP_MAX_EVENTS) {
         inst->cap_head  = (uint16_t)((inst->cap_head + 1) % CAP_MAX_EVENTS);
         inst->cap_count = CAP_MAX_EVENTS - 1;
@@ -5983,24 +6004,28 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
     if (!strcmp(key, "capture_pending"))
         return snprintf(out, out_len, "%d",
                         inst ? capture_pending_for_track(inst, (int)inst->active_track) : 0);
-    /* Last commit's outcome: "seq stopped applied_bpm alt1 alt2 len_steps".
+    /* Last commit + tempo-selector state:
+     * "seq stopped bpm0 bpm1 bpm2 len select_active select_idx".
+     * bpm0..2 = the 3 candidates (ascending); select_idx = applied one.
      * seq increments per successful commit (JS toast fires on the edge). */
     if (!strcmp(key, "capture_info"))
-        return snprintf(out, out_len, "%u %d %.1f %.1f %.1f %d",
+        return snprintf(out, out_len, "%u %d %.1f %.1f %.1f %d %d %d",
                         inst ? inst->cap_commit_seq : 0,
                         inst ? (int)inst->cap_last_was_stopped : 0,
                         inst ? inst->cap_bpm_est[0] : 0.0,
                         inst ? inst->cap_bpm_est[1] : 0.0,
                         inst ? inst->cap_bpm_est[2] : 0.0,
-                        inst ? (int)inst->cap_last_len_steps : 0);
+                        inst ? (int)inst->cap_last_len_steps : 0,
+                        inst ? (int)inst->cap_select_active : 0,
+                        inst ? (int)inst->cap_select_idx : 0);
 
     /* state_snapshot: single call returning all poll-loop values.
-     * Format: "playing cs0..cs7 ac0..ac7 qc0..qc7 count_in cp0..cp7 wr0..wr7 ps0..ps7 flash_eighth flash_sixteenth metro_beat_count master_pos looper_state merge_state"
-     * 57 values total. Replaces individual get_param calls in pollDSP(). */
+     * Format: "playing cs0..cs7 ac0..ac7 qc0..qc7 count_in cp0..cp7 wr0..wr7 ps0..ps7 flash_eighth flash_sixteenth metro_beat_count master_pos looper_state merge_state merge_solo_track"
+     * 57 values total (idx 0..56). Replaces individual get_param calls in pollDSP(). */
     if (!strcmp(key, "state_snapshot")) {
         if (!inst) return snprintf(out, out_len,
             "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -1 -1 -1 -1 -1 -1 -1 -1 0"
-            " 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0");
+            " 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 255");
         int t;
         int pos = 0;
         pos += snprintf(out + pos, (size_t)(out_len - pos), "%d", (int)inst->playing);
@@ -6024,6 +6049,7 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         pos += snprintf(out + pos, (size_t)(out_len - pos), " %u", (unsigned)inst->arp_master_tick);
         pos += snprintf(out + pos, (size_t)(out_len - pos), " %d", (int)inst->looper_state);
         pos += snprintf(out + pos, (size_t)(out_len - pos), " %d", (int)inst->merge_state);
+        pos += snprintf(out + pos, (size_t)(out_len - pos), " %d", (int)inst->merge_solo_track);
         return pos;
     }
 

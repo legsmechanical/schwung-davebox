@@ -29,6 +29,23 @@ static int sp_track_record(sp_ctx_t *cx) {
         capture_clear(inst);
         return 1;
     }
+    if (!strcmp(sub, "capture_retempo")) {
+        /* tN_capture_retempo "I" — while the tempo selector is open, re-derive
+         * the frozen take at candidate BPM I (0..2) and apply that tempo.
+         * Playback keeps rolling so the user hears the new alignment. */
+        if (inst->cap_select_active) {
+            int _i = clamp_i(my_atoi(val), 0, 2);
+            capture_write_take(inst, (int)inst->cap_select_track,
+                               (int)inst->cap_select_clip, inst->cap_bpm_est[_i]);
+            inst->cap_select_idx = (uint8_t)_i;
+        }
+        return 1;
+    }
+    if (!strcmp(sub, "capture_confirm")) {
+        /* tN_capture_confirm — accept the current tempo and close the selector. */
+        inst->cap_select_active = 0;
+        return 1;
+    }
 
     if (!strcmp(sub, "recording")) {
         int rv = my_atoi(val);

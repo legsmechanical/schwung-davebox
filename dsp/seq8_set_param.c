@@ -337,6 +337,7 @@ static void ext_transport_start(seq8_instance_t *inst) {
 static void ext_transport_stop(seq8_instance_t *inst) {
     int t;
     capture_clear(inst);   /* Move parity: transport edge drops capture input */
+    inst->cap_select_active = 0;   /* stopping transport closes the tempo selector */
     for (t = 0; t < NUM_TRACKS; t++) {
         play_fx_t *fx = &inst->tracks[t].pfx;
         silence_track_notes_v2(inst, &inst->tracks[t]);
@@ -447,6 +448,157 @@ static int cap_find_off(seq8_instance_t *inst, int tidx, int i, uint8_t pitch,
     return -1;
 }
 
+/* True when no clip anywhere in the session holds note data — the condition
+ * under which a stopped-transport capture is allowed to set the tempo and
+ * start a fresh take (Move parity: tempo detection only happens in a blank
+ * Set). Scans all melodic clips + allocated drum lanes. */
+static int capture_session_empty(seq8_instance_t *inst) {
+    int t, c, l;
+    for (t = 0; t < NUM_TRACKS; t++) {
+        seq8_track_t *tr = &inst->tracks[t];
+        for (c = 0; c < NUM_CLIPS; c++)
+            if (tr->clips[c].note_count > 0) return 0;
+        for (c = 0; c < NUM_CLIPS; c++) {
+            if (!tr->drum_clips[c]) continue;
+            for (l = 0; l < DRUM_LANES; l++)
+                if (tr->drum_clips[c]->lanes[l].clip.note_count > 0) return 0;
+        }
+    }
+    return 1;
+}
+
+/* Apply a BPM to davebox's internal clock (mirrors the "bpm" set_param body).
+ * Read-only under clock-follow (Move owns tempo there). */
+static void capture_apply_bpm(seq8_instance_t *inst, double bpm) {
+    if (inst->clock_follow_on) return;
+    if (bpm < 20.0) bpm = 20.0;
+    if (bpm > 400.0) bpm = 400.0;
+    inst->tick_delta = (uint32_t)((double)MOVE_FRAMES_PER_BLOCK * bpm * (double)PPQN);
+    int tb, tbl;
+    for (tb = 0; tb < NUM_TRACKS; tb++) {
+        inst->tracks[tb].pfx.cached_bpm = bpm;
+        for (tbl = 0; tbl < DRUM_LANES; tbl++)
+            inst->tracks[tb].drum_lane_pfx[tbl].cached_bpm = bpm;
+    }
+}
+
+/* Find the matching note-off for the take note-on at index i (first unconsumed
+ * off with the same pitch after i). Returns take index or -1. */
+static int cap_take_find_off(seq8_instance_t *inst, int i, uint8_t pitch,
+                             uint8_t *off_used) {
+    int j;
+    for (j = i + 1; j < (int)inst->cap_take_count; j++) {
+        const cap_take_ev_t *ev = &inst->cap_take[j];
+        if (ev->type == CAP_EV_NOTE_OFF && ev->a == pitch && !off_used[j]) {
+            off_used[j] = 1;
+            return j;
+        }
+    }
+    return -1;
+}
+
+/* (Re-)derive the frozen stopped-capture take (cap_take[]) into clip `clip` at
+ * `bpm`: wipes the clip, maps each event's wall-clock frame to a tick via the
+ * frames-per-tick at `bpm`, sets a bar-rounded length, and applies `bpm` to the
+ * transport. The take's real-time timing is preserved at every BPM — only the
+ * tick grid / loop length changes (Move parity). Returns 1 if anything wrote. */
+static int capture_write_take(seq8_instance_t *inst, int tidx, int clip, double bpm) {
+    if (!inst || tidx < 0 || tidx >= NUM_TRACKS) return 0;
+    if (clip < 0 || clip >= NUM_CLIPS) return 0;
+    seq8_track_t *tr = &inst->tracks[tidx];
+    int is_drum = inst->cap_take_is_drum;
+    clip_t *mcl = &tr->clips[clip];
+    uint16_t tps = mcl->ticks_per_step ? mcl->ticks_per_step : TICKS_PER_STEP;
+    double fpt = (double)inst->sample_rate * 60.0 / (bpm * (double)tps * 4.0);
+    if (fpt <= 0.0) fpt = 1.0;
+
+    /* Wipe the target so re-tempo is a clean rewrite. */
+    if (!is_drum) {
+        clip_init(mcl);
+        mcl->ticks_per_step = tps;
+    } else if (tr->drum_clips[clip]) {
+        int l;
+        for (l = 0; l < DRUM_LANES; l++) {
+            clip_init(&tr->drum_clips[clip]->lanes[l].clip);
+            tr->drum_clips[clip]->lanes[l].clip.ticks_per_step = tps;
+        }
+    }
+    cc_auto_reset(&tr->clip_cc_auto[clip]);
+
+    static uint8_t off_used[CAP_MAX_EVENTS];
+    memset(off_used, 0, (size_t)inst->cap_take_count);
+    uint8_t  cc_touched = 0;
+    uint32_t span_end   = 1;
+    int      wrote = 0, i;
+    for (i = 0; i < (int)inst->cap_take_count; i++) {
+        const cap_take_ev_t *ev = &inst->cap_take[i];
+        uint32_t ct = (uint32_t)((double)(ev->frame - inst->cap_take_first) / fpt + 0.5);
+        if (ev->type == CAP_EV_CC) {
+            cc_auto_set_point(&tr->clip_cc_auto[clip], ev->a,
+                              (uint16_t)(ct <= 65534 ? ct : 65534), ev->b);
+            cc_touched |= (uint8_t)(1u << (ev->a & 7));
+            if (ct + 1 > span_end) span_end = ct + 1;
+            wrote = 1;
+        } else if (ev->type == CAP_EV_NOTE_ON) {
+            int j = cap_take_find_off(inst, i, ev->a, off_used);
+            uint32_t gate = (j >= 0)
+                ? (uint32_t)((double)(inst->cap_take[j].frame - ev->frame) / fpt + 0.5)
+                : (uint32_t)tps;
+            if (gate < 1)      gate = 1;
+            if (gate > 65535u) gate = 65535u;
+            if (!is_drum) {
+                clip_insert_note(mcl, ct, (uint16_t)gate, ev->a, ev->b);
+                wrote = 1;
+            } else if (tr->drum_clips[clip]) {
+                int l;
+                for (l = 0; l < DRUM_LANES; l++) {
+                    drum_lane_t *ln = &tr->drum_clips[clip]->lanes[l];
+                    if (ln->midi_note != ev->a) continue;
+                    clip_insert_note(&ln->clip, ct, (uint16_t)gate, ev->a, ev->b);
+                    wrote = 1;
+                    break;
+                }
+            }
+            if (ct + gate > span_end) span_end = ct + gate;
+        }
+    }
+
+    /* Bar-round the length. */
+    uint32_t bar = (uint32_t)tps * 16u;
+    uint32_t len_steps = ((span_end + bar - 1) / bar) * 16u;
+    if (len_steps < 16)  len_steps = 16;
+    if (len_steps > 256) len_steps = 256;
+    inst->cap_last_len_steps = (uint16_t)len_steps;
+    if (!is_drum) {
+        mcl->length = (uint16_t)len_steps;
+    } else if (tr->drum_clips[clip]) {
+        int l;
+        for (l = 0; l < DRUM_LANES; l++)
+            tr->drum_clips[clip]->lanes[l].clip.length = (uint16_t)len_steps;
+    }
+
+    if (!is_drum && mcl->note_count > 0) clip_build_steps_from_notes(mcl);
+    if (is_drum && tr->drum_clips[clip]) {
+        int l;
+        for (l = 0; l < DRUM_LANES; l++) {
+            clip_t *lc = &tr->drum_clips[clip]->lanes[l].clip;
+            if (lc->note_count > 0) clip_build_steps_from_notes(lc);
+        }
+    }
+    if (cc_touched) {
+        int k;
+        for (k = 0; k < 8; k++) {
+            if (!(cc_touched & (1u << k))) continue;
+            cc_auto_decimate(&tr->clip_cc_auto[clip], k);
+            tr->cc_auto_last_sent[k] = 0xFF;
+        }
+    }
+    capture_apply_bpm(inst, bpm);
+    inst->state_dirty = 1;
+    rui_mark(inst, tidx, clip);
+    return wrote;
+}
+
 /* Commit the capture ring's events for track tidx into clip `clip`.
  *
  * Transport running: overdub — notes land at the abs-master-tick position
@@ -535,186 +687,132 @@ static int capture_commit(seq8_instance_t *inst, int tidx, int clip) {
         inst->cap_bpm_est[0] = inst->cap_bpm_est[1] = inst->cap_bpm_est[2] =
             (double)tr->pfx.cached_bpm;
         inst->cap_last_len_steps = mcl->length;
-    } else {
-        /* ---- Transport stopped: first event = clip start ---- */
-        uint64_t first_frame = 0;
-        int      have_first  = 0;
-        int      note_ons    = 0;
-        uint64_t iois[64];
-        int      n_ioi = 0;
-        uint64_t prev_on = 0;
-        int      have_prev = 0;
-        for (i = 0; i < (int)inst->cap_count; i++) {
-            const cap_ev_t *ev = &inst->cap_ring[(inst->cap_head + i) % CAP_MAX_EVENTS];
-            if (ev->track != (uint8_t)tidx) continue;
-            if (!have_first && (ev->type == CAP_EV_NOTE_ON || ev->type == CAP_EV_CC)) {
-                first_frame = ev->frame; have_first = 1;
-            }
-            if (ev->type == CAP_EV_NOTE_ON) {
-                note_ons++;
-                if (have_prev && n_ioi < 64) {
-                    uint64_t d = ev->frame - prev_on;
-                    /* < ~45ms = chord strum, not rhythm; ignore. */
-                    if (d >= (uint64_t)(inst->sample_rate * 0.045)) iois[n_ioi++] = d;
-                }
-                prev_on = ev->frame; have_prev = 1;
-            }
-        }
-        if (!have_first) return 0;
+        inst->cap_last_was_stopped = 0;
+        inst->cap_bpm_est[0] = inst->cap_bpm_est[1] = inst->cap_bpm_est[2] =
+            (double)tr->pfx.cached_bpm;
+        inst->cap_last_len_steps = mcl->length;
 
-        int fresh = !is_drum ? (mcl->note_count == 0)
-                             : (!tr->drum_clips[clip]);
+        if (!wrote) return 0;
+        if (!is_drum && mcl->note_count > 0) clip_build_steps_from_notes(mcl);
         if (is_drum && tr->drum_clips[clip]) {
-            int l; fresh = 1;
-            for (l = 0; l < DRUM_LANES; l++)
-                if (tr->drum_clips[clip]->lanes[l].clip.note_count > 0) { fresh = 0; break; }
-        }
-
-        double bpm = (double)tr->pfx.cached_bpm;
-        if (bpm < 20.0 || bpm > 400.0) bpm = 120.0;
-        inst->cap_bpm_est[0] = inst->cap_bpm_est[1] = inst->cap_bpm_est[2] = bpm;
-
-        if (fresh && !inst->clock_follow_on && n_ioi >= 2) {
-            /* Median IOI could be a quarter, an 8th, or a 16th of the played
-             * feel — three octave candidates; apply the one nearest 120 BPM
-             * in log space (Move parity: the alternatives only re-interpret
-             * the loop length, never the playback speed). */
-            double med = (double)cap_median_u64(iois, n_ioi);
-            double cand[3];
-            cand[0] = (double)inst->sample_rate * 60.0 / (med * 2.0); /* 8th  */
-            cand[1] = (double)inst->sample_rate * 60.0 / (med * 4.0); /* 16th */
-            cand[2] = (double)inst->sample_rate * 60.0 /  med;        /* 1/4  */
-            int    best = 0, ci;
-            double bestd = 1e9;
-            for (ci = 0; ci < 3; ci++) {
-                if (cand[ci] < 40.0)  cand[ci] = 40.0;
-                if (cand[ci] > 250.0) cand[ci] = 250.0;
-                double r = cand[ci] > 120.0 ? cand[ci] / 120.0 : 120.0 / cand[ci];
-                if (r < bestd) { bestd = r; best = ci; }
-            }
-            bpm = cand[best];
-            inst->cap_bpm_est[0] = bpm;
-            inst->cap_bpm_est[1] = cand[(best + 1) % 3];
-            inst->cap_bpm_est[2] = cand[(best + 2) % 3];
-            /* Apply (mirrors the "bpm" set_param body). */
-            inst->tick_delta = (uint32_t)((double)MOVE_FRAMES_PER_BLOCK * bpm
-                                          * (double)PPQN);
-            { int tb, tbl;
-              for (tb = 0; tb < NUM_TRACKS; tb++) {
-                  inst->tracks[tb].pfx.cached_bpm = bpm;
-                  for (tbl = 0; tbl < DRUM_LANES; tbl++)
-                      inst->tracks[tb].drum_lane_pfx[tbl].cached_bpm = bpm;
-              }
+            int l;
+            for (l = 0; l < DRUM_LANES; l++) {
+                clip_t *lc = &tr->drum_clips[clip]->lanes[l].clip;
+                if (lc->note_count > 0) clip_build_steps_from_notes(lc);
             }
         }
-
-        double fpt = (double)inst->sample_rate * 60.0
-                   / (bpm * (double)tps * 4.0);   /* frames per clip tick */
-        if (fpt <= 0.0) fpt = 1.0;
-
-        if (!is_drum) undo_begin_single(inst, tidx, clip);
-        if (is_drum && !tr->drum_clips[clip]) drum_clips_alloc(inst, tr);
-
-        uint32_t span_end = 1;
-        for (i = 0; i < (int)inst->cap_count; i++) {
-            const cap_ev_t *ev = &inst->cap_ring[(inst->cap_head + i) % CAP_MAX_EVENTS];
-            if (ev->track != (uint8_t)tidx) continue;
-            uint32_t ct = (uint32_t)((double)(ev->frame - first_frame) / fpt + 0.5);
-            if (ev->type == CAP_EV_CC) {
-                uint32_t at = fresh ? ct : (wl ? ct % wl : ct);
-                at += ws;
-                cc_auto_set_point(&tr->clip_cc_auto[clip], ev->a,
-                                  (uint16_t)(at <= 65534 ? at : 65534), ev->b);
-                cc_touched |= (uint8_t)(1u << (ev->a & 7));
-                if (ct + 1 > span_end) span_end = ct + 1;
-                wrote = 1;
-            } else if (ev->type == CAP_EV_NOTE_ON) {
-                int j = cap_find_off(inst, tidx, i, ev->a, off_used);
-                uint32_t gate;
-                if (j >= 0) {
-                    const cap_ev_t *offe =
-                        &inst->cap_ring[(inst->cap_head + j) % CAP_MAX_EVENTS];
-                    gate = (uint32_t)((double)(offe->frame - ev->frame) / fpt + 0.5);
-                } else {
-                    gate = (uint32_t)tps;   /* unclosed: one step */
-                }
-                if (gate < 1)      gate = 1;
-                if (gate > 65535u) gate = 65535u;
-                uint32_t at = fresh ? ct : (wl ? ct % wl : ct);
-                at += ws;
-                if (!is_drum) {
-                    clip_insert_note(mcl, at, (uint16_t)gate, ev->a, ev->b);
-                    wrote = 1;
-                } else if (tr->drum_clips[clip]) {
-                    int l;
-                    for (l = 0; l < DRUM_LANES; l++) {
-                        drum_lane_t *ln = &tr->drum_clips[clip]->lanes[l];
-                        if (ln->midi_note != ev->a) continue;
-                        clip_insert_note(&ln->clip, at, (uint16_t)gate,
-                                         ev->a, ev->b);
-                        wrote = 1;
-                        break;
-                    }
-                }
-                if (ct + gate > span_end) span_end = ct + gate;
+        if (cc_touched) {
+            int k;
+            for (k = 0; k < 8; k++) {
+                if (!(cc_touched & (1u << k))) continue;
+                cc_auto_decimate(&tr->clip_cc_auto[clip], k);
+                if (clip == (int)tr->active_clip) tr->cc_auto_last_sent[k] = 0xFF;
             }
         }
-
-        if (wrote && fresh) {
-            uint32_t bar = (uint32_t)tps * 16u;
-            uint32_t len_steps = ((span_end + bar - 1) / bar) * 16u;
-            if (len_steps < 16)  len_steps = 16;
-            if (len_steps > 256) len_steps = 256;
-            inst->cap_last_len_steps = (uint16_t)len_steps;
-            if (!is_drum) {
-                mcl->length         = (uint16_t)len_steps;
-                mcl->ticks_per_step = tps;
-            } else if (tr->drum_clips[clip]) {
-                int l;
-                for (l = 0; l < DRUM_LANES; l++) {
-                    tr->drum_clips[clip]->lanes[l].clip.length =
-                        (uint16_t)len_steps;
-                }
-            }
-        } else {
-            inst->cap_last_len_steps = mcl->length;
-        }
-        inst->cap_last_was_stopped = 1;
-
-        if (wrote) {
-            /* Arm the committed clip and roll the transport so the capture
-             * plays back immediately (Move parity). */
-            tr->active_clip   = (uint8_t)clip;
-            tr->queued_clip   = -1;
-            tr->will_relaunch = 1;
-            pfx_sync_from_clip(tr);
-            if (inst->clock_follow_on) follow_request_start(inst, 1);
-            else                       ext_transport_start(inst);
-        }
+        inst->cap_commit_seq++;
+        inst->state_dirty = 1;
+        rui_mark(inst, tidx, clip);
+        capture_clear(inst);
+        return 1;
     }
 
+    /* ---- Transport stopped: blank-session first-take + tempo detection ---- */
+    /* Stopped capture is the blank-session "first take + set tempo" mode only.
+     * If ANY clip in the session has content, refuse (keep the ring) — the user
+     * should start playback and overdub instead. */
+    if (!capture_session_empty(inst)) return 0;
+
+    /* Scan the ring: first event = clip start; gather inter-onset intervals for
+     * tempo detection; snapshot the take into cap_take[] (frame-stamped) so the
+     * tempo selector can re-derive it at any BPM without cumulative rounding. */
+    uint64_t first_frame = 0;
+    int      have_first  = 0;
+    uint64_t iois[64];
+    int      n_ioi = 0;
+    uint64_t prev_on = 0;
+    int      have_prev = 0;
+    inst->cap_take_count = 0;
+    for (i = 0; i < (int)inst->cap_count; i++) {
+        const cap_ev_t *ev = &inst->cap_ring[(inst->cap_head + i) % CAP_MAX_EVENTS];
+        if (ev->track != (uint8_t)tidx) continue;
+        if (!have_first && (ev->type == CAP_EV_NOTE_ON || ev->type == CAP_EV_CC)) {
+            first_frame = ev->frame; have_first = 1;
+        }
+        if (ev->type == CAP_EV_NOTE_ON) {
+            if (have_prev && n_ioi < 64) {
+                uint64_t d = ev->frame - prev_on;
+                if (d >= (uint64_t)(inst->sample_rate * 0.045)) iois[n_ioi++] = d;
+            }
+            prev_on = ev->frame; have_prev = 1;
+        }
+        if (inst->cap_take_count < CAP_MAX_EVENTS) {
+            cap_take_ev_t *te = &inst->cap_take[inst->cap_take_count++];
+            te->frame = ev->frame;
+            te->type  = ev->type;
+            te->a     = ev->a;
+            te->b     = ev->b;
+        }
+    }
+    if (!have_first) return 0;
+    inst->cap_take_first   = first_frame;
+    inst->cap_take_is_drum = (uint8_t)is_drum;
+
+    /* Three octave candidates from the median IOI, sorted ascending. Initial
+     * selection = the one nearest 120 BPM in log space (Move parity). Falls
+     * back to the current tempo when there's too little rhythm to estimate. */
+    double base = (double)tr->pfx.cached_bpm;
+    if (base < 20.0 || base > 400.0) base = 120.0;
+    inst->cap_bpm_est[0] = inst->cap_bpm_est[1] = inst->cap_bpm_est[2] = base;
+    int have_estimate = 0;
+    if (!inst->clock_follow_on && n_ioi >= 2) {
+        double med = (double)cap_median_u64(iois, n_ioi);
+        double cand[3];
+        cand[0] = (double)inst->sample_rate * 60.0 / (med * 4.0); /* 16th → lowest */
+        cand[1] = (double)inst->sample_rate * 60.0 / (med * 2.0); /* 8th          */
+        cand[2] = (double)inst->sample_rate * 60.0 /  med;        /* 1/4 → highest */
+        int ci;
+        for (ci = 0; ci < 3; ci++) {
+            if (cand[ci] < 40.0)  cand[ci] = 40.0;
+            if (cand[ci] > 250.0) cand[ci] = 250.0;
+            inst->cap_bpm_est[ci] = cand[ci];
+        }
+        int best = 0; double bestd = 1e9;
+        for (ci = 0; ci < 3; ci++) {
+            double r = cand[ci] > 120.0 ? cand[ci] / 120.0 : 120.0 / cand[ci];
+            if (r < bestd) { bestd = r; best = ci; }
+        }
+        inst->cap_select_idx = (uint8_t)best;
+        have_estimate = 1;
+    } else {
+        inst->cap_select_idx = 0;
+    }
+
+    if (!is_drum) undo_begin_single(inst, tidx, clip);
+    if (is_drum && !tr->drum_clips[clip]) drum_clips_alloc(inst, tr);
+
+    wrote = capture_write_take(inst, tidx, clip,
+                               inst->cap_bpm_est[inst->cap_select_idx]);
+    inst->cap_last_was_stopped = 1;
     if (!wrote) return 0;
 
-    if (!is_drum && mcl->note_count > 0) clip_build_steps_from_notes(mcl);
-    if (is_drum && tr->drum_clips[clip]) {
-        int l;
-        for (l = 0; l < DRUM_LANES; l++) {
-            clip_t *lc = &tr->drum_clips[clip]->lanes[l].clip;
-            if (lc->note_count > 0) clip_build_steps_from_notes(lc);
-        }
-    }
-    if (cc_touched) {
-        int k;
-        for (k = 0; k < 8; k++) {
-            if (!(cc_touched & (1u << k))) continue;
-            cc_auto_decimate(&tr->clip_cc_auto[clip], k);
-            if (clip == (int)tr->active_clip) tr->cc_auto_last_sent[k] = 0xFF;
-        }
-    }
+    /* Arm the committed clip and roll the transport so the take plays back
+     * immediately (Move parity). */
+    tr->active_clip   = (uint8_t)clip;
+    tr->queued_clip   = -1;
+    tr->will_relaunch = 1;
+    pfx_sync_from_clip(tr);
+    if (inst->clock_follow_on) follow_request_start(inst, 1);
+    else                       ext_transport_start(inst);
+
+    /* Open the tempo selector when we actually estimated a tempo (>1 candidate
+     * worth choosing). The frozen take in cap_take[] backs re-tempo. */
+    inst->cap_select_active = (uint8_t)(have_estimate ? 1 : 0);
+    inst->cap_select_track  = (uint8_t)tidx;
+    inst->cap_select_clip   = (uint8_t)clip;
+
     inst->cap_commit_seq++;
     inst->state_dirty = 1;
-    rui_mark(inst, tidx, clip);
-    capture_clear(inst);
+    capture_clear(inst);   /* ring consumed; the take lives in cap_take[] */
     return 1;
 }
 

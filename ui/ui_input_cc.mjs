@@ -35,7 +35,7 @@ import {
     snapshotPickerRotate, snapshotPickerClick, openClearAutoMenu,
     clearAutoMenuRotate, clearAutoMenuClick, showMenuInfo, closeConvertConfirm, resolveInheritPicker
 } from './ui_dialogs.mjs';
-import { trackClipHasContent } from './ui_scene.mjs';
+import { trackClipHasContent, sessionHasAnyContent } from './ui_scene.mjs';
 import { computePadNoteMap, syncDrumLaneSteps, syncDrumLanesMeta,
     setDrumLanePage } from './ui_drummodel.mjs';
 import { effectiveClip, forceRedraw, invalidateLEDCache,
@@ -69,6 +69,16 @@ const NOTE_SESSION_HOLD_TICKS = 19;  /* ~200ms at 94Hz, matching STEP_HOLD_TICKS
 
 function _onCC_jog(d1, d2) {
     if (S.shiftTrackLEDActive) { S.shiftTrackLEDActive = false; S.screenDirty = true; }
+    /* Tempo selector (post-capture): jog click keeps the current tempo. */
+    if (d1 === 3 && d2 === 127 && S.tempoSelectActive) {
+        if (typeof host_module_set_param === 'function')
+            host_module_set_param('t' + S.tempoSelectTrack + '_capture_confirm', '');
+        S.tempoSelectActive = false;
+        showActionPopup('TEMPO SET',
+                        Math.round(S.tempoSelectBpms[S.tempoSelectIdx]) + ' BPM');
+        S.screenDirty = true;
+        return;
+    }
     /* Inherit picker: jog click confirms selection (-1 = Start blank). */
     if (d1 === 3 && d2 === 127 && S.pendingInheritPicker) {
         const p = S.pendingInheritPicker;
@@ -610,6 +620,21 @@ function _onCC_jog(d1, d2) {
 
     if (d1 === MoveMainKnob) {
 
+        /* Tempo selector: wheel auditions the BPM candidates (re-derives the
+         * take at each; playback keeps rolling so alignment is audible). */
+        if (S.tempoSelectActive) {
+            const delta = decodeDelta(d2);
+            if (delta !== 0) {
+                const n = S.tempoSelectBpms.length;
+                S.tempoSelectIdx = (S.tempoSelectIdx + (delta > 0 ? 1 : n - 1)) % n;
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param('t' + S.tempoSelectTrack + '_capture_retempo',
+                                          String(S.tempoSelectIdx));
+                S.screenDirty = true;
+            }
+            return;
+        }
+
         /* Arp Steps interval mode: jog turn exits the overlay and swallows
          * the turn so the underlying bank knob param isn't nudged on exit. */
         if (S.stepIntervalMode) {
@@ -1033,15 +1058,20 @@ function _onCC_buttons(d1, d2) {
                 S.captureUsedAsModifier = true;   /* consume the tap */
             }
             if (!S.captureUsedAsModifier) {
-                if (S.capturePending > 0) {
+                if (S.capturePending <= 0) {
+                    showActionPopup('CAPTURE', 'Nothing buffered', 'Play pads first');
+                } else if (!S.playing && sessionHasAnyContent()) {
+                    /* Stopped capture is the blank-session first-take-+-set-tempo
+                     * mode only. With existing clips, the tempo is already set —
+                     * the user should overdub during playback. Keep the buffer. */
+                    showActionPopup('CAPTURE', 'Start playback', 'to overdub');
+                } else {
                     const _ct = S.activeTrack;
                     S.pendingDefaultSetParams.push({
                         key: 't' + _ct + '_capture_commit',
                         val: String(S.trackActiveClip[_ct]) });
                     S.capturePending     = 0;
                     S.captureCommitAwait = 40;   /* polls to watch for the toast */
-                } else {
-                    showActionPopup('CAPTURE', 'Nothing buffered', 'Play pads first');
                 }
             }
             computePadNoteMap();
