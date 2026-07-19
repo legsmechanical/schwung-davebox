@@ -18,7 +18,7 @@ import {
 } from './ui_constants.mjs';
 import {
     drawKitHeader, drawKitTouchedHeader, drawKitPageBar, drawKitAltArrow,
-    drawKitCells, drawKitEnumOverlay, mvPrint, mvWidth, rectOutline,
+    drawKitCells, drawKitEnumOverlay, mvPrint, mvWidth, mvPrintScaled, rectOutline,
     pf3Print, pf3Width,
     MV_ROW0_Y, MV_KH
 } from './ui_movy.mjs';
@@ -492,35 +492,48 @@ function drawPerfModeOled() {
     }
 }
 
-/* Post-capture tempo chooser (Move-style). Shows the applied BPM + a strip of
- * all candidate tempos, and a BAR view — the loop drawn as numbered bars with
- * bright bar dividers, the notes, the loop end, and a live playhead sweeping at
- * the selected tempo — so the user sees where the bar breaks and loop point
- * fall relative to what they hear. Wheel auditions; jog click keeps. */
+/* Left/right filled triangle "arrows" (the "< >" changeable indicator). */
+function triLeft(x, y, w, h) {
+    const mid = (h - 1) / 2;
+    for (let r = 0; r < h; r++) {
+        const c0 = Math.round((Math.abs(r - mid) / mid) * (w - 1));
+        for (let c = c0; c < w; c++) set_pixel(x + c, y + r, 1);
+    }
+}
+function triRight(x, y, w, h) {
+    const mid = (h - 1) / 2;
+    for (let r = 0; r < h; r++) {
+        const c1 = Math.round((1 - Math.abs(r - mid) / mid) * (w - 1));
+        for (let c = 0; c <= c1; c++) set_pixel(x + c, y + r, 1);
+    }
+}
+
+/* Post-capture tempo chooser (Move-style). A big scaled tempo flanked by "< >"
+ * (wheel to change), and a BAR view — the loop drawn as numbered bars with
+ * bright dividers, the notes, the loop end, and a live playhead sweeping at the
+ * selected tempo — so the user sees where the bar breaks and loop point fall
+ * relative to what they hear. Jog click keeps the tempo. */
 function drawTempoSelect() {
     clear_screen();
     const t    = S.tempoSelectTrack;
     const c    = S.tempoSelectClip;
     const idx  = S.tempoSelectIdx | 0;
     const bpms = S.tempoSelectBpms;
-    const nC   = bpms.length || 1;
     const isDrum = S.trackPadMode[t] === PAD_MODE_DRUM;
 
-    print(4, 1, 'CAPTURE TEMPO', 1);
-    { const pos = (idx + 1) + '/' + nC; print(128 - pos.length * 6 - 2, 1, pos, 1); }
-
-    /* Applied BPM, large (movy font). */
-    mvPrint(4, 11, Math.round(bpms[idx] || 0) + ' BPM', 1);
-
-    /* Candidate strip: one mark per candidate across the width, current filled.
-     * Scales to any count (3..8). */
+    /* Big tempo + "< >" arrows, centered. Pick the largest scale that fits. */
     {
-        const DY = 24, DX = 4, DW = 120;
-        for (let i = 0; i < nC; i++) {
-            const x = nC > 1 ? DX + Math.round(i / (nC - 1) * (DW - 4)) : DX;
-            if (i === idx) fill_rect(x, DY, 4, 6, 1);
-            else { set_pixel(x, DY, 1); set_pixel(x, DY + 2, 1); set_pixel(x, DY + 4, 1); }
-        }
+        const num = String(Math.round(bpms[idx] || 0));
+        const aW = 7, aH = 13, gap = 7;           /* arrow box + spacing */
+        let scale = 5;
+        while (scale > 2 && mvWidth(num) * scale + 2 * (aW + gap) > 124) scale--;
+        const nW = mvWidth(num) * scale, nH = 5 * scale;
+        const total = aW + gap + nW + gap + aW;
+        let x = Math.max(1, Math.round((128 - total) / 2));
+        const topY = 3, midY = topY + Math.round((nH - aH) / 2);
+        triLeft(x, midY, aW, aH); x += aW + gap;
+        mvPrintScaled(x, topY, num, 1, scale); x += nW + gap;
+        triRight(x, midY, aW, aH);
     }
 
     /* BAR view. */
@@ -557,7 +570,7 @@ function drawTempoSelect() {
     const px  = BX + Math.round((ph / len) * BW);
     for (let yy = BY; yy < BY + BH; yy++) set_pixel(Math.min(px, BX + BW - 1), yy, 1);
 
-    print(4, 56, 'wheel tempo   click keep', 1);
+    print(4, 56, 'Click to set', 1);
 }
 
 export function drawUI() {

@@ -215,6 +215,27 @@ export function mvPrint(x, y, text, color) {
     }
 }
 
+/* Integer-scaled movy print: each source pixel becomes a scale×scale block.
+ * Width scales linearly, so mvWidth(text) * scale is the rendered width. */
+export function mvPrintScaled(x, y, text, color, scale) {
+    const s = String(text);
+    let cx = Math.round(x);
+    const oy = Math.round(y), v = color ? 1 : 0;
+    for (let i = 0; i < s.length; i++) {
+        const g = mvGlyph(s.charCodeAt(i));
+        if (!g) { cx += 5 * scale; continue; }
+        const yOff = g[1], w = g[2], h = g[3];
+        for (let r = 0; r < h; r++) {
+            const bits = g[4 + r];
+            for (let c = 0; c < w; c++)
+                if (bits & (1 << c))
+                    fill_rect(cx + c * scale, oy + (yOff + r) * scale, scale, scale, v);
+        }
+        cx += g[0] * scale;
+        if (i < s.length - 1) cx -= scale;
+    }
+}
+
 /* ---- 5x3 micro font (schwung-movy glyphs5x3, MIT) — inside the squares ---- */
 const PF3_CHARS = " !\"'()+,-./:0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ%<>=?*";
 const PF3_G = [
