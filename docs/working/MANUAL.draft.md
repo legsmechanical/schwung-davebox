@@ -1330,22 +1330,23 @@ Live Merge records the actual output of tracks as they play — capturing a live
 performance, effects and all, into clips. The view you arm from sets the scope:
 
 - **Session View**: all 8 tracks at once, committed to a scene row you pick.
-- **Track View**: just the **active track**, printed straight into its focused
-  clip when you stop — no row pick. A quick way to resample one track's
-  performance (arps, delays, knob rides) into solid notes. Note it overwrites
-  that clip's existing pattern.
+- **Track View**: just the **active track**. When you stop, dAVEBOx switches
+  to Session View and blinks the empty clips on that track — tap one to save
+  the merged take there. A quick way to resample one track's performance
+  (arps, delays, knob rides) into solid notes in a new clip.
 
 | Step | Control |
 |---|---|
 | Arm | **Shift + Record** |
 | Capture starts | Next bar boundary (or on transport start) |
-| Stop | **Shift + Record** again (finalizes at the next page boundary; Track View then commits immediately) |
+| Stop | **Shift + Record** again (Session View finalizes at the next page boundary; Track View finalizes immediately) |
 | Auto-stop | Reaching the 256-step max clip length |
-| Place (Session View) | After stop, tap a scene row to commit |
-| Cancel (Session View) | Press **Record** instead of a row |
+| Place | After stop, tap a destination — a scene row (Session View) or a blinking empty clip on the merge track (Track View) |
+| Cancel | Press **Record** instead |
 
 In Session View, tracks that captured notes overwrite their clip at the target
-row; tracks that captured nothing leave the existing clip untouched.
+row; tracks that captured nothing leave the existing clip untouched. In Track
+View, the take lands in the empty clip you pick.
 
 ## 13.3 Export to Ableton Live
 
