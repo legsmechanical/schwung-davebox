@@ -1627,6 +1627,12 @@ function _onCC_transport(d1, d2) {
         }
         return;
     }
+    /* Plain Record while a Live Merge is armed/capturing STOPS the merge
+     * (in addition to Play). Without this, only Shift+Record stopped it. */
+    if (d1 === MoveRec && d2 === 127 && !S.shiftHeld && S.dspMergeState !== 0) {
+        S.pendingDefaultSetParams.push({ key: 'merge_stop', val: '1' });
+        return;
+    }
     if (d1 === MoveRec && d2 === 127) {
         if (S.recordArmed) {
             if (S.recordCountingIn) {

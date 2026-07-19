@@ -444,7 +444,7 @@ export function updateSessionLEDs() {
              * the merge track; dim everything else so the choice is obvious. */
             if (S.mergeSoloPlacement >= 0) {
                 if (t === S.mergeSoloPlacement && !hasContent)
-                    color = (Math.floor(S.tickCount / 24) % 2) ? trackColor(t) : LED_OFF;
+                    color = (Math.floor(S.tickCount / 24) % 2) ? LightGrey : LED_OFF;
                 else
                     color = LED_OFF;
             }
