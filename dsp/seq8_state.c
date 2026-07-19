@@ -1121,7 +1121,9 @@ static void seq8_load_state(seq8_instance_t *inst) {
     if (inst->conductor_track >= 0) {
         seq8_track_t *_ctr = &inst->tracks[inst->conductor_track];
         if (_ctr->pad_mode != PAD_MODE_CONDUCT) {
-            if (_ctr->pad_mode == PAD_MODE_DRUM) drum_clips_free(_ctr);
+            /* Clear-and-keep, NOT free (snapshot may read concurrently —
+             * monotonic allocation, see drum_clips_free in seq8.c). */
+            if (_ctr->pad_mode == PAD_MODE_DRUM) drum_clips_reset(_ctr);
             _ctr->pad_mode = PAD_MODE_CONDUCT;
         }
         /* Conductor per-clip control banks (sparse; absent keys keep clip_init

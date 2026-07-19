@@ -165,7 +165,7 @@ static int sp_globals_state(sp_ctx_t *cx) {
                 memset(tr2->cc_auto_last_sent, 0xFF, 8);
                 memset(tr2->cc_auto_cur_val, 0xFF, 8);
                 memset(tr2->at_last_sent, 0xFF, AT_MAX_LANES);
-                drum_clips_free(tr2);
+                drum_clips_reset(tr2);  /* clear-and-keep: snapshot may read concurrently */
                 drum_track_init(tr2, t2);
                 { int _rl; for (_rl = 0; _rl < DRUM_LANES; _rl++) tr2->drum_lane_pfx[_rl].route = tr2->pfx.route; }
                 drum_repeat_init_defaults(tr2);

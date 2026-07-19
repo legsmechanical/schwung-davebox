@@ -1268,11 +1268,32 @@ static void drum_clips_alloc(seq8_instance_t *inst, seq8_track_t *tr) {
     }
 }
 
+/* destroy_instance ONLY. Everywhere else use drum_clips_reset(): the remote-UI
+ * snapshot (get_param "state") may be serialized on a host worker thread
+ * concurrently with set_param (remote_snapshot_rt_safe contract), so instance
+ * memory the snapshot can reach must never be freed while the instance lives.
+ * Drum-clip allocation is therefore MONOTONIC: calloc on demand, keep until
+ * destroy. The host guarantees the worker is idle before destroy/unload. */
 static void drum_clips_free(seq8_track_t *tr) {
     int c;
     for (c = 0; c < NUM_CLIPS; c++) {
         free(tr->drum_clips[c]);
         tr->drum_clips[c] = NULL;
+    }
+}
+
+/* Clear-and-keep: re-init every allocated drum clip's lanes without freeing
+ * (see the snapshot-safety note on drum_clips_free above). */
+static void drum_clips_reset(seq8_track_t *tr) {
+    int c, l;
+    for (c = 0; c < NUM_CLIPS; c++) {
+        drum_clip_t *dc = tr->drum_clips[c];
+        if (!dc) continue;
+        for (l = 0; l < DRUM_LANES; l++) {
+            clip_init(&dc->lanes[l].clip);
+            drum_pfx_params_init(&dc->lanes[l].pfx_params);
+            dc->lanes[l].midi_note = (uint8_t)(DRUM_BASE_NOTE + l);
+        }
     }
 }
 
@@ -3645,9 +3666,11 @@ static void clip_copy_cond_fields(clip_t *dst, const clip_t *src) {
 }
 
 static void drum_track_init(seq8_track_t *tr, int track_idx) {
-    int c, l;
-    for (c = 0; c < NUM_CLIPS; c++)
-        tr->drum_clips[c] = NULL;
+    int l;
+    /* NOTE: does NOT touch tr->drum_clips[] — at create_instance the calloc'd
+     * struct already has NULL pointers, and on Clear Session the caller does
+     * drum_clips_reset() first (monotonic allocation: nulling a live pointer
+     * here would leak it — see drum_clips_free). */
     for (l = 0; l < DRUM_LANES; l++) {
         tr->drum_rec_pending_tick[l]   = 0;
         tr->drum_rec_pending_step[l]   = 0;
@@ -4946,17 +4969,13 @@ static void drum_row_restore(seq8_instance_t *inst, int row,
             }
         }
         if (dc && !has_data) {
-            /* Empty snapshot: for a drum track keep the clip allocated (clear
-             * its lanes) so active_clip never points at a freed slot — the
-             * crash invariant the live/render drum paths rely on. Only a
-             * non-drum track reclaims the memory (its drum_clips are unused). */
-            if (inst->tracks[t].pad_mode == PAD_MODE_DRUM) {
-                for (l = 0; l < DRUM_LANES; l++)
-                    clip_init(&dc->lanes[l].clip);
-            } else {
-                free(dc);
-                inst->tracks[t].drum_clips[row] = NULL;
-            }
+            /* Empty snapshot: keep the clip allocated and clear its lanes —
+             * both for the active_clip crash invariant the live/render drum
+             * paths rely on, AND because drum-clip allocation is monotonic
+             * (never freed mid-life; see drum_clips_free): the remote-UI
+             * snapshot may be reading this memory on a host worker thread. */
+            for (l = 0; l < DRUM_LANES; l++)
+                clip_init(&dc->lanes[l].clip);
             continue;
         }
         for (l = 0; l < DRUM_LANES; l++) {
@@ -5999,9 +6018,12 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
         return snprintf(out, out_len, "%d", inst ? (int)inst->swing_res : 0);
     if (!strcmp(key, "version"))
         return snprintf(out, out_len, "6");
-    /* Host capability: the remote-UI "state" snapshot is read-only and render
-     * never frees/reallocs note memory, so the host may serve it off the audio
-     * thread (avoids the RT-thread serialization hitch on browser pulls). */
+    /* Host capability: the remote-UI "state" snapshot is read-only and ALL
+     * instance memory it can reach is never freed/realloc'd for the lifetime
+     * of the instance (drum clips are monotonic — see drum_clips_free), so the
+     * host may serialize it on a worker thread concurrently with render_block
+     * AND set_param. Worst case is a torn/stale snapshot (self-corrected by
+     * the next rev-gated pull), never a use-after-free. */
     if (!strcmp(key, "remote_snapshot_rt_safe"))
         return snprintf(out, out_len, "1");
     if (!strcmp(key, "instance_id"))

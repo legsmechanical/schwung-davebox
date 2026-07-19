@@ -89,7 +89,7 @@ static int sp_track_config2(sp_ctx_t *cx) {
         if (new_mode == PAD_MODE_DRUM && tr->pad_mode != PAD_MODE_DRUM)
             drum_clips_alloc(inst, tr);
         else if (new_mode != PAD_MODE_DRUM && tr->pad_mode == PAD_MODE_DRUM)
-            drum_clips_free(tr);
+            drum_clips_reset(tr);  /* clear-and-keep: snapshot may read concurrently */
         tr->pad_mode = new_mode;
         tarp_silence(inst, tr);
         return 1;

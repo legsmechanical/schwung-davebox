@@ -106,7 +106,11 @@ static void test_convert(void) {
     /* --- drum -> melodic (reverse path) --- */
     hx_set_param(h, "t2_convert_to_melodic", "1");
     EXPECT(tr->pad_mode == PAD_MODE_MELODIC_SCALE, "D->M: pad_mode did not flip to MELODIC");
-    EXPECT(tr->drum_clips[0] == NULL, "D->M: drum_clips[0] not freed");
+    /* Monotonic allocation: clips stay allocated (snapshot-safety contract),
+     * but their lanes must be cleared for a clean future re-flip. */
+    EXPECT(tr->drum_clips[0] != NULL, "D->M: drum_clips[0] freed (must be kept)");
+    EXPECT(tr->drum_clips[0]->lanes[1].clip.note_count == 0,
+           "D->M: kept drum clip lanes not cleared");
     /* lane notes merged back into the melodic clip, pitch/tick/vel/gate intact. */
     EXPECT(tr->clips[0].note_count == 2, "D->M: expected 2 merged melodic notes");
     expect_note("D->M note0", &tr->clips[0].notes[0], 0, 60, 100, 12);

@@ -209,8 +209,10 @@ static void convert_track_drum_to_melodic(seq8_instance_t *inst, int t) {
 
     tr->pad_mode = PAD_MODE_MELODIC_SCALE;
 
-    /* Free drum clips (leaving drum mode). */
-    drum_clips_free(tr);
+    /* Clear drum clips (leaving drum mode). Clear-and-keep, NOT free: the
+     * remote-UI snapshot may be reading them concurrently on a host worker
+     * thread (monotonic allocation — see drum_clips_free in seq8.c). */
+    drum_clips_reset(tr);
 
     /* Reset drum-only track state (no melodic equivalent). */
     tr->drum_lane_mute = 0;

@@ -1236,7 +1236,10 @@ int main(void) {
                   "pad_mode: DRUM allocates all drum_clips");
         hx_set_param(h, "t2_pad_mode", "0");
         HX_ASSERT(ct->pad_mode == PAD_MODE_MELODIC_SCALE, "pad_mode: 0 -> melodic");
-        HX_ASSERT(ct->drum_clips[0] == NULL, "pad_mode: melodic frees drum_clips");
+        /* Monotonic allocation: kept + lanes cleared, never freed mid-life. */
+        HX_ASSERT(ct->drum_clips[0] != NULL, "pad_mode: melodic keeps drum_clips");
+        HX_ASSERT(ct->drum_clips[0]->lanes[0].clip.note_count == 0,
+                  "pad_mode: melodic clears kept drum lanes");
 
         /* convert_to_drum / convert_to_melodic: type flip + note translation
          * (observable = pad_mode + drum_clips alloc state). */
@@ -1245,7 +1248,7 @@ int main(void) {
         HX_ASSERT(ct->drum_clips[0] != NULL, "convert_to_drum: allocates drum_clips");
         hx_set_param(h, "t2_convert_to_melodic", "1");
         HX_ASSERT(ct->pad_mode == PAD_MODE_MELODIC_SCALE, "convert_to_melodic: -> melodic");
-        HX_ASSERT(ct->drum_clips[0] == NULL, "convert_to_melodic: frees drum_clips");
+        HX_ASSERT(ct->drum_clips[0] != NULL, "convert_to_melodic: keeps drum_clips");
     }
 
     /* ---- Recording white-box pins (Phase 4B group 6 prep). Runs after the table:
