@@ -238,6 +238,18 @@ int main(void) {
         HX_ASSERT(inst->tracks[1].clips[0].note_count == 3, "notes kept across warp");
         HX_ASSERT(inst->tracks[1].pfx.cached_bpm == bpm_before, "tempo still untouched");
         (void)len0;
+        hx_set_param(h, "t1_capture_retempo", "0");   /* back to 1 bar */
+        /* Fine warp: expand the take well past the loop → trailing notes scroll
+         * off the last bar and are dropped. */
+        int nc_before = inst->tracks[1].clips[0].note_count;
+        hx_set_param(h, "t1_capture_fine", "9000");   /* big positive → expand */
+        HX_ASSERT(inst->tracks[1].clips[0].note_count < nc_before,
+                  "fine expand drops trailing notes off the end");
+        HX_ASSERT(inst->tracks[1].clips[0].length == 16, "loop length unchanged by fine");
+        /* Compressing back restores them (re-derived from the frozen take). */
+        hx_set_param(h, "t1_capture_fine", "-9000");
+        HX_ASSERT(inst->tracks[1].clips[0].note_count == nc_before,
+                  "fine compress restores the dropped notes");
         hx_set_param(h, "t1_capture_confirm", "");
         HX_ASSERT(inst->cap_select_active == 0, "warp selector closed on confirm");
     }

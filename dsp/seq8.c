@@ -1228,6 +1228,10 @@ typedef struct {
     uint8_t  cap_select_clip;
     uint8_t  cap_select_idx;       /* index of the applied candidate */
     uint16_t cap_bar_cand[CAP_MAX_CAND];  /* warp mode: candidate lengths in bars */
+    int32_t  cap_warp_ticks;       /* warp fine: ticks the take is scaled to fill
+                                    * (0 = exact fill of the loop). Larger than the
+                                    * loop pushes trailing notes off the last bar
+                                    * (dropped); smaller packs the take to the front. */
 } seq8_instance_t;
 
 static const host_api_v1_t *g_host = NULL;

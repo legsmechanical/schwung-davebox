@@ -589,12 +589,18 @@ static int capture_write_take(seq8_instance_t *inst, int tidx, int clip,
     clip_t *mcl = &tr->clips[clip];
     uint16_t tps = mcl->ticks_per_step ? mcl->ticks_per_step : TICKS_PER_STEP;
     int warp = (target_len_steps > 0);
+    uint32_t loop_ticks = (uint32_t)target_len_steps * tps;   /* warp: fixed loop */
     double fpt;
     if (warp) {
-        /* Stretch the take's whole span onto target_len_steps*tps ticks. */
+        /* Stretch the take's whole span onto cap_warp_ticks ticks (fine), or the
+         * loop's full length when the fine offset is unset. A warp span longer
+         * than the loop pushes the tail past the last bar (dropped below). */
         double span = (double)inst->cap_take_span;
         if (span < 1.0) span = 1.0;
-        fpt = span / ((double)target_len_steps * (double)tps);
+        double wt = (inst->cap_warp_ticks > 0)
+            ? (double)inst->cap_warp_ticks : (double)loop_ticks;
+        if (wt < 1.0) wt = 1.0;
+        fpt = span / wt;
     } else {
         fpt = (double)inst->sample_rate * 60.0 / (bpm * (double)tps * 4.0);
     }
@@ -621,6 +627,8 @@ static int capture_write_take(seq8_instance_t *inst, int tidx, int clip,
     for (i = 0; i < (int)inst->cap_take_count; i++) {
         const cap_take_ev_t *ev = &inst->cap_take[i];
         uint32_t ct = (uint32_t)((double)(ev->frame - inst->cap_take_first) / fpt + 0.5);
+        /* Warp fine: drop events scaled past the end of the last bar. */
+        if (warp && ct >= loop_ticks) continue;
         if (ev->type == CAP_EV_CC) {
             cc_auto_set_point(&tr->clip_cc_auto[clip], ev->a,
                               (uint16_t)(ct <= 65534 ? ct : 65534), ev->b);
@@ -881,6 +889,7 @@ static int capture_commit(seq8_instance_t *inst, int tidx, int clip) {
             if (d < bd) { bd = d; bidx = bi; }
         }
         inst->cap_select_idx = (uint8_t)bidx;
+        inst->cap_warp_ticks = 0;   /* exact fill until fine-adjusted */
         wrote = capture_write_take(inst, tidx, clip, sbpm,
                                    (int)inst->cap_bar_cand[bidx] * 16);
         have_selector = (nb >= 2);

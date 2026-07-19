@@ -40,6 +40,7 @@ static int sp_track_record(sp_ctx_t *cx) {
             if (inst->cap_select_warp) {
                 double _sbpm =
                     (double)inst->tracks[inst->cap_select_track].pfx.cached_bpm;
+                inst->cap_warp_ticks = 0;   /* coarse bar change → exact fill */
                 capture_write_take(inst, (int)inst->cap_select_track,
                                    (int)inst->cap_select_clip, _sbpm,
                                    (int)inst->cap_bar_cand[_i] * 16);
@@ -49,6 +50,29 @@ static int sp_track_record(sp_ctx_t *cx) {
                                    inst->cap_bpm_est[_i], 0);
             }
             inst->cap_select_idx = (uint8_t)_i;
+        }
+        return 1;
+    }
+    if (!strcmp(sub, "capture_fine")) {
+        /* tN_capture_fine "<delta_ticks>" — WARP selector fine adjust: scale the
+         * take's timing by +/- delta ticks within the fixed bar length. Expanding
+         * past the loop scrolls trailing notes off the last bar (dropped);
+         * compressing packs the take toward the front. Tempo mode ignores it. */
+        if (inst->cap_select_active && inst->cap_select_warp) {
+            int _t = (int)inst->cap_select_track, _c = (int)inst->cap_select_clip;
+            clip_t *_mcl = &inst->tracks[_t].clips[_c];
+            uint16_t _tps = _mcl->ticks_per_step ? _mcl->ticks_per_step : TICKS_PER_STEP;
+            int32_t loop_ticks = (int32_t)inst->cap_bar_cand[inst->cap_select_idx]
+                               * 16 * (int32_t)_tps;
+            if (inst->cap_warp_ticks <= 0) inst->cap_warp_ticks = loop_ticks;
+            inst->cap_warp_ticks += my_atoi(val);
+            int32_t _lo = (int32_t)_tps;            /* >= 1 step of content */
+            int32_t _hi = loop_ticks * 4;           /* allow scrolling most off */
+            if (inst->cap_warp_ticks < _lo) inst->cap_warp_ticks = _lo;
+            if (inst->cap_warp_ticks > _hi) inst->cap_warp_ticks = _hi;
+            double _sbpm = (double)inst->tracks[_t].pfx.cached_bpm;
+            capture_write_take(inst, _t, _c, _sbpm,
+                               (int)inst->cap_bar_cand[inst->cap_select_idx] * 16);
         }
         return 1;
     }

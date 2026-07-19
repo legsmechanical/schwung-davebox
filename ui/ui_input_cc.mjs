@@ -620,9 +620,21 @@ function _onCC_jog(d1, d2) {
 
     if (d1 === MoveMainKnob) {
 
-        /* Tempo selector: wheel auditions the BPM candidates (re-derives the
-         * take at each; playback keeps rolling so alignment is audible). */
+        /* Capture chooser: plain wheel cycles the coarse candidates (BPMs, or
+         * bar lengths in warp mode). Shift+wheel (warp only) is a FINE tick-
+         * level scale of the take within the fixed bar length — accelerated on
+         * the jog; expanding scrolls trailing notes off the last bar (dropped),
+         * compressing packs the take toward the front. */
         if (S.tempoSelectActive) {
+            if (S.shiftHeld && S.tempoSelectWarp) {
+                const u = ccKnobDelta(d2, 0);   /* run-length accel (slot 0 free here) */
+                if (u !== 0 && typeof host_module_set_param === 'function') {
+                    host_module_set_param('t' + S.tempoSelectTrack + '_capture_fine',
+                                          String(u * 6));   /* ~6 ticks/detent, faster when spun */
+                    S.screenDirty = true;
+                }
+                return;
+            }
             const delta = decodeDelta(d2);
             if (delta !== 0) {
                 const n = S.tempoSelectBpms.length;
