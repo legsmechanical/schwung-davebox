@@ -72,7 +72,32 @@ int main(void) {
                   "non-drum track keeps its drum clip NULL (reclaimed / never alloc'd)");
     }
 
+    /* ---- 4. Batched tN_drum_meta get_param matches the per-lane values ---- */
+    {
+        seq8_track_t *tr3 = &inst->tracks[3];
+        hx_set_param(h, "t3_l0_note_add", "0 100 24");  /* drum mode, alloc, lane 0 has a note */
+        tr3->drum_lane_mute = 0x2A;
+        tr3->drum_lane_solo = 0x15;
+        char buf[1024];
+        int n = hx_get_param(h, "t3_drum_meta", buf, sizeof(buf));
+        HX_ASSERT(n > 0, "drum_meta returns data");
+        /* Parse "note0 nc0 ... note31 nc31 mute solo" and cross-check. */
+        int vals[DRUM_LANES * 2 + 2], cnt = 0;
+        const char *p = buf;
+        while (*p && cnt < DRUM_LANES * 2 + 2) {
+            vals[cnt++] = atoi(p);
+            while (*p && *p != ' ') p++;
+            while (*p == ' ') p++;
+        }
+        HX_ASSERT(cnt == DRUM_LANES * 2 + 2, "drum_meta has 66 fields");
+        HX_ASSERT(vals[0] == DRUM_BASE_NOTE, "lane0 note = base");
+        HX_ASSERT(vals[1] == 1, "lane0 has notes");
+        HX_ASSERT(vals[3] == 0, "lane1 has no notes");
+        HX_ASSERT((uint32_t)vals[DRUM_LANES * 2] == 0x2Au, "mute field matches");
+        HX_ASSERT((uint32_t)vals[DRUM_LANES * 2 + 1] == 0x15u, "solo field matches");
+    }
+
     hx_destroy(h);
-    printf("PASS: drum-clip NULL-active invariant (live_note_on guard + row_copy/drum_row_restore re-init)\n");
+    printf("PASS: drum-clip NULL-active invariant + batched drum_meta getter\n");
     return 0;
 }

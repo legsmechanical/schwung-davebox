@@ -185,19 +185,25 @@ export function syncDrumLaneSteps(t, l) {
     }
 }
 
-/** Sync lane notes and hit-presence for all lanes of track t (active clip). */
+/** Sync lane notes and hit-presence for all lanes of track t (active clip).
+ * One batched get_param ("tN_drum_meta") instead of 2×32+2 individual calls —
+ * each get_param round-trips the SPI RT thread, and this runs on every drum
+ * clip switch, so the old 66-call burst hitched playback (density-independent:
+ * it reads all 32 lanes regardless of content). Format:
+ * "note0 nc0 note1 nc1 ... note31 nc31 mute solo". */
 export function syncDrumLanesMeta(t) {
     if (typeof host_module_get_param !== 'function') return;
+    const raw = host_module_get_param('t' + t + '_drum_meta');
+    if (!raw) return;
+    const v = raw.split(' ');
+    if (v.length < DRUM_LANES * 2 + 2) return;
     for (let l = 0; l < DRUM_LANES; l++) {
-        const noteRaw = host_module_get_param('t' + t + '_l' + l + '_lane_note');
-        if (noteRaw !== null) S.drumLaneNote[t][l] = parseInt(noteRaw, 10) || (DRUM_BASE_NOTE + l);
-        const ncRaw  = host_module_get_param('t' + t + '_l' + l + '_note_count');
-        S.drumLaneHasNotes[t][l] = ncRaw !== null ? parseInt(ncRaw, 10) > 0 : false;
+        const note = parseInt(v[l * 2], 10);
+        S.drumLaneNote[t][l] = (note >= 0) ? note : (DRUM_BASE_NOTE + l);
+        S.drumLaneHasNotes[t][l] = v[l * 2 + 1] === '1';
     }
-    const muteRaw = host_module_get_param('t' + t + '_drum_lane_mute');
-    if (muteRaw !== null) S.drumLaneMute[t] = parseInt(muteRaw, 10) >>> 0;
-    const soloRaw = host_module_get_param('t' + t + '_drum_lane_solo');
-    if (soloRaw !== null) S.drumLaneSolo[t] = parseInt(soloRaw, 10) >>> 0;
+    S.drumLaneMute[t] = parseInt(v[DRUM_LANES * 2], 10) >>> 0;
+    S.drumLaneSolo[t] = parseInt(v[DRUM_LANES * 2 + 1], 10) >>> 0;
 }
 
 

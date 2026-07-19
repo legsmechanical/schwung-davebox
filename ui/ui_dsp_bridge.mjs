@@ -408,8 +408,14 @@ export function pollDSP() {
                 S.lastDspActiveClip[t] = newClip;
                 refreshPerClipBankParams(t);
                 if (S.trackPadMode[t] === PAD_MODE_DRUM) {
+                    /* Batched lane meta (1 get_param, covers has-notes dots for
+                     * all lanes). The 256-step pattern read is only needed to
+                     * draw the ACTIVE track's lane, so skip it for the others —
+                     * on a scene switch this avoids ~5 RT-thread get_params per
+                     * off-screen track. */
                     syncDrumLanesMeta(t);
-                    syncDrumLaneSteps(t, S.activeDrumLane[t]);
+                    if (t === S.activeTrack)
+                        syncDrumLaneSteps(t, S.activeDrumLane[t]);
                 }
             }
         }

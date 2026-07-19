@@ -6117,6 +6117,24 @@ static int get_param(void *instance, const char *key, char *out, int out_len) {
             return snprintf(out, out_len, "%u", tr->drum_lane_mute);
         if (!strcmp(sub, "drum_lane_solo"))
             return snprintf(out, out_len, "%u", tr->drum_lane_solo);
+        if (!strcmp(sub, "drum_meta")) {
+            /* Batched lane metadata for the active clip: one call replaces the
+             * per-lane note/note_count get_param burst (JS syncDrumLanesMeta).
+             * Format: "note0 nc0 note1 nc1 ... note31 nc31 mute solo" — 66 ints.
+             * Each get_param round-trips the SPI RT thread, so collapsing 66→1
+             * removes the drum-clip-switch playback hitch. nc = 1/0 (has notes). */
+            drum_clip_t *dc = tr->drum_clips[tr->active_clip];
+            int l, pos = 0;
+            for (l = 0; l < DRUM_LANES; l++) {
+                int note = dc ? (int)dc->lanes[l].midi_note : (DRUM_BASE_NOTE + l);
+                int has  = (dc && dc->lanes[l].clip.note_count > 0) ? 1 : 0;
+                pos += snprintf(out + pos, (size_t)(out_len - pos),
+                                l == 0 ? "%d %d" : " %d %d", note, has);
+            }
+            pos += snprintf(out + pos, (size_t)(out_len - pos), " %u %u",
+                            tr->drum_lane_mute, tr->drum_lane_solo);
+            return pos;
+        }
         if (!strcmp(sub, "diq"))
             return snprintf(out, out_len, "%d", (int)tr->drum_inp_quant);
         if (!strcmp(sub, "drum_repeat_sync"))
