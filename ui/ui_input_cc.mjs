@@ -1020,12 +1020,12 @@ function _onCC_buttons(d1, d2) {
             forceRedraw();
         } else {
             S.captureHeld = false;
-            /* Bare-tap release, three-way (checked in order):
-             *   Shift+Capture           → clear buffered capture input (Move parity)
-             *   buffered capture input  → retrospective Capture commit into the
-             *                             focused clip (Move-style Capture MIDI)
-             *   otherwise               → clip-bake (Track View) / scene-bake
-             *                             picker (Session View), as before.
+            /* Bare-tap release — Capture is CAPTURE-ONLY (bake lives on
+             * Sample, Live Merge on Shift+Record):
+             *   Shift+Capture          → discard buffered capture input (Move parity)
+             *   buffered capture input → retrospective Capture commit into the
+             *                            focused clip (Move-style Capture MIDI)
+             *   nothing buffered       → hint popup.
              * Suppressed when Capture was used as a modifier (scene capture via
              * Capture+row, drum-lane select via Capture+pad). */
             if (!S.captureUsedAsModifier && S.shiftHeld) {
@@ -1035,35 +1035,18 @@ function _onCC_buttons(d1, d2) {
                     S.capturePending = 0;
                     showActionPopup('CAPTURE', 'Input cleared');
                 }
-                S.captureUsedAsModifier = true;   /* never fall into bake */
-            }
-            if (!S.captureUsedAsModifier && S.capturePending > 0) {
-                const _ct = S.activeTrack;
-                S.pendingDefaultSetParams.push({
-                    key: 't' + _ct + '_capture_commit',
-                    val: String(S.trackActiveClip[_ct]) });
-                S.capturePending     = 0;
-                S.captureCommitAwait = 40;   /* polls to watch for the toast */
-                computePadNoteMap();
-                forceRedraw();
-                return;
+                S.captureUsedAsModifier = true;   /* consume the tap */
             }
             if (!S.captureUsedAsModifier) {
-                if (S.sessionView) {
-                    S.pendingSceneBakePicker = true;
-                    S.screenDirty = true;
+                if (S.capturePending > 0) {
+                    const _ct = S.activeTrack;
+                    S.pendingDefaultSetParams.push({
+                        key: 't' + _ct + '_capture_commit',
+                        val: String(S.trackActiveClip[_ct]) });
+                    S.capturePending     = 0;
+                    S.captureCommitAwait = 40;   /* polls to watch for the toast */
                 } else {
-                    const _bt = S.activeTrack, _bc = S.trackActiveClip[_bt];
-                    const _isDrum = S.trackPadMode[_bt] === PAD_MODE_DRUM;
-                    S.confirmBake             = true;
-                    S.confirmBakeIsDrum       = _isDrum;
-                    S.confirmBakeIsMultiLoop  = !_isDrum;
-                    S.confirmBakeSel          = _isDrum ? 2 : 1;
-                    S.confirmBakeTrack        = _bt;
-                    S.confirmBakeClip         = _bc;
-                    S.confirmBakeDrumLoopOpen = false;
-                    S.confirmBakeWrapPhase    = false;
-                    S.screenDirty             = true;
+                    showActionPopup('CAPTURE', 'Nothing buffered', 'Play pads first');
                 }
             }
             computePadNoteMap();
@@ -1588,6 +1571,26 @@ function _onCC_transport(d1, d2) {
     }
 
     /* Record button (CC 86): toggle arm/disarm */
+    /* Shift+Record: Live Merge arm/stop (moved off Sample — Sample is now
+     * bake-only, Capture is capture-only). Works in both views; the DSP flow
+     * (merge_arm → bar-boundary start → merge_stop → placement dialog) is
+     * unchanged. Merge state shows on the Record LED (red armed, green
+     * capturing). */
+    if (d1 === MoveRec && d2 === 127 && S.shiftHeld) {
+        if (S.dspMergeState !== 0) {
+            S.pendingDefaultSetParams.push({ key: 'merge_stop', val: '1' });
+            /* LED stays green until DSP finalizes at page boundary. */
+        } else {
+            S.pendingDefaultSetParams.push({ key: 'merge_arm', val: '1' });
+            S.pendingMergeArm = true;
+            /* Explain what's happening — multi-track merge is non-obvious
+             * and the user needs time to read. Override the standard popup
+             * window to ~3 seconds. */
+            showActionPopup('LIVE MERGE', 'Capturing all 8', 'tracks. Shift+Rec', 'again to stop.');
+            S.actionPopupEndTick = S.tickCount + 280;
+        }
+        return;
+    }
     if (d1 === MoveRec && d2 === 127) {
         if (S.recordArmed) {
             if (S.recordCountingIn) {
@@ -1686,32 +1689,31 @@ function _onCC_transport(d1, d2) {
             S.confirmBakeWrapPhase    = false;
             S.sampleUsedAsModifier    = true;
             forceRedraw();
-        } else if (S.dspMergeState !== 0) {
-            S.pendingDefaultSetParams.push({ key: 'merge_stop', val: '1' });
-            S.sampleUsedAsModifier = true;
-            /* LED stays green until DSP finalizes at page boundary */
         }
     }
-    /* Sample release (no modifier): in Session View arm/stop multi-track live
-     * merge; in Track View bare tap is a no-op (clip bake moved off Sample
-     * onto Capture). Sample-held + scene row still opens scene bake directly
-     * (Sample is also a modifier — flagged via sampleUsedAsModifier). */
+    /* Sample release (no modifier): BAKE — clip-bake confirm (Track View) or
+     * scene-bake picker (Session View). Moved here off Capture, which is now
+     * capture-only; Live Merge moved to Shift+Record. Sample-held + scene row
+     * still opens scene bake directly (Sample is also a modifier — flagged
+     * via sampleUsedAsModifier). */
     if (d1 === MoveSample && d2 === 0 && !S.shiftHeld) {
         S.sampleHeld = false;
-        if (!S.sampleUsedAsModifier && S.sessionView) {
-            if (S.dspMergeState !== 0) {
-                S.pendingDefaultSetParams.push({ key: 'merge_stop', val: '1' });
-                /* LED stays Red until DSP finalizes at page boundary, then
-                 * placement dialog opens via dspMergeState→IDLE detection. */
+        if (!S.sampleUsedAsModifier) {
+            if (S.sessionView) {
+                S.pendingSceneBakePicker = true;
+                S.screenDirty = true;
             } else {
-                S.pendingDefaultSetParams.push({ key: 'merge_arm', val: '1' });
-                S.pendingMergeArm = true;
-                setButtonLED(MoveSample, Red);
-                /* Explain what's happening — multi-track merge is non-obvious
-                 * and the user needs time to read. Override the standard popup
-                 * window to ~3 seconds. */
-                showActionPopup('LIVE MERGE', 'Capturing all 8', 'tracks. Tap Sample', 'again to stop.');
-                S.actionPopupEndTick = S.tickCount + 280;
+                const _bt = S.activeTrack, _bc = S.trackActiveClip[_bt];
+                const _isDrum = S.trackPadMode[_bt] === PAD_MODE_DRUM;
+                S.confirmBake             = true;
+                S.confirmBakeIsDrum       = _isDrum;
+                S.confirmBakeIsMultiLoop  = !_isDrum;
+                S.confirmBakeSel          = _isDrum ? 2 : 1;
+                S.confirmBakeTrack        = _bt;
+                S.confirmBakeClip         = _bc;
+                S.confirmBakeDrumLoopOpen = false;
+                S.confirmBakeWrapPhase    = false;
+                S.screenDirty             = true;
             }
         }
     }

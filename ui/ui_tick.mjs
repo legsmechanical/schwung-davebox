@@ -545,8 +545,11 @@ export function _tickImpl() {
         }
         reapplyPalette();
         setButtonLED(MovePlay,   S.playing ? Green : LED_OFF, true);
-        setButtonLED(MoveRec,    (S.recordArmed || S.recordScheduledStop) ? Red : LED_OFF, true);
-        setButtonLED(MoveSample, S.dspMergeState >= 2 ? Green : S.dspMergeState === 1 ? Red : LED_OFF, true);
+        /* Rec carries Live Merge state (Shift+Rec): green capturing, red armed. */
+        setButtonLED(MoveRec,    (S.recordArmed || S.recordScheduledStop) ? Red
+                                 : S.dspMergeState >= 2 ? Green
+                                 : S.dspMergeState === 1 ? Red : LED_OFF, true);
+        setButtonLED(MoveSample, DarkGrey, true);
         /* reapplyPalette reset the buttonCache — force-resend the 8 knob LEDs
          * next render (their stopped-state named colors would otherwise be
          * silently dropped) and the step LEDs. */
@@ -1201,10 +1204,14 @@ export function _tickImpl() {
             /* recordScheduledStop = waiting for end-of-page to stop; recordPendingPage =
              * waiting for next page boundary for DSP to flip recording=1. Both blink. */
             setButtonLED(MoveRec, Math.floor(S.tickCount / 8) % 2 === 0 ? Red : LED_OFF);
+        } else if (S.dspMergeState !== 0) {
+            /* Live Merge (Shift+Rec): green while capturing, red while armed. */
+            setButtonLED(MoveRec, S.dspMergeState >= 2 ? Green : Red);
         } else {
             setButtonLED(MoveRec, S.recordArmed ? Red : LED_OFF);
         }
-        setButtonLED(MoveSample, S.dspMergeState >= 2 ? Green : S.dspMergeState === 1 ? Red : DarkGrey);
+        /* Sample = bake, always available: dim ambient (same as Capture idle). */
+        setButtonLED(MoveSample, DarkGrey);
         /* Loop LED: flash White at 1/8 rate while Perf Mode view is locked (Session
          * View only) or drum repeat latched; VividYellow for latch mode; dim available
          * indicator (16) otherwise (always functional in both views). */
@@ -1286,9 +1293,11 @@ export function _tickImpl() {
          * Sample uses DarkGrey/OFF since index 16 (RoyalBlue) shows wrong on that button. */
         if (S.shiftHeld) {
             const _sf  = (Math.floor(S.tickCount / 24) % 2) ? 16 : LED_OFF;
-            const _sfs = (Math.floor(S.tickCount / 24) % 2) ? DarkGrey : LED_OFF;
             setButtonLED(MoveNoteSession, _sf);
-            setButtonLED(MoveSample,      _sfs);
+            /* Shift+Rec = Live Merge; blink Rec only while merge is idle (an
+             * active merge already owns the LED with its red/green state). */
+            if (S.dspMergeState === 0 && !S.recordArmed)
+                setButtonLED(MoveRec, (Math.floor(S.tickCount / 24) % 2) ? Red : LED_OFF);
             setButtonLED(MoveUndo,        _sf);
             setButtonLED(MoveCopy,        _sf);
             if (S.sessionView)  setButtonLED(MoveLoop, _sf);

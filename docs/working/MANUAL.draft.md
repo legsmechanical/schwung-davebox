@@ -149,13 +149,13 @@ Note/Session.
 | Button | On its own | As a modifier (held) |
 |---|---|---|
 | Play | Start / stop transport | — |
-| Record | Start / stop live recording | — |
+| Record | Start / stop live recording | Shift + Record = Live Merge arm/stop |
 | Loop | Track View: hold for loop view. Session View: Performance Mode | Loop + jog, Loop + step, etc. |
 | Mute | Toggle mute on active track/lane | Mute + pad/step, Mute + Play |
 | Delete | Open clear menu (context-dependent) | Delete + step/clip/lane/jog |
 | Copy | — | Copy + step/clip/lane/scene |
-| Capture | LED bright: commit buffered play-input to clip (6.7). LED dim: bake dialog (Track View) / scene-bake (Session View) | Capture + lane pad, Capture + scene, Shift + Capture = discard buffered input |
-| Sample | Live Merge arm/stop (Session View) | Sample + scene launcher |
+| Capture | Commit buffered play-input to clip (6.7); LED bright when input is waiting | Capture + lane pad, Capture + scene, Shift + Capture = discard buffered input |
+| Sample | Bake dialog (Track View) / scene-bake picker (Session View) | Sample + scene launcher = direct scene bake |
 | Undo | Undo last destructive action | Shift + Undo = redo |
 | Note/Session | Switch views (tap) / peek (hold) | Shift + Note/Session = Global Menu |
 | Shift | — | The primary modifier; combines with most controls |
@@ -526,8 +526,9 @@ Like Move's own Capture, dAVEBOx is always listening: everything you play on
 the pads (and every FX-bank knob move) while a track is **not** record-armed is
 silently buffered. If you play something you like but forgot to press Record,
 tap **Capture** — the buffered input becomes real clip data. The Capture
-button's LED lights **bright** whenever there is buffered input waiting; while
-it's dim, a tap opens the Bake dialog as before (see 13.1).
+button's LED lights **bright** whenever there is buffered input waiting; with
+nothing buffered, a tap just shows a hint. (Bake lives on **Sample** — see
+13.1; Live Merge on **Shift + Record** — see 13.2.)
 
 **While the transport is running**, tapping Capture overdubs the buffered notes
 into the active track's focused clip at the positions you heard them —
@@ -1273,16 +1274,14 @@ saves.
 
 ## 13.1 Bake
 
-The **Capture** button (when its LED is dim — with buffered play-input waiting,
-a tap commits that instead; see 6.7). Bake renders a clip's effects (NOTE FX,
-HARMONY, DELAY, SEQ ARP) into permanent note data, then resets the effects to
-defaults. The result
+The **Sample** button. Bake renders a clip's effects (NOTE FX, HARMONY, DELAY,
+SEQ ARP) into permanent note data, then resets the effects to defaults. The result
 sounds the same without any effects applied — useful for layering new effects on
 top, or for freezing a specific sound.
 
 ### Melodic bake (Track View)
 
-Tap **Capture** → two dialogs:
+Tap **Sample** → two dialogs:
 1. Loop count: 1x / 2x / 4x
 2. Wrap tails? Yes / No (Yes wraps echoes past clip end back to the beginning for
    seamless loops)
@@ -1293,7 +1292,7 @@ whatever pattern they produced.
 
 ### Drum bake (Track View)
 
-Tap **Capture** → three dialogs:
+Tap **Sample** → three dialogs:
 1. Clip / Lane (Clip = all lanes with full chain; Lane = active lane only, no
    pitch transforms)
 2. Loop count: 1x / 2x / 4x
@@ -1301,7 +1300,7 @@ Tap **Capture** → three dialogs:
 
 ### Scene bake (Session View)
 
-Tap **Capture** → pick a target row (tap scene launcher or step 1–16). Then loop
+Tap **Sample** → pick a target row (tap scene launcher or step 1–16). Then loop
 count and wrap tails. Each track runs its per-clip bake. Empty clips are skipped.
 
 Alternative: **Sample + scene launcher** goes directly to the confirm dialog.
@@ -1325,9 +1324,9 @@ capturing a live performance, effects and all, into new clips.
 
 | Step | Control |
 |---|---|
-| Arm | Session View, tap **Sample** |
+| Arm | **Shift + Record** (either view) |
 | Capture starts | Next bar boundary (or on transport start) |
-| Stop | Tap **Sample** again (finalizes at the next page boundary) |
+| Stop | **Shift + Record** again (finalizes at the next page boundary) |
 | Auto-stop | Reaching the 256-step max clip length |
 | Place | After stop, tap a scene row to commit |
 | Cancel | Tap **Capture** instead of a row |
@@ -1733,7 +1732,10 @@ that set the next time it launches.
 | Shift + Play | Restart from start |
 | Loop + Play | Restart at visible page |
 | Record | Start/stop recording |
-| Capture | Bake dialog |
+| Shift + Record | Arm/stop Live Merge |
+| Capture | Commit buffered play-input (6.7) |
+| Shift + Capture | Discard buffered play-input |
+| Sample | Bake dialog |
 | Mute | Toggle mute |
 | Shift + Mute | Toggle solo |
 | Delete + Mute | Clear all mutes/solos |
@@ -1813,8 +1815,9 @@ that set the next time it launches.
 | Shift + Copy + clip pad | Cut clip |
 | Copy + scene launcher | Copy row |
 | Capture + scene launcher | Snapshot playing clips to row |
-| Capture (tap) | Scene-bake picker |
-| Sample (tap) | Arm/stop Live Merge |
+| Capture (tap) | Commit buffered play-input (retrospective capture) |
+| Shift + Record | Arm/stop Live Merge |
+| Sample (tap) | Scene-bake picker |
 | Sample + scene launcher | Direct scene bake |
 | Delete + clip pad | Delete clip |
 | Delete + scene launcher | Clear row notes |

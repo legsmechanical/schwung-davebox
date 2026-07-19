@@ -23,8 +23,9 @@ import {
 import {
     NUM_TRACKS, NUM_CLIPS, NUM_STEPS, DRUM_LANES,
     TPS_VALUES, BANKS, PAD_MODE_DRUM,
-    MoveSample, LED_OFF, parseActionRaw
+    MoveRec, LED_OFF, parseActionRaw
 } from './ui_constants.mjs';
+import { Red } from '/data/UserData/schwung/shared/constants.mjs';
 
 import { S, CC_ASSIGN_DEFAULTS } from './ui_state.mjs';
 import { clipHasContent, _clipIsEmpty } from './ui_pure.mjs';
@@ -427,7 +428,9 @@ export function pollDSP() {
      * full re-read also rebuilds clipSteps/clipNonEmpty mirrors so the
      * Session-View overview lights the newly-populated clip pads. */
     if (_prevMergeState !== 0 && S.dspMergeState === 0) {
-        setButtonLED(MoveSample, LED_OFF);
+        /* Merge state lives on the Rec LED now (Shift+Rec); drop it back to
+         * the record-arm state immediately (tick pass would catch up anyway). */
+        setButtonLED(MoveRec, S.recordArmed ? Red : LED_OFF);
         if (_prevMergeState === 2) showActionPopup('MAX LENGTH', 'REACHED');
         syncClipsFromDsp();
         S.screenDirty = true;
