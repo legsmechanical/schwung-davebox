@@ -28,8 +28,32 @@ static void tap(hx_t *h, int track, int pitch, int vel,
     hx_render(h, gap_blocks);
 }
 
+/* Play a melodic phrase whose note onsets fall on the given 1/16 grid
+ * positions at ~120 BPM (1/16 ≈ 43 render blocks in the 44.1k/128 stub world).
+ * Notes are short staccato hits; gaps between onsets are rendered. Unlike
+ * evenly-spaced taps, a phrase with varied grid positions actually constrains
+ * the tempo — a wrong BPM pushes some onsets off the 1/16 grid. */
+static void play_phrase_120(hx_t *h, int track, const int *steps16, int n) {
+    seq8_instance_t *inst = I(h);
+    const int BLK_PER_16 = 43, HOLD = 8;
+    int cur = 0, i;
+    for (i = 0; i < n; i++) {
+        int target = steps16[i] * BLK_PER_16;
+        if (target > cur) { hx_render(h, target - cur); cur = target; }
+        uint8_t p = (uint8_t)(60 + (i % 5));
+        live_note_on(inst, &inst->tracks[track], p, 100);
+        hx_render(h, HOLD);
+        live_note_off(inst, &inst->tracks[track], p);
+        cur += HOLD;
+    }
+}
+
 int main(void) {
-    /* ---- 1. Stopped capture with tempo estimate (melodic, track 1) ---- */
+    /* ---- 1. Stopped capture, mechanics + tempo apply (melodic, track 1) ----
+     * NOTE: 4 evenly-spaced notes is the DEGENERATE/ambiguous case for tempo
+     * detection (even spacing fits many grids); it's kept to pin the commit
+     * mechanics + a sane default. Scenario 8 is the representative test: a
+     * varied phrase that actually constrains the tempo. */
     hx_t *h = hx_create(NULL);
     HX_ASSERT(h, "create failed");
     seq8_instance_t *inst = I(h);
@@ -204,6 +228,30 @@ int main(void) {
         HX_ASSERT(inst->tracks[1].clips[0].note_count == 0, "no notes written");
         HX_ASSERT(capture_pending_for_track(inst, 1) == 2, "ring kept for later");
         HX_ASSERT(inst->playing == 0, "transport not started");
+    }
+    hx_destroy(h);
+
+    /* ---- 8. Realistic syncopated phrase pins the tempo decisively ---- */
+    /* A 2-bar pattern with notes on varied 1/16 positions (on-beats, offbeats,
+     * 16ths) — the representative case, unlike the even taps in scenario 1.
+     * These only fit a 1/16 grid cleanly near 120, so the estimator should
+     * default there confidently (no 150/90 competition). */
+    h = hx_create(NULL);
+    HX_ASSERT(h, "create failed");
+    inst = I(h);
+    hx_render(h, 4);
+    {
+        static const int PH[] = { 0, 3, 4, 6, 8, 11, 14, 16, 19, 20, 24, 27, 28, 30 };
+        play_phrase_120(h, 1, PH, (int)(sizeof(PH) / sizeof(PH[0])));
+    }
+    hx_render(h, 43);   /* let the final bar breathe to the loop end */
+    hx_set_param(h, "t1_capture_commit", "0");
+    {
+        double bpm = inst->cap_bpm_est[inst->cap_select_idx];
+        HX_ASSERT(bpm > 116.0 && bpm < 124.0, "phrase default locks near 120");
+        HX_ASSERT(inst->tracks[1].clips[0].note_count == 14, "all 14 notes committed");
+        /* The chosen tempo should make the take a whole number of bars. */
+        HX_ASSERT((inst->tracks[1].clips[0].length % 16) == 0, "clip length is whole bars");
     }
     hx_destroy(h);
 
