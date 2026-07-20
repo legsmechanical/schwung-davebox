@@ -98,6 +98,26 @@ function drawConductTrackGrid(header, valFn, inertLabel) {
     drawKitPage(header, cells, false);
 }
 
+/* Conductor RESPONDER grid: per-track TOGGLE bar (like the DELAY Retrig toggle)
+ * showing each track's responder on/off state instead of an ON/off value box.
+ * The Conductor's own cell and drum tracks (which never respond) stay blank —
+ * distinct from an "off" track, which shows an empty framed bar. */
+function drawConductToggleGrid(header, onFn) {
+    const cells = [];
+    for (let i = 0; i < 8; i++) {
+        if (i === S.activeTrack) {
+            cells.push({ kind: 'blank', label: 'Cndct' });
+        } else if (S.trackPadMode[i] === PAD_MODE_DRUM) {
+            cells.push({ kind: 'blank', label: 'Tr' + (i + 1) });
+        } else {
+            const on = !!onFn(i);
+            cells.push({ kind: 'hbar', norm: on ? 1 : 0, label: 'Tr' + (i + 1),
+                         name: 'Track ' + (i + 1), text: on ? 'ON' : 'off' });
+        }
+    }
+    drawKitPage(header, cells, false);
+}
+
 /* Full-height dithered (checkerboard) bar — the "Thru" state in the step
  * editors: velocity passes through, so the bar reads as present-but-soft. */
 function drawThruBar(x, w, top, bot) {
@@ -1223,7 +1243,8 @@ export function drawUI() {
             (S.knobTouched >= 0 || inTimeout)) {
         const _ch = bankHeaderName(S.activeTrack, bank);
         if (bank === BANK_RESPONDER) {
-            drawConductTrackGrid(_ch, function(k){ return S.trackPadMode[k] === PAD_MODE_DRUM ? '--' : (S.condResp[S.trackActiveClip[S.activeTrack] | 0][k] ? 'ON' : 'off'); }, 'Cndct');
+            const _cc = S.trackActiveClip[S.activeTrack] | 0;
+            drawConductToggleGrid(_ch, function(k){ return S.condResp[_cc][k]; });
         } else if (bank === BANK_OCTAVE) {
             drawConductTrackGrid(_ch, function(k){ if (S.trackPadMode[k] === PAD_MODE_DRUM) return '--'; const o = S.condOct[S.trackActiveClip[S.activeTrack] | 0][k]; return o === 0 ? '--' : (o > 0 ? '+' + o : '' + o); }, 'Cndct');
         } else { /* BANK_WHEN */
