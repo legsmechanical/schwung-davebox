@@ -262,11 +262,14 @@ Input Quantize, octaves…) show a selection dot-strip along the bottom edge. **
 a knob (without turning) highlights it — the header inverts to that parameter's
 **full name** and the label strip under its widget swaps to the **live value** —
 so you can tap across the knobs to see how they map to the screen. **Turning** a
-knob with more than two options (Delay Rate, Arp Style, Resolution, ...)
-additionally pops up a scrolling list of every option, with the current one
-highlighted; the list appears only on turn (never on a bare touch) and stays up
-until you release the knob. The LED below each knob lights when that parameter
-differs from default.
+knob pops up a large, centred read-out of just that parameter — a zoomed copy of
+its widget (a big arc, or the value) — so it's easy to read while you dial it in.
+Parameters with a fixed set of choices (Delay Rate, Arp Style, Resolution, Note
+Offset, the harmonies, Ratchet, …) instead pop up a scrolling list of the options
+with the current one highlighted and a scrollbar when they don't all fit. Either
+way the pop-up appears only on turn (never on a bare touch) and stays up until you
+release the knob; the same read-outs appear in the step editor. The LED below each
+knob lights when that parameter differs from default.
 
 The bank display returns to the track overview after about a second of inactivity.
 **Touch the jog wheel** at any time to bring the active bank's display back —

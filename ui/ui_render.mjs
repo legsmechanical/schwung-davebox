@@ -19,8 +19,8 @@ import {
 import {
     drawKitHeader, drawKitTouchedHeader, drawKitPageBar, drawKitAltArrow,
     drawKitCells, drawKitEnumOverlay, mvPrint, mvWidth, rectOutline,
-    pf3Print, pf3Width,
-    MV_ROW0_Y, MV_KH
+    pf3Print, pf3Width, drawArcKnobAt, hdrPrint, hdrWidth,
+    MV_ROW0_Y, MV_KH, MV_ZOOM_X, MV_ZOOM_Y, MV_ZOOM_W, MV_ZOOM_H
 } from './ui_movy.mjs';
 import {
     drawGlobalMenu, drawStateWipeConfirm, drawRecordBlockedDialog, drawBpmMoveInfo,
@@ -138,6 +138,52 @@ function enumOverlayIdx(t) {
     return (t >= 0 && S.knobTurnedTick[t] >= 0) ? t : -1;
 }
 
+/* Turn-to-reveal value zoom — the non-picker counterpart to drawKitEnumOverlay.
+ * Same reveal lifecycle (via enumOverlayIdx): appears only once the physically-
+ * held knob is turned, stays until release. It's just a visual zoom of the cell
+ * that's already on screen — the same widget graphic scaled up with the value
+ * beneath it — shown in a box below the (unchanged) param-name header.
+ *
+ * Applies to sustained-value widgets (arc / bipolar arc / value-box). Skips
+ * pickers (their scrolling list overlay already does this), on/off toggles,
+ * one-shot actions, and blanks. */
+function drawKitValueOverlay(cells, idx) {
+    if (idx < 0) return;
+    const cell = cells[idx];
+    if (!cell || !cell.name) return;
+    if (cell.options && cell.options.length > 2) return;   /* discrete lists → picker overlay */
+    /* bigText = a text-only value with no widget graphic (the step editor's
+     * merged Oct/Note box, whose value is the note name). */
+    const bigText = cell.bigText;
+    if (bigText == null && cell.kind !== 'arc' && cell.kind !== 'arcbip' && cell.kind !== 'valsq') return;
+
+    /* Floating overlay box below the header: only the box itself is cleared,
+     * so the surrounding params stay visible around its borders. */
+    const BX = MV_ZOOM_X, BW = MV_ZOOM_W, boxTop = MV_ZOOM_Y, boxH = MV_ZOOM_H;
+    fill_rect(BX, boxTop, BW, boxH, 0);
+    rectOutline(BX, boxTop, BW, boxH, 1);
+
+    if (bigText != null) {
+        const _bt = String(bigText);
+        hdrPrint(Math.round(64 - hdrWidth(_bt) / 2), boxTop + 21, _bt, 1);
+        return;
+    }
+
+    const _vt = String(cell.text);
+    const _vx = Math.round(64 - hdrWidth(_vt) / 2);
+    if (cell.kind === 'arc' || cell.kind === 'arcbip') {
+        /* Zoomed arc (same shape, larger), value in the header font beneath. */
+        const norm = cell.kind === 'arcbip'
+            ? 0.5 + (cell.signed || 0) / 2
+            : (cell.norm || 0);
+        drawArcKnobAt(64, boxTop + 18, 12, norm, cell.kind === 'arcbip');
+        hdrPrint(_vx, boxTop + 35, _vt, 1);
+    } else {
+        /* valsq — no graphic; the value is the widget, centered in the box. */
+        hdrPrint(_vx, boxTop + 21, _vt, 1);
+    }
+}
+
 /* Canvaskit step-editor page (drum + melodic step hold): "STEP N" filled
  * header (touched knob swaps in the param name), kit grid, enum overlay on
  * top. `noteBox` (melodic) draws the merged Oct/Note box over the K1+K2
@@ -164,7 +210,9 @@ function drawStepEditKitPage(title, cells, noteBox) {
         mvPrint(BX + Math.round((BW - mvWidth(noteBox)) / 2),
                 BY + Math.floor((BH - 5) / 2), noteBox, hiOP ? 0 : 1);
     }
-    drawKitEnumOverlay(cells, enumOverlayIdx(t));
+    const _ovi = enumOverlayIdx(t);
+    drawKitEnumOverlay(cells, _ovi);
+    drawKitValueOverlay(cells, _ovi);
 }
 
 /* Shared canvaskit page entry: touched non-blank cell inverts the header to
@@ -176,7 +224,9 @@ function drawKitPage(name, cells, inverted) {
     if (touched) drawKitTouchedHeader(touched.name);
     else (inverted ? drawBankHeadingInverted : drawBankHeading)(name, false);
     drawKitCells(cells, t);
-    drawKitEnumOverlay(cells, enumOverlayIdx(t));
+    const _ovi = enumOverlayIdx(t);
+    drawKitEnumOverlay(cells, _ovi);
+    drawKitValueOverlay(cells, _ovi);
 }
 
 /* Down-arrow affordance for banks that expose alt params. Always drawn in the
@@ -289,6 +339,14 @@ const KIT_ARP_STYLE_NAMES = ['Off', 'Up', 'Down', 'Up/Down', 'Down/Up',
  * option lists -> enum square, small counts / small signed / one-shot
  * actions -> value square, signed continuous -> center-tick arc,
  * unsigned continuous -> arc. Stubs -> blank. */
+/* Full formatted option list for a discrete numeric knob (min..max), so a
+ * value-box param can drive the picker overlay just like a named enum. */
+function _discreteOpts(knob) {
+    const opts = [];
+    for (let i = knob.min; i <= knob.max; i++) opts.push(knob.fmt(i));
+    return opts;
+}
+
 function kitCellForKnob(knob, val) {
     if (!knob || !knob.abbrev) return { kind: 'blank', label: '' };
     const v = val | 0;
@@ -322,14 +380,26 @@ function kitCellForKnob(knob, val) {
          * semitone offsets/intervals (±24: Note Offset, Harmony 1/2/3, Pitch
          * Feedback) — get a persistent value box. Wider signed ranges (±127
          * velocities) stay a bipolar arc where the sweep reads better than digits. */
-        if (knob.max <= 24) { base.kind = 'valsq'; return base; }
+        if (knob.max <= 24) {
+            base.kind = 'valsq';
+            base.options = _discreteOpts(knob); base.sel = v - knob.min;
+            return base;
+        }
         base.kind = 'arcbip';
         const halfR = Math.max(1, Math.max(knob.max, -knob.min));
         base.signed = Math.max(-1, Math.min(1, v / halfR));
         return base;
     }
-    if (knob.fmt === fmtPlain && knob.max <= 16) { base.kind = 'valsq'; return base; } /* counts (Repts) */
-    if (knob.fmt === fmtPitchRnd) { base.kind = 'valsq'; return base; } /* Pitch Random 0..24 ("OFF" at 0) */
+    if (knob.fmt === fmtPlain && knob.max <= 16) {   /* counts (Repts) */
+        base.kind = 'valsq';
+        base.options = _discreteOpts(knob); base.sel = v - knob.min;
+        return base;
+    }
+    if (knob.fmt === fmtPitchRnd) {                  /* Pitch Random 0..24 ("OFF" at 0) */
+        base.kind = 'valsq';
+        base.options = _discreteOpts(knob); base.sel = v - knob.min;
+        return base;
+    }
     base.kind = 'arc';
     base.norm = Math.max(0, Math.min(1, (v - knob.min) / ((knob.max - knob.min) || 1)));
     return base;
@@ -961,7 +1031,8 @@ export function drawUI() {
                       text: (S.stepEditRand === 0 ? 100 : S.stepEditRand) + '%',
                       norm: (S.stepEditRand === 0 ? 100 : S.stepEditRand) / 100 },
                     { kind: 'valsq', label: 'Ratch', name: 'Ratchet',
-                      text: S.stepEditRatch <= 1 ? '--' : String(S.stepEditRatch) },
+                      text: S.stepEditRatch <= 1 ? '--' : String(S.stepEditRatch),
+                      options: ['--', '2', '3', '4'], sel: S.stepEditRatch <= 1 ? 0 : S.stepEditRatch - 1 },
                     { kind: 'blank', label: '' },
                 ];
                 drawStepEditKitPage(_stepTitle, cells, null);
@@ -972,7 +1043,7 @@ export function drawUI() {
         }
         const ac        = effectiveClip(S.activeTrack);
         if (S.heldStepNotes.length > 0) {
-            /* Melodic step edit: K1 Oct + K2 Note share the merged note box
+            /* Melodic step edit: K1 Note + K2 Oct share the merged note box
              * (same idiom as the drum NOTE FX lane box); K3 Leng, K4 Vel,
              * K5 Nudg, K6 Iter, K7 Prob, K8 Ratch. */
             const root = S.heldStepNotes[0];
@@ -982,8 +1053,8 @@ export function drawUI() {
             const tps = S.clipTPS[S.activeTrack][ac] || 24;
             const _gateSteps = S.stepEditGate / tps;
             const cells = [
-                { kind: 'blank', label: 'Oct',  name: 'Note' },
-                { kind: 'blank', label: 'Note', name: 'Note' },
+                { kind: 'blank', label: 'Note', name: 'Note', bigText: noteLabel },
+                { kind: 'blank', label: 'Oct',  name: 'Note', bigText: noteLabel },
                 { kind: 'valsq', label: 'Leng', name: 'Length',
                   text: _gateSteps % 1 === 0 ? _gateSteps.toFixed(0) : _gateSteps.toFixed(2) },
                 { kind: 'arc', label: 'Vel', name: 'Velocity', text: String(S.stepEditVel),
@@ -999,7 +1070,8 @@ export function drawUI() {
                   text: (S.stepEditRand === 0 ? 100 : S.stepEditRand) + '%',
                   norm: (S.stepEditRand === 0 ? 100 : S.stepEditRand) / 100 },
                 { kind: 'valsq', label: 'Ratch', name: 'Ratchet',
-                  text: S.stepEditRatch <= 1 ? '--' : String(S.stepEditRatch) },
+                  text: S.stepEditRatch <= 1 ? '--' : String(S.stepEditRatch),
+                  options: ['--', '2', '3', '4'], sel: S.stepEditRatch <= 1 ? 0 : S.stepEditRatch - 1 },
             ];
             drawStepEditKitPage(_stepTitle, cells, noteLabel);
             return;
@@ -1425,7 +1497,9 @@ export function drawUI() {
             else        rectOutline(BX, BY, BW, BH, 1);
             mvPrint(BX + Math.round((BW - mvWidth(_noteStr)) / 2),
                     BY + Math.floor((BH - 5) / 2), _noteStr, hiLane ? 0 : 1);
-            drawKitEnumOverlay(cells, enumOverlayIdx(_tch));
+            const _ovi2 = enumOverlayIdx(_tch);
+            drawKitEnumOverlay(cells, _ovi2);
+            drawKitValueOverlay(cells, _ovi2);
         }
 
         } else if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 5) {

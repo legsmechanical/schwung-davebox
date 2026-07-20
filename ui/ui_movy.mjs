@@ -31,13 +31,16 @@ export const MV_HDR_H = 8;
 export const MV_BAR_Y = 9;
 export const MV_ROW0_Y = 14, MV_LBL0_Y = 30, MV_ROW1_Y = 41, MV_LBL1_Y = 57;
 export const MV_CELL_W = 32, MV_KW = 20, MV_KH = 16, MV_LBL_H = 7;
+/* Centered overlay box shared by the turn-to-reveal value zoom (ui_render) and
+ * the picker list overlay below — same footprint so both read as one control. */
+export const MV_ZOOM_X = 32, MV_ZOOM_Y = 14, MV_ZOOM_W = 64, MV_ZOOM_H = 48;
 const SCREEN_W = 128;
 
 /* ---- header font: "6x6 Pixel Font" by asciimario (CC BY-NC 3.0) ----
  * Glyph: [advance, ...6 rowBits], bit0 = leftmost; [n] alone = blank;
  * null = unmapped. Uppercase-only (lowercase rows repeat caps). */
 const HDR_G = [
-  [7], [7,12,12,12,12,0,12], null, null, null, [7,51,48,12,12,3,51], null, null,
+  [7], [7,12,12,12,12,0,12], null, [7,10,31,10,31,10,0], null, [7,51,48,12,12,3,51], null, null,
   [4,6,3,3,3,3,6], [4,3,6,6,6,6,3], null, [7,0,12,63,63,12,0], [7,0,0,0,0,12,4], [7,0,0,30,30,0,0], [7,0,0,0,0,12,12], [7,48,48,12,12,3,3],
   [7,30,51,59,55,51,30], [7,12,14,12,12,12,30], [7,30,51,48,30,3,63], [7,30,48,28,48,51,30], [7,24,28,30,27,63,24], [7,31,3,31,48,51,30], [7,30,3,31,51,51,30], [7,63,51,48,24,12,12],
   [7,30,51,30,51,51,30], [7,30,51,51,62,48,30], [7,12,12,0,0,12,12], null, [7,48,12,3,3,12,48], null, [7,3,12,48,48,12,3], [7,30,51,24,12,0,12],
@@ -328,15 +331,20 @@ function drawCircleBorder(cx, cy, r) {
     }
 }
 
-/* Arc knob: circle + pointer sweeping 300 degrees; bipolar adds a center tick. */
-export function drawArcKnob(kx, ky, norm, bipolar) {
-    const cx = kx + 10, cy = ky + 7, r = 7;
+/* Arc knob at an explicit center + radius (the zoom overlay reuses this to draw
+ * the exact same shape, just larger). */
+export function drawArcKnobAt(cx, cy, r, norm, bipolar) {
     drawCircleBorder(cx, cy, r);
-    if (bipolar) fill_rect(cx, cy - r + 1, 1, 2, 1);
+    if (bipolar) fill_rect(cx, cy - r + 1, 1, Math.max(2, Math.round(r / 3.5)), 1);
     const rad = (210 + norm * 300) * Math.PI / 180;
     const ex = Math.round(cx + (r - 1) * Math.sin(rad));
     const ey = Math.round(cy - (r - 1) * Math.cos(rad));
     plotLine(cx, cy, ex, ey, 1);
+}
+
+/* Arc knob: circle + pointer sweeping 300 degrees; bipolar adds a center tick. */
+export function drawArcKnob(kx, ky, norm, bipolar) {
+    drawArcKnobAt(kx + 10, ky + 7, 7, norm, bipolar);
 }
 
 /* Horizontal bar filling left->right (toggles / 2-state enums). */
@@ -500,40 +508,51 @@ export function drawKitCells(cells, touchedIdx) {
     }
 }
 
-/* Scrolling option-list overlay while a >2-option enum cell is touched:
- * covers the 3 columns away from the touched knob, selection inverted. */
+/* Picker overlay: the option list, revealed while a >2-option enum/dir cell is
+ * turned. Centered in the shared zoom box (same footprint as the value zoom),
+ * standard system font, with a scrollbar whenever the options don't all fit. */
 export function drawKitEnumOverlay(cells, touchedIdx) {
     const cell = touchedIdx >= 0 ? cells[touchedIdx] : null;
-    if (!cell || (cell.kind !== 'enumsq' && cell.kind !== 'dirsq') ||
-        !cell.options || cell.options.length <= 2) return;
+    /* Any cell carrying a discrete option list (named enum, direction, OR a
+     * numeric value-box) uses the picker — they're the same thing, limited
+     * values vs limited enums. */
+    if (!cell || !cell.options || cell.options.length <= 2) return;
     const sel = cell.sel | 0;
     if (sel < 0) return; /* unset value ("--") — nothing to browse */
-    const ovX = (touchedIdx % 4) < 2 ? SCREEN_W - 3 * MV_CELL_W : 0;
-    const ovW = 3 * MV_CELL_W, ovY = MV_ROW0_Y, ovH = MV_LBL1_Y + MV_LBL_H - MV_ROW0_Y;
-    fill_rect(ovX, ovY, ovW, ovH, 0);
-    rectOutline(ovX, ovY, ovW, ovH, 1);
-    const ROW_H = 8, n = cell.options.length;
-    const VISIBLE = Math.min(n, Math.floor((ovH - 2) / ROW_H));
+
+    const X = MV_ZOOM_X, Y = MV_ZOOM_Y, W = MV_ZOOM_W, H = MV_ZOOM_H;
+    fill_rect(X, Y, W, H, 0);
+    rectOutline(X, Y, W, H, 1);
+
+    const n = cell.options.length;
+    const ROW_H = 9;                                  /* standard-font line */
+    const VISIBLE = Math.max(1, Math.min(n, Math.floor((H - 4) / ROW_H)));
+    const hasScroll = n > VISIBLE;
     const half = Math.floor(VISIBLE / 2);
     const start = Math.max(0, Math.min(sel - half, n - VISIBLE));
-    const listTop = ovY + Math.floor((ovH - VISIBLE * ROW_H) / 2);
+    const listTop = Y + Math.floor((H - VISIBLE * ROW_H) / 2);
+    const rowX = X + 2, rowW = W - 4 - (hasScroll ? 4 : 0);
+    const availW = rowW - 4;
     for (let i = 0; i < VISIBLE; i++) {
         const idx = start + i;
         if (idx >= n) break;
         const y = listTop + i * ROW_H;
+        let label = String(cell.options[idx]);
+        while (label.length > 1 && hdrWidth(label) > availW) label = label.slice(0, -1);
         if (idx === sel) {
-            fill_rect(ovX + 2, y, ovW - 4, ROW_H, 1);
-            mvPrint(ovX + 4, y + 1, cell.options[idx], 0);
+            fill_rect(rowX, y, rowW, ROW_H, 1);
+            hdrPrint(rowX + 3, y + 1, label, 0);
         } else {
-            mvPrint(ovX + 4, y + 1, cell.options[idx], 1);
+            hdrPrint(rowX + 3, y + 1, label, 1);
         }
     }
-    if (n > VISIBLE) {
+    /* Scroll indicator: right-edge track + thumb, only when there's overflow. */
+    if (hasScroll) {
         const trackH = VISIBLE * ROW_H;
         const thumbH = Math.max(3, Math.round(trackH * VISIBLE / n));
         const thumbY = listTop + Math.round((trackH - thumbH) * start / Math.max(1, n - VISIBLE));
-        fill_rect(ovX + ovW - 2, listTop, 1, trackH, 1);
-        fill_rect(ovX + ovW - 3, thumbY, 2, thumbH, 1);
+        fill_rect(X + W - 2, listTop, 1, trackH, 1);
+        fill_rect(X + W - 3, thumbY, 2, thumbH, 1);
     }
 }
 

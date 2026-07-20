@@ -2499,7 +2499,7 @@ function _onCC_stepedit(d1, d2) {
         }
         return;
     }
-    /* Melodic step edit: K1 Oct, K2 Note, K3 Leng, K4 Vel, K5 Nudg, K6 Iter, K7 Prob, K8 Ratch */
+    /* Melodic step edit: K1 Note, K2 Oct, K3 Leng, K4 Vel, K5 Nudg, K6 Iter, K7 Prob, K8 Ratch */
     if (S.heldStep >= 0 && S.heldStepNotes.length > 0 && d1 >= 71 && d1 <= 78 && S.activeBank !== 6) {
         const knobIdx = d1 - 71;
         const dir     = (d2 >= 1 && d2 <= 63) ? 1 : -1;
@@ -2510,25 +2510,25 @@ function _onCC_stepedit(d1, d2) {
         S.knobTurnedTick[knobIdx] = S.tickCount;
         S.screenDirty   = true;
         if (knobIdx === 0) {
-            /* K1 Oct: shift all notes ±12 semitones, sens=12 */
-            S.knobAccum[knobIdx] = (dir === S.knobLastDir[knobIdx]) ? S.knobAccum[knobIdx] + 1 : 1;
-            S.knobLastDir[knobIdx] = dir;
-            if (S.knobAccum[knobIdx] >= KNOB_PICK) {
-                S.knobAccum[knobIdx] = 0;
-                S.heldStepNotes = S.heldStepNotes.map(function(n) {
-                    return Math.max(0, Math.min(127, n + dir * 12));
-                });
-                if (typeof host_module_set_param === 'function')
-                    host_module_set_param(pfx + '_set_notes', S.heldStepNotes.join(' '));
-            }
-        } else if (knobIdx === 1) {
-            /* K2 Pitch: shift each note ±1 scale degree (or ±1 semitone if scale-aware off), sens=10 */
+            /* K1 Note: shift each note ±1 scale degree (or ±1 semitone if scale-aware off), sens=10 */
             S.knobAccum[knobIdx] = (dir === S.knobLastDir[knobIdx]) ? S.knobAccum[knobIdx] + 1 : 1;
             S.knobLastDir[knobIdx] = dir;
             if (S.knobAccum[knobIdx] >= KNOB_PICK) {
                 S.knobAccum[knobIdx] = 0;
                 S.heldStepNotes = S.heldStepNotes.map(function(n) {
                     return scaleNudgeNote(n, dir, S.padKey, S.padScale);
+                });
+                if (typeof host_module_set_param === 'function')
+                    host_module_set_param(pfx + '_set_notes', S.heldStepNotes.join(' '));
+            }
+        } else if (knobIdx === 1) {
+            /* K2 Oct: shift all notes ±12 semitones, sens=12 */
+            S.knobAccum[knobIdx] = (dir === S.knobLastDir[knobIdx]) ? S.knobAccum[knobIdx] + 1 : 1;
+            S.knobLastDir[knobIdx] = dir;
+            if (S.knobAccum[knobIdx] >= KNOB_PICK) {
+                S.knobAccum[knobIdx] = 0;
+                S.heldStepNotes = S.heldStepNotes.map(function(n) {
+                    return Math.max(0, Math.min(127, n + dir * 12));
                 });
                 if (typeof host_module_set_param === 'function')
                     host_module_set_param(pfx + '_set_notes', S.heldStepNotes.join(' '));
