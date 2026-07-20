@@ -1339,22 +1339,33 @@ is required.
 ## 13.2 Live Merge
 
 Live Merge records the actual output of tracks as they play — capturing a live
-performance, effects and all, into clips. The view you arm from sets the scope:
+performance, effects and all, into clips. **Shift + Record** raises a notice
+("Rec to start, Back to cancel") — it does not begin the merge on its own, so a
+stray Shift + Record can't disturb a take. Press **Record** to begin (**Back**
+cancels). Start it from a **stopped** transport (ignored while playing): it gives
+you a **1-bar count-in** (metronome, with the step buttons flashing on each beat),
+then starts playback and captures a clean take from the top of the pattern. The
+view you arm from sets the scope:
 
 - **Session View**: all 8 tracks at once, committed to a scene row you pick.
-- **Track View**: just the **active track**. When you stop, dAVEBOx switches
-  to Session View and blinks the empty clips on that track — tap one to save
-  the merged take there. A quick way to resample one track's performance
-  (arps, delays, knob rides) into solid notes in a new clip.
+- **Track View**: just the **active track** (played in isolation over the
+  count-in). When you stop, dAVEBOx switches to Session View and blinks the empty
+  clips on that track — tap one to save the merged take there. A quick way to
+  resample one track's performance (arps, delays, knob rides) into solid notes.
 
 | Step | Control |
 |---|---|
-| Arm | **Shift + Record** |
-| Capture starts | Next bar boundary (or on transport start) |
-| Stop | **Shift + Record** again (Session View finalizes at the next page boundary; Track View finalizes immediately) |
+| Notice | **Shift + Record** (transport stopped) → "Rec to start, Back to cancel" |
+| Start | **Record** at the notice (**Back** cancels) — begins the count-in |
+| Capture starts | After the 1-bar count-in, from the top of the pattern |
+| Stop | **Record** (or Shift + Record) — Session View finalizes at the next page boundary, Track View immediately |
+| Abort count-in | Press **Record** during the count-in |
 | Auto-stop | Reaching the 256-step max clip length |
 | Place | After stop, tap a destination — a scene row (Session View) or a blinking empty clip on the merge track (Track View) |
-| Cancel | Press **Record** instead |
+| Cancel placement | Press **Back** at the placement prompt |
+
+While the clips are written after you pick a destination, a brief "Placing
+merged…" message shows so the return to the normal screen doesn't look frozen.
 
 In Session View, tracks that captured notes overwrite their clip at the target
 row; tracks that captured nothing leave the existing clip untouched. In Track

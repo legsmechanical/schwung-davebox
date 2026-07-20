@@ -585,6 +585,7 @@ function _onPadPressTrackView(status, d1, d2) {
 }
 
 export function _onPadPress(status, d1, d2) {
+        if (S.mergeNoticePending) return;   /* Live Merge notice is modal (Rec/Back only) */
         /* Move-native co-run + drum-mode active track: inject a PLAIN pad-on
          * (cable-0, no Shift) so Move firmware both plays the drum AND focuses
          * that cell for editing — a plain tap selects on Move. dAVEBOx then
@@ -765,10 +766,12 @@ export function _onPadPress(status, d1, d2) {
                     const t = d1 - rowBase;
                     /* Single-clip merge placement: pick a destination clip on
                      * the merge track. Only an empty clip on that track commits;
-                     * any other clip-pad press is swallowed (Record cancels). */
+                     * any other clip-pad press is swallowed (Back cancels). */
                     if (S.mergeSoloPlacement >= 0) {
                         const clipIdx = S.sceneRow + row;
                         if (t === S.mergeSoloPlacement && !clipHasContent(t, clipIdx)) {
+                            S.mergePlacing      = true;   /* "Placing…" until DSP → IDLE */
+                            S.mergePlacingScene = false;
                             S.pendingDefaultSetParams.push(
                                 { key: 'merge_place_row', val: String(clipIdx) });
                             /* mode + LEDs cleared when DSP → IDLE (pollDSP). */
@@ -1112,6 +1115,7 @@ export function _resolveLoopGesture(fireFallback) {
 }
 
 export function _onStepButtons(d1, d2) {
+    if (S.mergeNoticePending) return;   /* Live Merge notice is modal (Rec/Back only) */
     /* Co-run (Schwung chain-edit or Move-native): the step grid is blanked down
      * to a single exit affordance (the blinking Step 3 button + lit icon).
      * Step 3 (idx 2) exits co-run; every other step press is swallowed so it
@@ -1164,6 +1168,8 @@ export function _onStepButtons(d1, d2) {
         /* Multi-track live merge placement: step press picks destination row. */
         if (S.pendingMergePlacement) {
             S.pendingMergePlacement = false;
+            S.mergePlacing      = true;      /* show "Placing…" until DSP → IDLE */
+            S.mergePlacingScene = true;
             S.pendingDefaultSetParams.push({ key: 'merge_place_row', val: String(idx) });
             S.screenDirty = true;
             return;
@@ -1522,6 +1528,7 @@ export function _onStepButtons(d1, d2) {
 }
 
 export function _onPadRelease(status, d1, d2) {
+    if (S.mergeNoticePending) return;   /* Live Merge notice is modal (Rec/Back only) */
     if (S.tapTempoOpen && d1 >= 68 && d1 <= 99) return;
     /* Co-run drum hold release: if the hold-threshold inject fired, send note-off
      * to close the held note in Move firmware. Always clear hold state on any
@@ -1854,6 +1861,7 @@ export function _onPadRelease(status, d1, d2) {
  * track's AftTch mode (Off/Poly/Channel). Called from the top of
  * _onMidiInternalImpl, before isNoiseMessage would drop the 0xA0. */
 export function _onPadAftertouch(d1, d2) {
+    if (S.mergeNoticePending) return;   /* Live Merge notice is modal (Rec/Back only) */
     const t      = S.activeTrack;
     const padIdx = d1 - TRACK_PAD_BASE;
 

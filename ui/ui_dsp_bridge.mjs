@@ -550,14 +550,21 @@ export function pollDSP() {
         /* Solo (single-track) merge places DSP-side on merge_stop, so JS sees
          * CAPTURING/STOPPING → IDLE directly; the mirror is the reliable tell
          * at this point (DSP already reset its solo field to 255). */
-        const _wasSolo = S.mergeSingleTrack >= 0 || S.mergeSoloPlacement >= 0;
+        const _wasSolo    = S.mergeSingleTrack >= 0 || S.mergeSoloPlacement >= 0;
+        /* Did clips actually change? Only a real destination pick (mergePlacing)
+         * or a max-length auto-finalize writes notes. A CANCEL — Rec during the
+         * count-in (ARMED→IDLE) or Back at the placement prompt (CAPTURED→IDLE via
+         * merge_cancel) — writes nothing, so skip the ~1,540-get_param full
+         * re-read that otherwise froze the UI for seconds on cancel. */
+        const _wrote      = S.mergePlacing || _prevMergeState === 2;
         S.mergeSingleTrack   = -1;
         S.mergeSoloPlacement = -1;
-        if (_wasSolo)
-            showActionPopup('LIVE MERGE', 'Printed to clip');
-        else if (_prevMergeState === 2)
-            showActionPopup('MAX LENGTH', 'REACHED');
-        syncClipsFromDsp();
+        S.mergePlacing       = false;   /* clear the "Placing…" indicator */
+        if (_wrote) {
+            if (_prevMergeState === 2)  showActionPopup('MAX LENGTH', 'REACHED');
+            else if (_wasSolo)          showActionPopup('LIVE MERGE', 'Printed to clip');
+            syncClipsFromDsp();
+        }
         S.screenDirty = true;
     }
 
@@ -665,11 +672,17 @@ export function pollDSP() {
         if (_rpp === '0') S.recordPendingPage = false;
     }
 
-    /* Count-in end: DSP fired transport+recording — sync JS state */
-    if (S.countInDspPrev && !countInDspActive && S.playing) {
-        S.recordCountingIn    = false;
-        S.countInStartTick    = -1;
-        S.countInQuarterTicks = 0;
+    /* Count-in end: DSP fired transport+recording (playing), or the count-in was
+     * cancelled (e.g. Rec pressed during a merge count-in → stays stopped). Sync
+     * JS state on the edge. mergeCountingIn clears either way so its LED flash
+     * can't linger after a cancel. */
+    if (S.countInDspPrev && !countInDspActive) {
+        if (S.playing) {
+            S.recordCountingIn    = false;
+            S.countInStartTick    = -1;
+            S.countInQuarterTicks = 0;
+        }
+        S.mergeCountingIn = false;
     }
     S.countInDspPrev = countInDspActive;
 

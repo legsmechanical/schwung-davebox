@@ -1219,6 +1219,10 @@ export function _tickImpl() {
             /* recordScheduledStop = waiting for end-of-page to stop; recordPendingPage =
              * waiting for next page boundary for DSP to flip recording=1. Both blink. */
             setButtonLED(MoveRec, Math.floor(S.tickCount / 8) % 2 === 0 ? Red : LED_OFF);
+        } else if (S.mergeNoticePending) {
+            /* Live Merge NOTICE up, waiting for you to press Rec to start the
+             * count-in: flash red to draw the eye to the Record button. */
+            setButtonLED(MoveRec, Math.floor(S.tickCount / 12) % 2 === 0 ? Red : LED_OFF);
         } else if (S.dspMergeState === 2 || S.dspMergeState === 3) {
             /* Live Merge capturing (Shift+Rec): green. */
             setButtonLED(MoveRec, Green);
@@ -1342,10 +1346,18 @@ export function _tickImpl() {
             updateSessionLEDs();
             if (S.loopHeld || S.perfViewLocked) updatePerfModeLEDs();
             else updateSceneMapLEDs();
+            /* Scene-merge count-in flash overrides the scene grid for the lead-in bar. */
+            if (S.mergeCountingIn && S.countInQuarterTicks > 0) {
+                const elapsed  = S.tickCount - S.countInBeatStartTick;
+                const flashOn  = (elapsed % S.countInQuarterTicks) < (S.countInQuarterTicks >> 3);
+                const flashClr = flashOn ? White : LED_OFF;
+                for (let _i = 0; _i < 16; _i++) setLED(16 + _i, flashClr);
+            }
         } else {
             updateStepLEDs();
-            /* Count-in flash: blink all step buttons white at quarter-note rate */
-            if (S.recordArmed && S.recordCountingIn && S.countInQuarterTicks > 0) {
+            /* Count-in flash: blink all step buttons white at quarter-note rate
+             * (recording count-in, or a Track-View solo-merge count-in). */
+            if (((S.recordArmed && S.recordCountingIn) || S.mergeCountingIn) && S.countInQuarterTicks > 0) {
                 const elapsed  = S.tickCount - S.countInBeatStartTick;
                 const flashOn  = (elapsed % S.countInQuarterTicks) < (S.countInQuarterTicks >> 3);
                 const flashClr = flashOn ? White : LED_OFF;

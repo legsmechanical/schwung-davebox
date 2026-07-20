@@ -591,12 +591,31 @@ export function drawUI() {
         print(4, 50, 'Any other btn cancels', 1);
         return;
     }
+    if (S.mergePlacing) {
+        /* Destination picked — DSP is committing the take. Shown so the jump
+         * back to the normal screen doesn't read as a freeze. */
+        clear_screen();
+        print(4, 20, 'PLACING MERGED',                                 1);
+        print(4, 34, S.mergePlacingScene ? 'CLIPS...' : 'CLIP...',     1);
+        return;
+    }
+    if (S.mergeNoticePending) {
+        /* Shift+Rec raised this notice; it does NOT start the merge. Plain Rec
+         * begins the count-in, Back cancels. */
+        clear_screen();
+        print(4, 8,  'LIVE MERGE',                                          1);
+        print(4, 22, S.mergeNoticeSingleTrack < 0 ? 'Capture all 8.'
+                                                   : 'Capture this track.', 1);
+        print(4, 36, 'Rec to start,',                                       1);
+        print(4, 50, 'Back to cancel',                                      1);
+        return;
+    }
     if (S.pendingMergePlacement) {
         clear_screen();
         print(4, 8,  'PLACE MERGED CLIPS',  1);
         print(4, 22, 'Tap row or scene step', 1);
         print(4, 34, 'to pick destination',  1);
-        print(4, 50, 'Rec cancels',          1);
+        print(4, 50, 'Back cancels',          1);
         return;
     }
     if (S.tempoSelectActive) { drawTempoSelect(); return; }
@@ -605,7 +624,7 @@ export function drawUI() {
         print(4, 8,  'MERGED TAKE',        1);
         print(4, 22, 'Tap a blinking clip', 1);
         print(4, 34, 'on track ' + (S.mergeSoloPlacement + 1) + ' to save', 1);
-        print(4, 50, 'Rec cancels',         1);
+        print(4, 50, 'Back cancels',         1);
         return;
     }
     if (S.capturePlaceTrack >= 0) {

@@ -2040,24 +2040,31 @@ int main(void) {
         HX_ASSERT(inst->playing == 0, "merge precondition: transport stopped");
 
         /* merge_arm: clears all pending counts, sets merge_tps=TICKS_PER_STEP,
-         * stopped -> ARMED. */
+         * and stages a 1-bar count-in (stopped-transport merge) → ARMED +
+         * count_in_merge, all 8 tracks will_relaunch'd (scene mode). */
         inst->merge_pending_count[0] = 7;   /* dirty it to prove the clear */
         hx_set_param(h, "merge_arm", "1");
         HX_ASSERT(inst->merge_state == MERGE_STATE_ARMED, "merge_arm (stopped): -> ARMED");
         HX_ASSERT(inst->merge_tps == (uint32_t)TICKS_PER_STEP, "merge_arm: merge_tps=TICKS_PER_STEP");
         HX_ASSERT(inst->merge_pending_count[0] == 0, "merge_arm: pending counts cleared");
+        HX_ASSERT(inst->count_in_ticks > 0 && inst->count_in_merge == 1, "merge_arm: stages merge count-in");
+        HX_ASSERT(inst->tracks[0].will_relaunch == 1 && inst->tracks[7].will_relaunch == 1,
+                  "merge_arm scene: all tracks will_relaunch");
 
-        /* merge_cancel: discards pending, -> IDLE. */
+        /* merge_cancel: discards pending, aborts the count-in, -> IDLE. */
         inst->merge_pending_count[2] = 4;
         hx_set_param(h, "merge_cancel", "1");
         HX_ASSERT(inst->merge_state == MERGE_STATE_IDLE, "merge_cancel: -> IDLE");
         HX_ASSERT(inst->merge_pending_count[2] == 0, "merge_cancel: pending discarded");
+        HX_ASSERT(inst->count_in_ticks == 0 && inst->count_in_merge == 0, "merge_cancel: count-in aborted");
 
-        /* merge_stop from ARMED -> merge_finalize -> IDLE (no capture to close). */
+        /* merge_stop DURING the count-in (still ARMED + count_in_merge) aborts it,
+         * stays stopped -> IDLE. */
         hx_set_param(h, "merge_arm", "1");
-        HX_ASSERT(inst->merge_state == MERGE_STATE_ARMED, "merge_stop setup: ARMED");
+        HX_ASSERT(inst->merge_state == MERGE_STATE_ARMED && inst->count_in_merge == 1, "merge_stop setup: ARMED + count-in");
         hx_set_param(h, "merge_stop", "1");
-        HX_ASSERT(inst->merge_state == MERGE_STATE_IDLE, "merge_stop from ARMED: finalize -> IDLE");
+        HX_ASSERT(inst->merge_state == MERGE_STATE_IDLE, "merge_stop during count-in: -> IDLE");
+        HX_ASSERT(inst->count_in_ticks == 0 && inst->count_in_merge == 0, "merge_stop during count-in: aborted");
 
         /* merge_stop from CAPTURING -> STOPPING (defers finalize to a page
          * boundary in render; the transition itself is the observable). */

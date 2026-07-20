@@ -69,15 +69,43 @@ static int sp_globals_misc(sp_ctx_t *cx) {
             ? (uint8_t)clamp_i(my_atoi(val + 1), 0, NUM_TRACKS - 1)
             : 0xFF;
         inst->merge_tps = (uint32_t)TICKS_PER_STEP;
-        if (inst->playing && inst->master_tick_in_step == 0) {
-            inst->merge_state     = MERGE_STATE_CAPTURING;
-            inst->merge_start_abs = inst->global_tick * TICKS_PER_STEP;
-        } else {
-            inst->merge_state = MERGE_STATE_ARMED;
+        /* Live Merge is a STOPPED-transport operation (JS gates arm on !playing).
+         * Run a 1-bar count-in (reusing the record count-in machinery, but with
+         * count_in_merge=1). The count-in completion (seq8_render.c) resets all
+         * positions to the top, starts the transport, launches every will_relaunch
+         * clip below, and lets the main sequencer's ARMED→CAPTURING fire — so
+         * capture begins cleanly at bar 1. Solo mode launches only its track (a
+         * clean isolated resample); scene mode launches all 8. */
+        inst->merge_state    = MERGE_STATE_ARMED;
+        inst->count_in_ticks = 4 * PPQN;   /* 1 bar; tick_delta tracks actual BPM */
+        inst->count_in_track = (inst->merge_solo_track != 0xFF) ? inst->merge_solo_track : 0;
+        inst->count_in_merge = 1;
+        inst->tick_accum     = 0;
+        if (inst->metro_on >= 1) inst->metro_beat_count++;
+        for (t = 0; t < NUM_TRACKS; t++) {
+            if (inst->merge_solo_track == 0xFF || t == inst->merge_solo_track) {
+                inst->tracks[t].queued_clip   = -1;
+                inst->tracks[t].will_relaunch = 1;
+            }
         }
+        if (inst->clock_follow_on) follow_request_start(inst, 2);
         return 1;
     }
     if (!strcmp(key, "merge_stop")) {
+        if (inst->count_in_merge) {
+            /* Stop pressed during the count-in: abort the merge, stay stopped
+             * (don't let the count-in complete + start the transport). */
+            int t;
+            inst->count_in_ticks = 0;
+            inst->count_in_merge = 0;
+            for (t = 0; t < NUM_TRACKS; t++) {
+                inst->tracks[t].will_relaunch = 0;
+                inst->merge_pending_count[t]  = 0;
+            }
+            inst->merge_state      = MERGE_STATE_IDLE;
+            inst->merge_solo_track = 0xFF;
+            return 1;
+        }
         if (inst->merge_solo_track != 0xFF) {
             /* Single-track (Track-View) merge: finalize immediately in set_param
              * context (→ CAPTURED, no render-thread page-boundary wait, so no
@@ -101,9 +129,15 @@ static int sp_globals_misc(sp_ctx_t *cx) {
         return 1;
     }
     if (!strcmp(key, "merge_cancel")) {
-        /* Discard any captured pending notes without writing to clips. */
+        /* Discard any captured pending notes without writing to clips. Also
+         * abandon a count-in if one is mid-flight (defensive). */
         int t;
         for (t = 0; t < NUM_TRACKS; t++) inst->merge_pending_count[t] = 0;
+        if (inst->count_in_merge) {
+            inst->count_in_ticks = 0;
+            inst->count_in_merge = 0;
+            for (t = 0; t < NUM_TRACKS; t++) inst->tracks[t].will_relaunch = 0;
+        }
         inst->merge_state      = MERGE_STATE_IDLE;
         inst->merge_solo_track = 0xFF;
         return 1;
