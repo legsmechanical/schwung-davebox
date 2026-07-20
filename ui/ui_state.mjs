@@ -503,6 +503,14 @@ export const S = {
     pendingSuspendSave: false,
     pendingExitAfterSave: false,   /* drained one tick after pendingSuspendSave fires; calls host_exit_module */
     pendingHideAfterSave: false,   /* drained one tick after pendingSuspendSave fires; calls host_hide_module */
+    pendingSuspendManaged: false,  /* self-managed Back suspend: drained one tick after pendingSuspendSave fires; calls host_suspend_overtake (needs capabilities.suspend_self_managed + a host ≥ PR #165) */
+    /* Self-managed Back button (module.json capabilities.suspend_self_managed). Plain Back now
+     * reaches us as CC 51; we distinguish TAP (back out one UI level, resolved on release) from
+     * HOLD (~BACK_HOLD_TICKS → suspend from anywhere, fired by checkBackHold() in tick). Shift+Back
+     * stays a host-owned full-exit. backPressTick = tick of the current unresolved Back press
+     * (-1 = none); backHoldFired = the hold already suspended, so the release must not also tap. */
+    backPressTick: -1,
+    backHoldFired: false,
     pendingExport: false,          /* Ableton .ablbundle export — set by menu action, drained in tick() (get_param-safe) */
     pendingExportRun: false,       /* phase 2 of export: armed after EXPORTING popup renders, does the blocking work */
     pendingPruneOrphans: false,

@@ -66,6 +66,7 @@ const STRETCH_BLOCKED_TICKS = 141;  /* ~1500ms at 94Hz (was 294, calibrated for 
 
 /* Session overview overlay (hold CC 50) */
 const NOTE_SESSION_HOLD_TICKS = 19;  /* ~200ms at 94Hz, matching STEP_HOLD_TICKS (was 40 @196Hz — a ~300ms hold misread as tap, latching momentary views) */
+const BACK_HOLD_TICKS = 42;          /* ~450ms at 94Hz — a deliberate long-press on Back = suspend from anywhere (vs a short tap = back out one UI level) */
 
 function _onCC_jog(d1, d2) {
     if (S.shiftTrackLEDActive) { S.shiftTrackLEDActive = false; S.screenDirty = true; }
@@ -1453,56 +1454,176 @@ function _onCC_buttons(d1, d2) {
 
 }
 
-function _onCC_transport(d1, d2) {
-    /* Back: close global menu if open; otherwise (with Shift) hide module.
-     * Back during co-run never reaches us because dAVEBOx opts out of the
-     * framework Back-as-exit (CORUN_KEEP_BACK in keep_mask) and cedes Back
-     * to the peer (chain editor sub-view pop / Move firmware navigation).
-     * Menu is the dAVEBOx exit during co-run, handled in _onCC_buttons. */
-    if (d1 === MoveBack && d2 === 127) {
-        if (S.tapTempoOpen) {
-            closeTapTempo();
-            forceRedraw();
-        } else if (S.confirmBake) {
-            S.confirmBake          = false;
-            S.confirmBakeWrapPhase = false;
-            forceRedraw();
-        } else if (S.globalMenuOpen && S.confirmClearSession) {
-            S.confirmClearSession = false;
-            forceRedraw();
-        } else if (S.globalMenuOpen && S.confirmSaveState) {
-            S.confirmSaveState = false;
-            forceRedraw();
-        } else if (S.globalMenuOpen && S.confirmConvertToDrum) {
-            closeConvertConfirm();
-            forceRedraw();
-        } else if (S.globalMenuOpen && S.confirmConvertToConduct) {
-            closeConvertConfirm();
-            forceRedraw();
-        } else if (S.globalMenuOpen && S.menuInfoLines.length > 0) {
-            S.menuInfoLines = [];
-            forceRedraw();
-        } else if (S.globalMenuOpen && S.exportDoneDialog) {
-            S.exportDoneDialog = false;
-            S.globalMenuOpen   = false;
-            forceRedraw();
-        } else if (S.globalMenuOpen && S.confirmExportCondPhase) {
-            S.confirmExportCondPhase = false;   /* Back from cond stage aborts export */
-            forceRedraw();
-        } else if (S.globalMenuOpen && S.confirmExport) {
-            S.confirmExport = false;
-            forceRedraw();
-        } else if (S.globalMenuOpen) {
-            S.globalMenuOpen = false;
-            S.lastSentMenuEditValue = null;
-            forceRedraw();
-        } else if (S.shiftHeld) {
-            if (S.schwungCoRunSlot >= 0) exitSchwungCoRun();
-            saveState();                       /* sets pendingSuspendSave */
-            S.pendingHideAfterSave = true;     /* drained one tick after save fires */
-        }
+/* Suspend dAVEBOx to the background (self-managed Back). Mirrors the old
+ * Shift+Back path: save first, then call the host suspend one tick later (once
+ * the DSP 'save' has reached the buffer) via pendingSuspendManaged. */
+function _suspendModule() {
+    saveState();                    /* sets pendingSuspendSave */
+    S.pendingSuspendManaged = true; /* drained one tick after save fires → host_suspend_overtake */
+}
+
+/* Back TAP: back out exactly ONE level of UI state, innermost → outermost
+ * (ordered to match drawUI's overlay priority). First match consumes the tap.
+ * Suspends ONLY at the true home screen (Session view, nothing open); a
+ * long-press (checkBackHold) is the suspend-from-anywhere gesture instead.
+ * Co-run is intentionally NOT handled here — Back is host/peer-owned during
+ * co-run and never reaches us (deferred to a separate pass). */
+/* Would a Back TAP do something right now (back out of a dialog / menu / perf
+ * lock / Track-view alt-view or non-default bank)? Drives the Back button LED so
+ * it's lit only where a tap is functional. MUST stay in sync with _backTap's
+ * actionable branches. (Boot modals and the Session/Track home no-ops → false.
+ * Hold-to-suspend works regardless and is not reflected here.) */
+export function backTapWouldAct() {
+    if (S.confirmStateWipe || S.pendingInheritPicker) return false;
+    if (S.snapshotPicker || S.clearAutoMenu || S.tempoSelectActive ||
+        S.mergeNoticePending || S.mergeCountingIn ||
+        S.pendingMergePlacement || S.mergeSoloPlacement >= 0 ||
+        S.capturePlaceTrack >= 0 || S.pendingSceneBakePicker ||
+        S.confirmBakeScene || S.confirmBakeDrumLoopOpen || S.confirmXpose ||
+        S.confirmLgto || S.confirmBake || S.recordBlockedDialog ||
+        S.bpmMoveInfo || S.tapTempoOpen || S.globalMenuOpen) return true;
+    if (S.sessionView) return S.perfViewLocked;
+    /* Track view: alt-view exits, then non-default bank steps back to 0. */
+    return S.stepIntervalMode || S.altMode ||
+           (S.activeBank === 7 && S.allLanesConfirmed) || S.activeBank !== 0;
+}
+
+function _backTap() {
+    /* Boot-time decision modals (incompatible-state wipe, set-inherit picker):
+     * leave to their own jog-click flow; Back must not act underneath them. */
+    if (S.confirmStateWipe || S.pendingInheritPicker) return;
+
+    /* 1. Transient dialogs / pickers / modes (one open at a time). */
+    if (S.snapshotPicker) {
+        if (S.snapshotPicker.confirm) S.snapshotPicker.confirm = null;
+        else closeSnapshotPicker();
+        forceRedraw(); return;
+    }
+    if (S.clearAutoMenu)  { S.clearAutoMenu = null; S.deleteTapArmed = false; forceRedraw(); return; }
+    if (S.tempoSelectActive) {
+        /* Keep the currently-auditioned tempo (same as a jog-click) and close. */
+        if (typeof host_module_set_param === 'function')
+            host_module_set_param('t' + S.tempoSelectTrack + '_capture_confirm', '');
+        S.tempoSelectActive = false; forceRedraw(); return;
+    }
+    /* Live Merge pre-capture (merge-count-in branch): Back cancels the "Rec to
+     * start" notice, and aborts a running count-in. (Guards are inert when the
+     * merge-count-in branch isn't integrated — the fields stay undefined.) */
+    if (S.mergeNoticePending) { S.mergeNoticePending = false; forceRedraw(); return; }
+    if (S.mergeCountingIn) {
+        S.mergeCountingIn = false; S.mergeSingleTrack = -1; S.pendingMergeArm = false;
+        S.actionPopupEndTick = -1;   /* drop the "Count-in…" popup immediately */
+        S.pendingDefaultSetParams.push({ key: 'merge_cancel', val: '1' });
+        setButtonLED(MoveRec, S.recordArmed ? Red : LED_OFF);
+        forceRedraw(); return;
+    }
+    if (S.pendingMergePlacement || S.mergeSoloPlacement >= 0) {
+        S.pendingMergePlacement = false; S.mergeSoloPlacement = -1;
+        S.pendingDefaultSetParams.push({ key: 'merge_cancel', val: '1' });
+        forceRedraw(); return;
+    }
+    if (S.capturePlaceTrack >= 0)  { S.capturePlaceTrack = -1; forceRedraw(); return; }
+    if (S.pendingSceneBakePicker)  { S.pendingSceneBakePicker = false; forceRedraw(); return; }
+    if (S.confirmBakeScene)        { S.confirmBakeScene = false; S.confirmBakeSceneCondPhase = false; forceRedraw(); return; }
+    if (S.confirmBakeDrumLoopOpen) { S.confirmBakeDrumLoopOpen = false; forceRedraw(); return; }
+    if (S.confirmXpose)            { xposeCancelPreview(); S.confirmXpose = false; forceRedraw(); return; }
+    if (S.confirmLgto)             { S.confirmLgto = false; forceRedraw(); return; }
+    if (S.confirmBake)             { S.confirmBake = false; S.confirmBakeWrapPhase = false; forceRedraw(); return; }
+    if (S.recordBlockedDialog)     { S.recordBlockedDialog = false; forceRedraw(); return; }
+    if (S.bpmMoveInfo)             { S.bpmMoveInfo = false; forceRedraw(); return; }
+    if (S.tapTempoOpen)            { closeTapTempo(); forceRedraw(); return; }
+
+    /* 2. Global menu (+ its nested confirms): a nested confirm closes to the
+     *    menu, otherwise the menu itself closes. */
+    if (S.globalMenuOpen) {
+        if (S.confirmClearSession)        { S.confirmClearSession = false; }
+        else if (S.confirmSaveState)      { S.confirmSaveState = false; }
+        else if (S.confirmConvertToDrum)  { closeConvertConfirm(); }
+        else if (S.confirmConvertToConduct){ closeConvertConfirm(); }
+        else if (S.menuInfoLines.length > 0){ S.menuInfoLines = []; }
+        else if (S.exportDoneDialog)      { S.exportDoneDialog = false; S.globalMenuOpen = false; }
+        else if (S.confirmExportCondPhase){ S.confirmExportCondPhase = false; }
+        else if (S.confirmExport)         { S.confirmExport = false; }
+        else { S.globalMenuOpen = false; S.lastSentMenuEditValue = null; }
+        forceRedraw(); return;
     }
 
+    /* 3. Session view: exit locked Perf Mode before it would count as home. */
+    if (S.sessionView && S.perfViewLocked) {
+        S.perfViewLocked    = false;
+        S.loopHeld          = false;
+        S.loopJogActive     = false;
+        S.perfStack         = [];
+        S.perfStickyLengths = new Set();
+        S.perfHoldPadHeld   = false;
+        S.perfModsHeld      = 0;
+        sendPerfMods();
+        if (typeof host_module_set_param === 'function') host_module_set_param('looper_stop', '1');
+        invalidateLEDCache(); forceRedraw(); return;
+    }
+
+    /* 4/5. Track view: exit an alt-view to the bank's default view; else step a
+     *      non-default bank back to bank 0 (Clip / Drum Lane / Conduct). At
+     *      bank 0 with no alt-view, Back is a no-op (does NOT jump to Session). */
+    if (!S.sessionView) {
+        if (S.stepIntervalMode)   { S.stepIntervalMode = false; computePadNoteMap(); forceRedraw(); return; }
+        if (S.altMode)            { S.altMode = false; forceRedraw(); return; }
+        if (S.activeBank === 7 && S.allLanesConfirmed) { S.allLanesConfirmed = false; forceRedraw(); return; }
+        if (S.activeBank !== 0) {
+            /* Step back to the track's default bank (Clip / Drum Lane / Conduct),
+             * matching a normal Shift-pad bank switch's side-effects. */
+            S.activeBank = 0;
+            S.trackActiveBank[S.activeTrack] = 0;
+            readBankParams(S.activeTrack, 0);
+            S.bankSelectTick = S.tickCount;
+            writeSidecar();
+            invalidateLEDCache(); forceRedraw(); return;
+        }
+        return;   /* Track view, default bank, nothing open — stop here. */
+    }
+
+    /* 6. Session view home (nothing open) — a Back TAP no longer suspends
+     * (Josh's call). Suspend is via a Back HOLD or the "Suspend session" menu item. */
+}
+
+/* Route a Back (CC 51) press/release. Plain Back: press starts tap/hold timing
+ * (resolved on release by _backTap, or by checkBackHold if held). Shift+Back is
+ * a pre-#165-host compatibility path only (a ≥#165 host owns Shift+Back itself
+ * and never delivers it here); it suspends immediately like the old behavior. */
+function _handleBack(d2) {
+    if (d2 === 127) {
+        if (S.shiftHeld) {
+            if (S.schwungCoRunSlot >= 0) exitSchwungCoRun();
+            saveState();
+            S.pendingHideAfterSave = true;
+            return;
+        }
+        S.backPressTick = S.tickCount;
+        S.backHoldFired = false;
+    } else if (d2 === 0) {
+        if (S.backPressTick >= 0 && !S.backHoldFired) _backTap();
+        S.backPressTick = -1;
+        S.backHoldFired = false;
+    }
+}
+
+/* Fire the HOLD-Back suspend once the press crosses BACK_HOLD_TICKS. Called every
+ * tick. Clears backPressTick so the subsequent release doesn't also tap. */
+export function checkBackHold() {
+    if (S.backPressTick < 0) return;
+    /* Co-run started while Back was held: abandon the pending hold (co-run owns
+     * Back) rather than fire a suspend on/after its exit. */
+    if (S.schwungCoRunSlot >= 0 || S.moveCoRunTrack >= 0) {
+        S.backPressTick = -1; S.backHoldFired = false; return;
+    }
+    if ((S.tickCount - S.backPressTick) >= BACK_HOLD_TICKS) {
+        S.backHoldFired = true;
+        S.backPressTick = -1;
+        _suspendModule();
+    }
+}
+
+function _onCC_transport(d1, d2) {
     /* Undo button: press = undo; Shift+Undo = redo */
     if (d1 === MoveUndo && d2 === 127) {
         if (S.shiftHeld) {
@@ -3379,6 +3500,16 @@ export function _onCCMsg(d1, d2) {
     if (S._modalSwallowCC >= 0 && d1 === S._modalSwallowCC) {
         if (d2 === 0) S._modalSwallowCC = -1;
         return;
+    }
+    /* Self-managed Back button: centralize ALL Back handling here (press/hold/
+     * release) BEFORE the press-based modal catch-alls below, so Back never
+     * double-fires (cancel on press via a catch-all AND tap on release). See
+     * _handleBack. (On a pre-#165 host plain Back is swallowed by the host and
+     * never arrives; only Shift+Back reaches us — _handleBack handles that too.)
+     * Co-run is excluded: Back there is host/peer-owned (deferred to a later
+     * pass), so we don't claim it and never run our back-stack over co-run. */
+    if (d1 === MoveBack && S.schwungCoRunSlot < 0 && S.moveCoRunTrack < 0) {
+        _handleBack(d2); return;
     }
     /* Scene-bake picker: "any other btn cancels". The picking controls are
      * the scene launchers (40-43) and session step buttons (16-31); knobs,

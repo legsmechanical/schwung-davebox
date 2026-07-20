@@ -17,7 +17,7 @@ import { S } from './ui_state.mjs';
 import { drumPadToLane, drumPadToVelZone, drumVelZoneToVelocity, _clipIsEmpty,
     clipHasContent, effectiveVelocity, stepEntryVelocity,
     ARP_VEL_CANON, arpVelLevel, VEL_THRU } from './ui_pure.mjs';
-import { showActionPopup, writeSidecar } from './ui_persistence.mjs';
+import { showActionPopup, writeSidecar, saveState } from './ui_persistence.mjs';
 import { computePadNoteMap, syncDrumLaneSteps, setActiveDrumLane,
     setDrumPerformMode } from './ui_drummodel.mjs';
 import { effectiveClip, invalidateLEDCache, forceRedraw, sendPerfMods,
@@ -976,6 +976,9 @@ function _doShiftStepCommon(idx) {
     }
     else if (idx === 6) _jumpToMenuLabel('Swing Amt');
     else if (idx === 8) _jumpToMenuLabel('Scale');
+    /* NOTE: Shift+Step 13 is NOT a dAVEBOx shortcut — the Schwung host reserves it
+     * (opens the Tools menu; the shim consumes it before the module sees it). Suspend
+     * is via hold-Back or the "Suspend session" menu item. */
 }
 
 /* Loop+step gesture fire helpers — both the deferred fallback (length-only,
@@ -1137,7 +1140,8 @@ export function _onStepButtons(d1, d2) {
         forceRedraw();
         return;
     }
-    /* Perf Mode: step buttons are preset snapshot slots — defer to release for tap/hold decision. */
+    /* Perf Mode: step buttons are preset snapshot slots — defer to release for
+     * tap/hold decision. */
     if (S.sessionView && (S.loopHeld || S.perfViewLocked)) {
         S.stepBtnPressedTick[idx] = S.tickCount;
         S.sessionStepHeld         = idx;
