@@ -434,8 +434,12 @@ static double cap_fabs(double x) { return x < 0.0 ? -x : x; }
  * for the take spanning near-integer bars (so the loop lands cleanly) and a mild
  * pull toward a comfortable tempo to break octave ties. The distinct local
  * minima of that score become the candidates the user can wheel through. */
-#define CAP_BPM_MIN 60
-#define CAP_BPM_MAX 200
+/* Candidate-tempo search range. Kept aligned with the manual BPM control's
+ * accepted range (the "bpm" set_param handler = 40..250) so Capture can suggest
+ * any tempo you could also dial by hand. (The internal clock/apply clamp is
+ * wider, 20..400.) */
+#define CAP_BPM_MIN 40
+#define CAP_BPM_MAX 250
 static int capture_estimate_tempos(seq8_instance_t *inst) {
     static double onset[512];
     int n = 0, i, j;
