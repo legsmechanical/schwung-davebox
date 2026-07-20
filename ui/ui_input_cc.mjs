@@ -1512,6 +1512,7 @@ function _backTap() {
     if (S.mergeNoticePending) { S.mergeNoticePending = false; forceRedraw(); return; }
     if (S.mergeCountingIn) {
         S.mergeCountingIn = false; S.mergeSingleTrack = -1; S.pendingMergeArm = false;
+        S.actionPopupEndTick = -1;   /* drop the "Count-in…" popup immediately */
         S.pendingDefaultSetParams.push({ key: 'merge_cancel', val: '1' });
         setButtonLED(MoveRec, S.recordArmed ? Red : LED_OFF);
         forceRedraw(); return;
