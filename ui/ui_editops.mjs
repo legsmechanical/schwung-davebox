@@ -93,11 +93,12 @@ export function showModePopup(title, items, activeIdx) {
 export function clearClip(t, ac, keepPlaying) {
     if (typeof host_module_set_param !== 'function') return;
     S.undoAvailable = true; S.redoAvailable = false; S.undoSeqArpSnapshot = null;
-    /* Clip CLEAR semantics (matches drum lane Clear, Group I): wipe step
-     * note data only. Preserve length, loop window, ticks_per_step, the
-     * destructive CLIP-bank params (stretch_exp / clock_shift_pos /
-     * nudge_pos), and per-clip pfx (NOTE FX / HARMONY / DELAY / SEQUENCE
-     * ARP). Hard Reset (Shift+Delete) is the gesture that wipes structure. */
+    /* Clip CLEAR semantics: wipe step note data AND reset length + loop window
+     * to the fresh-clip default so the emptied clip returns to ADAPTIVE mode for
+     * the next recording (adaptive = empty + length-not-manually-set). Preserve
+     * ticks_per_step, the destructive CLIP-bank params (stretch_exp /
+     * clock_shift_pos / nudge_pos), and per-clip pfx (NOTE FX / HARMONY / DELAY /
+     * SEQUENCE ARP). Hard Reset (Shift+Delete) additionally wipes those. */
     if (S.trackPadMode[t] === PAD_MODE_DRUM) {
         const keep = (keepPlaying && S.trackClipPlaying[t] && ac === S.trackActiveClip[t]) ? '1' : '0';
         S.pendingDefaultSetParams.unshift({ key: 't' + t + '_c' + ac + '_drum_clear', val: keep, _local: true });
@@ -107,7 +108,12 @@ export function clearClip(t, ac, keepPlaying) {
             S.drumLaneHasNotes[t][l] = false;
         }
         S.drumClipNonEmpty[t][ac] = false;
+        /* Reset lane length → adaptive (mirrors DSP drum_clear; drum adaptivity =
+         * !drumClipNonEmpty && !drumLaneLengthManuallySet). */
+        S.drumLaneLengthManuallySet[t] = false;
         if (ac === S.trackActiveClip[t]) {
+            S.drumLaneLength[t]    = 16;
+            S.drumLaneLoopStart[t] = 0;
             S.seqActiveNotes.clear();
         }
         return;
@@ -122,6 +128,11 @@ export function clearClip(t, ac, keepPlaying) {
     const len = S.clipLength[t][ac];
     for (let s = 0; s < len; s++) S.clipSteps[t][ac][s] = 0;
     S.clipNonEmpty[t][ac] = false;
+    /* Reset length + loop window → adaptive re-record (mirrors DSP _clear). */
+    S.clipLength[t][ac]           = 16;
+    S.clipLoopStart[t][ac]        = 0;
+    S.clipLengthManuallySet[t][ac] = false;
+    S.clipAdaptiveMode[t][ac]      = false;
     /* Clip clear now also wipes all automation DSP-side — mirror it so the
      * AUTOMATION-bank indicators + CC values reflect the clear immediately. */
     S.trackCCAutoBits[t][ac] = 0;

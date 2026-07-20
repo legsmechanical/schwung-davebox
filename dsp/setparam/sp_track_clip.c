@@ -697,11 +697,12 @@ static int sp_track_clip(sp_ctx_t *cx) {
             return 1;
         }
         if (!strncmp(p, "_clear", 6) && p[6] == '\0') {
-            /* tN_cC_clear — wipe step data in clip.
-             * Preserves: length, loop_start, ticks_per_step, stretch_exp,
-             * clock_shift_pos, nudge_pos, and pfx_params. Only step note
-             * data is wiped. Hard Reset (_hard_reset) is the gesture that
-             * wipes structure too. */
+            /* tN_cC_clear — wipe step data in clip AND reset length/loop_start to
+             * the fresh-clip default so the emptied clip records adaptively again
+             * (adaptive = empty + length-not-manually-set; JS mirrors this by
+             * clearing clipLengthManuallySet). Preserves ticks_per_step,
+             * stretch_exp, clock_shift_pos, nudge_pos, and pfx_params. Hard Reset
+             * (_hard_reset) additionally wipes those. */
             int i;
             undo_begin_single(inst, tidx, cidx);
             for (i = 0; i < SEQ_STEPS; i++) {
@@ -712,6 +713,8 @@ static int sp_track_clip(sp_ctx_t *cx) {
                 cl->step_gate[i] = (uint16_t)GATE_TICKS;
                 memset(cl->note_tick_offset[i], 0, 8 * sizeof(int16_t));
             }
+            cl->length     = SEQ_STEPS_DEFAULT;   /* back to adaptive length */
+            cl->loop_start = 0;
             cl->active     = 0;
             cl->note_count = 0;
             memset(cl->notes, 0, sizeof(cl->notes));
@@ -738,11 +741,10 @@ static int sp_track_clip(sp_ctx_t *cx) {
             return 1;
         }
         if (!strncmp(p, "_clear_keep", 11) && p[11] == '\0') {
-            /* tN_cC_clear_keep — wipe step data, preserve playback state.
-             * Same preserve list as _clear (length, loop_start, tps, stretch,
-             * clock_shift, nudge, pfx) — only step note data is wiped. The
-             * difference vs _clear is that clip_playing / queued / armed
-             * state stay put so the focused clip keeps ticking through. */
+            /* tN_cC_clear_keep — wipe step data + reset length/loop_start (same
+             * adaptive-reset as _clear; tps/stretch/clock_shift/nudge/pfx
+             * preserved). The difference vs _clear is that clip_playing / queued
+             * / armed state stay put so the focused clip keeps ticking through. */
             int i;
             undo_begin_single(inst, tidx, cidx);
             for (i = 0; i < SEQ_STEPS; i++) {
@@ -753,6 +755,8 @@ static int sp_track_clip(sp_ctx_t *cx) {
                 cl->step_gate[i] = (uint16_t)GATE_TICKS;
                 memset(cl->note_tick_offset[i], 0, 8 * sizeof(int16_t));
             }
+            cl->length     = SEQ_STEPS_DEFAULT;   /* back to adaptive length */
+            cl->loop_start = 0;
             cl->active     = 0;
             cl->note_count = 0;
             memset(cl->notes, 0, sizeof(cl->notes));
@@ -796,7 +800,10 @@ static int sp_track_clip(sp_ctx_t *cx) {
         }
         if (!strncmp(p, "_drum_clear", 11) && p[11] == '\0') {
             /* tN_cC_drum_clear val="0"=deactivate|"1"=keep transport
-             * Clears all lane step data in clip C; midi_note/length/tps/pfx preserved */
+             * Clears all lane step data in clip C AND resets each lane's
+             * length/loop_start to the fresh default so the emptied drum clip
+             * records adaptively again (JS mirrors via drumLaneLengthManuallySet).
+             * midi_note/tps/pfx preserved. */
             int keep = my_atoi(val);
             int l, s;
             drum_clip_t *dc = tr->drum_clips[cidx];
@@ -811,6 +818,8 @@ static int sp_track_clip(sp_ctx_t *cx) {
                     lc->step_gate[s] = (uint16_t)GATE_TICKS;
                     memset(lc->note_tick_offset[s], 0, 8 * sizeof(int16_t));
                 }
+                lc->length     = SEQ_STEPS_DEFAULT;   /* back to adaptive length */
+                lc->loop_start = 0;
                 lc->active = 0;
                 lc->note_count = 0;
                 memset(lc->notes, 0, sizeof(lc->notes));
