@@ -2,6 +2,42 @@
 
 Local patches applied to `~/schwung/` that must be re-applied after any Schwung upgrade.
 
+> ## ⚠ CURRENT STATE (2026-07-20) — read this first; everything below is largely historical
+>
+> Verified against live git (`upstream/main` = `a46f32b2` "bump host to 0.11.6"; the `legsmechanical/schwung`
+> fork's `origin/main` has fast-forwarded past it cleanly). The body of this doc (base `v0.9.16`, "co-run is a
+> local patch") is **stale** — kept for history. The current reality:
+>
+> - **Co-run is no longer a fork patch — it was upstreamed** (PRs #94 / #112 / #113 / #114). The fork's older
+>   "granular" co-run commits were dropped in the rebase. **All 15 host symbols davebox capability-gates on are
+>   now in upstream `charlesvestal/schwung`**: `shadow_corun_begin/end/open/entries/state/set_led_keep_mask`,
+>   `shadow_get_slots`, `shadow_set_skip_led_clear`, `shadow_set_overtake_suppress_sysex`,
+>   `shadow_inbound_pad_midi_active`, `shadow_get_ui_flags` / `shadow_clear_ui_flags`,
+>   `shadow_set_param` / `shadow_get_param`, `shadow_send_midi_to_dsp`, `host_suspend_overtake`,
+>   `host_hide_module`, `host_ext_midi_remap_enable`. So on a stock upstream host, co-run / "Edit Slot…" /
+>   Move-native co-run / Back-navigate-suspend all work.
+>
+> - **The one remaining fork-ONLY host dependency for davebox is the FX-bus picker** (Send FX + Move insert FX):
+>   host commits `0d6402b6` (Send FX + Move FX buses + generic FX-bus picker) + `7ba06ccc` (fx3/fx4 chain-slot
+>   `get_param` routing) + overlay-canvas commits `6e178e7e` / `af773341` / `ca13c950`. davebox's `fx_picker`
+>   overlay gates on `shadow_corun_entries()` returning an `fx_picker` entry, which exists **only** with this
+>   patch. The co-run *mechanism* it rides on is upstream; the FX-bus *target* is not. On a host without it, the
+>   Note/Session FX-picker just doesn't surface (gated off, not broken). NOTE: `0d6402b6` also carries fork-only
+>   FX3/FX4 chain-slot expansion that is explicitly NOT for upstream.
+>
+> - **Remote UI** host support is being upstreamed as **PR #180** ("Remote UI v2 for overtake tools" — off-thread
+>   snapshot cache, lossless push ring, server-driven poll, `RemoveIPC=no` logind fix; files:
+>   `schwung-manager/{remote_ui.go,shmwebring.go,static/remote-ui.js}`, `src/schwung_shim.c`, `scripts/install.sh`,
+>   `docs/MODULES.md`). It touches **none** of the co-run/capability symbols above. **Base remote-UI support is
+>   already in the current release** — davebox's browser editor rides `schwung-manager`'s Tool tab + rev-gated poll
+>   from **upstream PR #148** (`abdcdac9`, in `v0.11.5`/`v0.11.6`, released 2026-07-02), so it **loads and works on
+>   stock `v0.11.6`**. #180 is the **v2 robustness layer** — it fixes the RT-thread state-snapshot serialization
+>   that hitches the sequencer clock + MIDI during heavy browser editing (`547e6e3a`), adds true push + a lossless
+>   write ring, and hardens `/dev/shm` at install. So the remote UI is **functional-but-degraded** without #180,
+>   not broken. (Current published upstream release: **`v0.11.6`**, 2026-07-19.)
+>
+> The gate pattern itself is unchanged and still correct — see "Why this is split into two repos" below.
+
 Current base: **`v0.9.16`** (`2e15e357`, upstream `charlesvestal/schwung`; 2026-05-29), branch `main` on the `legsmechanical/schwung` fork. The fork is `v0.9.16` + 3 post-release upstream fixes + 8 co-run commits. The local patch is **co-run-only** — chain-edit + Move-native co-run, incl. the selective LED filter + track-button strip + co-run LED handoff + chain-edit knob exposure (knob turn+touch) + teardown fix. As of 2026-05-22 the co-run input split is **generalized** — a tool-declared manifest (`corun_keep_mask` + the shared `corun_group_for_event` map + `shadow_corun_begin/end` API) replaces the old hard-coded nav-CC lists; dAVEBOx's split is the zero-config default (`keep_mask==0`). This form is the basis for upstream PR #94 (`notes/corun-upstream-pr-draft.md`). PR #92 + #93 shipped in v0.9.16 and are no longer carried locally. `shadow_control_t` reserved bytes carry `midi_indicator_enabled` (upstream) + `corun_chain_edit_slot` + `corun_move_native_track`, `reserved[3]`.
 
 **2026-06-03 — two non-co-run general fixes also added to fork/main** (`fc8db9bb`, `b090edf0`, docs `673f166c`; pushed). Both are **pre-existing bugs in upstream `v0.9.16`** (not dAVEBOx-specific) and are good upstream-PR candidates: (1) **master-FX preset buffers** — `save_master_preset`/`update_master_preset` extracted each FX slot into `char fxN[512]`, so large modules (e.g. spectra) truncated → malformed preset JSON → empty chain on load; enlarged to 8192 (`final_json`→40960, under the 64KB round-trip). (2) **build hygiene** — the host target's `needs_rebuild` list omitted `shadow_constants.h`, so an SHM-layout change rebuilt the shim/modules but **not the host**, leaving mismatched binaries (silent param corruption that mimics feature bugs); host now depends on all `src/host/*.h`, and deploys should use a clean build (`clean.sh && build.sh`). Standalone patch files: `~/schwung-master-fx-patches/` (`git am`-applyable). NB: `scripts/build.sh` is **not** under `src/`, so the build fix is *not* captured by the `git diff <base>..main -- src/` regen of `davebox-local.patch` — it lives only as a fork/main commit.
