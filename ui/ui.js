@@ -238,7 +238,7 @@ globalThis.init = function () {
 
     extHeldNotes.clear();
 
-    if (!S.hasInitedOnce) { S.sessionView = true; S.hasInitedOnce = true; }
+    if (!S.hasInitedOnce) { S.sessionView = true; S.hasInitedOnce = true; S._forceSessionCold = true; }
 
     /* Restore UI state (active track, clip focus, view) from sidecar.
      * Deferred if pendingSetLoad: DSP hasn't loaded the new set yet, restoreUiSidecar

@@ -219,6 +219,7 @@ export const S = {
     activeTrack: 0,
     sessionView: false,
     hasInitedOnce: false,
+    _forceSessionCold: false,   /* set on the first init() of a fresh runtime (cold load) so restoreUiSidecar opens in Session view regardless of the saved sv; a resume (JS kept in memory) leaves it false. See ui.js init + restoreUiSidecar. */
     sceneRow: 0,
     flashEighth: false,
     flashSixteenth: false,
