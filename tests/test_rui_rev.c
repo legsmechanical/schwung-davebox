@@ -531,6 +531,22 @@ int main(void) {
           HX_ASSERT(rev(h) == r,       "state_load must NOT bump rui_rev"); }
     }
 
+    /* ---- rui_mark_rec: discrete ops DURING live recording (e.g. a pfx knob
+     * turned mid-take) are browser-visible but must NOT resync the device JS
+     * mid-recording (2026-07-06 hang class). ---- */
+    {
+        unsigned r, c;
+        inst_->tracks[1].queued_clip = -1;
+        hx_set_param(h, "t1_recording", "1");
+        r = rev(h); c = crev(h); hx_set_param(h, "t1_pfx_gate", "60");
+        HX_ASSERT(crev(h) == c + 1, "pfx during recording must bump rui_content_rev");
+        HX_ASSERT(rev(h) == r,      "pfx during recording must NOT bump rui_rev");
+        r = rev(h); c = crev(h); hx_set_param(h, "t1_nudge", "1");
+        HX_ASSERT(crev(h) == c + 1, "nudge during recording must bump rui_content_rev");
+        HX_ASSERT(rev(h) == r,      "nudge during recording must NOT bump rui_rev");
+        hx_set_param(h, "t1_recording", "0");
+    }
+
     hx_destroy(h);
     printf("PASS: rui_rev bump semantics + rui_dirty targeted-resync accumulator\n");
     return 0;

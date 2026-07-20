@@ -1264,8 +1264,18 @@ static void drum_pfx_params_init(drum_pfx_params_t *p);
 static inline void rui_mark(seq8_instance_t *inst, int t, int c);
 static inline void rui_content(seq8_instance_t *inst);
 
+/* Shared per-clip lane init (fresh defaults) — used by alloc AND reset. */
+static void drum_lanes_init(drum_clip_t *dc) {
+    int l;
+    for (l = 0; l < DRUM_LANES; l++) {
+        clip_init(&dc->lanes[l].clip);
+        drum_pfx_params_init(&dc->lanes[l].pfx_params);
+        dc->lanes[l].midi_note = (uint8_t)(DRUM_BASE_NOTE + l);
+    }
+}
+
 static void drum_clips_alloc(seq8_instance_t *inst, seq8_track_t *tr) {
-    int c, l;
+    int c;
     for (c = 0; c < NUM_CLIPS; c++) {
         if (tr->drum_clips[c]) continue;
         tr->drum_clips[c] = (drum_clip_t *)calloc(1, sizeof(drum_clip_t));
@@ -1273,11 +1283,7 @@ static void drum_clips_alloc(seq8_instance_t *inst, seq8_track_t *tr) {
             seq8_ilog(inst, "drum_clips_alloc: calloc failed");
             continue;
         }
-        for (l = 0; l < DRUM_LANES; l++) {
-            clip_init(&tr->drum_clips[c]->lanes[l].clip);
-            drum_pfx_params_init(&tr->drum_clips[c]->lanes[l].pfx_params);
-            tr->drum_clips[c]->lanes[l].midi_note = (uint8_t)(DRUM_BASE_NOTE + l);
-        }
+        drum_lanes_init(tr->drum_clips[c]);
     }
 }
 
@@ -1298,15 +1304,9 @@ static void drum_clips_free(seq8_track_t *tr) {
 /* Clear-and-keep: re-init every allocated drum clip's lanes without freeing
  * (see the snapshot-safety note on drum_clips_free above). */
 static void drum_clips_reset(seq8_track_t *tr) {
-    int c, l;
+    int c;
     for (c = 0; c < NUM_CLIPS; c++) {
-        drum_clip_t *dc = tr->drum_clips[c];
-        if (!dc) continue;
-        for (l = 0; l < DRUM_LANES; l++) {
-            clip_init(&dc->lanes[l].clip);
-            drum_pfx_params_init(&dc->lanes[l].pfx_params);
-            dc->lanes[l].midi_note = (uint8_t)(DRUM_BASE_NOTE + l);
-        }
+        if (tr->drum_clips[c]) drum_lanes_init(tr->drum_clips[c]);
     }
 }
 
@@ -3836,6 +3836,15 @@ static inline void rui_touch(seq8_instance_t *inst) {
 static inline void rui_content(seq8_instance_t *inst) {
     if (!inst) return;
     inst->rui_content_rev++;
+}
+
+/* Discrete-op mark that must never resync the device JS MID-RECORDING (the
+ * 2026-07-06 record-disarm-hang class): while the track is live-recording
+ * (e.g. a pfx knob turned during a take), bump content only; otherwise a
+ * normal rui_mark. */
+static inline void rui_mark_rec(seq8_instance_t *inst, seq8_track_t *tr, int t, int c) {
+    if (tr && tr->recording) rui_content(inst);
+    else rui_mark(inst, t, c);
 }
 
 /* Bump the revision AND record clip (t,c) as dirty for a targeted on-device
