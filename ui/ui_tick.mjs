@@ -9,7 +9,8 @@
  */
 
 import {
-    MoveShift, MovePlay, MoveLeft, MoveRight, MoveUp, MoveDown, MoveMute, MoveDelete
+    MoveShift, MovePlay, MoveLeft, MoveRight, MoveUp, MoveDown, MoveMute, MoveDelete,
+    MoveBack
 } from '/data/UserData/schwung/shared/constants.mjs';
 import {
     Red, VividYellow, Green, DarkGrey, White
@@ -47,7 +48,7 @@ import { pollDSP,
     pendingDrumNoteOffs, _drumRecNoteOns, _drumRecNoteOffs } from './ui_dsp_bridge.mjs';
 import { disarmRecord, _recordingNoteTrack, flushHeldMoveExtNotes } from './ui_record.mjs';
 import { xposeCancelPreview } from './ui_xpose.mjs';
-import { checkBackHold } from './ui_input_cc.mjs';
+import { checkBackHold, backTapWouldAct } from './ui_input_cc.mjs';
 
 const BANK_DISPLAY_TICKS = 94;  /* ~1000ms at 94Hz device tick rate (was 392 = ~4.2s; constant was miscalibrated for 196Hz) */
 const KNOB_TURN_HIGHLIGHT_TICKS = 56;             /* ~600ms at 94Hz — highlight after turn without touch (was 120 @196Hz) */
@@ -554,6 +555,9 @@ export function _tickImpl() {
                                  : (S.dspMergeState === 2 || S.dspMergeState === 3) ? Green
                                  : S.dspMergeState === 1 ? Red : LED_OFF, true);
         setButtonLED(MoveSample, DarkGrey, true);
+        setButtonLED(MoveBack,
+            (S.schwungCoRunSlot < 0 && S.moveCoRunTrack < 0 && backTapWouldAct())
+                ? White : LED_OFF, true);
         /* reapplyPalette reset the buttonCache — force-resend the 8 knob LEDs
          * next render (their stopped-state named colors would otherwise be
          * silently dropped) and the step LEDs. */
@@ -1227,6 +1231,13 @@ export function _tickImpl() {
         }
         /* Sample = bake, always available: dim ambient (same as Capture idle). */
         setButtonLED(MoveSample, DarkGrey);
+        /* Back LED: lit where a TAP is functional (backs out of a dialog / menu /
+         * perf lock / Track-view alt-view or non-default bank); off at the home
+         * screens where a tap is a no-op. Hold-to-suspend works regardless. Dark
+         * during co-run — Back is ceded to the peer there and never reaches us. */
+        setButtonLED(MoveBack,
+            (S.schwungCoRunSlot < 0 && S.moveCoRunTrack < 0 && backTapWouldAct())
+                ? White : LED_OFF);
         /* Loop LED: flash White at 1/8 rate while Perf Mode view is locked (Session
          * View only) or drum repeat latched; VividYellow for latch mode; dim available
          * indicator (16) otherwise (always functional in both views). */

@@ -1468,6 +1468,26 @@ function _suspendModule() {
  * long-press (checkBackHold) is the suspend-from-anywhere gesture instead.
  * Co-run is intentionally NOT handled here — Back is host/peer-owned during
  * co-run and never reaches us (deferred to a separate pass). */
+/* Would a Back TAP do something right now (back out of a dialog / menu / perf
+ * lock / Track-view alt-view or non-default bank)? Drives the Back button LED so
+ * it's lit only where a tap is functional. MUST stay in sync with _backTap's
+ * actionable branches. (Boot modals and the Session/Track home no-ops → false.
+ * Hold-to-suspend works regardless and is not reflected here.) */
+export function backTapWouldAct() {
+    if (S.confirmStateWipe || S.pendingInheritPicker) return false;
+    if (S.snapshotPicker || S.clearAutoMenu || S.tempoSelectActive ||
+        S.mergeNoticePending || S.mergeCountingIn ||
+        S.pendingMergePlacement || S.mergeSoloPlacement >= 0 ||
+        S.capturePlaceTrack >= 0 || S.pendingSceneBakePicker ||
+        S.confirmBakeScene || S.confirmBakeDrumLoopOpen || S.confirmXpose ||
+        S.confirmLgto || S.confirmBake || S.recordBlockedDialog ||
+        S.bpmMoveInfo || S.tapTempoOpen || S.globalMenuOpen) return true;
+    if (S.sessionView) return S.perfViewLocked;
+    /* Track view: alt-view exits, then non-default bank steps back to 0. */
+    return S.stepIntervalMode || S.altMode ||
+           (S.activeBank === 7 && S.allLanesConfirmed) || S.activeBank !== 0;
+}
+
 function _backTap() {
     /* Boot-time decision modals (incompatible-state wipe, set-inherit picker):
      * leave to their own jog-click flow; Back must not act underneath them. */
@@ -1485,6 +1505,16 @@ function _backTap() {
         if (typeof host_module_set_param === 'function')
             host_module_set_param('t' + S.tempoSelectTrack + '_capture_confirm', '');
         S.tempoSelectActive = false; forceRedraw(); return;
+    }
+    /* Live Merge pre-capture (merge-count-in branch): Back cancels the "Rec to
+     * start" notice, and aborts a running count-in. (Guards are inert when the
+     * merge-count-in branch isn't integrated — the fields stay undefined.) */
+    if (S.mergeNoticePending) { S.mergeNoticePending = false; forceRedraw(); return; }
+    if (S.mergeCountingIn) {
+        S.mergeCountingIn = false; S.mergeSingleTrack = -1; S.pendingMergeArm = false;
+        S.pendingDefaultSetParams.push({ key: 'merge_cancel', val: '1' });
+        setButtonLED(MoveRec, S.recordArmed ? Red : LED_OFF);
+        forceRedraw(); return;
     }
     if (S.pendingMergePlacement || S.mergeSoloPlacement >= 0) {
         S.pendingMergePlacement = false; S.mergeSoloPlacement = -1;
@@ -1551,8 +1581,8 @@ function _backTap() {
         return;   /* Track view, default bank, nothing open — stop here. */
     }
 
-    /* 6. Session view home (nothing open) — the only tap that suspends. */
-    _suspendModule();
+    /* 6. Session view home (nothing open) — a Back TAP no longer suspends
+     * (Josh's call). Suspend is now only Shift+Step 13 or a Back HOLD. */
 }
 
 /* Route a Back (CC 51) press/release. Plain Back: press starts tap/hold timing
