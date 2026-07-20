@@ -3425,6 +3425,13 @@ export function _onCCMsg(d1, d2) {
         if (d2 === 0) S._modalSwallowCC = -1;
         return;
     }
+    /* Live Merge NOTICE up (Shift+Rec pressed, count-in not started): modal —
+     * only Rec (start the count-in) and Back (cancel) do anything; every other
+     * button/knob is swallowed, press + release. Shift passes so its held state
+     * stays accurate for the plain-Rec start. */
+    if (S.mergeNoticePending && d1 !== MoveRec && d1 !== MoveBack && d1 !== MoveShift) {
+        return;
+    }
     /* Scene-bake picker: "any other btn cancels". The picking controls are
      * the scene launchers (40-43) and session step buttons (16-31); knobs,
      * knob touches, jog and the master knob aren't buttons. Any OTHER

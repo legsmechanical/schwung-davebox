@@ -1213,6 +1213,10 @@ export function _tickImpl() {
             /* recordScheduledStop = waiting for end-of-page to stop; recordPendingPage =
              * waiting for next page boundary for DSP to flip recording=1. Both blink. */
             setButtonLED(MoveRec, Math.floor(S.tickCount / 8) % 2 === 0 ? Red : LED_OFF);
+        } else if (S.mergeNoticePending) {
+            /* Live Merge NOTICE up, waiting for you to press Rec to start the
+             * count-in: flash red to draw the eye to the Record button. */
+            setButtonLED(MoveRec, Math.floor(S.tickCount / 12) % 2 === 0 ? Red : LED_OFF);
         } else if (S.dspMergeState === 2 || S.dspMergeState === 3) {
             /* Live Merge capturing (Shift+Rec): green. */
             setButtonLED(MoveRec, Green);
