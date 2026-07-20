@@ -495,7 +495,9 @@ Stop recording: press **Record** again (transport continues) or **Play** (stops
 transport).
 
 Recording is always additive — existing notes are never erased. Clear the clip
-first (Delete + side clip button) for a fresh take.
+first (Delete + side clip button) for a fresh take; clearing also resets the
+clip's length, so the new take records adaptively (the clip grows to fit what you
+play) rather than being locked to the old length.
 
 **Count-in pre-roll:** notes pressed in the last half-beat of the count-in are
 captured on step 1.
@@ -1404,7 +1406,7 @@ clears after first paste).
 | Control | Action |
 |---|---|
 | Delete + step | Clear that step |
-| Delete + side clip button | Clear notes (structure survives) |
+| Delete + side clip button | Clear notes + reset length (clip returns to adaptive length for the next recording); resolution and pfx survive |
 | Shift + Delete + side clip | Hard reset — notes and all params |
 | Delete + lane pad (drum) | Clear lane notes |
 | Shift + Delete + lane pad | Hard reset lane (MIDI note preserved) |

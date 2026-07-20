@@ -1030,7 +1030,10 @@ int main(void) {
             HX_ASSERT(c6->cond_when[5] == 1, "_cond_when: track5 Now(1)");
         }
 
-        /* _clear vs _clear_keep vs _hard_reset: what each preserves/wipes. */
+        /* _clear vs _clear_keep vs _hard_reset: what each preserves/wipes.
+         * _clear/_clear_keep now RESET length + loop_start to the adaptive
+         * default (but keep ticks_per_step); _hard_reset additionally resets tps
+         * (and wipes pfx). */
         {
             clip_t *c11 = &mt->clips[11];
             hx_set_param(h, "t4_c11_step_2_toggle", "60 80");
@@ -1041,15 +1044,18 @@ int main(void) {
             HX_ASSERT(c11->steps[2] == 0 && c11->step_note_count[2] == 0 && c11->active == 0,
                       "_clear: step data wiped");
             HX_ASSERT(c11->note_count == 0, "_clear: notes[] wiped");
-            HX_ASSERT(c11->length == 8 && c11->loop_start == 3,
-                      "_clear: PRESERVES length + loop_start (vs hard_reset)");
+            HX_ASSERT(c11->length == SEQ_STEPS_DEFAULT && c11->loop_start == 0,
+                      "_clear: RESETS length + loop_start -> adaptive default");
+            HX_ASSERT(c11->ticks_per_step == TICKS_PER_STEP,
+                      "_clear: preserves ticks_per_step (vs hard_reset)");
 
             clip_t *c12 = &mt->clips[12];
             hx_set_param(h, "t4_c12_step_1_toggle", "62 70");
             hx_set_param(h, "t4_c12_loop_set", "196616");
             hx_set_param(h, "t4_c12_clear_keep", "1");
             HX_ASSERT(c12->steps[1] == 0 && c12->note_count == 0, "_clear_keep: step/note data wiped");
-            HX_ASSERT(c12->length == 8 && c12->loop_start == 3, "_clear_keep: PRESERVES geometry");
+            HX_ASSERT(c12->length == SEQ_STEPS_DEFAULT && c12->loop_start == 0,
+                      "_clear_keep: RESETS geometry -> adaptive default");
 
             clip_t *c13 = &mt->clips[13];
             hx_set_param(h, "t4_c13_step_1_toggle", "64 70");
@@ -1079,17 +1085,19 @@ int main(void) {
             HX_ASSERT(dt->pad_mode == PAD_MODE_DRUM, "precondition: t3 is DRUM");
             HX_ASSERT(dt->drum_clips[7] && dt->drum_clips[8], "precondition: t3 drum_clips[7,8] allocated");
 
-            /* _drum_clear "1"(keep): wipes all lane step data in clip C;
-             * midi_note / length / tps preserved. */
+            /* _drum_clear "1"(keep): wipes all lane step data in clip C AND resets
+             * each lane's length/loop_start to the adaptive default; midi_note /
+             * tps preserved. */
             {
                 clip_t *lc = &dt->drum_clips[7]->lanes[3].clip;
                 uint8_t mn = dt->drum_clips[7]->lanes[3].midi_note;
                 lc->steps[2] = 1; lc->step_note_count[2] = 1; lc->step_notes[2][0] = mn;
-                lc->active = 1; lc->length = 9;
+                lc->active = 1; lc->length = 9; lc->loop_start = 2;
                 hx_set_param(h, "t3_c7_drum_clear", "1");
                 HX_ASSERT(lc->steps[2] == 0 && lc->step_note_count[2] == 0, "_drum_clear: lane steps wiped");
                 HX_ASSERT(lc->active == 0, "_drum_clear: lane deactivated");
-                HX_ASSERT(lc->length == 9, "_drum_clear: PRESERVES length");
+                HX_ASSERT(lc->length == SEQ_STEPS_DEFAULT && lc->loop_start == 0,
+                          "_drum_clear: RESETS length/loop_start -> adaptive default");
                 HX_ASSERT(dt->drum_clips[7]->lanes[3].midi_note == mn, "_drum_clear: preserves midi_note");
             }
 
@@ -2724,7 +2732,27 @@ int main(void) {
         remove(SAVE_TMP);
     }
 
+    /* Regular clip CLEAR resets length + loop_start to the fresh default so the
+     * emptied clip records adaptively again (contrast: it used to preserve
+     * length). Both _clear and _clear_keep. Melodic t7 (t0 defaults DRUM). */
+    {
+        clip_t *mc = &inst->tracks[7].clips[3];
+        hx_set_param(h, "t7_c3_loop_set", "131080");   /* loop_start=2 | length=8 */
+        hx_set_param(h, "t7_c3_step_0_toggle", "60 100");
+        HX_ASSERT(mc->length == 8,     "setup: t7c3 length=8");
+        HX_ASSERT(mc->loop_start == 2, "setup: t7c3 loop_start=2");
+        hx_set_param(h, "t7_c3_clear", "1");
+        HX_ASSERT(mc->length == SEQ_STEPS_DEFAULT, "clear resets length -> default (adaptive)");
+        HX_ASSERT(mc->loop_start == 0,             "clear resets loop_start -> 0");
+        HX_ASSERT(mc->note_count == 0,             "clear wipes notes");
+        hx_set_param(h, "t7_c3_loop_set", "31");       /* loop_start=0 | length=31 */
+        HX_ASSERT(mc->length == 31, "setup: t7c3 length=31 for clear_keep");
+        hx_set_param(h, "t7_c3_clear_keep", "1");
+        HX_ASSERT(mc->length == SEQ_STEPS_DEFAULT, "clear_keep resets length -> default");
+    }
+
     hx_destroy(h);
+    printf("PASS: clip clear resets length/loop_start -> adaptive default (_clear + _clear_keep)\n");
     printf("PASS: set_param domain snapshot (%d domains + transport)\n", i);
     printf("PASS: track-config white-box pins "
            "(xpose/launch/stop/deactivate/route/channel/looper/mute-solo/conduct)\n");
