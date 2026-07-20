@@ -3272,7 +3272,13 @@ function _onCC_knobs(d1, d2) {
                 if (isMidi) { S.midiDlyRandomMode[t] = nv; }
                 else        { S.noteFXRandomMode[t]  = nv; }
                 if (typeof host_module_set_param === 'function')
-                    host_module_set_param(isMidi ? 'delay_pitch_random_mode' : 'noteFX_random_mode', String(nv));
+                    /* Must be tN_-prefixed: bare-global module keys are silently
+                     * dropped by the Schwung host (see root CLAUDE.md), and the
+                     * DSP pfx_set handler is only reachable via the tN_ catch-all
+                     * anyway. Sending the bare key meant note_random_mode /
+                     * fb_note_random_mode never reached the clip pfx_params, so
+                     * the mode reverted on every snapshot resync/reload. */
+                    host_module_set_param('t' + t + (isMidi ? '_delay_pitch_random_mode' : '_noteFX_random_mode'), String(nv));
                 S.screenDirty = true;
             }
             return;
