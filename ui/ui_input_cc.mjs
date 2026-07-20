@@ -973,6 +973,13 @@ function _onCC_buttons(d1, d2) {
                 openSchwungSlotEditor(_t);
             }
         }
+        /* Deferred Shift+Step13 Suspend: park now that Shift is released, so
+         * host_suspend_overtake doesn't run with the held Shift leaking into the host. */
+        if (!S.shiftHeld && S.pendingSuspendOnShiftRelease) {
+            S.pendingSuspendOnShiftRelease = false;
+            _suspendModule();
+            return;
+        }
         if (!S.sessionView) forceRedraw();
     }
 

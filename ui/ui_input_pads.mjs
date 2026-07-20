@@ -977,11 +977,12 @@ function _doShiftStepCommon(idx) {
     else if (idx === 6) _jumpToMenuLabel('Swing Amt');
     else if (idx === 8) _jumpToMenuLabel('Scale');
     else if (idx === 12) {
-        /* Shift+Step 13 (idx 12): suspend from anywhere — same park as a Back
-         * hold / Back tap at home (save, then host_suspend_overtake next tick via
-         * pendingSuspendManaged). Works in both views. */
-        saveState();
-        S.pendingSuspendManaged = true;
+        /* Shift+Step 13 (idx 12): suspend — but DEFER to Shift release. Firing
+         * host_suspend_overtake while Shift is still physically held fails to
+         * park (the held Shift leaks into the host, same failure the Shift+Step3
+         * co-run entry avoids). The MoveShift-release handler runs the actual
+         * park (_suspendModule) once Shift is up. Works in both views. */
+        S.pendingSuspendOnShiftRelease = true;
     }
 }
 

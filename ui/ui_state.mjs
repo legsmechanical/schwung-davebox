@@ -532,6 +532,7 @@ export const S = {
      * { id, label } (id reused = overwrite). */
     pendingSnapshotCopy: null,
     pendingEditEntryTrack: -1,  /* Shift+Step3: deferred co-run entry. -1 = none; track idx = fire on Shift release so Shift state doesn't leak into Move/Schwung */
+    pendingSuspendOnShiftRelease: false,  /* Shift+Step13 Suspend: deferred to Shift release so host_suspend_overtake doesn't run with Shift still held (host park fails otherwise — same reason as pendingEditEntryTrack) */
     pendingUndoSync: 0,
     pendingDefaultSetParams: [],
     clearDrainHold: 0,       /* clearClip sets this so the next pendingDefaultSetParams drain skips one tick — keeps the queued _clear out of the same buffer as the sync set_param fan-out from clearClip's call site */
