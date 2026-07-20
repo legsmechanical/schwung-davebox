@@ -510,7 +510,7 @@ export function updateTrackLEDs() {
             } else {
                 let on = false;
                 if (S.shiftHeld && !_knobShiftMode && !_compoundHeld) {
-                    if (i === 1 || (i >= 4 && i <= 6) || i === 8 || i === 12) on = true; /* shared shortcuts (i===12 = Step 13 Suspend) */
+                    if (i === 1 || (i >= 4 && i <= 6) || i === 8) on = true; /* shared shortcuts */
                     if (!S.sessionView) {
                         if (i === 2)                            on = true; /* Step3 = Edit Slot/Synth — Track View only */
                         else if (i === 7)                       on = true;
@@ -538,7 +538,7 @@ export function updateTrackLEDs() {
     if (S.sessionView && S.shiftHeld &&
         !(S.muteHeld || S.deleteHeld || S.copyHeld || S.loopHeld)) {
         for (let i = 0; i < 16; i++) {
-            const on = i === 1 || (i >= 4 && i <= 6) || i === 8 || i === 12; /* shared shortcuts only (i===12 = Step 13 Suspend) — Step3 (Edit Slot/Synth) is Track View only */
+            const on = i === 1 || (i >= 4 && i <= 6) || i === 8; /* shared shortcuts only — Step3 (Edit Slot/Synth) is Track View only */
             setLED(16 + i, on ? LightGrey : LED_OFF);
         }
     }

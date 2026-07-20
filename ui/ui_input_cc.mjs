@@ -973,13 +973,6 @@ function _onCC_buttons(d1, d2) {
                 openSchwungSlotEditor(_t);
             }
         }
-        /* Deferred Shift+Step13 Suspend: park now that Shift is released, so
-         * host_suspend_overtake doesn't run with the held Shift leaking into the host. */
-        if (!S.shiftHeld && S.pendingSuspendOnShiftRelease) {
-            S.pendingSuspendOnShiftRelease = false;
-            _suspendModule();
-            return;
-        }
         if (!S.sessionView) forceRedraw();
     }
 
@@ -1590,7 +1583,7 @@ function _backTap() {
     }
 
     /* 6. Session view home (nothing open) — a Back TAP no longer suspends
-     * (Josh's call). Suspend is now only Shift+Step 13 or a Back HOLD. */
+     * (Josh's call). Suspend is via a Back HOLD or the "Suspend session" menu item. */
 }
 
 /* Route a Back (CC 51) press/release. Plain Back: press starts tap/hold timing

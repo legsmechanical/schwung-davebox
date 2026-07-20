@@ -976,14 +976,9 @@ function _doShiftStepCommon(idx) {
     }
     else if (idx === 6) _jumpToMenuLabel('Swing Amt');
     else if (idx === 8) _jumpToMenuLabel('Scale');
-    else if (idx === 12) {
-        /* Shift+Step 13 (idx 12): suspend — but DEFER to Shift release. Firing
-         * host_suspend_overtake while Shift is still physically held fails to
-         * park (the held Shift leaks into the host, same failure the Shift+Step3
-         * co-run entry avoids). The MoveShift-release handler runs the actual
-         * park (_suspendModule) once Shift is up. Works in both views. */
-        S.pendingSuspendOnShiftRelease = true;
-    }
+    /* NOTE: Shift+Step 13 is NOT a dAVEBOx shortcut — the Schwung host reserves it
+     * (opens the Tools menu; the shim consumes it before the module sees it). Suspend
+     * is via hold-Back or the "Suspend session" menu item. */
 }
 
 /* Loop+step gesture fire helpers — both the deferred fallback (length-only,
@@ -1146,9 +1141,7 @@ export function _onStepButtons(d1, d2) {
         return;
     }
     /* Perf Mode: step buttons are preset snapshot slots — defer to release for
-     * tap/hold decision. (Shift+Step 13 Suspend is intentionally NOT available
-     * here — it's one of the normal Shift shortcuts, which don't apply in Perf
-     * Mode; use hold-Back to suspend from Perf Mode.) */
+     * tap/hold decision. */
     if (S.sessionView && (S.loopHeld || S.perfViewLocked)) {
         S.stepBtnPressedTick[idx] = S.tickCount;
         S.sessionStepHeld         = idx;

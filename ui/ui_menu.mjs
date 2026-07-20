@@ -294,7 +294,7 @@ function buildGlobalMenuItems() {
             S.screenDirty         = true;
         }),
         createAction('Suspend session', function() {
-            /* Park dAVEBOx in the background (same as hold-Back / Shift+Step 13):
+            /* Park dAVEBOx in the background (same as hold-Back):
              * save, then host_suspend_overtake one tick later via pendingSuspendManaged. */
             saveState();                       /* sets pendingSuspendSave */
             S.pendingSuspendManaged = true;    /* drained one tick after save fires */
