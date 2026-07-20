@@ -251,7 +251,7 @@ export function updateStepLEDs() {
             }
         }
         /* Copy-source blink: step-to-step copy waiting for destination (drum lane) */
-        if (S.copyHeld && S.copySrc && S.copySrc.kind === 'step' && Math.floor(S.copySrc.absStep / 16) === page) {
+        if (S.copyHeld && S.copySrc && (S.copySrc.kind === 'step' || S.copySrc.kind === 'cut_step') && Math.floor(S.copySrc.absStep / 16) === page) {
             const btnIdx = S.copySrc.absStep % 16;
             setLED(16 + btnIdx, (Math.floor(S.tickCount / 24) % 2) ? White : LED_OFF);
         }
@@ -386,7 +386,7 @@ export function updateStepLEDs() {
     }
 
     /* Copy-source blink: step-to-step copy waiting for destination */
-    if (S.copyHeld && S.copySrc && S.copySrc.kind === 'step' && Math.floor(S.copySrc.absStep / 16) === page) {
+    if (S.copyHeld && S.copySrc && (S.copySrc.kind === 'step' || S.copySrc.kind === 'cut_step') && Math.floor(S.copySrc.absStep / 16) === page) {
         const btnIdx = S.copySrc.absStep % 16;
         setLED(16 + btnIdx, (Math.floor(S.tickCount / 24) % 2) ? White : LED_OFF);
     }
