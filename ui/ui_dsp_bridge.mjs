@@ -1317,6 +1317,15 @@ export function restoreUiSidecar(applyDefaultsNow) {
             );
         }
     }
+    /* Cold initial load (fresh runtime, not a resume-from-suspend) always opens
+     * in Session view, ignoring the sidecar's saved sv. The flag is set only on
+     * the very first init() in a runtime; it's held across a deferred
+     * (pendingSetLoad) restore and cleared on the settling call (applyDefaultsNow)
+     * so a set-change resume restores the saved view normally. */
+    if (S._forceSessionCold) {
+        S.sessionView = true;
+        if (applyDefaultsNow) S._forceSessionCold = false;
+    }
 }
 
 /* ------------------------------------------------------------------ */
