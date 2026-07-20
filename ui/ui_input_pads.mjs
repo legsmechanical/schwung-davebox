@@ -31,7 +31,7 @@ import { applyBankParam, applyTrackConfig, readBankParams,
 import { handoffRecordingToTrack, recordNoteOn, recordNoteOff,
     openTapTempo, registerTapTempo, extNoteOffAll } from './ui_record.mjs';
 import { setTrackMute, setTrackSolo, clearClip, hardResetClip, copyClip, cutClip,
-    copyDrumLane, cutDrumLane, copyDrumClip, cutDrumClip, copyStep, clearStep,
+    copyDrumLane, cutDrumLane, copyDrumClip, cutDrumClip, copyStep, cutStep, clearStep,
     showModePopup, allLanesGate, doDoubleFill, doLaneDoubleFill,
     _switchActiveTrack } from './ui_editops.mjs';
 
@@ -798,8 +798,8 @@ export function _onPadPress(status, d1, d2) {
                         /* Copy + clip pad (Session View): clip-to-clip copy */
                         const clipIdx = S.sceneRow + row;
                         const isDrumT = S.trackPadMode[t] === PAD_MODE_DRUM;
-                        if (S.copySrc && S.copySrc.kind === 'step') {
-                            /* step copy in progress: swallow */
+                        if (S.copySrc && (S.copySrc.kind === 'step' || S.copySrc.kind === 'cut_step')) {
+                            /* step copy/cut in progress: swallow */
                         } else if (!S.copySrc) {
                             if (isDrumT) {
                                 S.copySrc = S.shiftHeld
@@ -1206,18 +1206,31 @@ export function _onStepButtons(d1, d2) {
         }
         /* idx === loopGestureStart while held: ignore (same-page tap is a no-op) */
     } else if (S.copyHeld) {
-        /* Copy + step button (Track View): step-to-step copy within active clip */
+        /* Copy + step button (Track View): step-to-step copy within active clip.
+         * Shift held = CUT (paste then clear the source), mirroring the row/clip
+         * Copy+Shift gesture. After a cut-paste the destination becomes the new
+         * source, so the cut content can be pasted onto further steps. */
         const ac     = effectiveClip(S.activeTrack);
         const absIdx = S.trackCurrentPage[S.activeTrack] * 16 + idx;
         if (!S.copySrc) {
-            S.copySrc = { kind: 'step', absStep: absIdx };
+            S.copySrc = S.shiftHeld
+                ? { kind: 'cut_step', absStep: absIdx }
+                : { kind: 'step',     absStep: absIdx };
+            if (S.shiftHeld) showActionPopup('CUT STEP');
             invalidateLEDCache();
         } else if (S.copySrc.kind === 'step') {
             if (S.copySrc.absStep !== absIdx) copyStep(S.activeTrack, ac, S.copySrc.absStep, absIdx);
             invalidateLEDCache();
             forceRedraw();
+        } else if (S.copySrc.kind === 'cut_step') {
+            if (S.copySrc.absStep !== absIdx) {
+                cutStep(S.activeTrack, ac, S.copySrc.absStep, absIdx);
+                S.copySrc = { kind: 'step', absStep: absIdx };   /* dst becomes new source */
+            }
+            invalidateLEDCache();
+            forceRedraw();
         }
-        /* S.copySrc.kind !== 'step': swallow — don't mix copy types */
+        /* other S.copySrc kinds: swallow — don't mix copy types */
     } else if (S.deleteHeld) {
         /* Delete + step button (Track View): clear all notes from that step.
          * On the CC bank (melodic), instead clear all knobs' points in the step. */

@@ -357,6 +357,27 @@ export function copyStep(t, ac, srcAbs, dstAbs) {
     }
 }
 
+/* Cut step src→dst within same clip: copy src→dst, then clear the source step
+ * (melodic clip step or the active drum lane's step). Composes copyStep +
+ * step_clear — no new DSP key. The copy_to drains before the clear (both queued),
+ * so dst holds the content and src is wiped. Mirrors cutRow/cutClip. */
+export function cutStep(t, ac, srcAbs, dstAbs) {
+    if (typeof host_module_set_param !== 'function') return;
+    copyStep(t, ac, srcAbs, dstAbs);
+    if (S.trackPadMode[t] === PAD_MODE_DRUM) {
+        const lane = S.activeDrumLane[t];
+        S.pendingDefaultSetParams.push({ key: 't' + t + '_l' + lane + '_step_' + srcAbs + '_clear', val: '1', _local: true });
+        S.drumLaneSteps[t][lane][srcAbs] = '0';
+        S.drumLaneHasNotes[t][lane] = S.drumLaneSteps[t][lane].some(c => c !== '0');
+        /* pendingDrumLaneResync already armed by copyStep above. */
+    } else {
+        S.pendingDefaultSetParams.push({ key: 't' + t + '_c' + ac + '_step_' + srcAbs + '_clear', val: '1', _local: true });
+        S.clipSteps[t][ac][srcAbs] = 0;
+        if (S.clipNonEmpty[t][ac]) S.clipNonEmpty[t][ac] = clipHasContent(t, ac);
+        /* pendingStepsReread already armed by copyStep above. */
+    }
+}
+
 /* Copy active clip's lane srcLane to dstLane (same track, preserves dst midi_note). */
 export function copyDrumLane(t, srcLane, dstLane) {
     if (srcLane === dstLane) return;

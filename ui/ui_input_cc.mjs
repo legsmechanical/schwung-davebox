@@ -1979,8 +1979,8 @@ function _onCC_side(d1, d2) {
             return;
         }
         if (S.copyHeld) {
-            if (S.copySrc && S.copySrc.kind === 'step') {
-                /* step copy in progress: swallow track/scene buttons — don't mix copy types */
+            if (S.copySrc && (S.copySrc.kind === 'step' || S.copySrc.kind === 'cut_step')) {
+                /* step copy/cut in progress: swallow track/scene buttons — don't mix copy types */
             } else if (S.sessionView) {
                 /* Copy/Cut: row-to-row gesture */
                 if (!S.copySrc) {
