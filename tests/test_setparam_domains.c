@@ -2724,7 +2724,35 @@ int main(void) {
         remove(SAVE_TMP);
     }
 
+    /* Beat Stretch RE-ANCHORS the playhead to the master clock during playback
+     * (fix: a mid-play stretch changed cl->length without re-deriving the
+     * playhead, drifting the clip out of sync). Melodic t4 (t0 defaults DRUM).
+     * After expand (fwd): current_step = loop_start + (elapsed/tps)%len,
+     * tick_in_step = elapsed%tps, elapsed = global_tick*TPS + master_tick_in_step. */
+    {
+        seq8_track_t *bt = &inst->tracks[4];
+        bt->active_clip = 0;
+        clip_t *bcl = &bt->clips[0];
+        bcl->length = 16; bcl->loop_start = 0; bcl->ticks_per_step = (uint16_t)TICKS_PER_STEP;
+        bcl->steps[0] = 1; bcl->step_note_count[0] = 1; bcl->step_notes[0][0] = 60;
+        inst->playing = 1; inst->global_tick = 10; inst->master_tick_in_step = 5;
+        bt->current_step = 3;      /* bogus — the re-anchor must override this */
+        bt->tick_in_step = 0;
+        hx_set_param(h, "t4_beat_stretch", "1");            /* expand 16 -> 32 */
+        HX_ASSERT(bcl->length == 32, "beat-stretch: expand length 16->32");
+        {
+            uint32_t elapsed = (uint32_t)10 * (uint32_t)TICKS_PER_STEP + 5;   /* 245 */
+            uint16_t tps = bcl->ticks_per_step;
+            HX_ASSERT(bt->current_step == (uint16_t)(bcl->loop_start + (elapsed / tps) % bcl->length),
+                      "beat-stretch: re-anchors current_step to master clock");
+            HX_ASSERT(bt->tick_in_step == (uint16_t)(elapsed % tps),
+                      "beat-stretch: re-anchors tick_in_step to master clock");
+        }
+        inst->playing = 0;
+    }
+
     hx_destroy(h);
+    printf("PASS: beat_stretch re-anchors playhead to master clock during playback\n");
     printf("PASS: set_param domain snapshot (%d domains + transport)\n", i);
     printf("PASS: track-config white-box pins "
            "(xpose/launch/stop/deactivate/route/channel/looper/mute-solo/conduct)\n");

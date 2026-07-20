@@ -271,6 +271,13 @@ static int sp_track_drum2(sp_ctx_t *cx) {
                 if (tr->drum_current_step[l_al] < dlc->loop_start
                         || tr->drum_current_step[l_al] >= _le)
                     tr->drum_current_step[l_al] = dlc->loop_start;
+                /* Re-anchor this lane's playhead to the master clock so the
+                 * resized lane stays in phase during playback (same fix as the
+                 * melodic / single-lane beat_stretch). Runs BEFORE the suppress
+                 * pass below so already-passed notes are re-suppressed against the
+                 * re-anchored position (the helper clears suppress_until_wrap). */
+                if (inst->playing)
+                    drum_lane_anchor_playhead(inst, tr, l_al, dlc);
             }
             any = 0;
             for (i = 0; i < (int)dlc->length; i++)

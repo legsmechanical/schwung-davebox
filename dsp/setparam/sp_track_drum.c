@@ -383,6 +383,11 @@ static int sp_track_drum(sp_ctx_t *cx) {
                 if (tr->drum_current_step[lane_idx] < dlc->loop_start
                         || tr->drum_current_step[lane_idx] >= _le)
                     tr->drum_current_step[lane_idx] = dlc->loop_start;
+                /* Re-anchor this lane's playhead to the master clock so the
+                 * resized lane stays in phase during playback (same fix as the
+                 * melodic beat_stretch / _length handlers). */
+                if (inst->playing)
+                    drum_lane_anchor_playhead(inst, tr, lane_idx, dlc);
             }
             any = 0;
             for (i = 0; i < (int)dlc->length; i++)

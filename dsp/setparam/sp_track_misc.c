@@ -332,6 +332,13 @@ static int sp_track_misc(sp_ctx_t *cx) {
             uint16_t _le = (uint16_t)(cl->loop_start + cl->length);
             if (tr->current_step < cl->loop_start || tr->current_step >= _le)
                 tr->current_step = cl->loop_start;
+            /* Beat Stretch changes cl->length; re-anchor the playhead to the
+             * master clock during playback so the resized clip's loop wrap stays
+             * in phase with the master bar and the other tracks (same fix as the
+             * _length / _loop_set handlers). Without this the clip drifts out of
+             * sync after a mid-play stretch. Direction-aware via the helper. */
+            if (inst->playing)
+                melodic_anchor_playhead(inst, tr, cl);
         }
 
         any = 0;
