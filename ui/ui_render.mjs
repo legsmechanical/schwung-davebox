@@ -14,7 +14,7 @@ import {
     col4, col5, pixelPrint, pixelPrintC,
     fmtSign, fmtStretch, fmtLen, fmtRes, fmtPct, fmtBool, fmtGateMod,
     fmtArpRate, fmtVelOverride, fmtPlayDir, fmtRevStyle,
-    fmtDly, fmtArpStyle, fmtArpSteps, fmtDiq, fmtPlain, fmtLgto
+    fmtDly, fmtArpStyle, fmtArpSteps, fmtDiq, fmtPlain, fmtLgto, fmtPitchRnd
 } from './ui_constants.mjs';
 import {
     drawKitHeader, drawKitTouchedHeader, drawKitPageBar, drawKitAltArrow,
@@ -264,9 +264,10 @@ function kitCellForKnob(knob, val) {
     const base = { label: knob.abbrev, name: knob.full, text };
     if (knob.fmt === fmtBool) { base.kind = 'hbar'; base.norm = v ? 1 : 0; return base; }
     if (knob.fmt === fmtLgto) { base.kind = 'action'; base.oneWay = true; return base; }
-    /* relative one-shot actions (Stch, Shft) + Octave Shift: "< >" square
-     * whose box shows the live value while its knob is touched */
-    if (knob.scope === 'action' || knob.dspKey === 'noteFX_octave') { base.kind = 'action'; return base; }
+    /* relative one-shot actions (Stch, Shft): "< >" square whose box shows the
+     * live value only while its knob is touched. (Octave Shift is NOT here — it
+     * holds an absolute value, so it uses a persistent value box below.) */
+    if (knob.scope === 'action') { base.kind = 'action'; return base; }
     if (knob.fmt === fmtPlayDir) {
         base.kind = 'dirsq';
         base.options = KIT_DIR_NAMES;
@@ -285,13 +286,18 @@ function kitCellForKnob(knob, val) {
         return base;
     }
     if (knob.min < 0) {
-        if (knob.max <= 4) { base.kind = 'valsq'; return base; }  /* octave-ish */
+        /* Discrete signed values worth showing exactly — octave shift (±4) and
+         * semitone offsets/intervals (±24: Note Offset, Harmony 1/2/3, Pitch
+         * Feedback) — get a persistent value box. Wider signed ranges (±127
+         * velocities) stay a bipolar arc where the sweep reads better than digits. */
+        if (knob.max <= 24) { base.kind = 'valsq'; return base; }
         base.kind = 'arcbip';
         const halfR = Math.max(1, Math.max(knob.max, -knob.min));
         base.signed = Math.max(-1, Math.min(1, v / halfR));
         return base;
     }
     if (knob.fmt === fmtPlain && knob.max <= 16) { base.kind = 'valsq'; return base; } /* counts (Repts) */
+    if (knob.fmt === fmtPitchRnd) { base.kind = 'valsq'; return base; } /* Pitch Random 0..24 ("OFF" at 0) */
     base.kind = 'arc';
     base.norm = Math.max(0, Math.min(1, (v - knob.min) / ((knob.max - knob.min) || 1)));
     return base;
