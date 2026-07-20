@@ -17,7 +17,7 @@ import { S } from './ui_state.mjs';
 import { drumPadToLane, drumPadToVelZone, drumVelZoneToVelocity, _clipIsEmpty,
     clipHasContent, effectiveVelocity, stepEntryVelocity,
     ARP_VEL_CANON, arpVelLevel, VEL_THRU } from './ui_pure.mjs';
-import { showActionPopup, writeSidecar } from './ui_persistence.mjs';
+import { showActionPopup, writeSidecar, saveState } from './ui_persistence.mjs';
 import { computePadNoteMap, syncDrumLaneSteps, setActiveDrumLane,
     setDrumPerformMode } from './ui_drummodel.mjs';
 import { effectiveClip, invalidateLEDCache, forceRedraw, sendPerfMods,
@@ -976,6 +976,13 @@ function _doShiftStepCommon(idx) {
     }
     else if (idx === 6) _jumpToMenuLabel('Swing Amt');
     else if (idx === 8) _jumpToMenuLabel('Scale');
+    else if (idx === 12) {
+        /* Shift+Step 13 (idx 12): suspend from anywhere — same park as a Back
+         * hold / Back tap at home (save, then host_suspend_overtake next tick via
+         * pendingSuspendManaged). Works in both views. */
+        saveState();
+        S.pendingSuspendManaged = true;
+    }
 }
 
 /* Loop+step gesture fire helpers — both the deferred fallback (length-only,

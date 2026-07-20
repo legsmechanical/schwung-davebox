@@ -22,6 +22,7 @@
             79
         ],
         "claims_master_knob": true,
-        "suspend_keeps_js": true
+        "suspend_keeps_js": true,
+        "suspend_self_managed": true
     }
 }

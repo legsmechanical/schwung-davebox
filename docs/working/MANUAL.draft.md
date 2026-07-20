@@ -136,7 +136,17 @@ For a guided first session, see the [Quick Start guide](QUICKSTART.md).
 | R0–R3 | Pad grid rows, bottom to top |
 | Side clip buttons (c1–c4) | Four buttons left of the pad grid |
 | Step buttons (s1–s16) | 16 buttons below the pad grid |
-| Back | Suspends dAVEBOx. **Shift + Back** fully exits |
+| Back | Navigates back one level (see below). **Hold Back** (~½s) suspends from anywhere; **Shift + Back** fully exits |
+
+**Back button navigation.** A tap of **Back** steps out one level at a time rather than immediately leaving:
+
+1. Cancels an open dialog, picker, or chooser
+2. Closes the menu
+3. Exits a locked Performance Mode (Session View)
+4. In **Track View**: drops out of a bank's alt-view, then steps back to the track's default bank (Clip / Drum Lane / Conduct). At the default bank, Back does nothing further — it does not jump to Session View.
+5. On the main **Session View** overview with nothing open, Back **suspends** dAVEBOx (leaves it running in the background).
+
+To suspend from anywhere without walking back level by level, **hold Back** for about half a second, or press **Shift + Step 13** (works in both views; its step lights up while Shift is held). **Shift + Back** fully exits to Schwung. *(Back navigation requires a current Schwung host; on older hosts Back simply suspends.)*
 
 ## 2.3 Transport & modifier buttons
 

@@ -47,6 +47,7 @@ import { pollDSP,
     pendingDrumNoteOffs, _drumRecNoteOns, _drumRecNoteOffs } from './ui_dsp_bridge.mjs';
 import { disarmRecord, _recordingNoteTrack, flushHeldMoveExtNotes } from './ui_record.mjs';
 import { xposeCancelPreview } from './ui_xpose.mjs';
+import { checkBackHold } from './ui_input_cc.mjs';
 
 const BANK_DISPLAY_TICKS = 94;  /* ~1000ms at 94Hz device tick rate (was 392 = ~4.2s; constant was miscalibrated for 196Hz) */
 const KNOB_TURN_HIGHLIGHT_TICKS = 56;             /* ~600ms at 94Hz — highlight after turn without touch (was 120 @196Hz) */
@@ -260,6 +261,7 @@ var _lastSessionView = false;
 export function _tickImpl() {
     S.tickCount++;
     if (S.bootSplashTicks > 0) S.bootSplashTicks--;
+    checkBackHold();   /* self-managed Back: fire suspend once a held Back crosses the long-press threshold */
 
     /* Lifecycle edge: at suspend/teardown (and transient co-run slot switches)
      * the host can momentarily unbind its param API while an already-queued tick
@@ -1558,6 +1560,19 @@ export function _tickImpl() {
         clearAllLEDs();
         for (let _i = 0; _i < 4; _i++) setButtonLED(40 + _i, LED_OFF);
         if (typeof host_hide_module === 'function') host_hide_module();
+    } else if (S.pendingSuspendManaged) {
+        /* Self-managed Back suspend (tap-at-home / hold-anywhere). Same teardown
+         * as the hide path, but calls the new host_suspend_overtake() so the host
+         * parks us keeping JS in memory. Falls back to host_hide_module on a host
+         * that predates the API (defensive — plain Back wouldn't reach us there). */
+        S.pendingSuspendManaged = false;
+        removeFlagsWrap();
+        S.ledInitComplete = false;
+        invalidateLEDCache();
+        clearAllLEDs();
+        for (let _i = 0; _i < 4; _i++) setButtonLED(40 + _i, LED_OFF);
+        if (typeof host_suspend_overtake === 'function') host_suspend_overtake();
+        else if (typeof host_hide_module === 'function') host_hide_module();
     } else if (S.pendingSnapshotCopy) {
         /* One tick after the 'save' above flushed live state to disk
          * synchronously — copy it into the snapshot + update manifest. */
