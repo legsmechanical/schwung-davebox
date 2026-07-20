@@ -60,8 +60,26 @@ Large per-clip data (automation curves) is therefore **gated** — see `rui_cc`.
 
 **Rev-gated poll (perf).** While playing, the manager reads the cheap `rui_poll` digest each
 tick and only re-reads the heavy `state` snapshot when the content rev changed, pushing just
-the playhead otherwise. Any DSP edit the UI should see must call **`rui_touch(inst)`** to bump
-`rui_rev`.
+the playhead otherwise.
+
+**SPLIT REV COUNTERS (2026-07-19).** Two monotonic counters serve two different consumers:
+
+- **`rui_content_rev`** — the BROWSER-facing counter: bumped on EVERY content change. It is
+  what the `rui_poll` digest and the snapshot's `rui_rev` JSON field report, and what drives
+  the manager's rev-gated re-pull.
+- **`rui_rev`** — the DEVICE-JS remote-edit signal (served by the `rui_rev` get_param,
+  unchanged semantics): a bump makes the on-device JS re-read the `rui_dirty` clip digest.
+  It must NEVER be bumped by local live-recording writes (2026-07-06 record-disarm hang) or
+  by a `state_load` the device itself initiated (double full-sync).
+
+**RULE for every content-mutating `set_param` handler** (pinned by `tests/test_rui_rev.c`):
+- Discrete ops (note edits, clip transforms, pfx edits, launches…): **`rui_mark(inst, t, c)`**
+  — bumps BOTH counters + records the dirty clip. Use **`rui_mark_rec(inst, tr, t, c)`** when
+  the handler can run while the track is live-recording (bumps content-only in that case).
+- High-frequency / device-local writes (record paths, arp-record, `state_load`):
+  **`rui_content(inst)`** — content-only.
+- A handler that bumps NEITHER leaves the browser stale until an unrelated bump or the 30s
+  backstop — the root cause of the 2026-07-19 "remote UI lags far behind the device" bug.
 
 ---
 
@@ -79,7 +97,7 @@ parser is tolerant of missing/short forms.
 
 | Field | Format | Notes |
 |---|---|---|
-| `rui_rev` | `<uint>` | Monotonic edit counter (`rui_touch()`); drives the rev-gated poll. |
+| `rui_rev` | `<uint>` | **`rui_content_rev`** (browser-facing content counter — NOT the device-JS `rui_rev`; see §2 split-counters note); drives the rev-gated poll. |
 | `rui_play` | `on:tick:bpm[:devms]` | `on` 0/1; `tick` = playhead via `rui_playhead_tick()` (melodic: `current_clip_tick`; drum: the DISPLAYED lane's own clock — `rui_sel_lane`, else lane 0 — audible-mapped; u32, wraps in the **loop window**); `bpm` int; `devms` (PLAYING only) = device-clock ms (`rui_frames*1000/44100`, free-running, resets only on re-instantiation) — the browser time-bases playhead corrections on it so delivery latency cancels. |
 | `rui_sel` | `track:clip:lane` | Selection. `lane` = −1 melodic, else drum lane index. |
 | `rui_clip` | `len:tps:loop_start:dir` | Grid-reference clip (drum → active drum clip lane 0; melodic → selected clip). Steps + ticks/step. |
@@ -144,8 +162,8 @@ prefers atomic keys (`notes_op`) for atomicity and fewer round-trips, not becaus
   `APP(...)` snprintf-cursor macro. Reads `inst->rui_sel_track`/`_clip`/`_lane` for scoping and
   `inst->rui_cc_focus` for the gated `rui_cc`. Read-only + side-effect free (does not touch
   `state_dirty`).
-- **`rui_touch(inst)`** — increments `rui_rev`; call it from any `set_param` handler whose change
-  the browser must re-read (content edits; focus changes).
+- **`rui_touch(inst)`** — bumps BOTH counters + sets dirty-full (whole-set scope). Prefer
+  `rui_mark`/`rui_mark_rec`/`rui_content` per the §2 rule for anything clip-scoped.
 - **Selection is DSP state:** `tN_cC_ruisel` sets `rui_sel_track`/`_clip`; drum lane via
   `rui_sel_lane`. The snapshot is always for the current selection.
 - **Storage the snapshot reads:** melodic notes `tracks[t].clips[c].notes[]`; drum
