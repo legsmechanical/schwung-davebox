@@ -360,6 +360,7 @@ static int sp_globals_transport(sp_ctx_t *cx) {
             undo_begin_single(inst, track, (int)inst->tracks[track].active_clip);
         inst->count_in_track = (uint8_t)track;
         inst->count_in_ticks = 4 * PPQN;  /* 1 bar; tick_delta already tracks actual BPM */
+        inst->count_in_merge = 0;          /* this is a RECORDING count-in, not a merge */
         inst->tick_accum     = 0;          /* reset phase so first beat fires on schedule */
         if (inst->metro_on >= 1) inst->metro_beat_count++;  /* beat 1 fires immediately */
         /* PHASE-1: clear inbound press/release slots for this track so stale
@@ -383,6 +384,7 @@ static int sp_globals_transport(sp_ctx_t *cx) {
     }
     if (!strcmp(key, "record_count_in_cancel")) {
         inst->count_in_ticks = 0;
+        inst->count_in_merge = 0;
         return 1;
     }
 

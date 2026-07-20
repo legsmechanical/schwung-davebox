@@ -1637,23 +1637,29 @@ function _onCC_transport(d1, d2) {
         if (S.dspMergeState !== 0) {
             S.pendingDefaultSetParams.push({ key: 'merge_stop', val: '1' });
             /* LED stays green until DSP finalizes at page boundary. */
-        } else if (S.sessionView) {
-            S.mergeSingleTrack = -1;
-            S.pendingDefaultSetParams.push({ key: 'merge_arm', val: '1' });
-            S.pendingMergeArm = true;
-            /* Explain what's happening — multi-track merge is non-obvious
-             * and the user needs time to read. Override the standard popup
-             * window to ~3 seconds. */
-            showActionPopup('LIVE MERGE', 'Capturing all 8', 'tracks. Shift+Rec', 'again to stop.');
-            S.actionPopupEndTick = S.tickCount + 280;
-        } else {
-            const _mt = S.activeTrack;
-            S.mergeSingleTrack = _mt;
-            S.pendingDefaultSetParams.push({ key: 'merge_arm', val: 't' + _mt });
-            S.pendingMergeArm = true;
-            showActionPopup('LIVE MERGE', 'This track. Shift+', 'Rec to stop, then', 'pick a clip.');
+        } else if (!S.playing) {
+            /* Live Merge is a stopped-transport op: it does a 1-bar count-in then
+             * starts the transport and captures from the top. Arm the count-in
+             * flash (mirrors record). While playing, Shift+Rec is ignored. */
+            const _bpm = (S.bpmMirror > 0 && isFinite(S.bpmMirror)) ? S.bpmMirror : 120;
+            S.mergeCountingIn      = true;
+            S.countInBeatStartTick = S.tickCount;
+            S.countInQuarterTicks  = Math.round(TICK_HZ * 60 / _bpm);
+            if (S.sessionView) {
+                S.mergeSingleTrack = -1;
+                S.pendingDefaultSetParams.push({ key: 'merge_arm', val: '1' });
+                S.pendingMergeArm = true;
+                showActionPopup('LIVE MERGE', 'Count-in, then', 'capturing all 8.', 'Rec to stop.');
+            } else {
+                const _mt = S.activeTrack;
+                S.mergeSingleTrack = _mt;
+                S.pendingDefaultSetParams.push({ key: 'merge_arm', val: 't' + _mt });
+                S.pendingMergeArm = true;
+                showActionPopup('LIVE MERGE', 'Count-in, then', 'this track.', 'Rec to stop.');
+            }
             S.actionPopupEndTick = S.tickCount + 280;
         }
+        /* else: transport playing + no active merge → ignored (merge is stopped-only) */
         return;
     }
     /* Plain Record while a Live Merge is armed/capturing STOPS the merge

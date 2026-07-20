@@ -1325,10 +1325,18 @@ export function _tickImpl() {
             updateSessionLEDs();
             if (S.loopHeld || S.perfViewLocked) updatePerfModeLEDs();
             else updateSceneMapLEDs();
+            /* Scene-merge count-in flash overrides the scene grid for the lead-in bar. */
+            if (S.mergeCountingIn && S.countInQuarterTicks > 0) {
+                const elapsed  = S.tickCount - S.countInBeatStartTick;
+                const flashOn  = (elapsed % S.countInQuarterTicks) < (S.countInQuarterTicks >> 3);
+                const flashClr = flashOn ? White : LED_OFF;
+                for (let _i = 0; _i < 16; _i++) setLED(16 + _i, flashClr);
+            }
         } else {
             updateStepLEDs();
-            /* Count-in flash: blink all step buttons white at quarter-note rate */
-            if (S.recordArmed && S.recordCountingIn && S.countInQuarterTicks > 0) {
+            /* Count-in flash: blink all step buttons white at quarter-note rate
+             * (recording count-in, or a Track-View solo-merge count-in). */
+            if (((S.recordArmed && S.recordCountingIn) || S.mergeCountingIn) && S.countInQuarterTicks > 0) {
                 const elapsed  = S.tickCount - S.countInBeatStartTick;
                 const flashOn  = (elapsed % S.countInQuarterTicks) < (S.countInQuarterTicks >> 3);
                 const flashClr = flashOn ? White : LED_OFF;

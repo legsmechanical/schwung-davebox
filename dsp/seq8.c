@@ -904,6 +904,9 @@ typedef struct {
     /* DSP-side count-in: counts down in DSP ticks; fires transport+recording when done */
     int32_t  count_in_ticks;        /* remaining ticks; 0 = inactive */
     uint8_t  count_in_track;        /* track to arm for recording on fire */
+    uint8_t  count_in_merge;        /* 1 = this count-in starts a LIVE MERGE (not recording): at
+                                     * completion, start transport + will_relaunch'd clips and let
+                                     * merge_state ARMED→CAPTURING fire, but do NOT arm recording. */
 
     /* Metronome: clicks on quarter notes while recording/count-in is active */
     uint8_t  metro_on;              /* 0=off,1=count-in only,2=count+rec,3=always */

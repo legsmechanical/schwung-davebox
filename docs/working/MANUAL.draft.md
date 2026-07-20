@@ -1327,22 +1327,27 @@ is required.
 ## 13.2 Live Merge
 
 Live Merge records the actual output of tracks as they play — capturing a live
-performance, effects and all, into clips. The view you arm from sets the scope:
+performance, effects and all, into clips. Start it from a **stopped** transport
+(Shift + Record is ignored while playing): it gives you a **1-bar count-in**
+(metronome, with the step buttons flashing on each beat), then starts playback
+and captures a clean take from the top of the pattern. The view you arm from sets
+the scope:
 
 - **Session View**: all 8 tracks at once, committed to a scene row you pick.
-- **Track View**: just the **active track**. When you stop, dAVEBOx switches
-  to Session View and blinks the empty clips on that track — tap one to save
-  the merged take there. A quick way to resample one track's performance
-  (arps, delays, knob rides) into solid notes in a new clip.
+- **Track View**: just the **active track** (played in isolation over the
+  count-in). When you stop, dAVEBOx switches to Session View and blinks the empty
+  clips on that track — tap one to save the merged take there. A quick way to
+  resample one track's performance (arps, delays, knob rides) into solid notes.
 
 | Step | Control |
 |---|---|
-| Arm | **Shift + Record** |
-| Capture starts | Next bar boundary (or on transport start) |
-| Stop | **Shift + Record** again (Session View finalizes at the next page boundary; Track View finalizes immediately) |
+| Arm | **Shift + Record**, transport stopped (ignored while playing) |
+| Capture starts | After the 1-bar count-in, from the top of the pattern |
+| Stop | **Record** (or Shift + Record) — Session View finalizes at the next page boundary, Track View immediately |
+| Abort count-in | Press **Record** during the count-in |
 | Auto-stop | Reaching the 256-step max clip length |
 | Place | After stop, tap a destination — a scene row (Session View) or a blinking empty clip on the merge track (Track View) |
-| Cancel | Press **Record** instead |
+| Cancel placement | Press **Record** at the placement prompt |
 
 In Session View, tracks that captured notes overwrite their clip at the target
 row; tracks that captured nothing leave the existing clip untouched. In Track

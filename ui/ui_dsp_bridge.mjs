@@ -665,11 +665,17 @@ export function pollDSP() {
         if (_rpp === '0') S.recordPendingPage = false;
     }
 
-    /* Count-in end: DSP fired transport+recording — sync JS state */
-    if (S.countInDspPrev && !countInDspActive && S.playing) {
-        S.recordCountingIn    = false;
-        S.countInStartTick    = -1;
-        S.countInQuarterTicks = 0;
+    /* Count-in end: DSP fired transport+recording (playing), or the count-in was
+     * cancelled (e.g. Rec pressed during a merge count-in → stays stopped). Sync
+     * JS state on the edge. mergeCountingIn clears either way so its LED flash
+     * can't linger after a cancel. */
+    if (S.countInDspPrev && !countInDspActive) {
+        if (S.playing) {
+            S.recordCountingIn    = false;
+            S.countInStartTick    = -1;
+            S.countInQuarterTicks = 0;
+        }
+        S.mergeCountingIn = false;
     }
     S.countInDspPrev = countInDspActive;
 

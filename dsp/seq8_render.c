@@ -400,10 +400,18 @@ static void render_block(void *instance, int16_t *out_lr, int frames) {
                     }
                 }
                 inst->playing = 1;
-                inst->tracks[inst->count_in_track].recording   = 1;
-                memset(inst->tracks[inst->count_in_track].drum_last_rec_step, 0xFF,
-                       sizeof(inst->tracks[inst->count_in_track].drum_last_rec_step));
-                inst->tracks[inst->count_in_track].clip_playing = 1;
+                if (inst->count_in_merge) {
+                    /* Live Merge count-in: do NOT arm recording. The will_relaunch
+                     * clips launched in the loop above are now playing; merge_state
+                     * stays ARMED so the main sequencer's ARMED→CAPTURING check
+                     * (below, at master_tick_in_step==0) begins capture at bar 1. */
+                    inst->count_in_merge = 0;
+                } else {
+                    inst->tracks[inst->count_in_track].recording   = 1;
+                    memset(inst->tracks[inst->count_in_track].drum_last_rec_step, 0xFF,
+                           sizeof(inst->tracks[inst->count_in_track].drum_last_rec_step));
+                    inst->tracks[inst->count_in_track].clip_playing = 1;
+                }
             }
         }
         goto mix_click; /* skip main sequencer but still mix any pending click audio */

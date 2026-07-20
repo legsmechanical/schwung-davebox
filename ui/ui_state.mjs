@@ -478,6 +478,7 @@ export const S = {
      * so the user sees the deferred start. */
     recordPendingPage: false,
     recordCountingIn: false,
+    mergeCountingIn: false,   /* Live Merge count-in in progress — drives the same count-in LED flash as recordCountingIn; cleared in pollDSP when the DSP count_in flips 0 */
     recordArmedTrack: -1,
     countInStartTick: -1,
     countInBeatStartTick: -1,

@@ -46,8 +46,18 @@ int main(void) {
 
     hx_set_param(h, "merge_arm", "t1");
     HX_ASSERT(inst->merge_solo_track == 1, "solo track parsed from t1");
+    /* merge_arm now stages a 1-bar count-in (stopped-transport merge): ARMED +
+     * count_in_merge, and only the solo track is will_relaunch'd. */
+    HX_ASSERT(inst->merge_state == MERGE_STATE_ARMED, "merge_arm → ARMED (count-in staged)");
+    HX_ASSERT(inst->count_in_ticks > 0 && inst->count_in_merge == 1, "merge_arm starts a merge count-in");
+    HX_ASSERT(inst->tracks[1].will_relaunch == 1, "solo merge launches its own track");
+    HX_ASSERT(inst->tracks[2].will_relaunch == 0, "solo merge does not launch other tracks");
+    /* Simulate the count-in completing (render-side): merge clears count_in_merge
+     * and the main sequencer transitions ARMED→CAPTURING at bar 1. */
+    inst->count_in_merge  = 0;
+    inst->count_in_ticks  = 0;
     inst->tracks[1].active_clip = 5;                 /* focused clip = commit target */
-    inst->merge_state     = MERGE_STATE_CAPTURING;   /* force straight to capture */
+    inst->merge_state     = MERGE_STATE_CAPTURING;
     inst->merge_start_abs = 0;
 
     /* Emit a note-on/off pair through track 1's pfx AND track 2's pfx. */
