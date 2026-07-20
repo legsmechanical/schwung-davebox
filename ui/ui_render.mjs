@@ -126,6 +126,17 @@ function drawThruBar(x, w, top, bot) {
             set_pixel(xx, yy, 1);
 }
 
+/* The enum/dir option-list overlay covers the 3 cells away from the touched
+ * knob, so it must NOT appear on a bare orienting touch — only once the knob is
+ * actually turned. knobTurnedTick[t] is reset to -1 on each touch-down and set
+ * on turn, so `>= 0` means "turned since this touch began". It then stays up
+ * until the finger lifts: knobTouched persists while physically held (the
+ * post-turn highlight timeout in ui_tick is gated on knobPhysIdx). Returns the
+ * index for drawKitEnumOverlay, or -1 to suppress. */
+function enumOverlayIdx(t) {
+    return (t >= 0 && S.knobTurnedTick[t] >= 0) ? t : -1;
+}
+
 /* Canvaskit step-editor page (drum + melodic step hold): "STEP N" filled
  * header (touched knob swaps in the param name), kit grid, enum overlay on
  * top. `noteBox` (melodic) draws the merged Oct/Note box over the K1+K2
@@ -152,7 +163,7 @@ function drawStepEditKitPage(title, cells, noteBox) {
         mvPrint(BX + Math.round((BW - mvWidth(noteBox)) / 2),
                 BY + Math.floor((BH - 5) / 2), noteBox, hiOP ? 0 : 1);
     }
-    drawKitEnumOverlay(cells, t);
+    drawKitEnumOverlay(cells, enumOverlayIdx(t));
 }
 
 /* Shared canvaskit page entry: touched non-blank cell inverts the header to
@@ -164,7 +175,7 @@ function drawKitPage(name, cells, inverted) {
     if (touched) drawKitTouchedHeader(touched.name);
     else (inverted ? drawBankHeadingInverted : drawBankHeading)(name, false);
     drawKitCells(cells, t);
-    drawKitEnumOverlay(cells, t);
+    drawKitEnumOverlay(cells, enumOverlayIdx(t));
 }
 
 /* Down-arrow affordance for banks that expose alt params. Always drawn in the
@@ -1401,7 +1412,7 @@ export function drawUI() {
             else        rectOutline(BX, BY, BW, BH, 1);
             mvPrint(BX + Math.round((BW - mvWidth(_noteStr)) / 2),
                     BY + Math.floor((BH - 5) / 2), _noteStr, hiLane ? 0 : 1);
-            drawKitEnumOverlay(cells, _tch);
+            drawKitEnumOverlay(cells, enumOverlayIdx(_tch));
         }
 
         } else if (S.trackPadMode[S.activeTrack] === PAD_MODE_DRUM && bank === 5) {

@@ -258,11 +258,14 @@ function: one-shot action knobs (Beat Stretch, Clock Shift) show chevrons on
 their side borders ("turn either way to act"), destructive one-way actions
 (Legato) show a single filled arrow, Playback Direction draws actual arrows
 (► ◄ and paired arrows for ping-pong), and small stepped ranges (Resolution,
-Input Quantize, octaves…) show a selection dot-strip along the bottom edge. Turning a knob inverts the header to
-that parameter's **full name** while the label strip under its widget swaps to
-the **live value**. Turning a knob with more than two options (Delay Rate, Arp
-Style, Resolution, ...) also pops up a scrolling list of every option, with the
-current one highlighted. The LED below each knob lights when that parameter
+Input Quantize, octaves…) show a selection dot-strip along the bottom edge. **Touching**
+a knob (without turning) highlights it — the header inverts to that parameter's
+**full name** and the label strip under its widget swaps to the **live value** —
+so you can tap across the knobs to see how they map to the screen. **Turning** a
+knob with more than two options (Delay Rate, Arp Style, Resolution, ...)
+additionally pops up a scrolling list of every option, with the current one
+highlighted; the list appears only on turn (never on a bare touch) and stays up
+until you release the knob. The LED below each knob lights when that parameter
 differs from default.
 
 The bank display returns to the track overview after about a second of inactivity.

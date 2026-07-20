@@ -351,7 +351,7 @@ function _onMidiInternalImpl(data) {
         if ((status & 0xF0) === 0x90) {
             if (d2 === 127) {
                 if (d1 <= 7 && S.activeBank >= 0) {
-                    S.knobTouched = d1; S.knobTurnedTick[d1] = -1; S.screenDirty = true;
+                    S.knobTouched = d1; S.knobPhysIdx = d1; S.knobTurnedTick[d1] = -1; S.screenDirty = true;
                     /* CC bank: touching a knob makes it the active lane (persistent
                      * — drives the step-LED gradient and highlighted overview cell). */
                     if (S.activeBank === 6) {
@@ -425,6 +425,7 @@ function _onMidiInternalImpl(data) {
                     /* SEQ ARP K5 / TRACK ARP K5 release: refresh pads (vel-slider editor → normal pads). */
                     if ((S.activeBank === 4 && d1 === 4) || (S.activeBank === 5 && d1 === 4)) forceRedraw();
                     S.knobTouched = -1;
+                    S.knobPhysIdx = -1;
                     S.knobLocked[d1] = false;
                     S.knobAccum[d1]  = 0;
                     S.screenDirty = true;
@@ -461,6 +462,7 @@ function _onMidiInternalImpl(data) {
                 }
                 if ((S.activeBank === 4 && d1 === 4) || (S.activeBank === 5 && d1 === 4)) forceRedraw();
                 S.knobTouched = -1;
+                S.knobPhysIdx = -1;
                 S.knobLocked[d1] = false;
                 S.knobAccum[d1]  = 0;
                 S.screenDirty = true;

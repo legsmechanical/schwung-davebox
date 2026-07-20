@@ -931,7 +931,11 @@ export function _tickImpl() {
             S.actionPopupEndTick = -1;
             S.screenDirty = true;
         }
-        if (S.knobTouched >= 0 && S.knobTurnedTick[S.knobTouched] >= 0 &&
+        /* Auto-clear the highlight ~600ms after a turn — but ONLY for a turn that
+         * arrived without a physical touch (knobPhysIdx < 0). While a finger is
+         * actually on the knob, the highlight (and enum overlay) must persist
+         * until the touch is released, so skip the timeout in that case. */
+        if (S.knobTouched >= 0 && S.knobPhysIdx < 0 && S.knobTurnedTick[S.knobTouched] >= 0 &&
                 (S.tickCount - S.knobTurnedTick[S.knobTouched]) >= KNOB_TURN_HIGHLIGHT_TICKS) {
             S.knobTouched = -1;
             S.screenDirty = true;

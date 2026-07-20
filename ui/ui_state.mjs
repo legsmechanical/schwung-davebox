@@ -245,6 +245,11 @@ export const S = {
      * once on exit). Schwung co-run has a parallel _coRunTrackLedsLit latch. */
     _moveCoRunTrackLedsActive: false,
     knobTouched: -1,
+    /* Physically-held knob index (-1 none). Unlike knobTouched, this is set ONLY
+     * by a real touch note-on and cleared ONLY by its release — never by a knob
+     * turn or the post-turn highlight timeout. Lets the highlight/overlay persist
+     * until the finger lifts, and lets the enum overlay reveal on turn only. */
+    knobPhysIdx: -1,
     knobAccum: new Array(8).fill(0),
     knobLastDir: new Array(8).fill(0),
     knobLocked: new Array(8).fill(false),
