@@ -553,6 +553,7 @@ export function pollDSP() {
         const _wasSolo = S.mergeSingleTrack >= 0 || S.mergeSoloPlacement >= 0;
         S.mergeSingleTrack   = -1;
         S.mergeSoloPlacement = -1;
+        S.mergePlacing       = false;   /* clear the "Placing…" indicator */
         if (_wasSolo)
             showActionPopup('LIVE MERGE', 'Printed to clip');
         else if (_prevMergeState === 2)

@@ -357,6 +357,10 @@ export const S = {
     pendingMergePlacement: false,    /* multi-track live merge stopped → wait for row/step press to pick destination scene row */
     mergeSingleTrack: -1,            /* >=0: Track-View single-clip merge armed on this track (DSP merge_solo_track); on CAPTURED → pick-destination mode */
     mergeSoloPlacement: -1,          /* >=0: single-clip merge captured, awaiting a destination-clip pick on this track (Session View, empty clips blink) */
+    mergeNoticePending: false,       /* Shift+Rec raised the "Rec to start / Back to cancel" notice; count-in has NOT begun */
+    mergeNoticeSingleTrack: -1,      /* view captured at notice time: -1 = scene (all 8), >=0 = solo track for the pending merge */
+    mergePlacing: false,             /* destination picked → DSP committing; shows "Placing…" until CAPTURED→IDLE edge */
+    mergePlacingScene: false,        /* true = scene/all-8 placement (CLIPS), false = single clip (CLIP) — text only */
     _modalSwallowCC: -1,             /* button CC whose press was consumed by a modal guard in _onCCMsg; its release is swallowed too */
     metronomeOn: 1,
     metronomeOnLast: 1,

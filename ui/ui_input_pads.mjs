@@ -765,10 +765,12 @@ export function _onPadPress(status, d1, d2) {
                     const t = d1 - rowBase;
                     /* Single-clip merge placement: pick a destination clip on
                      * the merge track. Only an empty clip on that track commits;
-                     * any other clip-pad press is swallowed (Record cancels). */
+                     * any other clip-pad press is swallowed (Back cancels). */
                     if (S.mergeSoloPlacement >= 0) {
                         const clipIdx = S.sceneRow + row;
                         if (t === S.mergeSoloPlacement && !clipHasContent(t, clipIdx)) {
+                            S.mergePlacing      = true;   /* "Placing…" until DSP → IDLE */
+                            S.mergePlacingScene = false;
                             S.pendingDefaultSetParams.push(
                                 { key: 'merge_place_row', val: String(clipIdx) });
                             /* mode + LEDs cleared when DSP → IDLE (pollDSP). */
@@ -1160,6 +1162,8 @@ export function _onStepButtons(d1, d2) {
         /* Multi-track live merge placement: step press picks destination row. */
         if (S.pendingMergePlacement) {
             S.pendingMergePlacement = false;
+            S.mergePlacing      = true;      /* show "Placing…" until DSP → IDLE */
+            S.mergePlacingScene = true;
             S.pendingDefaultSetParams.push({ key: 'merge_place_row', val: String(idx) });
             S.screenDirty = true;
             return;

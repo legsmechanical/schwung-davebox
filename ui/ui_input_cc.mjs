@@ -1453,6 +1453,18 @@ function _onCC_buttons(d1, d2) {
 
 }
 
+/* Abort a Live Merge that is still counting in (before any capture). Clears the
+ * count-in flash, drops the armed state, and tells DSP to discard. Shared by the
+ * Rec-during-count-in path and Back (via _backTap). */
+function _cancelMergeCountIn() {
+    S.mergeCountingIn = false;
+    S.mergeSingleTrack = -1;
+    S.pendingMergeArm = false;
+    S.pendingDefaultSetParams.push({ key: 'merge_cancel', val: '1' });
+    setButtonLED(MoveRec, S.recordArmed ? Red : LED_OFF);
+    forceRedraw();
+}
+
 function _onCC_transport(d1, d2) {
     /* Back: close global menu if open; otherwise (with Shift) hide module.
      * Back during co-run never reaches us because dAVEBOx opts out of the
@@ -1633,33 +1645,58 @@ function _onCC_transport(d1, d2) {
      *     captured (DSP merge_arm "tN" solo mode) and on stop it commits
      *     straight into that track's focused clip — no placement dialog.
      * Merge state shows on the Record LED (red armed, green capturing). */
+    /* Rec (Shift or plain) while the merge count-in is running → CANCEL the
+     * merge (nothing is captured; back to idle). Must precede the notice/stop
+     * checks below so a mid-count-in press aborts rather than stops. */
+    if (d1 === MoveRec && d2 === 127 && S.mergeCountingIn) {
+        _cancelMergeCountIn();
+        return;
+    }
     if (d1 === MoveRec && d2 === 127 && S.shiftHeld) {
         if (S.dspMergeState !== 0) {
+            /* Active capture → stop it (finalizes; opens placement). */
             S.pendingDefaultSetParams.push({ key: 'merge_stop', val: '1' });
             /* LED stays green until DSP finalizes at page boundary. */
+        } else if (S.mergeNoticePending) {
+            /* Notice already up → ignore repeat Shift+Rec. */
         } else if (!S.playing) {
-            /* Live Merge is a stopped-transport op: it does a 1-bar count-in then
-             * starts the transport and captures from the top. Arm the count-in
-             * flash (mirrors record). While playing, Shift+Rec is ignored. */
-            const _bpm = (S.bpmMirror > 0 && isFinite(S.bpmMirror)) ? S.bpmMirror : 120;
-            S.mergeCountingIn      = true;
-            S.countInBeatStartTick = S.tickCount;
-            S.countInQuarterTicks  = Math.round(TICK_HZ * 60 / _bpm);
-            if (S.sessionView) {
-                S.mergeSingleTrack = -1;
-                S.pendingDefaultSetParams.push({ key: 'merge_arm', val: '1' });
-                S.pendingMergeArm = true;
-                showActionPopup('LIVE MERGE', 'Count-in, then', 'capturing all 8.', 'Rec to stop.');
-            } else {
-                const _mt = S.activeTrack;
-                S.mergeSingleTrack = _mt;
-                S.pendingDefaultSetParams.push({ key: 'merge_arm', val: 't' + _mt });
-                S.pendingMergeArm = true;
-                showActionPopup('LIVE MERGE', 'Count-in, then', 'this track.', 'Rec to stop.');
-            }
-            S.actionPopupEndTick = S.tickCount + 280;
+            /* Shift+Rec no longer starts the merge directly — it raises a NOTICE.
+             * The user then presses plain Rec to begin the count-in, or Back to
+             * cancel. (Live Merge is a stopped-transport op; ignored if playing.) */
+            S.mergeNoticePending     = true;
+            S.mergeNoticeSingleTrack = S.sessionView ? -1 : S.activeTrack;
+            forceRedraw();
         }
         /* else: transport playing + no active merge → ignored (merge is stopped-only) */
+        return;
+    }
+    /* Plain Rec while the Live Merge NOTICE is up → begin the 1-bar count-in.
+     * It reuses the record count-in machinery, then starts the transport and
+     * captures from the top. */
+    if (d1 === MoveRec && d2 === 127 && !S.shiftHeld && S.mergeNoticePending) {
+        S.mergeNoticePending = false;
+        if (S.playing) {
+            /* Transport was started while the notice was up — merge is a
+             * stopped-transport op, so just dismiss the notice. */
+            forceRedraw();
+            return;
+        }
+        const _bpm = (S.bpmMirror > 0 && isFinite(S.bpmMirror)) ? S.bpmMirror : 120;
+        S.mergeCountingIn      = true;
+        S.countInBeatStartTick = S.tickCount;
+        S.countInQuarterTicks  = Math.round(TICK_HZ * 60 / _bpm);
+        const _solo = S.mergeNoticeSingleTrack;
+        if (_solo < 0) {
+            S.mergeSingleTrack = -1;
+            S.pendingDefaultSetParams.push({ key: 'merge_arm', val: '1' });
+            showActionPopup('LIVE MERGE', 'Count-in, then', 'capturing all 8.', 'Rec to stop.');
+        } else {
+            S.mergeSingleTrack = _solo;
+            S.pendingDefaultSetParams.push({ key: 'merge_arm', val: 't' + _solo });
+            showActionPopup('LIVE MERGE', 'Count-in, then', 'this track.', 'Rec to stop.');
+        }
+        S.pendingMergeArm     = true;
+        S.actionPopupEndTick  = S.tickCount + 280;
         return;
     }
     /* Plain Record while a Live Merge is armed/capturing STOPS the merge
@@ -1980,6 +2017,8 @@ function _onCC_side(d1, d2) {
          * no notes captured — preserves existing clips on those tracks). */
         if (S.pendingMergePlacement) {
             S.pendingMergePlacement = false;
+            S.mergePlacing      = true;      /* show "Placing…" until DSP → IDLE */
+            S.mergePlacingScene = true;
             S.pendingDefaultSetParams.push({ key: 'merge_place_row', val: String(clipIdx) });
             S.screenDirty = true;
             return;
@@ -3403,16 +3442,9 @@ export function _onCCMsg(d1, d2) {
             return;
         }
     }
-    /* Live-merge placement (scene or single-clip): Record cancels (dialog text). */
-    if ((S.pendingMergePlacement || S.mergeSoloPlacement >= 0) &&
-            d2 === 127 && d1 === MoveRec) {
-        S.pendingMergePlacement = false;
-        S.mergeSoloPlacement    = -1;
-        S.pendingDefaultSetParams.push({ key: 'merge_cancel', val: '1' });
-        S._modalSwallowCC = d1;
-        forceRedraw();
-        return;
-    }
+    /* Live-merge placement (scene or single-clip): cancel is BACK now (handled
+     * in _backTap → merge_cancel), not Record. Record is inert during placement
+     * so a stray press can't discard the take. */
     /* Capture placement: Record cancels the pick (buffered input is kept, so
      * the user can try again or Shift+Capture to discard). */
     if (S.capturePlaceTrack >= 0 && d2 === 127 && d1 === MoveRec) {
