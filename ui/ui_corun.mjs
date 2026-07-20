@@ -110,7 +110,7 @@ export function schSlotsForTrack(t) {
  * pads / step buttons / knobs / transport stay with dAVEBOx. */
 export function openSchwungSlotEditor(t) {
     if (S.trackRoute[t] !== 0) {  /* 0 = ROUTE_SCHWUNG; fmtRoute('Swng') */
-        showActionPopup('NOT', 'SCHWUNG-ROUTED');
+        showActionPopup('NOT SCHWUNG-ROUTED', 'Set track route to', 'Schwung first.');
         return;
     }
     /* Close the global menu so Menu (exit co-run) doesn't land back on a

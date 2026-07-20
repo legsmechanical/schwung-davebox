@@ -1018,7 +1018,7 @@ export function _tickImpl() {
             } else {
                 const _msk = schSlotsForTrack(_t);
                 if (_msk === 0) {
-                    showActionPopup('NO SLOT', 'CH ' + (S.trackChannel[_t] | 0));
+                    showActionPopup('NO SCHWUNG SLOT', 'for channel ' + (S.trackChannel[_t] | 0));
                     /* Enter right as the popup expires so there's no gap where the
                      * normal UI flashes before the editor takes the OLED. */
                     S.pendingSchwungCoRunDelay = ACTION_POPUP_TICKS;

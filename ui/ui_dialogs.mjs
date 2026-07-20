@@ -79,6 +79,48 @@ export function drawBpmLine(cx, topY, value, unit) {
     triRight(x, topY + Math.round((nH - aH) / 2), aW, aH);
 }
 
+/* ---- Shared confirm-dialog chrome ----
+ * One button primitive + one Yes/No layout so every dialog reads the same:
+ * CAPS header (drawMenuHeader), Title-Case buttons, No-left / Yes-right. Before
+ * this, the button renderer was copy-pasted into ~8 functions (and several
+ * dialogs inlined it fully unrolled), which is how button order, label casing,
+ * and geometry drifted apart. Route every dialog through these. */
+
+/* A single button: filled when selected (black label), else outlined (white
+ * label). The label is auto-centered at the 6px print font, so call sites never
+ * hand-tune an x offset again. */
+function drawDlgBtn(x, y, w, h, sel, label) {
+    const lx = x + Math.round((w - label.length * 6) / 2);
+    if (sel) {
+        fill_rect(x, y, w, h, 1);
+        print(lx, y + 3, label, 0);
+    } else {
+        fill_rect(x, y, w, 1, 1);
+        fill_rect(x, y + h - 1, w, 1, 1);
+        fill_rect(x, y, 1, h, 1);
+        fill_rect(x + w - 1, y, 1, h, 1);
+        print(lx, y + 3, label, 1);
+    }
+}
+
+/* Canonical two-button Yes/No row: No left, Yes right, bottom of screen.
+ * `sel` follows the universal davebox convention (0 = Yes, 1 = No). */
+function drawYesNoRow(sel) {
+    drawDlgBtn(6,  46, 46, 13, sel === 1, 'No');
+    drawDlgBtn(74, 46, 46, 13, sel === 0, 'Yes');
+}
+
+/* Single filled OK button (info dialogs), centered horizontally at a caller-set
+ * baseline y. Consistent 30×12 geometry everywhere. */
+function drawOkButton(y) {
+    drawDlgBtn(49, y, 30, 12, true, 'OK');
+}
+
+/* Clamp a variable-length label to fit one OLED line at the 6px print font. */
+function truncLabel(label, maxChars) {
+    return label.length > maxChars ? label.substring(0, maxChars - 1) + '…' : label;
+}
+
 function drawTapTempoScreen() {
     clear_screen();
     drawMenuHeader('TAP TEMPO');
@@ -92,55 +134,15 @@ function drawClearSessionConfirm() {
     print(4, 16, 'This will clear the', 1);
     print(4, 25, 'entire project and', 1);
     print(4, 34, 'cannot be undone.', 1);
-    const noX = 6, yesX = 74, btnY = 46, btnW = 46, btnH = 13;
-    if (S.confirmClearSel === 1) {
-        fill_rect(noX, btnY, btnW, btnH, 1);
-        print(noX + 17, btnY + 3, 'No', 0);
-    } else {
-        fill_rect(noX, btnY, btnW, 1, 1);
-        fill_rect(noX, btnY + btnH - 1, btnW, 1, 1);
-        fill_rect(noX, btnY, 1, btnH, 1);
-        fill_rect(noX + btnW - 1, btnY, 1, btnH, 1);
-        print(noX + 17, btnY + 3, 'No', 1);
-    }
-    if (S.confirmClearSel === 0) {
-        fill_rect(yesX, btnY, btnW, btnH, 1);
-        print(yesX + 14, btnY + 3, 'Yes', 0);
-    } else {
-        fill_rect(yesX, btnY, btnW, 1, 1);
-        fill_rect(yesX, btnY + btnH - 1, btnW, 1, 1);
-        fill_rect(yesX, btnY, 1, btnH, 1);
-        fill_rect(yesX + btnW - 1, btnY, 1, btnH, 1);
-        print(yesX + 14, btnY + 3, 'Yes', 1);
-    }
+    drawYesNoRow(S.confirmClearSel);
 }
 
 function drawSaveStateConfirm() {
     clear_screen();
     drawMenuHeader('SAVE STATE');
-    print(4, 20, 'Save current session?', 1);
+    print(4, 20, 'Save this session?', 1);
     print(4, 32, S.confirmSaveCount + ' of ' + SNAPSHOT_CAP + ' saved', 1);
-    const noX = 6, yesX = 74, btnY = 46, btnW = 46, btnH = 13;
-    if (S.confirmSaveSel === 1) {
-        fill_rect(noX, btnY, btnW, btnH, 1);
-        print(noX + 17, btnY + 3, 'No', 0);
-    } else {
-        fill_rect(noX, btnY, btnW, 1, 1);
-        fill_rect(noX, btnY + btnH - 1, btnW, 1, 1);
-        fill_rect(noX, btnY, 1, btnH, 1);
-        fill_rect(noX + btnW - 1, btnY, 1, btnH, 1);
-        print(noX + 17, btnY + 3, 'No', 1);
-    }
-    if (S.confirmSaveSel === 0) {
-        fill_rect(yesX, btnY, btnW, btnH, 1);
-        print(yesX + 14, btnY + 3, 'Yes', 0);
-    } else {
-        fill_rect(yesX, btnY, btnW, 1, 1);
-        fill_rect(yesX, btnY + btnH - 1, btnW, 1, 1);
-        fill_rect(yesX, btnY, 1, btnH, 1);
-        fill_rect(yesX + btnW - 1, btnY, 1, btnH, 1);
-        print(yesX + 14, btnY + 3, 'Yes', 1);
-    }
+    drawYesNoRow(S.confirmSaveSel);
 }
 
 function drawConvertToDrumConfirm() {
@@ -149,27 +151,7 @@ function drawConvertToDrumConfirm() {
     print(4, 16, 'Warning:', 1);
     print(4, 25, 'Existing notes may', 1);
     print(4, 34, 'be lost. Proceed?', 1);
-    const noX = 6, yesX = 74, btnY = 46, btnW = 46, btnH = 13;
-    if (S.confirmConvertToDrumSel === 1) {
-        fill_rect(noX, btnY, btnW, btnH, 1);
-        print(noX + 17, btnY + 3, 'No', 0);
-    } else {
-        fill_rect(noX, btnY, btnW, 1, 1);
-        fill_rect(noX, btnY + btnH - 1, btnW, 1, 1);
-        fill_rect(noX, btnY, 1, btnH, 1);
-        fill_rect(noX + btnW - 1, btnY, 1, btnH, 1);
-        print(noX + 17, btnY + 3, 'No', 1);
-    }
-    if (S.confirmConvertToDrumSel === 0) {
-        fill_rect(yesX, btnY, btnW, btnH, 1);
-        print(yesX + 14, btnY + 3, 'Yes', 0);
-    } else {
-        fill_rect(yesX, btnY, btnW, 1, 1);
-        fill_rect(yesX, btnY + btnH - 1, btnW, 1, 1);
-        fill_rect(yesX, btnY, 1, btnH, 1);
-        fill_rect(yesX + btnW - 1, btnY, 1, btnH, 1);
-        print(yesX + 14, btnY + 3, 'Yes', 1);
-    }
+    drawYesNoRow(S.confirmConvertToDrumSel);
 }
 
 function drawConvertToConductConfirm() {
@@ -178,27 +160,7 @@ function drawConvertToConductConfirm() {
     print(4, 16, 'Make Conductor?', 1);
     print(4, 25, 'Clears FX/ARP/Auto.', 1);
     print(4, 34, 'Keeps notes.', 1);
-    const noX = 6, yesX = 74, btnY = 46, btnW = 46, btnH = 13;
-    if (S.confirmConvertToConductSel === 1) {
-        fill_rect(noX, btnY, btnW, btnH, 1);
-        print(noX + 17, btnY + 3, 'No', 0);
-    } else {
-        fill_rect(noX, btnY, btnW, 1, 1);
-        fill_rect(noX, btnY + btnH - 1, btnW, 1, 1);
-        fill_rect(noX, btnY, 1, btnH, 1);
-        fill_rect(noX + btnW - 1, btnY, 1, btnH, 1);
-        print(noX + 17, btnY + 3, 'No', 1);
-    }
-    if (S.confirmConvertToConductSel === 0) {
-        fill_rect(yesX, btnY, btnW, btnH, 1);
-        print(yesX + 14, btnY + 3, 'Yes', 0);
-    } else {
-        fill_rect(yesX, btnY, btnW, 1, 1);
-        fill_rect(yesX, btnY + btnH - 1, btnW, 1, 1);
-        fill_rect(yesX, btnY, 1, btnH, 1);
-        fill_rect(yesX + btnW - 1, btnY, 1, btnH, 1);
-        print(yesX + 14, btnY + 3, 'Yes', 1);
-    }
+    drawYesNoRow(S.confirmConvertToConductSel);
 }
 
 /* Generic single-button INFO dialog. Renders up to 4 lines from S.menuInfoLines
@@ -213,58 +175,24 @@ function drawMenuInfo() {
         print(4, y, lines[i], 1);
         y += 9;
     }
-    const okX = 49, btnY = 46, btnW = 30, btnH = 13;
-    fill_rect(okX, btnY, btnW, btnH, 1);
-    print(okX + 10, btnY + 3, 'OK', 0);
+    drawOkButton(46);
 }
 
 function drawExportConfirm() {
     clear_screen();
     drawMenuHeader('EXPORT');
     if (S.confirmExportCondPhase) {
-        function _ebtn(x, y, w, h, sel, label, labelOff) {
-            if (sel) {
-                fill_rect(x, y, w, h, 1);
-                print(x + labelOff, y + 3, label, 0);
-            } else {
-                fill_rect(x, y, w, 1, 1);
-                fill_rect(x, y + h - 1, w, 1, 1);
-                fill_rect(x, y, 1, h, 1);
-                fill_rect(x + w - 1, y, 1, h, 1);
-                print(x + labelOff, y + 3, label, 1);
-            }
-        }
         print(4, 22, 'Apply Conductor?', 1);
         const bY = 47, bW = 36, mH = 11;
-        _ebtn(4,  bY, bW, mH, S.confirmExportCondSel === 0, 'YES',    9);
-        _ebtn(45, bY, bW, mH, S.confirmExportCondSel === 1, 'NO',    14);
-        _ebtn(86, bY, bW, mH, S.confirmExportCondSel === 2, 'CANCEL', 1);
+        drawDlgBtn(4,  bY, bW, mH, S.confirmExportCondSel === 0, 'Yes');
+        drawDlgBtn(45, bY, bW, mH, S.confirmExportCondSel === 1, 'No');
+        drawDlgBtn(86, bY, bW, mH, S.confirmExportCondSel === 2, 'Cancel');
         return;
     }
     print(4, 16, 'Export this set as', 1);
     print(4, 25, 'an Ableton bundle?', 1);
     print(4, 34, '(transport stopped)', 1);
-    const noX = 6, yesX = 74, btnY = 46, btnW = 46, btnH = 13;
-    if (S.confirmExportSel === 1) {
-        fill_rect(noX, btnY, btnW, btnH, 1);
-        print(noX + 17, btnY + 3, 'No', 0);
-    } else {
-        fill_rect(noX, btnY, btnW, 1, 1);
-        fill_rect(noX, btnY + btnH - 1, btnW, 1, 1);
-        fill_rect(noX, btnY, 1, btnH, 1);
-        fill_rect(noX + btnW - 1, btnY, 1, btnH, 1);
-        print(noX + 17, btnY + 3, 'No', 1);
-    }
-    if (S.confirmExportSel === 0) {
-        fill_rect(yesX, btnY, btnW, btnH, 1);
-        print(yesX + 14, btnY + 3, 'Yes', 0);
-    } else {
-        fill_rect(yesX, btnY, btnW, 1, 1);
-        fill_rect(yesX, btnY + btnH - 1, btnW, 1, 1);
-        fill_rect(yesX, btnY, 1, btnH, 1);
-        fill_rect(yesX + btnW - 1, btnY, 1, btnH, 1);
-        print(yesX + 14, btnY + 3, 'Yes', 1);
-    }
+    drawYesNoRow(S.confirmExportSel);
 }
 
 /* Persistent post-export confirmation: shows the full device path, dismissed
@@ -279,10 +207,7 @@ function drawExportDoneDialog() {
         print(2, y, path.slice(i, i + W), 1);
         y += 9;
     }
-    /* OK button (filled, bottom center) */
-    const okX = 49, btnY = 52, btnW = 30, btnH = 11;
-    fill_rect(okX, btnY, btnW, btnH, 1);
-    print(okX + 10, btnY + 2, 'OK', 0);
+    drawOkButton(52);
 }
 
 export function drawGlobalMenu() {
@@ -323,140 +248,89 @@ export function drawGlobalMenu() {
  * pre-targeted at the active clip / drum lane. */
 export function drawStateWipeConfirm() {
     clear_screen();
-    function _btn(x, y, w, h, sel, label, labelOff) {
-        if (sel) {
-            fill_rect(x, y, w, h, 1);
-            print(x + labelOff, y + 3, label, 0);
-        } else {
-            fill_rect(x, y, w, 1, 1);
-            fill_rect(x, y + h - 1, w, 1, 1);
-            fill_rect(x, y, 1, h, 1);
-            fill_rect(x + w - 1, y, 1, h, 1);
-            print(x + labelOff, y + 3, label, 1);
-        }
-    }
-    drawMenuHeader('Incompatible State');
-    print(4, 16, 'Session incompatible', 1);
-    print(4, 25, 'with current dB ver.', 1);
-    print(4, 34, 'Erase and proceed?', 1);
-    _btn(6,  46, 46, 13, S.confirmStateWipeSel === 0, 'Yes', 14);
-    _btn(74, 46, 46, 13, S.confirmStateWipeSel === 1, 'No',  17);
+    drawMenuHeader('INCOMPATIBLE STATE');
+    print(4, 16, 'This session is from', 1);
+    print(4, 25, 'a different dAVEBOx', 1);
+    print(4, 34, 'version. Erase it?', 1);
+    drawYesNoRow(S.confirmStateWipeSel);
 }
 
 export function drawRecordBlockedDialog() {
     clear_screen();
-    function _btn(x, y, w, h, sel, label, labelOff) {
-        if (sel) {
-            fill_rect(x, y, w, h, 1);
-            print(x + labelOff, y + 3, label, 0);
-        } else {
-            fill_rect(x, y, w, 1, 1);
-            fill_rect(x, y + h - 1, w, 1, 1);
-            fill_rect(x, y, 1, h, 1);
-            fill_rect(x + w - 1, y, 1, h, 1);
-            print(x + labelOff, y + 3, label, 1);
-        }
-    }
-    drawMenuHeader('REC Unavailable');
-    print(4, 16, 'Set Dir to Fwd', 1);
-    print(4, 25, 'or Bake', 1);
-    _btn(6,  46, 46, 13, S.recordBlockedDialogSel === 0, 'OK',       19);
-    _btn(58, 46, 64, 13, S.recordBlockedDialogSel === 1, 'BAKE NOW', 6);
+    drawMenuHeader('REC UNAVAILABLE');
+    print(4, 16, 'Set clip Dir to Fwd,', 1);
+    print(4, 25, 'or bake it first.', 1);
+    drawDlgBtn(6,  46, 46, 13, S.recordBlockedDialogSel === 0, 'OK');
+    drawDlgBtn(58, 46, 64, 13, S.recordBlockedDialogSel === 1, 'Bake Now');
 }
 
 /* Shown when Tap Tempo is invoked while Clock Follow = Move (tempo is Move's, so
  * there's nothing to tap). Single OK button; dismissed by jog click or Back. */
 export function drawBpmMoveInfo() {
     clear_screen();
-    drawMenuHeader('Tempo');
-    print(4, 20, 'BPM controlled', 1);
-    print(4, 30, 'by Move', 1);
-    /* OK button (filled, bottom center) — matches the generic INFO dialog. */
-    fill_rect(49, 52, 30, 11, 1);
-    print(59, 54, 'OK', 0);
+    drawMenuHeader('TEMPO');
+    print(4, 20, 'Tempo follows Move', 1);
+    print(4, 30, 'while clock-linked.', 1);
+    drawOkButton(52);
 }
 
 /* Destructive Lgto confirm dialog. Right-turn of CLIP K8 / DRUM LANE K8
  * opens this. OK applies; CANCEL aborts. Undoable. */
 export function drawLgtoConfirm() {
     clear_screen();
-    function _btn(x, y, w, h, sel, label, labelOff) {
-        if (sel) {
-            fill_rect(x, y, w, h, 1);
-            print(x + labelOff, y + 3, label, 0);
-        } else {
-            fill_rect(x, y, w, 1, 1);
-            fill_rect(x, y + h - 1, w, 1, 1);
-            fill_rect(x, y, 1, h, 1);
-            fill_rect(x + w - 1, y, 1, h, 1);
-            print(x + labelOff, y + 3, label, 1);
-        }
-    }
-    drawMenuHeader(S.confirmLgtoIsDrum ? 'Lgto (lane)' : 'Lgto (clip)');
-    print(4, 16, 'Destructive', 1);
-    print(4, 25, 'Proceed?', 1);
-    _btn(6,  46, 46, 13, S.confirmLgtoSel === 0, 'OK',     19);
-    _btn(58, 46, 64, 13, S.confirmLgtoSel === 1, 'CANCEL', 14);
+    drawMenuHeader(S.confirmLgtoIsDrum ? 'LEGATO (LANE)' : 'LEGATO (CLIP)');
+    print(4, 16, 'Extend notes to fill', 1);
+    print(4, 25, 'gaps. Destructive.', 1);
+    drawDlgBtn(6,  46, 46, 13, S.confirmLgtoSel === 0, 'OK');
+    drawDlgBtn(58, 46, 64, 13, S.confirmLgtoSel === 1, 'Cancel');
 }
 
 export function drawBakeConfirm() {
     clear_screen();
-    function _btn(x, y, w, h, sel, label, labelOff) {
-        if (sel) {
-            fill_rect(x, y, w, h, 1);
-            print(x + labelOff, y + 3, label, 0);
-        } else {
-            fill_rect(x, y, w, 1, 1);
-            fill_rect(x, y + h - 1, w, 1, 1);
-            fill_rect(x, y, 1, h, 1);
-            fill_rect(x + w - 1, y, 1, h, 1);
-            print(x + labelOff, y + 3, label, 1);
-        }
-    }
     if (S.confirmBakeWrapPhase) {
         drawMenuHeader('WRAP TAILS?');
         print(4, 16, 'Wrap delay echoes', 1);
         print(4, 25, 'past clip end back', 1);
         print(4, 34, 'to the beginning?', 1);
         const bW = 38, bH = 13, bY = 50;
-        _btn(4,  bY, bW, bH, S.confirmBakeWrapSel === 0, 'YES',    9);
-        _btn(45, bY, bW, bH, S.confirmBakeWrapSel === 1, 'NO',    14);
-        _btn(86, bY, bW, bH, S.confirmBakeWrapSel === 2, 'CANCEL', 1);
+        drawDlgBtn(4,  bY, bW, bH, S.confirmBakeWrapSel === 0, 'Yes');
+        drawDlgBtn(45, bY, bW, bH, S.confirmBakeWrapSel === 1, 'No');
+        drawDlgBtn(86, bY, bW, bH, S.confirmBakeWrapSel === 2, 'Cancel');
     } else if (S.confirmBakeIsMultiLoop) {
         drawMenuHeader('BAKE FX?');
-        print(4, 14, 'Bake N loops of FX', 1);
-        print(4, 23, 'chain to clip?', 1);
-        const bH = 12, bY = 38;
-        _btn(2,  bY, 27, bH, S.confirmBakeSel === 1, '1x',     9);
-        _btn(31, bY, 27, bH, S.confirmBakeSel === 2, '2x',     9);
-        _btn(60, bY, 27, bH, S.confirmBakeSel === 3, '4x',     9);
-        _btn(89, bY, 37, bH, S.confirmBakeSel === 0, 'CANCEL', 3);
+        print(4, 14, 'Bake the FX chain to', 1);
+        print(4, 23, 'the clip — how many', 1);
+        print(4, 32, 'loops?', 1);
+        const bH = 12, bY = 44;
+        drawDlgBtn(2,  bY, 27, bH, S.confirmBakeSel === 1, '1x');
+        drawDlgBtn(31, bY, 27, bH, S.confirmBakeSel === 2, '2x');
+        drawDlgBtn(60, bY, 27, bH, S.confirmBakeSel === 3, '4x');
+        drawDlgBtn(89, bY, 37, bH, S.confirmBakeSel === 0, 'Cancel');
     } else if (!S.confirmBakeIsDrum) {
         drawMenuHeader('BAKE FX?');
         print(4, 16, 'Apply effects chain', 1);
         print(4, 25, 'to clip notes and', 1);
         print(4, 34, 'clear the settings.', 1);
-        _btn(6,  46, 46, 13, S.confirmBakeSel === 1, 'No',  17);
-        _btn(74, 46, 46, 13, S.confirmBakeSel === 0, 'Yes', 14);
+        drawYesNoRow(S.confirmBakeSel);
     } else if (S.confirmBakeDrumLoopOpen) {
         /* Step 2: loop count selection */
-        const modeLabel = S.confirmBakeDrumMode === 1 ? 'LANE' : 'CLIP';
+        const modeLabel = S.confirmBakeDrumMode === 1 ? 'Lane' : 'Clip';
         drawMenuHeader('BAKE DRUMS?');
         print(4, 13, modeLabel + ' — loop count:', 1);
         const mH = 11;
-        _btn(14, 33, 100, mH, S.confirmBakeDrumLoopSel === 0, 'CANCEL', 31);
-        _btn(4,  47, 36,  mH, S.confirmBakeDrumLoopSel === 1, '1x', 12);
-        _btn(46, 47, 36,  mH, S.confirmBakeDrumLoopSel === 2, '2x', 12);
-        _btn(88, 47, 36,  mH, S.confirmBakeDrumLoopSel === 3, '4x', 12);
+        drawDlgBtn(14, 33, 100, mH, S.confirmBakeDrumLoopSel === 0, 'Cancel');
+        drawDlgBtn(4,  47, 36,  mH, S.confirmBakeDrumLoopSel === 1, '1x');
+        drawDlgBtn(46, 47, 36,  mH, S.confirmBakeDrumLoopSel === 2, '2x');
+        drawDlgBtn(88, 47, 36,  mH, S.confirmBakeDrumLoopSel === 3, '4x');
     } else {
         drawMenuHeader('BAKE DRUMS?');
         print(4, 16, 'Bake FX to clip', 1);
         print(4, 25, '(all lanes) or lane?', 1);
-        /* 3 buttons: CLIP(0) | LANE(1) | CANCEL(2, default) */
+        /* 3 buttons: Clip(0) | Lane(1) | Cancel(2, default) */
         const bW = 38, bH = 13, bY = 50;
-        _btn(4,  bY, bW, bH, S.confirmBakeSel === 0, 'CLIP',   7);
-        _btn(45, bY, bW, bH, S.confirmBakeSel === 1, 'LANE',   7);
-        _btn(86, bY, bW, bH, S.confirmBakeSel === 2, 'CANCEL', 1);
+        drawDlgBtn(4,  bY, bW, bH, S.confirmBakeSel === 0, 'Clip');
+        drawDlgBtn(45, bY, bW, bH, S.confirmBakeSel === 1, 'Lane');
+        drawDlgBtn(86, bY, bW, bH, S.confirmBakeSel === 2, 'Cancel');
     }
 }
 
@@ -509,17 +383,7 @@ function snapById(p, id) {
 
 /* Yes/No buttons matching the other confirm dialogs (No left, Yes right). */
 function drawSnapYesNo(sel) {
-    const noX = 6, yesX = 74, btnY = 46, btnW = 46, btnH = 13;
-    function btn(x, on, label, off) {
-        if (on) { fill_rect(x, btnY, btnW, btnH, 1); print(x + off, btnY + 3, label, 0); }
-        else {
-            fill_rect(x, btnY, btnW, 1, 1); fill_rect(x, btnY + btnH - 1, btnW, 1, 1);
-            fill_rect(x, btnY, 1, btnH, 1); fill_rect(x + btnW - 1, btnY, 1, btnH, 1);
-            print(x + off, btnY + 3, label, 1);
-        }
-    }
-    btn(noX, sel === 1, 'No', 17);
-    btn(yesX, sel === 0, 'Yes', 14);
+    drawYesNoRow(sel);
 }
 
 export function drawSnapshotPicker() {
@@ -537,14 +401,14 @@ export function drawSnapshotPicker() {
         } else if (c.kind === 'load') {
             const s = snapById(p, c.targetId);
             drawMenuHeader('LOAD STATE');
-            print(4, 18, 'Load ' + (s ? s.label : ''), 1);
+            print(4, 18, 'Load ' + truncLabel(s ? s.label : '', 15), 1);
             print(4, 27, 'Unsaved changes', 1);
             print(4, 36, 'will be lost.', 1);
         } else {
             const s = snapById(p, c.targetId);
             drawMenuHeader('OVERWRITE');
             print(4, 18, 'Replace', 1);
-            print(4, 27, (s ? s.label : '') + '?', 1);
+            print(4, 27, truncLabel(s ? s.label : '', 19) + '?', 1);
         }
         drawSnapYesNo(c.sel);
         return;
@@ -602,62 +466,36 @@ export function drawClearAutoMenu() {
 
 export function drawBakeSceneConfirm() {
     clear_screen();
-    function _btn(x, y, w, h, sel, label, labelOff) {
-        if (sel) {
-            fill_rect(x, y, w, h, 1);
-            print(x + labelOff, y + 3, label, 0);
-        } else {
-            fill_rect(x, y, w, 1, 1);
-            fill_rect(x, y + h - 1, w, 1, 1);
-            fill_rect(x, y, 1, h, 1);
-            fill_rect(x + w - 1, y, 1, h, 1);
-            print(x + labelOff, y + 3, label, 1);
-        }
-    }
     drawMenuHeader('BAKE SCENE?');
     const mH = 11;
     if (S.confirmBakeSceneCondPhase) {
         print(4, 22, 'Apply Conductor?', 1);
         const bY = 47, bW = 36;
-        _btn(4,  bY, bW, mH, S.confirmBakeSceneCondSel === 0, 'YES',    9);
-        _btn(45, bY, bW, mH, S.confirmBakeSceneCondSel === 1, 'NO',    14);
-        _btn(86, bY, bW, mH, S.confirmBakeSceneCondSel === 2, 'CANCEL', 1);
+        drawDlgBtn(4,  bY, bW, mH, S.confirmBakeSceneCondSel === 0, 'Yes');
+        drawDlgBtn(45, bY, bW, mH, S.confirmBakeSceneCondSel === 1, 'No');
+        drawDlgBtn(86, bY, bW, mH, S.confirmBakeSceneCondSel === 2, 'Cancel');
     } else if (S.confirmBakeSceneWrapPhase) {
         print(4, 22, 'Wrap tails?', 1);
         const bY = 47, bW = 36;
-        _btn(4,  bY, bW, mH, S.confirmBakeSceneWrapSel === 0, 'YES',    9);
-        _btn(45, bY, bW, mH, S.confirmBakeSceneWrapSel === 1, 'NO',    14);
-        _btn(86, bY, bW, mH, S.confirmBakeSceneWrapSel === 2, 'CANCEL', 1);
+        drawDlgBtn(4,  bY, bW, mH, S.confirmBakeSceneWrapSel === 0, 'Yes');
+        drawDlgBtn(45, bY, bW, mH, S.confirmBakeSceneWrapSel === 1, 'No');
+        drawDlgBtn(86, bY, bW, mH, S.confirmBakeSceneWrapSel === 2, 'Cancel');
     } else {
         print(4, 22, 'Loop count:', 1);
-        _btn(14, 33, 100, mH, S.confirmBakeSceneSel === 0, 'CANCEL', 31);
-        _btn(4,  47, 36,  mH, S.confirmBakeSceneSel === 1, '1x', 12);
-        _btn(46, 47, 36,  mH, S.confirmBakeSceneSel === 2, '2x', 12);
-        _btn(88, 47, 36,  mH, S.confirmBakeSceneSel === 3, '4x', 12);
+        drawDlgBtn(14, 33, 100, mH, S.confirmBakeSceneSel === 0, 'Cancel');
+        drawDlgBtn(4,  47, 36,  mH, S.confirmBakeSceneSel === 1, '1x');
+        drawDlgBtn(46, 47, 36,  mH, S.confirmBakeSceneSel === 2, '2x');
+        drawDlgBtn(88, 47, 36,  mH, S.confirmBakeSceneSel === 3, '4x');
     }
 }
 
 export function drawXposeConfirm() {
     clear_screen();
-    function _btn(x, y, w, h, sel, label, labelOff) {
-        if (sel) {
-            fill_rect(x, y, w, h, 1);
-            print(x + labelOff, y + 3, label, 0);
-        } else {
-            fill_rect(x, y, w, 1, 1);
-            fill_rect(x, y + h - 1, w, 1, 1);
-            fill_rect(x, y, 1, h, 1);
-            fill_rect(x + w - 1, y, 1, h, 1);
-            print(x + labelOff, y + 3, label, 1);
-        }
-    }
     drawMenuHeader('TRANSPOSE CLIPS?');
     const tgt = NOTE_KEYS[S.confirmXposeKey] + ' ' + (SCALE_DISPLAY[S.confirmXposeScale] || '?');
     print(4, 22, 'To ' + tgt, 1);
     print(4, 33, 'All melodic clips', 1);
-    const mH = 11, bY = 50, bW = 50;
-    _btn(4,  bY, bW, mH, S.confirmXposeSel === 0, 'YES', 17);
-    _btn(74, bY, bW, mH, S.confirmXposeSel === 1, 'NO',  20);
+    drawYesNoRow(S.confirmXposeSel);
 }
 
 /* ------------------------------------------------------------------ */

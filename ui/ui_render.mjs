@@ -35,6 +35,7 @@ import {
     bankHasAltParams, altIndicatorActive
 } from './ui_leds.mjs';
 import { SPLASH_FRAMES, SPLASH_COUNT, SPLASH_W, SPLASH_H, pickSplashIdx } from './ui_splash.mjs';
+import { drawMenuHeader } from '/data/UserData/schwung/shared/menu_layout.mjs';
 
 /* ------------------------------------------------------------------ */
 /* Parameter bank definitions                                           */
@@ -622,54 +623,54 @@ export function drawUI() {
     if (S.clearAutoMenu) { drawClearAutoMenu(); return; }
     if (S.pendingSceneBakePicker) {
         clear_screen();
-        print(4, 8,  'BAKE SCENE',         1);
-        print(4, 22, 'Tap row or scene step', 1);
-        print(4, 34, 'to pick the scene',    1);
-        print(4, 50, 'Any other btn cancels', 1);
+        drawMenuHeader('BAKE SCENE');
+        print(4, 20, 'Tap a row or scene', 1);
+        print(4, 30, 'step to pick it.',   1);
+        print(4, 50, 'Back cancels',        1);
         return;
     }
     if (S.mergePlacing) {
         /* Destination picked — DSP is committing the take. Shown so the jump
          * back to the normal screen doesn't read as a freeze. */
         clear_screen();
-        print(4, 20, 'PLACING MERGED',                                 1);
-        print(4, 34, S.mergePlacingScene ? 'CLIPS...' : 'CLIP...',     1);
+        drawMenuHeader('PLACING MERGED');
+        print(4, 26, S.mergePlacingScene ? 'Clips…' : 'Clip…', 1);
         return;
     }
     if (S.mergeNoticePending) {
         /* Shift+Rec raised this notice; it does NOT start the merge. Plain Rec
          * begins the count-in, Back cancels. */
         clear_screen();
-        print(4, 8,  'LIVE MERGE',                                          1);
-        print(4, 22, S.mergeNoticeSingleTrack < 0 ? 'Capture all 8.'
+        drawMenuHeader('LIVE MERGE');
+        print(4, 20, S.mergeNoticeSingleTrack < 0 ? 'Capture all 8.'
                                                    : 'Capture this track.', 1);
-        print(4, 36, 'Rec to start,',                                       1);
-        print(4, 50, 'Back to cancel',                                      1);
+        print(4, 34, 'Rec to start,',                                       1);
+        print(4, 48, 'Back to cancel.',                                     1);
         return;
     }
     if (S.pendingMergePlacement) {
         clear_screen();
-        print(4, 8,  'PLACE MERGED CLIPS',  1);
-        print(4, 22, 'Tap row or scene step', 1);
-        print(4, 34, 'to pick destination',  1);
-        print(4, 50, 'Back cancels',          1);
+        drawMenuHeader('PLACE MERGED');
+        print(4, 20, 'Tap a row or scene', 1);
+        print(4, 30, 'step for the clips.', 1);
+        print(4, 50, 'Back cancels',         1);
         return;
     }
     if (S.tempoSelectActive) { drawTempoSelect(); return; }
     if (S.mergeSoloPlacement >= 0) {
         clear_screen();
-        print(4, 8,  'MERGED TAKE',        1);
-        print(4, 22, 'Tap a blinking clip', 1);
-        print(4, 34, 'on track ' + (S.mergeSoloPlacement + 1) + ' to save', 1);
+        drawMenuHeader('MERGED TAKE');
+        print(4, 20, 'Tap a blinking clip', 1);
+        print(4, 32, 'on track ' + (S.mergeSoloPlacement + 1) + ' to save.', 1);
         print(4, 50, 'Back cancels',         1);
         return;
     }
     if (S.capturePlaceTrack >= 0) {
         clear_screen();
-        print(4, 8,  'CAPTURED TAKE',       1);
-        print(4, 22, 'Tap a blinking clip', 1);
-        print(4, 34, 'on track ' + (S.capturePlaceTrack + 1) + ' to save', 1);
-        print(4, 50, 'Rec cancels',         1);
+        drawMenuHeader('CAPTURED TAKE');
+        print(4, 20, 'Tap a blinking clip', 1);
+        print(4, 32, 'on track ' + (S.capturePlaceTrack + 1) + ' to save.', 1);
+        print(4, 50, 'Back cancels',         1);   /* Rec still works; Back is the universal cancel */
         return;
     }
     if (S.confirmStateWipe) { drawStateWipeConfirm(); return; }
@@ -798,6 +799,18 @@ export function drawUI() {
                     print(_lx, _ly, S.actionPopupLines[_li], 1);
                 }
             }
+        } else if (S.actionPopupLines.length >= 4) {
+            /* 3+ line info popups have no highlight, so they fell through to the
+             * 2-line branch below and silently dropped lines 3-4. Render all
+             * four (matches the Perf-view popup renderer's layout). */
+            print(4, 14, S.actionPopupLines[0], 1);
+            print(4, 25, S.actionPopupLines[1], 1);
+            print(4, 36, S.actionPopupLines[2], 1);
+            print(4, 47, S.actionPopupLines[3], 1);
+        } else if (S.actionPopupLines.length === 3) {
+            print(4, 17, S.actionPopupLines[0], 1);
+            print(4, 29, S.actionPopupLines[1], 1);
+            print(4, 41, S.actionPopupLines[2], 1);
         } else if (S.actionPopupLines.length >= 2) {
             print(4, 22, S.actionPopupLines[0], 1);
             print(4, 34, S.actionPopupLines[1], 1);
