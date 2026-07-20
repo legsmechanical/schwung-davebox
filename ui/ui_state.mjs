@@ -527,6 +527,17 @@ export const S = {
     pendingUndoSync: 0,
     pendingDefaultSetParams: [],
     clearDrainHold: 0,       /* clearClip sets this so the next pendingDefaultSetParams drain skips one tick — keeps the queued _clear out of the same buffer as the sync set_param fan-out from clearClip's call site */
+    /* Local-edit self-resync suppression. Device-originated clip edits (copy/cut/
+     * clear/row ops) bump the DSP's rui_rev — which is the browser-facing REMOTE-edit
+     * signal — so pollDSP would otherwise resync the device from the DSP for an edit
+     * it JUST applied to its own mirrors. For row-scope ops rui_touch marks the digest
+     * FULL → syncClipsFromDsp() = ~1,540 get_params ≈ 4.3s frozen tick. When a flagged
+     * (_local) editop command drains to DSP we arm localRevSuppressUntil; a rui_rev bump
+     * observed within that tick window is treated as ours (adopt the rev, do only the
+     * cheap automation-only re-read below), never the FULL sync. See ui_editops.mjs /
+     * pollDSP. */
+    localRevSuppressUntil: -1,   /* tickCount through which a rui_rev bump is OUR own edit */
+    localEditTouched: [],        /* [{t,c}] melodic clips whose automation mirror the editop couldn't fill locally; drained by pollDSP's local-rev path (cc_auto_bits/cc_rest/at_has only — steps/len/tps are already correct from the editop) */
     pendingStepsReread: 0,
     pendingStepsRereadTrack: 0,
     pendingStepsRereadClip: 0,

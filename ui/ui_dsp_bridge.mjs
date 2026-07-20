@@ -249,6 +249,37 @@ export function resetPerClipBankParamsToDefault(t) {
     S.screenDirty = true;
 }
 
+/* Re-read ONLY the per-clip automation mirror (cc_auto_bits / cc_rest / at_has)
+ * for the melodic clips a local editop touched. Used by pollDSP's local-rev path
+ * in place of the DSP FULL-digest self-resync: copy/cut/clear/row editops set
+ * steps/length/tps/loop/nonEmpty in JS themselves, but cannot know the resulting
+ * automation state (the DSP copies/wipes cc lanes) — so we read just those three
+ * fields here. Bounded to S.localEditTouched (≤16 clips), ~3 get_params each.
+ * Runs from tick (pollDSP) where get_param is legal. */
+function localAutomationResync() {
+    const touched = S.localEditTouched;
+    if (!touched || touched.length === 0) return;
+    if (typeof host_module_get_param === 'function') {
+        for (let i = 0; i < touched.length; i++) {
+            const t = touched[i].t, c = touched[i].c;
+            if (t < 0 || t >= NUM_TRACKS || c < 0 || c >= NUM_CLIPS) continue;
+            const _abits = host_module_get_param('t' + t + '_c' + c + '_cc_auto_bits');
+            S.trackCCAutoBits[t][c] = _abits !== null ? (parseInt(_abits, 10) || 0) : 0;
+            const _arest = host_module_get_param('t' + t + '_c' + c + '_cc_rest');
+            if (_arest) {
+                const _arp = _arest.split(' ');
+                for (let k = 0; k < 8; k++) {
+                    const rv = parseInt(_arp[k], 10);
+                    S.clipCCVal[t][c][k] = (rv >= 0 && rv <= 127) ? rv : -1;
+                }
+            }
+            const _ath = host_module_get_param('t' + t + '_c' + c + '_at_has');
+            S.clipAtHas[t][c] = (_ath !== null && parseInt(_ath, 10) === 1);
+        }
+    }
+    S.localEditTouched = [];
+}
+
 /* ------------------------------------------------------------------ */
 /* pollDSP — the one legal get_param reader (runs from tick)           */
 /* ------------------------------------------------------------------ */
@@ -316,7 +347,20 @@ export function pollDSP() {
                 S.lastRemoteRev = _rev;
             } else if (_rev !== S.lastRemoteRev) {
                 S.lastRemoteRev = _rev;
-                syncClipsTargeted(host_module_get_param('rui_dirty'));
+                if (S.tickCount <= S.localRevSuppressUntil) {
+                    /* OUR OWN edit (a _local editop just drained). The device
+                     * already applied it to its mirrors; the DSP FULL-digest path
+                     * would otherwise cost a ~4.3s syncClipsFromDsp for row-scope
+                     * ops. Consume+discard rui_dirty (read-and-clear, so a later
+                     * genuine remote poll starts clean) and re-read ONLY the
+                     * automation fields the editop couldn't fill in JS, for just
+                     * the clips we touched. Steps/length/tps stay as the editop
+                     * set them (more correct than a re-read — preserves tie steps). */
+                    host_module_get_param('rui_dirty');
+                    localAutomationResync();
+                } else {
+                    syncClipsTargeted(host_module_get_param('rui_dirty'));
+                }
                 S.screenDirty = true;
             }
         }

@@ -586,6 +586,13 @@ export function _tickImpl() {
             && typeof host_module_set_param === 'function') {
         const _dp = S.pendingDefaultSetParams.shift();
         host_module_set_param(_dp.key, _dp.val);
+        /* Device-originated clip edit (copy/cut/clear/row): the DSP will bump
+         * rui_rev on the next audio buffer. Arm a short window so pollDSP treats
+         * that bump as OURS — adopt the rev + cheap automation-only re-read of
+         * S.localEditTouched — instead of the FULL syncClipsFromDsp() self-resync
+         * (~1,540 get_params ≈ 4.3s). 12 ticks (~128ms) covers buffer-apply
+         * latency + one POLL_INTERVAL. See ui_state.mjs localRevSuppressUntil. */
+        if (_dp._local) S.localRevSuppressUntil = S.tickCount + 12;
     }
 
     /* Poll every 100 ticks (~0.5s): detect DSP hot-reload via instance nonce. */
