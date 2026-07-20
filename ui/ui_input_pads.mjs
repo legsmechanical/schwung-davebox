@@ -1145,11 +1145,10 @@ export function _onStepButtons(d1, d2) {
         return;
     }
     /* Perf Mode: step buttons are preset snapshot slots — defer to release for
-     * tap/hold decision. EXCEPT Shift+Step 13 (Suspend), which must work from
-     * anywhere: let it fall through to the Shift handler below so Perf Mode
-     * doesn't swallow it as a preset-slot recall. */
-    if (S.sessionView && (S.loopHeld || S.perfViewLocked) &&
-            !(S.shiftHeld && idx === 12)) {
+     * tap/hold decision. (Shift+Step 13 Suspend is intentionally NOT available
+     * here — it's one of the normal Shift shortcuts, which don't apply in Perf
+     * Mode; use hold-Back to suspend from Perf Mode.) */
+    if (S.sessionView && (S.loopHeld || S.perfViewLocked)) {
         S.stepBtnPressedTick[idx] = S.tickCount;
         S.sessionStepHeld         = idx;
         S.sessionStepHeldCtx      = 1;  /* perf */

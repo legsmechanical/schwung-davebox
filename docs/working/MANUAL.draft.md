@@ -146,7 +146,7 @@ For a guided first session, see the [Quick Start guide](QUICKSTART.md).
 4. In **Track View**: drops out of a bank's alt-view, then steps back to the track's default bank (Clip / Drum Lane / Conduct). At the default bank, Back does nothing further — it does not jump to Session View.
 5. At the home screens (the **Session View** overview, or Track View's default bank) with nothing open, a Back **tap does nothing** — it never suspends.
 
-The **Back LED** lights whenever a tap will back out of something, and stays dark at the home screens where a tap is a no-op. To suspend dAVEBOx (leave it running in the background), **hold Back** for about half a second, or press **Shift + Step 13** (works in both views; its step lights up while Shift is held). **Shift + Back** fully exits to Schwung. *(Back navigation requires a current Schwung host; on older hosts Back simply suspends.)*
+The **Back LED** lights whenever a tap will back out of something, and stays dark at the home screens where a tap is a no-op. To suspend dAVEBOx (leave it running in the background), **hold Back** for about half a second, press **Shift + Step 13** (where the normal Shift shortcuts are available — Session/Track view, **not** Performance Mode; use hold-Back there), or choose **Suspend session** from the menu (just above Quit). The **menu button** stays steady-lit while the menu is open (Back exits the menu too, so it no longer blinks to advertise itself). **Shift + Back** fully exits to Schwung. *(Back navigation requires a current Schwung host; on older hosts Back simply suspends.)*
 
 ## 2.3 Transport & modifier buttons
 

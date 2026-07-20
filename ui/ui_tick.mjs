@@ -1308,7 +1308,11 @@ export function _tickImpl() {
              * exits), so keep its LED dark. Force OFF every POLL_INTERVAL to
              * override Move firmware's pass-through writes. */
             setButtonLED(MoveNoteSession, LED_OFF, (S.tickCount % POLL_INTERVAL) === 0);
-        } else if (S.globalMenuOpen || S.tapTempoOpen) {
+        } else if (S.globalMenuOpen) {
+            /* Menu open: steady-lit (no blink) — Back exits the menu now, so the
+             * button doesn't need to flash to advertise itself as the exit. */
+            setButtonLED(MoveNoteSession, White);
+        } else if (S.tapTempoOpen) {
             const _exitBlink = (Math.floor(S.tickCount / 24) % 2) ? 16 : LED_OFF;
             setButtonLED(MoveNoteSession, _exitBlink);
         }
