@@ -595,8 +595,8 @@ export function drawEnumSquare(kx, ky, text, sq) {
  *
  * A triplet/dotted suffix modifies the WHOLE fraction, not the denominator,
  * so it sits OUTSIDE the stack: the rule spans only numerator/denominator and
- * the suffix hangs to its right, centred on the rule's axis. Stacking it into
- * the denominator instead (the first cut) read as "one over sixteen-d".
+ * the suffix sits to its right on the denominator's line. Stacking it INTO
+ * the denominator (the first cut) read as "one over sixteen-d".
  *
  * Vertical budget is the whole story: 6 + rule + 6 = 13px of ink in a 16px
  * row, so the parts sit at ky+0 and ky+9 with the rule at ky+7 — the only
@@ -620,8 +620,10 @@ export function drawFracStack(cellX, ky, text) {
     hdrPrint(left + Math.round((fracW - nw) / 2), ky, num, 1);
     fill_rect(left, ky + 7, fracW, 1, 1);
     hdrPrint(left + Math.round((fracW - dw) / 2), ky + 9, den, 1);
-    /* suffix centred on the rule's axis, clear of the rule's right end */
-    if (sfx) hdrPrint(left + fracW + SFX_GAP, ky + 4, sfx, 1);
+    /* suffix on the denominator's line, past the rule's right end — it sits
+     * WITH the value rather than floating beside it, while the rule still
+     * stops short of it (the mark modifies the fraction, not the denominator) */
+    if (sfx) hdrPrint(left + fracW + SFX_GAP, ky + 9, sfx, 1);
 }
 const SFX_GAP = 2;
 
