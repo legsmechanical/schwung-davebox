@@ -48,7 +48,7 @@ up.
 
 ## How a dAVEBOx set is built
 
-Everything in dAVEBOx nests the same way Move's own sequencer does:
+Everything in dAVEBOx nests like this:
 
 - A **note** (or an automation point) sits on a **step** — one slot of a clip's grid.
 - A run of steps makes a **clip** — the basic unit you program and play. A clip
@@ -425,9 +425,6 @@ The pad grid splits in two:
 The left pads show 16 lanes at a time; **+ / −** switches between lane **bank
 A** and **bank B** for all 32. The screen shows the active bank.
 
-> **Like Move:** the 4×4 drum layout and its velocity zones mirror Move's drum
-> track.
-
 ## 6.1 Placing hits
 
 Select a lane, then tap **steps 1–16** to add or clear its hits. The steps always
@@ -453,8 +450,6 @@ cycle against the shared transport — a polyrhythm from one clip.
 
 Note Repeat retriggers a lane at a steady rate. **Shift + Step 8** cycles the right
 pads between velocity zones and the two repeat modes.
-
-> **Like Move:** this is Move's Note Repeat.
 
 The bottom two rows of the right pads are **rates**; the top two rows are a **gate
 mask**:
@@ -776,9 +771,6 @@ its playback speed, and **+ / −** change its step density.
 Arranging happens in **Session View** — the clip grid on the pads, 8 tracks across
 and 4 rows visible, with the jog scrolling through all 16 rows. The screen keeps
 showing the active bank.
-
-> **Like Move:** this is Move's clip-launch grid — columns are tracks, rows are
-> scenes.
 
 ## 11.1 Launching clips
 
