@@ -235,15 +235,7 @@ It opens on the active track's settings, followed by the global settings below a
 divider — the full list is in [Settings & Sets](#15-settings--sets). Many settings
 also have a **Shift + Step** shortcut (see the [Quick Reference](#17-quick-reference)).
 
-## 3.6 Backing out
-
-A tap of **Back** steps out one level of the interface. In priority order, it
-cancels an open dialog, closes the menu, exits a locked
-[Performance Mode](#12-performance-mode), or in Track View drops out of a bank's
-alternate view back to the track's home bank. The **Back LED** lights whenever a
-tap will back out of something.
-
-## 3.7 Saving, suspending & exiting
+## 3.6 Saving, suspending & exiting
 
 dAVEBOx saves your set automatically whenever you leave it:
 
