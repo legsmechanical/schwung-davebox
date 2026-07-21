@@ -7,6 +7,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com). Add entries to
 the section into a versioned heading at release time.
 
 ## [Unreleased]
+
+## [1.0-beta.8] — 2026-07-21
 ### Performance / UX
 - Additional movy-inspired UI improvements.
 
