@@ -409,24 +409,51 @@ function bigGlyph(cp) { return (cp < 0x20 || cp > 0x7E) ? null : BIG_G[cp - 0x20
  * The gap on their RIGHT is kept: the next character starts at its own left
  * edge with no bearing, so without it a "0.25" reads as "0.2 5".
  * Keyed by codepoint; the value is the advance. */
-const BIG_TIGHT = { 0x2E: 2, 0x3A: 2, 0x2C: 3, 0x3B: 3 };   /* . : , ; */
-const bigAdv = (cp, g) => BIG_TIGHT[cp] ?? g[0];
+const BIG_TIGHT = { 0x2E: 2, 0x3A: 2, 0x2C: 3, 0x3B: 3, 0x2F: 5 };   /* . : , ; / */
+
+/* Ink bounds per glyph, measured once: [leftmostCol, inkWidth]. Drives the
+ * CONDENSED variant below. */
+const BIG_INK = BIG_G.map((g) => {
+    const w = g[2], h = g[3];
+    let lo = 99, hi = -1;
+    for (let r = 0; r < h; r++) {
+        const bits = g[4 + r];
+        for (let c = 0; c < w; c++) if (bits & (1 << c)) { if (c < lo) lo = c; if (c > hi) hi = c; }
+    }
+    return hi < 0 ? [0, 0] : [lo, hi - lo + 1];
+});
+
+/* CONDENSED: same glyphs, same 11px height, advances trimmed to ink width + 1
+ * and the glyph shifted left onto its own ink. The source font is generously
+ * spaced (a digit is 9px advance for 7px of ink), so this buys ~15% width with
+ * no loss of legibility — enough for a 4-character value like "1/16" or a
+ * 5-character "1/16T" in a 32px cell, which the normal spacing can't hold.
+ * It is NOT a smaller font: mixing the two on a page reads as tracking, not
+ * as two type sizes. */
+const bigAdv = (cp, g, cond) => {
+    const ink = BIG_INK[cp - 0x20][1];
+    if (!cond) return BIG_TIGHT[cp] ?? g[0];
+    if (!ink) return g[0];                      /* space */
+    /* punctuation advances by its exact ink — it already gets a zero gap on
+     * the left, and this is what lets "1/16T" hold a 32px cell */
+    return BIG_TIGHT[cp] ? ink : ink + 1;
+};
 const bigGapAt = (a, b) => BIG_TIGHT[b] ? 0 : BIG_GAP;
 
-/* Width of `text` in the big font (no trailing gap). */
-export function bigWidth(text) {
+/* Width of `text` in the big font (no trailing gap). `cond` = condensed. */
+export function bigWidth(text, cond) {
     const s = String(text);
     let w = 0;
     for (let i = 0; i < s.length; i++) {
         const cp = s.charCodeAt(i);
         const g = bigGlyph(cp);
-        w += g ? bigAdv(cp, g) : 7;
+        w += g ? bigAdv(cp, g, cond) : 7;
         if (i < s.length - 1) w += bigGapAt(cp, s.charCodeAt(i + 1));
     }
     return w;
 }
 
-export function bigPrint(x, y, text, color) {
+export function bigPrint(x, y, text, color, cond) {
     const s = String(text);
     let cx = Math.round(x);
     const oy = Math.round(y), v = color ? 1 : 0;
@@ -435,6 +462,7 @@ export function bigPrint(x, y, text, color) {
         const g = bigGlyph(cp);
         if (!g) { cx += 7; continue; }
         const yOff = g[1], w = g[2], h = g[3];
+        const shift = cond ? BIG_INK[cp - 0x20][0] : 0;   /* sit on the ink */
         for (let r = 0; r < h; r++) {
             const bits = g[4 + r];
             let c = 0;
@@ -442,13 +470,23 @@ export function bigPrint(x, y, text, color) {
                 if (bits & (1 << c)) {
                     const st = c;
                     while (c < w && (bits & (1 << c))) c++;
-                    fill_rect(cx + st, oy + yOff + r, c - st, 1, v);
+                    fill_rect(cx + st - shift, oy + yOff + r, c - st, 1, v);
                 } else c++;
             }
         }
-        cx += bigAdv(cp, g);
+        cx += bigAdv(cp, g, cond);
         if (i < s.length - 1) cx += bigGapAt(cp, s.charCodeAt(i + 1));
     }
+}
+
+/* Largest form of `text` that fits `maxW`: normal spacing, else condensed,
+ * else null (caller drops to the label font). Returns { w, cond }. */
+export function bigFit(text, maxW) {
+    const n = bigWidth(text, false);
+    if (n <= maxW) return { w: n, cond: false };
+    const c = bigWidth(text, true);
+    if (c <= maxW) return { w: c, cond: true };
+    return null;
 }
 
 /* ---- primitive helpers ---- */
@@ -576,10 +614,10 @@ export function drawDirSquare(kx, ky, mode) {
  * label font when the text is too wide (4+ digits) so it always fits. */
 export function drawBigNum(cellX, ky, text) {
     const t = String(text);
-    const bw = bigWidth(t);
-    if (bw <= MV_CELL_W) {
-        bigPrint(cellX + Math.round((MV_CELL_W - bw) / 2),
-                 ky + Math.floor((MV_KH - MV_BIG_H) / 2), t, 1);
+    const fit = bigFit(t, MV_CELL_W);
+    if (fit) {
+        bigPrint(cellX + Math.round((MV_CELL_W - fit.w) / 2),
+                 ky + Math.floor((MV_KH - MV_BIG_H) / 2), t, 1, fit.cond);
     } else {
         const sw = mvWidth(t);
         mvPrint(cellX + Math.round((MV_CELL_W - sw) / 2),

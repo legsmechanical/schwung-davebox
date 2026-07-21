@@ -19,7 +19,7 @@ import {
 import {
     drawKitHeader, drawKitTouchedHeader, drawKitPageBar, drawKitAltArrow,
     drawKitCells, drawKitEnumOverlay, mvPrint, mvWidth, rectOutline,
-    pf3Print, pf3Width, drawArcKnobAt, hdrPrint, hdrWidth, bigPrint, bigWidth,
+    pf3Print, pf3Width, drawArcKnobAt, hdrPrint, hdrWidth, bigPrint, bigWidth, bigFit,
     MV_ROW0_Y, MV_KH, MV_BIG_H, MV_ZOOM_X, MV_ZOOM_Y, MV_ZOOM_W, MV_ZOOM_H
 } from './ui_movy.mjs';
 import {
@@ -167,9 +167,9 @@ function drawKitValueOverlay(cells, idx) {
      * the text outgrows the box (long note labels, long formatted values). */
     const zoomPrint = (text, y) => {
         const t = String(text);
-        const bw = bigWidth(t);
-        if (bw <= BW - 6) bigPrint(Math.round(64 - bw / 2), y, t, 1);
-        else              hdrPrint(Math.round(64 - hdrWidth(t) / 2), y + 3, t, 1);
+        const fit = bigFit(t, BW - 6);
+        if (fit) bigPrint(Math.round(64 - fit.w / 2), y, t, 1, fit.cond);
+        else     hdrPrint(Math.round(64 - hdrWidth(t) / 2), y + 3, t, 1);
     };
 
     if (bigText != null) {
@@ -203,13 +203,13 @@ function drawNoteBox(name, sub, invert) {
     else        rectOutline(BX, BY, BW, BH, 1);
     const fg = invert ? 0 : 1;
     const s  = sub ? String(sub) : '';
-    const nW = bigWidth(name);
     const sW = s ? mvWidth(s) + 3 : 0;      /* 3px gap before the qualifier */
-    if (nW + sW <= BW - 4) {
-        const x = BX + Math.round((BW - nW - sW) / 2);
-        bigPrint(x, BY + Math.floor((BH - MV_BIG_H) / 2), name, fg);
+    const fit = bigFit(name, BW - 4 - sW);
+    if (fit) {
+        const x = BX + Math.round((BW - fit.w - sW) / 2);
+        bigPrint(x, BY + Math.floor((BH - MV_BIG_H) / 2), name, fg, fit.cond);
         /* baseline-align the small text with the bottom of the big glyphs */
-        if (s) mvPrint(x + nW + 3, BY + Math.floor((BH - MV_BIG_H) / 2) + MV_BIG_H - 5, s, fg);
+        if (s) mvPrint(x + fit.w + 3, BY + Math.floor((BH - MV_BIG_H) / 2) + MV_BIG_H - 5, s, fg);
         return;
     }
     const line = s ? name + ' ' + s : name;
@@ -269,12 +269,14 @@ function drawAltArrow(x, hdrBgWhite, on) {
  * canvaskit chrome via drawStepEditKitPage.) */
 
 /* Per-step trig-condition formatters (v=34).
- *   formatStepIter(raw):  0 -> "—"; else "{idx}/{len}" with raw=(len<<4)|idx
+ *   formatStepIter(raw):  0 -> "—"; else "{idx}:{len}" with raw=(len<<4)|idx
  *   formatStepRand(raw):  0 -> "—" (100%); else "{n}%"
  *   formatStepRatch(raw): 0|1 -> "—"; else "x{n}" */
 function formatStepIter(raw) {
     if (!raw) return '--';
-    return (raw & 0xF) + '/' + ((raw >> 4) & 0xF);
+    /* colon, not a slash: it isn't a fraction (it's "fire on pass 2 of 4"),
+     * and the tight colon leaves room for both digits in the big read-out. */
+    return (raw & 0xF) + ':' + ((raw >> 4) & 0xF);
 }
 function formatStepRand(raw) {
     if (!raw) return '--';
@@ -351,8 +353,15 @@ function bankHeaderName(t, bank) {
 
 /* Formatters whose domain is a browsable option list (enum square + the
  * scrolling overlay while touched). fmtBool is special-cased to the hbar. */
-const KIT_ENUM_FMTS = [fmtRes, fmtDiq, fmtPlayDir, fmtLen, fmtGateMod,
-                       fmtDly, fmtArpStyle, fmtArpRate, fmtArpSteps, fmtRevStyle];
+const KIT_ENUM_FMTS = [fmtPlayDir, fmtDly, fmtArpStyle, fmtArpSteps, fmtRevStyle];
+
+/* Musical rates and lengths — "1/16", "1bar", ".25". Numbers, not words, so
+ * they get the big read-out (condensed where they need it) rather than the
+ * micro-font square. fmtDly stays an enum square: its D-suffixed 5-character
+ * labels ("1/64D") don't fit even condensed, and the square's two-line split
+ * already handles them, so promoting the set would render it half big and
+ * half small. */
+const KIT_RATE_FMTS = [fmtRes, fmtDiq, fmtLen, fmtGateMod, fmtArpRate];
 
 /* Full option names for the picker overlays (the widget squares keep the
  * short forms from the fmt* tables). */
@@ -405,6 +414,13 @@ function kitCellForKnob(knob, val) {
         base.kind = 'dirsq';
         base.options = KIT_DIR_NAMES;
         base.sel = v;
+        return base;
+    }
+    if (KIT_RATE_FMTS.indexOf(knob.fmt) >= 0) {
+        base.kind = 'valsq'; base.text = _offDash(text);
+        base.options = [];
+        for (let i = knob.min; i <= knob.max; i++) base.options.push(_offDash(knob.fmt(i)));
+        base.sel = v - knob.min;
         return base;
     }
     if (KIT_ENUM_FMTS.indexOf(knob.fmt) >= 0) {
@@ -1435,7 +1451,7 @@ export function drawUI() {
             const _dlRev = S.drumLanePlaybackAudioReverse[t][lane] | 0;
             const _dlDir = S.drumLanePlaybackDir[t][lane] | 0;
             const cells = [
-                { kind: 'enumsq', label: S.altMode ? 'Zoom' : 'Res',
+                { kind: 'valsq', label: S.altMode ? 'Zoom' : 'Res',
                   name: S.altMode ? 'Zoom' : 'Resolution', text: fmtRes(tpsIdx),
                   options: [0,1,2,3,4,5].map(fmtRes), sel: tpsIdx },
                 { kind: 'action', label: 'Strch', name: 'Beat Stretch',
@@ -1474,7 +1490,7 @@ export function drawUI() {
             const _inq = S.drumInpQuant[t] | 0;
             const cells = [
                 rv < 0 ? { kind: 'valsq', label: 'Res', name: 'Resolution', text: '--' }
-                       : { kind: 'enumsq', label: 'Res', name: 'Resolution', text: fmtRes(rv),
+                       : { kind: 'valsq', label: 'Res', name: 'Resolution', text: fmtRes(rv),
                            options: [0,1,2,3,4,5].map(fmtRes), sel: rv },
                 { kind: 'action', label: 'Strch', name: 'Beat Stretch',
                   text: fmtStretch(S.bankParams[t][7][1]) },
@@ -1486,8 +1502,8 @@ export function drawUI() {
                             text: fmtPct(qv), norm: Math.min(1, qv / 100) },
                 { kind: 'valsq', label: 'VelIn', name: 'Velocity Input',
                   text: fmtVelOverride(S.trackVelOverride[t]) },
-                { kind: 'enumsq', label: 'InQnt', name: 'Input Quantize',
-                  text: DIQ_LABELS[_inq] || 'Off', options: DIQ_LABELS, sel: _inq },
+                { kind: 'valsq', label: 'InQnt', name: 'Input Quantize',
+                  text: _offDash(DIQ_LABELS[_inq]), options: DIQ_LABELS.map(_offDash), sel: _inq },
                 dv < 0 ? { kind: 'valsq', label: S.altMode ? 'Revrs' : 'Dir',
                            name: S.altMode ? 'Reverse Style' : 'Playback Dir', text: '--' }
                        : (S.altMode
@@ -1521,7 +1537,7 @@ export function drawUI() {
               signed: Math.max(-1, Math.min(1, (vals[1] | 0) / 127)) },
             { kind: 'arc', label: 'Quant', name: 'Quantize', text: fmtPct(vals[2]),
               norm: Math.max(0, Math.min(1, (vals[2] | 0) / 100)) },
-            { kind: 'enumsq', label: 'Len>', name: 'Note Length', text: fmtLen(_lenMode),
+            { kind: 'valsq', label: 'Len>', name: 'Note Length', text: fmtLen(_lenMode),
               options: LEN_OPTS, sel: _lenMode },
             { kind: 'arc', label: '>Gate', name: 'Gate Time', text: fmtPct(vals[0]),
               norm: Math.max(0, Math.min(1, (vals[0] | 0) / 400)) },
@@ -1736,8 +1752,8 @@ export function drawUI() {
             kitCellForKnob(knobs[1], vals[1]),
             kitCellForKnob(knobs[2], vals[2]),
             kitCellForKnob(knobs[3], vals[3]),
-            { kind: 'enumsq', label: 'Gate', name: 'Gate', text: fmtGateMod(vals[4]),
-              options: [0,1,2,3,4,5,6,7,8,9,10].map(fmtGateMod), sel: vals[4] | 0 },
+            { kind: 'valsq', label: 'Gate', name: 'Gate', text: _offDash(fmtGateMod(vals[4])),
+              options: [0,1,2,3,4,5,6,7,8,9,10].map(fmtGateMod).map(_offDash), sel: vals[4] | 0 },
             { kind: 'arcbip', label: 'ClkFb', name: 'Clock Feedback', text: fmtSign(vals[5]),
               signed: Math.max(-1, Math.min(1, (vals[5] | 0) / 127)) },
             { kind: 'hbar', label: 'Retrg', name: 'Retrig', text: fmtBool(vals[6]),
