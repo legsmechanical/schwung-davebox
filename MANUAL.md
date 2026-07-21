@@ -1101,26 +1101,26 @@ settings and the session-wide settings.
 
 ## 15.1 Global settings
 
-| Setting | Values | Default |
-|---|---|---|
-| Clock Follow | Off, Move | Off |
-| Clock Out | Off, On | Off |
-| BPM | 40–250 | 120 |
-| Tap Tempo | tap the pads | — |
-| Key | C…B | C |
-| Scale | Major … Diminished | Major |
-| Scale Aware | On, Off | On |
-| Launch Quant | Now … 1 bar | Now |
-| Swing Amt | 50–75 % | 50 % |
-| Swing Res | 1/16, 1/8 | 1/16 |
-| MIDI In | All, 1–16 | All |
-| Metro | Off, Cnt-In, Play, Always | Off |
-| Metro Vol | 0–150 % | 100 % |
-| Beat Markers | On, Off | On |
-| Export to Ableton | action | — |
-| Save state / Load state | action | — |
-| Clear Session | action | — |
-| Quit | action | — |
+| Setting | What it does | Values | Default |
+|---|---|---|---|
+| Clock Follow | Lock to Move's transport and tempo — see [§13.4](#134-clock-follow) | Off, Move | Off |
+| Clock Out | Send MIDI clock out USB-A to drive external gear — see [§13.5](#135-clock-out) | Off, On | Off |
+| BPM | Tempo | 40–250 | 120 |
+| Tap Tempo | Tap the pads to set the tempo by feel | action | — |
+| Key | The session's root note — see [§15.2](#152-key--scale) | C…B | C |
+| Scale | The scale melodic tracks snap to — see [§15.2](#152-key--scale) | (below) | Major |
+| Scale Aware | Whether scale-aware params move by scale degree (On) or semitone (Off) | On, Off | On |
+| Launch Quant | When a launched clip or scene actually starts — at once (Now) or on the next boundary | Now … 1 bar | Now |
+| Swing Amt | Swing depth — 50 % is straight, 66 % is triplet swing | 50–75 % | 50 % |
+| Swing Res | Which grid positions get the swing | 1/16, 1/8 | 1/16 |
+| MIDI In | Channel filter for external input — All, or one channel | All, 1–16 | All |
+| Metro | When the metronome sounds — never, during the count-in, while playing, or always | Off, Cnt-In, Play, Always | Off |
+| Metro Vol | Metronome level | 0–150 % | 100 % |
+| Beat Markers | Dim markers on the step buttons at 1, 5, 9, 13 | On, Off | On |
+| Export to Ableton | Write a Live bundle of the set — see [§14.3](#143-export-to-live) | action | — |
+| Save state / Load state | Save or restore a named snapshot — see [§15.3](#153-snapshots) | action | — |
+| Clear Session | Reset the whole instance (confirms first) | action | — |
+| Quit | Save and exit to Schwung | action | — |
 
 **Scales:** Major, Minor, Dorian, Phrygian, Lydian, Mixolydian, Locrian, Harmonic
 Minor, Melodic Minor, Pentatonic Major, Pentatonic Minor, Blues, Whole Tone,
