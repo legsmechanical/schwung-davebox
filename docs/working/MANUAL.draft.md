@@ -144,7 +144,7 @@ For a guided first session, see the [Quick Start guide](QUICKSTART.md).
 2. Closes the menu
 3. Exits a locked Performance Mode (Session View)
 4. In **Track View**: drops out of a bank's alt-view, then steps back to the track's default bank (Clip / Drum Lane / Conduct). At the default bank, Back does nothing further — it does not jump to Session View.
-5. At the home screens (the **Session View** overview, or Track View's default bank) with nothing open, a Back **tap does nothing** — it never suspends.
+5. At the home screens (**Session View**, or Track View's default bank) with nothing open, a Back **tap does nothing** — it never suspends.
 
 The **Back LED** lights whenever a tap will back out of something, and stays dark at the home screens where a tap is a no-op. To suspend dAVEBOx (leave it running in the background), **hold Back** for about half a second, or choose **Suspend session** from the menu (just above Quit). (There is no Shift + Step 13 shortcut — that combo is reserved by the Schwung host for its Tools menu.) The **menu button** stays steady-lit while the menu is open. **Shift + Back** fully exits to Schwung. *(Back navigation requires a current Schwung host; on older hosts Back simply suspends.)*
 
@@ -320,7 +320,9 @@ Steps 2, 5, 6, 7, 9 also work in Session View. The rest are Track View only.
 
 # 4. Session View
 
-The 8×16 clip grid. 8 rows visible at a time; jog scrolls to all 16.
+The 8×16 clip grid lives on the **pads**: 8 tracks across, **4 clip rows visible**
+at a time; jog scrolls through all 16. The OLED keeps showing the current bank —
+there is no separate Session-View screen.
 
 | Control | Action |
 |---|---|
