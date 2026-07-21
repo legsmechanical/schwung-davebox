@@ -606,11 +606,10 @@ export function drawEnumSquare(kx, ky, text, sq) {
 export function drawFracStack(cellX, ky, text) {
     const t = String(text);
     const m = t.match(/^(\d+)\/(\d+)([A-Za-z]*)$/);
-    if (!m) {                           /* not a fraction — centre it as-is */
-        const w = hdrWidth(t);
-        hdrPrint(cellX + Math.round((MV_CELL_W - w) / 2), ky + 5, t, 1);
-        return;
-    }
+    /* Not an n/m fraction ("1bar", "--"): these sets are mixed, so fall back
+     * to the big read-out rather than a small centred string — the two forms
+     * then read as one hierarchy instead of two different widgets. */
+    if (!m) return drawBigNum(cellX, ky, t);
     const num = m[1], den = m[2], sfx = m[3];
     const nw = hdrWidth(num), dw = hdrWidth(den);
     const fracW = Math.max(nw, dw) + 2;     /* rule overhangs the wider part */

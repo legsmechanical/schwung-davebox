@@ -355,18 +355,19 @@ function bankHeaderName(t, bank) {
  * scrolling overlay while touched). fmtBool is special-cased to the hbar. */
 const KIT_ENUM_FMTS = [fmtPlayDir, fmtArpStyle, fmtArpSteps, fmtRevStyle];
 
-/* Rates that are true fractions but too long for the big read-out even
- * condensed ("1/64D" = 36px vs a 32px cell). They STACK instead — frameless,
- * numerator over denominator, suffix riding with the denominator. */
-const KIT_FRAC_FMTS = [fmtDly];
+/* Every set whose values are true n/m fractions — resolutions, arp rates,
+ * gate rates, input quantize, delay times. They render as STACKED fractions
+ * (numerator over rule over denominator, triplet/dotted mark beside the
+ * denominator). Members of these sets that AREN'T fractions ("1bar", "--")
+ * fall through to the big read-out inside drawFracStack, so a set reads as
+ * one hierarchy rather than two competing widgets. */
+const KIT_FRAC_FMTS = [fmtDly, fmtRes, fmtArpRate, fmtGateMod, fmtDiq];
 
-/* Musical rates and lengths — "1/16", "1bar", ".25". Numbers, not words, so
- * they get the big read-out (condensed where they need it) rather than the
- * micro-font square. fmtDly stays an enum square: its D-suffixed 5-character
- * labels ("1/64D") don't fit even condensed, and the square's two-line split
- * already handles them, so promoting the set would render it half big and
- * half small. */
-const KIT_RATE_FMTS = [fmtRes, fmtDiq, fmtLen, fmtGateMod, fmtArpRate];
+/* Numeric lengths that are NOT fractions — LEN_LABELS is "--/.25/.50/1/2/16",
+ * decimals and counts. These keep the big read-out; stacking a decimal makes
+ * no sense. (Step-edit Length and Iteration likewise: steps and "2:4" aren't
+ * n/m fractions, so neither stacks.) */
+const KIT_RATE_FMTS = [fmtLen];
 
 /* Full option names for the picker overlays (the widget squares keep the
  * short forms from the fmt* tables). */
@@ -1463,7 +1464,7 @@ export function drawUI() {
             const _dlRev = S.drumLanePlaybackAudioReverse[t][lane] | 0;
             const _dlDir = S.drumLanePlaybackDir[t][lane] | 0;
             const cells = [
-                { kind: 'valsq', label: S.altMode ? 'Zoom' : 'Res',
+                { kind: 'frac', label: S.altMode ? 'Zoom' : 'Res',
                   name: S.altMode ? 'Zoom' : 'Resolution', text: fmtRes(tpsIdx),
                   options: [0,1,2,3,4,5].map(fmtRes), sel: tpsIdx },
                 { kind: 'action', label: 'Strch', name: 'Beat Stretch',
@@ -1501,8 +1502,8 @@ export function drawUI() {
             const DIQ_LABELS = ['Off','1/64','1/32','1/16','1/16t','1/8','1/8t','1/4','1/4t'];
             const _inq = S.drumInpQuant[t] | 0;
             const cells = [
-                rv < 0 ? { kind: 'valsq', label: 'Res', name: 'Resolution', text: '--' }
-                       : { kind: 'valsq', label: 'Res', name: 'Resolution', text: fmtRes(rv),
+                rv < 0 ? { kind: 'frac', label: 'Res', name: 'Resolution', text: '--' }
+                       : { kind: 'frac', label: 'Res', name: 'Resolution', text: fmtRes(rv),
                            options: [0,1,2,3,4,5].map(fmtRes), sel: rv },
                 { kind: 'action', label: 'Strch', name: 'Beat Stretch',
                   text: fmtStretch(S.bankParams[t][7][1]) },
@@ -1514,7 +1515,7 @@ export function drawUI() {
                             text: fmtPct(qv), norm: Math.min(1, qv / 100) },
                 { kind: 'valsq', label: 'VelIn', name: 'Velocity Input',
                   text: fmtVelOverride(S.trackVelOverride[t]) },
-                { kind: 'valsq', label: 'InQnt', name: 'Input Quantize',
+                { kind: 'frac', label: 'InQnt', name: 'Input Quantize',
                   text: _offDash(DIQ_LABELS[_inq]), options: DIQ_LABELS.map(_offDash), sel: _inq },
                 dv < 0 ? { kind: 'valsq', label: S.altMode ? 'Revrs' : 'Dir',
                            name: S.altMode ? 'Reverse Style' : 'Playback Dir', text: '--' }
@@ -1764,7 +1765,7 @@ export function drawUI() {
             kitCellForKnob(knobs[1], vals[1]),
             kitCellForKnob(knobs[2], vals[2]),
             kitCellForKnob(knobs[3], vals[3]),
-            { kind: 'valsq', label: 'Gate', name: 'Gate', text: _offDash(fmtGateMod(vals[4])),
+            { kind: 'frac', label: 'Gate', name: 'Gate', text: _offDash(fmtGateMod(vals[4])),
               options: [0,1,2,3,4,5,6,7,8,9,10].map(fmtGateMod).map(_offDash), sel: vals[4] | 0 },
             { kind: 'arcbip', label: 'ClkFb', name: 'Clock Feedback', text: fmtSign(vals[5]),
               signed: Math.max(-1, Math.min(1, (vals[5] | 0) / 127)) },
