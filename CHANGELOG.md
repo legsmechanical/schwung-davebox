@@ -11,7 +11,7 @@ the section into a versioned heading at release time.
 ## [1.0-beta.7] — 2026-07-20
 ### Features
 - **Big pop-up read-outs when you turn a parameter knob.** Turning any knob — on the track pages or in the step editor — opens a large, centred view of just that parameter: a zoomed arc/value, or a scrolling picker for choice params, so you can read what you're changing at a glance. It appears on turn (a bare touch still just highlights the name) and holds until you release.
-- **Redesigned track-view parameter pages.** Graphical widgets per knob (arc and centre-tick knobs, toggle bars, option/value squares) under a chunky pixel-font header — the Schwung canvaskit look shared with the OB-Xd and Palette editors. The step editors match.
+- **Redesigned track-view parameter pages.** Graphical widgets per knob (arc and centre-tick knobs, toggle bars, option/value squares) under a chunky pixel-font header — an on-screen canvas UI whose look and font are adapted from [movy](https://github.com/DimaDake/schwung-movy) by DimaDake. The step editors match.
 - **Capture — retrospective recording, like Move's own Capture button.** dAVEBOx always listens; tap Capture to keep what you just played. From a stopped empty session it estimates the tempo, sizes the clip to whole bars and plays it back; with the transport running it overdubs into the focused clip. Melodic and drum.
 - **Live Merge now confirms before it starts, with a 1-bar count-in.** Shift + Record raises a notice first (so an accidental press can't wipe a take), then counts in and captures a clean take — single-track in Track View, all 8 in Session View.
 - **Clearer button roles.** Capture captures, Sample bakes, Shift + Record runs Live Merge.
