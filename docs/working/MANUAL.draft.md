@@ -417,6 +417,8 @@ Both methods support up to 4 notes per step.
 
 ## 6.3 Step edit and trig conditions
 
+<img src="img/step-editor.png" width="384" alt="Step edit overlay OLED screen">
+
 Hold any step button to open the edit overlay. Edits apply to all notes in the
 step simultaneously. Hold multiple steps to edit them all at once. While holding
 a step, Up/Down shifts the octave range for reaching higher/lower notes.
@@ -613,6 +615,8 @@ lane. Example: kick at 16 steps, hi-hat at 12, percussion at 10 — each loops
 independently against shared transport.
 
 ## 7.3 Drum lane banks
+
+<img src="img/bank-drum-notefx.png" width="384" alt="NOTE FX bank on a drum track, merged lane-note box">
 
 The drum-specific knob banks (DRUM LANE, ALL LANES) and the shared banks (NOTE
 FX, DELAY, AUTO) are all documented together in

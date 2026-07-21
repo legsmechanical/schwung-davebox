@@ -7,7 +7,7 @@
 //   - custom-drawn screens (REPEAT GROOVE): their exact draw block, replicated.
 // The device-absolute imports in ui_constants are satisfied by render_loader.
 // Run:  node --import ./tools/render_loader.mjs tools/render_screens.mjs [stem]
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import zlib from 'node:zlib';
 
 const W = 128, H = 64;
@@ -15,6 +15,27 @@ let fb = new Uint8Array(W * H);
 globalThis.set_pixel = (x, y, v) => { x |= 0; y |= 0; if (x >= 0 && x < W && y >= 0 && y < H) fb[y * W + x] = v ? 1 : 0; };
 globalThis.fill_rect = (x, y, w, h, v) => { for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) globalThis.set_pixel(x + i, y + j, v); };
 globalThis.clear_screen = () => { fb.fill(0); };
+
+// ---- host text font: the "Oled 5x7 Pixel Font" the device print()/pixelPrint()
+//      render (schwung generate_font.py). The device atlas trims each glyph to
+//      its ink width, so print() is PROPORTIONAL: advance = glyphWidth +
+//      charSpacing (blank/space advances the full 5px cell). Matches
+//      js_display.c js_display_glyph(). charSpacing = 1. ----
+const HFONT = JSON.parse(readFileSync(new URL('./host_font_5x7.json', import.meta.url)));  // ch -> 7 bytes, bit4=leftmost col
+const CHAR_SPACING = 1, CELL_W = 5;
+function _inkBounds(rows) { let mn = 5, mx = -1; for (const b of rows) for (let x = 0; x < 5; x++) if (b & (1 << (4 - x))) { if (x < mn) mn = x; if (x > mx) mx = x; } return mx < 0 ? null : { mn, mx }; }
+function _drawHostChar(ch, x, y, col) {
+    const rows = HFONT[ch] ?? HFONT[ch.toUpperCase?.()] ?? null;
+    if (!rows) return CELL_W + CHAR_SPACING;          // unknown -> blank cell
+    const b = _inkBounds(rows);
+    if (!b) return CELL_W + CHAR_SPACING;             // space -> full cell
+    for (let r = 0; r < 7; r++) for (let cx = b.mn; cx <= b.mx; cx++)
+        if (rows[r] & (1 << (4 - cx))) globalThis.set_pixel(x + (cx - b.mn), y + r, col);
+    return (b.mx - b.mn + 1) + CHAR_SPACING;
+}
+globalThis.print = (x, y, str, col) => { let cx = x | 0; for (const ch of String(str)) cx += _drawHostChar(ch, cx, y | 0, col ? 1 : 0); };
+globalThis.pixelPrint = globalThis.print;   // same 5x7 font
+globalThis.text_width = (str) => { let w = 0; for (const ch of String(str)) { const rows = HFONT[ch] ?? null; const b = rows && _inkBounds(rows); w += (b ? (b.mx - b.mn + 1) : CELL_W) + CHAR_SPACING; } return w; };
 
 const kit = await import('../ui/ui_movy.mjs');
 const C = await import('../ui/ui_constants.mjs');   // real BANKS + fmt tables (via loader)
@@ -123,8 +144,66 @@ const CUSTOM_KIT = [
 ];
 
 // Fully custom-drawn screens: replicate the exact draw block from ui_render.mjs.
-const print = (x, y, s, col) => kit.pf3Print(x, y, s, col);  // small font used by device print()
 const CUSTOM_DRAW = [
+    {
+        // Font validation only (not wired into the manual): exercises the host
+        // print() port so its glyphs/spacing can be eyeballed vs the device.
+        file: '_fonttest', section: '(host-font self-test)',
+        draw: () => {
+            fill_rect(0, 0, 128, 12, 1);
+            print(4, 3, 'PERFORMANCE', 0);
+            print(2, 16, 'ABCDEFGHIJKLM', 1);
+            print(2, 26, 'NOPQRSTUVWXYZ', 1);
+            print(2, 36, 'abcdefg 0123456789', 1);
+            print(2, 46, 'STEP 5  Track 8  +12', 1);
+            print(2, 55, 'Suspend session?', 1);
+        },
+    },
+    {
+        file: 'step-editor', section: '6.3 Step edit (melodic)',
+        // ui_render.mjs drawStepEditKitPage(title, cells, noteBox) — pure ui_movy.
+        draw: () => {
+            const noteBox = 'E 3';
+            const cells = [
+                { kind: 'blank', label: 'Note', name: 'Note', bigText: noteBox },
+                { kind: 'blank', label: 'Oct',  name: 'Note', bigText: noteBox },
+                { kind: 'valsq', label: 'Leng', name: 'Length', text: '1' },
+                { kind: 'arc', label: 'Vel', name: 'Velocity', text: '100', norm: 100 / 127 },
+                { kind: 'arcbip', label: 'Nudg', name: 'Nudge', text: '+0', signed: 0 },
+                { kind: 'enumsq', label: 'Iter', name: 'Iteration', text: '--', options: ['--'], sel: 0 },
+                { kind: 'arc', label: 'Prob', name: 'Probability', text: '100%', norm: 1 },
+                { kind: 'valsq', label: 'Ratch', name: 'Ratchet', text: '--', options: ['--','2','3','4'], sel: 0 },
+            ];
+            kit.drawKitHeader('STEP 5', false);
+            fill_rect(0, 9, 128, 1, 1);
+            kit.drawKitCells(cells, -1);
+            const BX = 6, BW = 52, BY = kit.MV_ROW0_Y, BH = kit.MV_KH;
+            kit.rectOutline(BX, BY, BW, BH, 1);
+            kit.mvPrint(BX + Math.round((BW - kit.mvWidth(noteBox)) / 2), BY + Math.floor((BH - 5) / 2), noteBox, 1);
+        },
+    },
+    {
+        file: 'bank-drum-notefx', section: '10.1 NOTE FX bank (drum lane box)',
+        // ui_render.mjs drum bank===1: K1+K2 merged Oct/Note box + Vel/Quant/Len/Gate.
+        draw: () => {
+            const noteStr = 'C1 36';
+            const cells = [
+                { kind: 'blank', label: 'Oct',  name: 'Lane Note' },
+                { kind: 'blank', label: 'Note', name: 'Lane Note' },
+                { kind: 'arcbip', label: 'Vel', name: 'Velocity Offset', text: '+0', signed: 0 },
+                { kind: 'arc', label: 'Quant', name: 'Quantize', text: '0%', norm: 0 },
+                { kind: 'enumsq', label: 'Len>', name: 'Note Length', text: '1', options: ['--','.25','.50','.75','1','2','4','8','16'], sel: 4 },
+                { kind: 'arc', label: '>Gate', name: 'Gate Time', text: '100%', norm: 100 / 400 },
+                { kind: 'blank', label: '' },
+                { kind: 'blank', label: '' },
+            ];
+            kit.drawKitHeader('NOTE FX', false);
+            kit.drawKitCells(cells, -1);
+            const BX = 6, BW = 52, BY = kit.MV_ROW0_Y, BH = kit.MV_KH;
+            kit.rectOutline(BX, BY, BW, BH, 1);
+            kit.mvPrint(BX + Math.round((BW - kit.mvWidth(noteStr)) / 2), BY + Math.floor((BH - 5) / 2), noteStr, 1);
+        },
+    },
     {
         file: 'bank-repeatgroove', section: '9.4 REPEAT GROOVE bank',
         // ui_render.mjs drum bank===5 (RPT GROOVE): 8-col velocity bar row.
@@ -179,6 +258,7 @@ const only = process.argv[2];
 let n = 0;
 const emit = (file, section, name, drawFn) => {
     if (only && file !== only) return;
+    if (!only && file.startsWith('_')) return;   // dev-only artifacts (e.g. _fonttest) unless named
     fb = new Uint8Array(W * H);
     drawFn();
     writePng(fb, `${OUT}/${file}.png`);
