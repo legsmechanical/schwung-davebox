@@ -178,7 +178,7 @@ While dAVEBOx is open, Move's controls map like this:
 | **Step buttons 1–16** | Show the active clip's steps, or launch scenes. |
 
 The **named buttons** — Play, Record, Loop, Mute, Delete, Copy, Capture, Sample,
-Undo, Note/Session, Shift, and the arrows — each have their own job (covered where
+Undo, Note/Session, Shift, +/−, and the arrows — each have their own job (covered where
 it comes up) and double as *modifiers* when held with another control. A held
 combination is written "**Modifier + X**" (for example, **Shift + Note/Session**).
 The full list of gestures is in the [Quick Reference](#17-quick-reference).
@@ -286,8 +286,8 @@ covers writing, editing, and recording into one; the [Effects](#9-effects) and
 
 ## 5.1 Playing and placing notes
 
-The pads play notes from the current [key and scale](#152-key--scale). **Up /
-Down** shifts the pad octave. To place notes on the grid, use the **16 step
+The pads play notes from the current [key and scale](#152-key--scale). **+ / −**
+shifts the pad octave. To place notes on the grid, use the **16 step
 buttons**:
 
 | Action | Result |
@@ -306,7 +306,7 @@ the Settings menu does the same.
 
 ## 5.2 Chords
 
-A step holds up to **four notes**. Build a chord two ways:
+A step holds up to **eight notes**. Build a chord two ways:
 
 - **Pads first:** hold one or more pads, then press a step.
 - **Step first:** hold a step, then tap pads one at a time. Tap a held note again
@@ -317,7 +317,7 @@ A step holds up to **four notes**. Build a chord two ways:
 <img src="img/step-editor.png" width="384" alt="Note edit screen: a note box on the left, then knobs for length, velocity, nudge, and per-step conditions">
 
 Hold a step to edit its notes. Edits apply to every note in the step; hold several
-steps to edit them together. While holding a step, **Up / Down** moves the octave
+steps to edit them together. While holding a step, **+ / −** moves the octave
 range so you can reach higher or lower notes.
 
 | Knob | On screen | Adjusts |
@@ -425,7 +425,7 @@ The pad grid splits in two:
 | **Left 4×4** | 16 drum lanes. Tap one to hear its sound and select it — the steps then show that lane. |
 | **Right 4×4** | Velocity zones, or a [note-repeat](#63-note-repeat) mode |
 
-The left pads show 16 lanes at a time; **Up / Down** switches between lane **bank
+The left pads show 16 lanes at a time; **+ / −** switches between lane **bank
 A** and **bank B** for all 32. The screen shows the active bank.
 
 > **Like Move:** the 4×4 drum layout and its velocity zones mirror Move's drum
@@ -770,7 +770,7 @@ starting from the shown value. Clearing:
 A lane can loop independently of the clip — a short filter sweep under a long
 melody, say. **Hold Loop on this bank** (the last-touched knob is the lane): the
 step buttons set the length, the jog trims it by a step, **Left / Right** change
-its playback speed, and **Up / Down** change its step density.
+its playback speed, and **+ / −** change its step density.
 
 ---
 
@@ -1171,7 +1171,7 @@ device both ways — edits on either side show up on the other.
 | Pad | Play a note |
 | Pads + step / step + pads | Chord entry |
 | Step tap / hold | Toggle / edit |
-| Up-Down / Left-Right | Octave / page |
+| +/− / Left-Right | Octave / page |
 | Side buttons | Switch clips |
 | Jog turn / click | Cycle banks / alt-parameters |
 | Shift + jog / Shift + bottom pad | Switch tracks |
@@ -1213,7 +1213,7 @@ device both ways — edits on either side show up on the other.
 | Shift + clip | Open in Track View |
 | Scene launcher / steps 1–16 | Launch scene |
 | Shift + scene launcher | Launch at next bar |
-| Jog / Up-Down | Scroll rows (1 / 4) |
+| Jog / +/− | Scroll rows (1 / 4) |
 | Mute + clip / Shift + Mute + clip | Mute / solo track |
 | Mute (hold) + step | Save · recall mute snapshot |
 | Copy + clip / scene launcher | Copy clip / row |
@@ -1227,7 +1227,7 @@ device both ways — edits on either side show up on the other.
 | Control | Action |
 |---|---|
 | Lane pad | Trigger + select lane |
-| Up / Down | Lane bank A ↔ B |
+| +/− | Lane bank A ↔ B |
 | Shift + Step 8 | Cycle velocity / Rpt1 / Rpt2 |
 | Loop + jog / lane pad | Lane length / latch repeat |
 | Copy + lane · Mute + lane | Copy · mute lane |
