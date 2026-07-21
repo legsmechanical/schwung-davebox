@@ -112,7 +112,7 @@ const BANK_SCREENS = [
     { file: 'bank-clip',      bank: 0, section: '9.1 CLIP bank',      over: { 0: 1, 6: 2 }, altArrowShow: true },
     { file: 'bank-notefx',    bank: 1, section: '10.1 NOTE FX bank',  over: { 0: 1, 1: 7, 2: -23, 3: 50 }, touchedIdx: 2 },
     { file: 'bank-harmony',   bank: 2, section: '10.2 HARMONY bank',  over: { 0: 1, 1: 7, 2: 12, 3: -5 } },
-    { file: 'bank-delay',     bank: 3, section: '10.3 DELAY bank',    over: { 0: 10, 2: 4, 4: 12, 7: 3 }, touchedIdx: 0 },
+    { file: 'bank-delay',     bank: 3, section: '10.3 DELAY bank',    over: { 0: 10, 2: 4, 4: 12, 7: 3 } },
     { file: 'bank-seqarp',    bank: 4, section: '10.4 SEQ ARP bank',  over: { 0: 1, 1: 3, 2: 1 } },
     { file: 'bank-livearp',   bank: 5, section: '10.5 LIVE ARP bank', over: { 0: 1, 1: 2, 2: 2 }, altArrowShow: true },
 ];
