@@ -218,9 +218,10 @@ covered in [Clip Timing & Grid](#8-clip-timing--grid), [Effects](#9-effects), an
 
 - **Touch** a knob to see its full name and current value; **turn** it for a large
   read-out. The LED under a knob lights when its parameter is set away from default.
-- **Click the jog** to reach a bank's alternate parameters (the labels change and
-  a down-arrow shows in the header); click again, or change bank or track, to
-  return.
+- **Click the jog** to switch a bank between its primary and alternate parameters
+  (the labels change). A **down-arrow** in the header marks any bank that has
+  alternates, and blinks while the alternates are showing. Click again, or change
+  bank or track, to return to the primary set.
 - The bank display falls back to a track overview after a moment. **Touch the jog**
   to bring it back.
 
