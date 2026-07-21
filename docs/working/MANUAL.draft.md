@@ -271,6 +271,15 @@ way the pop-up appears only on turn (never on a bare touch) and stays up until y
 release the knob; the same read-outs appear in the step editor. The LED below each
 knob lights when that parameter differs from default.
 
+**Knob feel.** Every knob follows one of three consistent response classes, so
+turning any control behaves predictably: **continuous** params (velocities,
+percentages, offsets, CC values, nudges, step pitch…) always move ±1 on a slow
+turn — every exact value is dialable — and accelerate smoothly the faster you
+turn; **option pickers** (resolutions, rates, styles, octaves, note length…)
+step at one fixed, predictable pace with no acceleration; and **deliberate**
+controls (toggles, Beat Stretch, Legato…) take a heavier throw so an accidental
+brush can't flip or fire them.
+
 The bank display returns to the track overview after about a second of inactivity.
 **Touch the jog wheel** at any time to bring the active bank's display back —
 it stays up while you hold the touch — wherever a bank display applies (melodic,
@@ -428,8 +437,8 @@ a step, Up/Down shifts the octave range for reaching higher/lower notes.
 
 | Knob | Label | Function |
 |---|---|---|
-| K1 | Oct | Shift by octave |
-| K2 | Note | Shift by scale degree (or semitone if Scale Aware is off) |
+| K1 | Note | Shift by scale degree (or semitone if Scale Aware is off) |
+| K2 | Oct | Shift by octave |
 | K3 | Leng | Gate length |
 | K4 | Vel | Velocity |
 | K5 | Nudg | Nudge timing (±1 step minus 1 tick). Step blinks when on-grid. Notes that cross into an adjacent step reassign on release. |
@@ -553,23 +562,34 @@ into the active track's focused clip at the positions you heard them —
 unquantized, exactly as played. Knob movements land as automation points in the
 clip's AUTOMATION lanes. The clip's length is never changed.
 
-**While the transport is stopped** (only in a brand-new, empty session —
-that's when there's no tempo yet to inherit), tapping Capture treats your first
-note as the start of a new take: dAVEBOx estimates the tempo from your playing,
-applies it, sizes the clip to whole bars, writes the notes and automation, and
-starts the transport so you hear the take immediately. Once you already have
-clips, the tempo is set — start playback and overdub instead (dAVEBOx will
-remind you).
+**While the transport is stopped in a brand-new, empty session** (there's no
+tempo yet to inherit), tapping Capture treats your first note as the start of a
+new take: dAVEBOx estimates the tempo from your playing, applies it, sizes the
+clip to whole bars, writes the notes and automation, and starts the transport so
+you hear the take immediately.
 
-**Choosing the tempo.** After a stopped capture, a **tempo chooser** opens: the
-big number is the applied BPM, with the three candidate tempos below it and a
-note strip showing your take against a beat/bar grid with a moving playhead.
-**Turn the wheel** to audition the other candidates — playback keeps rolling, so
-you can hear and see how the take lines up under each — and **click the wheel**
-to keep the one you want. The candidates are octave-related (half / double), so
-the notes always play back at the speed you performed them; only the loop length
-and grid alignment change. (No chooser appears under Clock Follow, where Move
-owns the tempo, or when there wasn't enough rhythm to estimate.)
+**While the transport is stopped in a session that already has clips**, the
+tempo is already set, so instead of retiming the set, your take is **stretched
+or squeezed to fit a chosen number of bars at the existing tempo**. An
+adjustment screen opens — the wheel steps through candidate bar lengths (1, 2,
+3, 4, 6, 8, 12, or 16), defaulting to whichever fits your take most naturally —
+and clicking the wheel commits it. The take lands in the focused clip if it's
+empty; otherwise dAVEBOx switches to Session View and blinks the track's empty
+clips so you can tap where to drop it (**Record** cancels, keeping the take
+buffered). Once the transport is playing, Capture always overdubs instead (see
+above).
+
+**Choosing the tempo.** After a stopped capture into an empty session, a
+**tempo chooser** opens: the big number is the applied BPM, with up to **eight**
+candidate tempos below it and a note strip showing your take against a beat/bar
+grid with a moving playhead marking where the bar lines and loop point fall.
+The candidates come from fitting your playing to a musical grid rather than
+simple half/double guessing, so the list better reflects how you actually
+played. **Turn the wheel** to audition the other candidates — playback keeps
+rolling, so you can hear and see how the take lines up under each — and
+**click the wheel** to keep the one you want. (No chooser appears under Clock
+Follow, where Move owns the tempo, or when there wasn't enough rhythm to
+estimate.)
 
 Works on melodic and drum tracks alike (drum hits land in their matching
 lanes). To throw the buffered input away instead, hold **Shift** and tap
@@ -1900,7 +1920,7 @@ that set the next time it launches.
 
 | Control | Action |
 |---|---|
-| K1–K5 | Oct / Note / Leng / Vel / Nudg (melodic) |
+| K1–K5 | Note / Oct / Leng / Vel / Nudg (melodic) |
 | K6–K8 | Iter / Prob / Ratch (melodic) |
 | K1–K3, K5–K7 | Leng / Vel / Nudg / Iter / Prob / Ratch (drum) |
 | Up / Down | Shift octave range |
@@ -2025,8 +2045,8 @@ Per-lane. Delete + jog click resets.
 
 | K | Label | Range |
 |---|---|---|
-| 1 | Oct | ±octaves |
-| 2 | Note | ±scale degrees (scale-aware) |
+| 1 | Note | ±scale degrees (scale-aware) |
+| 2 | Oct | ±octaves |
 | 3 | Leng | Gate length |
 | 4 | Vel | 0–127 |
 | 5 | Nudg | ±1 step minus 1 tick |
