@@ -146,7 +146,7 @@ For a guided first session, see the [Quick Start guide](QUICKSTART.md).
 4. In **Track View**: drops out of a bank's alt-view, then steps back to the track's default bank (Clip / Drum Lane / Conduct). At the default bank, Back does nothing further — it does not jump to Session View.
 5. At the home screens (the **Session View** overview, or Track View's default bank) with nothing open, a Back **tap does nothing** — it never suspends.
 
-The **Back LED** lights whenever a tap will back out of something, and stays dark at the home screens where a tap is a no-op. To suspend dAVEBOx (leave it running in the background), **hold Back** for about half a second, or choose **Suspend session** from the menu (just above Quit). (There is no Shift + Step 13 shortcut — that combo is reserved by the Schwung host for its Tools menu.) The **menu button** stays steady-lit while the menu is open (Back exits the menu too, so it no longer blinks to advertise itself). **Shift + Back** fully exits to Schwung. *(Back navigation requires a current Schwung host; on older hosts Back simply suspends.)*
+The **Back LED** lights whenever a tap will back out of something, and stays dark at the home screens where a tap is a no-op. To suspend dAVEBOx (leave it running in the background), **hold Back** for about half a second, or choose **Suspend session** from the menu (just above Quit). (There is no Shift + Step 13 shortcut — that combo is reserved by the Schwung host for its Tools menu.) The **menu button** stays steady-lit while the menu is open. **Shift + Back** fully exits to Schwung. *(Back navigation requires a current Schwung host; on older hosts Back simply suspends.)*
 
 ## 2.3 Transport & modifier buttons
 
@@ -277,14 +277,11 @@ it stays up while you hold the touch — wherever a bank display applies (melodi
 drum, and Conductor banks alike). The reveal is disabled while the Global Menu is
 open.
 
-The header is a filled bar with a **page-indicator line** beneath it (replacing
-the old bank tick strip in the header's corner): one segment per bank in the
-cycle, with the active bank's segment gently flashing. While a knob is being
-turned the bar drops out and the parameter name shows centered in white, with a
-solid rule beneath. Jog navigation
-order is unchanged (melodic: CLIP → NOTE FX → HARMONY → DELAY → SEQ ARP →
-LIVE ARP → AUTO; drum: DRUM LANE → NOTE FX → DELAY → ALL LANES → REPEAT GROOVE →
-AUTO). Conductor headers blink a "C-" prefix as before.
+The header is a filled bar with a **page-indicator line** beneath it: one
+segment per bank in the cycle, with the active bank's segment gently flashing.
+While a knob is being turned the bar drops out and the parameter name shows
+centered in white, with a solid rule beneath. Conductor headers blink a "C-"
+prefix.
 
 ## Switching tracks while playing
 
@@ -571,9 +568,7 @@ showing your take against the bar grid. **Turn the wheel** to audition them
 
 Works on melodic and drum tracks alike (drum hits land in their matching
 lanes). To throw the buffered input away instead, hold **Shift** and tap
-**Capture**. The buffer also clears itself whenever the transport starts or
-stops, when a commit lands, and when armed recording takes over (armed input is
-recorded normally, not buffered).
+**Capture**.
 
 ---
 
@@ -1022,8 +1017,9 @@ Each of the 8 knobs controls its own automation lane — a recordable stream of 
 or aftertouch data that plays back with the clip. Each lane can hold up to 1024
 recorded points (at 1/32 resolution, smoothly interpolated between points) plus an
 optional resting value that the lane returns to at each loop. **The AUTO bank works
-identically on melodic and drum tracks** — record, play back, step-edit, set resting
-values, and per-lane loops all work the same way on both.
+identically on melodic and drum tracks** — record,
+play back, step-edit, set resting values, and per-lane loops all work the same
+way on both.
 
 **Assigning what a knob controls:** jog click to enter alt mode on this bank, then
 turn a knob to step through the target options: aftertouch (AT), any CC number
@@ -1567,10 +1563,10 @@ clears latches.
 
 ## 16.5 CC and aftertouch output
 
-The AUTO bank lanes output CC, aftertouch, or Schwung chain knob (Sch) data at
-1/32 resolution with smooth interpolation. On External-routed tracks, CC/AT output
-goes via USB-A. Sch lanes send CC 102-109 on the internal Schwung MIDI path to
-control chain knob assignments (requires Schwung 0.9.17 or later). Aftertouch can also be
+The AUTO bank lanes output CC, aftertouch, or Schwung chain knob (Sch) data with
+smooth interpolation. On External-routed tracks, CC/AT output goes via USB-A.
+Sch lanes send CC 102-109 on the internal Schwung MIDI path to control chain
+knob assignments (requires Schwung 0.9.17 or later). Aftertouch can also be
 recorded live via pad pressure when the track's AftTch setting is enabled (see
 [Track Config](#171-track-config)).
 
@@ -1579,10 +1575,10 @@ recorded live via pad pressure when the track's AftTch setting is enabled (see
 By default dAVEBOx runs on its own internal clock. Set **Global Menu → Clock
 Follow → Move** to instead lock dAVEBOx to Move's transport:
 
-- **Tempo follows Move.** dAVEBOx advances from Move's MIDI clock, so it plays at
-  Move's tempo and stays phase-locked. BPM shows **Move** and is read-only; Tap
-  Tempo is disabled (the menu item and the Shift + Step 5 shortcut show a "BPM
-  controlled by Move" notice instead). Turn Move's tempo and dAVEBOx tracks it.
+- **Tempo follows Move.** dAVEBOx plays at Move's tempo and stays phase-locked.
+  BPM shows **Move** and is read-only; Tap Tempo is disabled (the menu item and
+  the Shift + Step 5 shortcut show a "BPM controlled by Move" notice instead).
+  Turn Move's tempo and dAVEBOx tracks it.
 - **Play drives Move.** Pressing dAVEBOx's **Play** starts (or stops) *Move's*
   transport; dAVEBOx then follows Move's start/stop so both launch from the same
   downbeat. Pressing Move's own Play works too — dAVEBOx follows either way.
@@ -1592,22 +1588,20 @@ Follow → Move** to instead lock dAVEBOx to Move's transport:
 - **Record count-in.** Arming Record while stopped starts Move and counts a
   one-bar lead-in on Move's clock, then begins recording on the downbeat (your
   bar 1 lands on Move's bar 2 — a constant, inaudible offset). Because Move
-  quantizes its *own* transport start to its Ableton Link grid, there can be a
-  short wait — up to about a bar — between pressing Record and Move actually
-  starting. dAVEBOx waits through that Link sync so the count-in always lands on
-  Move's downbeat at the current tempo, instead of starting early with no lead-in.
-  If Move never starts at all (for example if it isn't the Link transport leader),
-  dAVEBOx falls back to its own clock at the last-known tempo and shows a brief
-  on-screen notice, so you still get a count-in and a take.
+  quantizes its own transport start to its Ableton Link grid, there can be a
+  short wait — up to about a bar — before Move actually starts; dAVEBOx waits
+  through it. If Move never starts at all, dAVEBOx falls back to its own clock
+  at the last-known tempo and shows a brief on-screen notice, so you still get a
+  count-in and a take.
 - **Stops with Move.** If Move's clock stops (Stop, or the clock simply stops
   arriving), dAVEBOx's sequencer stops too.
-- **Tempo is captured automatically.** dAVEBOx reads its internal tempo from
-  Move's clock while following, so the BPM stays matched without setting it by
-  hand — including after Move stops (it keeps Move's last tempo).
+- **Tempo is captured automatically.** The BPM stays matched with Move's tempo
+  without setting it by hand — including after Move stops (it keeps Move's last
+  tempo).
 - **Live arp & delay keep running while stopped.** Holding pads to arpeggiate, or
-  using tempo-synced delay, keeps grooving at Move's tempo even when the transport
-  is stopped — it no longer freezes when Move isn't running. (The main sequencer
-  still stays stopped until Move starts again.)
+  using tempo-synced delay, keeps grooving at Move's tempo even when the
+  transport is stopped. (The main sequencer still stays stopped until Move
+  starts again.)
 
 This assumes Move's own sequencer is empty on the tracks dAVEBOx feeds —
 dAVEBOx *replaces* the sequencer while Move provides clock, transport, and
@@ -1626,8 +1620,8 @@ Follow = Off): dAVEBOx is the master and external gear chases it.
   remembered). While following, let Move's own *MIDI Clock Out* setting drive
   external gear — having dAVEBOx send clock too would put two clocks on the same
   USB-A port.
-- **Requires Schwung 0.9.16 or later** for the tight, audio-rate clock path; on
-  older Schwung the toggle has no effect.
+- **Requires Schwung 0.9.16 or later**; on older Schwung the toggle has no
+  effect.
 - Saved per set; defaults **Off** and never sends clock on load until the
   transport actually runs.
 
