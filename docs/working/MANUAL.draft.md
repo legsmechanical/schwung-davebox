@@ -271,15 +271,6 @@ way the pop-up appears only on turn (never on a bare touch) and stays up until y
 release the knob; the same read-outs appear in the step editor. The LED below each
 knob lights when that parameter differs from default.
 
-**Knob feel.** Every knob follows one of three consistent response classes, so
-turning any control behaves predictably: **continuous** params (velocities,
-percentages, offsets, CC values, nudges, step pitch…) always move ±1 on a slow
-turn — every exact value is dialable — and accelerate smoothly the faster you
-turn; **option pickers** (resolutions, rates, styles, octaves, note length…)
-step at one fixed, predictable pace with no acceleration; and **deliberate**
-controls (toggles, Beat Stretch, Legato…) take a heavier throw so an accidental
-brush can't flip or fire them.
-
 The bank display returns to the track overview after about a second of inactivity.
 **Touch the jog wheel** at any time to bring the active bank's display back —
 it stays up while you hold the touch — wherever a bank display applies (melodic,
@@ -568,28 +559,15 @@ new take: dAVEBOx estimates the tempo from your playing, applies it, sizes the
 clip to whole bars, writes the notes and automation, and starts the transport so
 you hear the take immediately.
 
-**While the transport is stopped in a session that already has clips**, the
-tempo is already set, so instead of retiming the set, your take is **stretched
-or squeezed to fit a chosen number of bars at the existing tempo**. An
-adjustment screen opens — the wheel steps through candidate bar lengths (1, 2,
-3, 4, 6, 8, 12, or 16), defaulting to whichever fits your take most naturally —
-and clicking the wheel commits it. The take lands in the focused clip if it's
-empty; otherwise dAVEBOx switches to Session View and blinks the track's empty
-clips so you can tap where to drop it (**Record** cancels, keeping the take
-buffered). Once the transport is playing, Capture always overdubs instead (see
-above).
+**While the transport is stopped in a session that already has clips**, your
+take is fit to the existing tempo instead: an adjustment screen opens where the
+**wheel** picks how many bars it fills. It lands in the focused clip, or — if
+that's full — tap an empty clip to drop it on.
 
 **Choosing the tempo.** After a stopped capture into an empty session, a
-**tempo chooser** opens: the big number is the applied BPM, with up to **eight**
-candidate tempos below it and a note strip showing your take against a beat/bar
-grid with a moving playhead marking where the bar lines and loop point fall.
-The candidates come from fitting your playing to a musical grid rather than
-simple half/double guessing, so the list better reflects how you actually
-played. **Turn the wheel** to audition the other candidates — playback keeps
-rolling, so you can hear and see how the take lines up under each — and
-**click the wheel** to keep the one you want. (No chooser appears under Clock
-Follow, where Move owns the tempo, or when there wasn't enough rhythm to
-estimate.)
+**tempo chooser** opens — the detected BPM plus a few candidates, with a strip
+showing your take against the bar grid. **Turn the wheel** to audition them
+(playback keeps rolling so you can hear the fit) and **click** to keep one.
 
 Works on melodic and drum tracks alike (drum hits land in their matching
 lanes). To throw the buffered input away instead, hold **Shift** and tap
