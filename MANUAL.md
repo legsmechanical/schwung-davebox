@@ -563,8 +563,20 @@ A melodic clip's grid, direction, and note transforms.
 | 7 | `Dir` | **Direction** — Forward, Backward, or ping-pong. *Alt:* **Reverse Style**. | No | Fwd |
 | 8 | `SqFl` | **Follow** — scroll the step display to keep up with the playhead. | No | On |
 
-Recording needs **Forward** direction; [bake](#141-bake) and [export](#143-export-to-live)
-freeze the direction into the notes and reset it to Forward.
+**Direction** plays the clip Forward, Backward, or bouncing between the two (the
+two ping-pong modes differ only in which end they start from). **Reverse Style**
+(the alt of `Dir`) sets what backward playback does to each note:
+
+- **Step** (default) reverses the *order* of the steps — each note still triggers
+  at its start, so the pattern runs back-to-front but the notes sound unchanged.
+- **Audio** also mirrors each note within its slot: on a backward pass the note-on
+  lands at the note's end and the note-off at its start, for a tape-reverse feel.
+  (In ping-pong, Audio plays the endpoints twice, so every note gets one forward
+  and one reversed pass.)
+
+Recording needs **Forward** direction; [bake](#141-bake) and
+[export](#143-export-to-live) freeze the direction into the notes and reset it to
+Forward.
 
 ## 8.2 DRUM LANE bank
 
