@@ -474,7 +474,7 @@ and stopping the transport clears them.
 **The gate mask** (top two rows) is a looping on/off pattern over the repeats — all
 on by default, tap to toggle. **Loop + a gate pad** sets its cycle length (1–8).
 Per-step velocity and timing for the mask live in the
-[REPEAT GROOVE bank](#84-repeat-groove-bank).
+[REPEAT GROOVE bank](#repeat-groove).
 
 ## 6.4 Copying & muting lanes
 
@@ -539,9 +539,10 @@ a silent placeholder.
 
 # 8. Clip Timing & Grid
 
-These banks set a clip's grid, timing, and playback. Some parameters permanently
-rewrite your notes — the **Rewrites notes** column marks which — and **Undo**
-reverses those; the rest only change how the clip plays.
+These banks set a clip's grid, timing, and playback — **CLIP** on a melodic track,
+**DRUM LANE** and **ALL LANES** on a drum track. Some parameters permanently
+rewrite your notes (the **Rewrites notes** column marks which; **Undo** reverses
+those); the rest only change how the clip plays.
 
 **Resetting a bank** (this works on any bank, including [Effects](#9-effects)):
 
@@ -621,39 +622,33 @@ anything.
 | 7 | `Dir` | **Direction** for all lanes. *Alt:* **Reverse Style.** | No |
 | 8 | `SyncRpt` | **Repeat Sync** — held repeats wait for the beat grid (On) or fire at once (Off) | No |
 
-## 8.4 REPEAT GROOVE bank
-
-<img src="img/bank-repeatgroove.png" width="384" alt="REPEAT GROOVE bank: a velocity bar for each of the eight gate-mask steps">
-
-On a drum track while a [Note Repeat](#63-note-repeat) mode is active, this bank
-shapes the 8-step gate mask, per lane.
-
-| Knobs | Screen page | After jog-click |
-|---|---|---|
-| 1–8 | **Velocity** per gate step — `Thru` (the pad's own velocity) or a value 1–127 | **Nudge** per gate step (±50 % of the step) |
-
-**Delete + jog click** resets the selected lane's groove.
-
 ---
 
 # 9. Effects
 
-dAVEBOx's effects are **MIDI effects** — they add and reshape notes on the way to
-the instrument and change nothing you programmed. Return a knob to its default and
-the clip plays exactly as written. Every note runs the same chain:
+Two kinds of processing shape notes beyond the stored clip:
+
+- **Effects** (§9.1–9.4) reshape every note — sequenced or live — at playback, per
+  clip. They are non-destructive: return a knob to its default and the clip plays
+  exactly as written.
+- **Live input modifiers** ([§9.5](#95-live-input-modifiers)) act only on what you
+  play live, before it is sequenced. LIVE ARP is the melodic one; on drums it is
+  [Note Repeat](#63-note-repeat), shaped by REPEAT GROOVE.
+
+Everything runs the same chain — the live modifier at the front, the effects after:
 
 ```
- LIVE INPUT ──▶ [LIVE ARP] ──┐
-                             ├─▶ NOTE FX ─▶ HARMONY ─▶ DELAY ─▶ SEQ ARP ─▶ OUT
- SEQUENCED NOTES ────────────┘
+ LIVE INPUT ──▶ [LIVE ARP / Note Repeat] ──┐
+                                           ├─▶ NOTE FX ─▶ HARMONY ─▶ DELAY ─▶ SEQ ARP ─▶ OUT
+ SEQUENCED NOTES ──────────────────────────┘
 ```
 
-The **LIVE ARP** runs on live pad and external input only. Global
-[swing](#151-global-settings) is applied after the chain; [Performance Mode](#12-performance-mode)
-comes last. NOTE FX, HARMONY, DELAY, and SEQ ARP are stored per clip; LIVE ARP is
-per track.
+Global [swing](#151-global-settings) is applied after the chain;
+[Performance Mode](#12-performance-mode) comes last.
 
 ## 9.1 NOTE FX
+
+*Melodic & drum.*
 
 <img src="img/bank-notefx.png" width="384" alt="NOTE FX bank: octave, offset, velocity, quantize, length, gate, random">
 
@@ -676,12 +671,16 @@ semitone); knobs 3–6 apply to that lane.
 
 ## 9.2 HARMONY
 
+*Melodic.*
+
 <img src="img/bank-harmony.png" width="384" alt="HARMONY bank: an octave voice and three harmony voices">
 
-Adds voices above every note (melodic tracks): an octave voice and three
-scale-aware harmony intervals (each ±24, default 0).
+Adds voices above every note: an octave voice and three scale-aware harmony
+intervals (each ±24, default 0).
 
 ## 9.3 DELAY
+
+*Melodic & drum.*
 
 <img src="img/bank-delay.png" width="384" alt="DELAY bank: rate, level, repeats, velocity feedback, pitch feedback, gate, retrigger, random">
 
@@ -700,10 +699,11 @@ Echoes every note in rhythm.
 
 ## 9.4 SEQ ARP
 
+*Melodic. Per clip.*
+
 <img src="img/bank-seqarp.png" width="384" alt="SEQ ARP bank: style, rate, octave, gate, steps mode, retrigger, sync">
 
-An arpeggiator running after Delay, on both sequenced and live notes (melodic
-tracks). Per clip.
+An arpeggiator running after Delay, on both sequenced and live notes.
 
 | Knob | On screen | What it does | Default |
 |---|---|---|---|
@@ -720,18 +720,38 @@ and with **Shift** held they set each step's velocity (`Thru` passes the incomin
 velocity). The pads write coarse velocities per step, and **Loop + pad** sets the
 step-loop length.
 
-## 9.5 LIVE ARP
+## 9.5 Live input modifiers
+
+These shape what you play **live** — on the pads or over external MIDI — before it
+is sequenced. They leave the stored clip untouched, and are a different stage from
+the effects above.
+
+### LIVE ARP
+
+*Melodic. Per track.*
 
 <img src="img/bank-livearp.png" width="384" alt="LIVE ARP bank: the same controls as SEQ ARP plus a latch">
 
-An arpeggiator for live pad and external input (melodic tracks). Per track; it
-leaves sequenced notes alone. Drum tracks use [Note Repeat](#63-note-repeat)
-instead.
+An arpeggiator for live pad and external input; it leaves sequenced notes alone.
+The controls match [SEQ ARP](#94-seq-arp), plus a **Latch** (`Ltch`, knob 8) that
+keeps the arp running after you release. With pads held, tapping **Loop** latches;
+**Delete + Loop** unlatches. Latch survives track and channel changes and clears on
+Stop. **Shift + Step 11** toggles LIVE ARP on and off with the last style.
 
-The controls match SEQ ARP, plus a **Latch** (`Ltch`, knob 8) that keeps the arp
-running after you release. With pads held, tapping **Loop** latches; **Delete +
-Loop** unlatches. Latch survives track and channel changes and clears on Stop.
-**Shift + Step 11** toggles LIVE ARP on and off with the last style.
+### REPEAT GROOVE
+
+*Drum. Per lane.*
+
+<img src="img/bank-repeatgroove.png" width="384" alt="REPEAT GROOVE bank: a velocity bar for each of the eight gate-mask steps">
+
+Shapes the 8-step gate mask of a lane's [Note Repeat](#63-note-repeat) — available
+only while a repeat mode is active.
+
+| Knobs | Screen page | After jog-click |
+|---|---|---|
+| 1–8 | **Velocity** per gate step — `Thru` (the pad's own velocity) or a value 1–127 | **Nudge** per gate step (±50 % of the step) |
+
+**Delete + jog click** resets the selected lane's groove.
 
 ---
 
@@ -773,9 +793,22 @@ starting from the shown value. Clearing:
 ## 10.4 Per-lane loops
 
 A lane can loop independently of the clip — a short filter sweep under a long
-melody, say. **Hold Loop on this bank** (the last-touched knob is the lane): the
-step buttons set the length, the jog trims it by a step, **Left / Right** change
-its playback speed, and **+ / −** change its step density.
+melody, say. **Hold Loop on this bank** (the last-touched knob is the lane):
+
+| Gesture | Sets |
+|---|---|
+| Step buttons | Loop length, by page |
+| Jog | Loop length, ±1 step |
+| Left / Right | Resolution (below) |
+| + / − | Zoom (below) |
+
+### Resolution & zoom
+
+- **Resolution** sets how fast the lane plays through its steps — the same
+  recorded data, cycled faster or slower (a 16-step lane at 1/8 takes twice as long
+  as at 1/16).
+- **Zoom** sets the step-grid density — more or fewer steps over the same time
+  span. Your recorded points keep their exact positions; the grid moves around them.
 
 ---
 
@@ -801,7 +834,8 @@ tracks without triggering the ones that hold notes.
 
 A scene launches one clip from every track at once — tap a **scene launcher** (left
 of the grid) or a **step button (1–16)**. **Shift + scene launcher** launches at
-the next bar. An empty cell in a scene leaves its track playing what it had.
+the next bar. Launching a scene switches **every** track to that row, so a track
+whose clip there is empty falls silent.
 
 | Gesture | Result |
 |---|---|
