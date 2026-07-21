@@ -401,14 +401,25 @@ const BIG_G = [
 ];
 function bigGlyph(cp) { return (cp < 0x20 || cp > 0x7E) ? null : BIG_G[cp - 0x20]; }
 
+/* Tight punctuation. The source font gives '.' the same ~4px advance a letter
+ * gets, so a decimal ate most of a digit's worth of a 32px cell and pushed
+ * values like "0.25" over the fallback threshold. These advance by their INK
+ * width instead, and take no inter-glyph gap on either side — the digits
+ * already carry ~2px of right side bearing, so they still read as separated.
+ * Keyed by codepoint; the value is the advance. */
+const BIG_TIGHT = { 0x2E: 2, 0x3A: 2, 0x2C: 3, 0x3B: 3 };   /* . : , ; */
+const bigAdv = (cp, g) => BIG_TIGHT[cp] ?? g[0];
+const bigGapAt = (a, b) => (BIG_TIGHT[a] || BIG_TIGHT[b]) ? 0 : BIG_GAP;
+
 /* Width of `text` in the big font (no trailing gap). */
 export function bigWidth(text) {
     const s = String(text);
     let w = 0;
     for (let i = 0; i < s.length; i++) {
-        const g = bigGlyph(s.charCodeAt(i));
-        w += g ? g[0] : 7;
-        if (i < s.length - 1) w += BIG_GAP;
+        const cp = s.charCodeAt(i);
+        const g = bigGlyph(cp);
+        w += g ? bigAdv(cp, g) : 7;
+        if (i < s.length - 1) w += bigGapAt(cp, s.charCodeAt(i + 1));
     }
     return w;
 }
@@ -418,7 +429,8 @@ export function bigPrint(x, y, text, color) {
     let cx = Math.round(x);
     const oy = Math.round(y), v = color ? 1 : 0;
     for (let i = 0; i < s.length; i++) {
-        const g = bigGlyph(s.charCodeAt(i));
+        const cp = s.charCodeAt(i);
+        const g = bigGlyph(cp);
         if (!g) { cx += 7; continue; }
         const yOff = g[1], w = g[2], h = g[3];
         for (let r = 0; r < h; r++) {
@@ -432,8 +444,8 @@ export function bigPrint(x, y, text, color) {
                 } else c++;
             }
         }
-        cx += g[0];
-        if (i < s.length - 1) cx += BIG_GAP;
+        cx += bigAdv(cp, g);
+        if (i < s.length - 1) cx += bigGapAt(cp, s.charCodeAt(i + 1));
     }
 }
 

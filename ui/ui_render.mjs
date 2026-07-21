@@ -191,6 +191,32 @@ function drawKitValueOverlay(cells, idx) {
     }
 }
 
+/* The merged Note/Oct box spanning the K1+K2 widget span — shared by the
+ * melodic step editor and the drum NOTE FX lane box so both read the same.
+ * `name` is the note name in the big font; `sub` is an optional qualifier
+ * (the lane's MIDI number, or "+2" for a chord step) alongside it in the
+ * label font, the pair centred as a group. Inverts while either knob is
+ * held. Falls back to an all-small line if the group overruns the box. */
+function drawNoteBox(name, sub, invert) {
+    const BX = 6, BW = 52, BY = MV_ROW0_Y, BH = MV_KH;
+    if (invert) fill_rect(BX, BY, BW, BH, 1);
+    else        rectOutline(BX, BY, BW, BH, 1);
+    const fg = invert ? 0 : 1;
+    const s  = sub ? String(sub) : '';
+    const nW = bigWidth(name);
+    const sW = s ? mvWidth(s) + 3 : 0;      /* 3px gap before the qualifier */
+    if (nW + sW <= BW - 4) {
+        const x = BX + Math.round((BW - nW - sW) / 2);
+        bigPrint(x, BY + Math.floor((BH - MV_BIG_H) / 2), name, fg);
+        /* baseline-align the small text with the bottom of the big glyphs */
+        if (s) mvPrint(x + nW + 3, BY + Math.floor((BH - MV_BIG_H) / 2) + MV_BIG_H - 5, s, fg);
+        return;
+    }
+    const line = s ? name + ' ' + s : name;
+    mvPrint(BX + Math.round((BW - mvWidth(line)) / 2),
+            BY + Math.floor((BH - 5) / 2), line, fg);
+}
+
 /* Canvaskit step-editor page (drum + melodic step hold): "STEP N" filled
  * header (touched knob swaps in the param name), kit grid, enum overlay on
  * top. `noteBox` (melodic) draws the merged Oct/Note box over the K1+K2
@@ -209,22 +235,7 @@ function drawStepEditKitPage(title, cells, noteBox) {
         return;
     }
     drawKitCells(cells, t);
-    if (noteBox != null) {
-        const hiOP = (t === 0 || t === 1);
-        const BX = 6, BW = 52, BY = MV_ROW0_Y, BH = MV_KH;
-        if (hiOP) fill_rect(BX, BY, BW, BH, 1);
-        else      rectOutline(BX, BY, BW, BH, 1);
-        /* Note read-out in the big font; falls back to the label font if a
-         * multi-note label ("C#3+2") outgrows the merged box. */
-        const _nbW = bigWidth(noteBox);
-        if (_nbW <= BW - 4) {
-            bigPrint(BX + Math.round((BW - _nbW) / 2),
-                     BY + Math.floor((BH - MV_BIG_H) / 2), noteBox, hiOP ? 0 : 1);
-        } else {
-            mvPrint(BX + Math.round((BW - mvWidth(noteBox)) / 2),
-                    BY + Math.floor((BH - 5) / 2), noteBox, hiOP ? 0 : 1);
-        }
-    }
+    if (noteBox != null) drawNoteBox(noteBox.name, noteBox.sub, (t === 0 || t === 1));
     const _ovi = enumOverlayIdx(t);
     drawKitEnumOverlay(cells, _ovi);
     drawKitValueOverlay(cells, _ovi);
@@ -354,11 +365,28 @@ const KIT_ARP_STYLE_NAMES = ['Off', 'Up', 'Down', 'Up/Down', 'Down/Up',
  * option lists -> enum square, small counts / small signed / one-shot
  * actions -> value square, signed continuous -> center-tick arc,
  * unsigned continuous -> arc. Stubs -> blank. */
+/* Step-edit note length in steps. Trailing zeros are trimmed ("0.50" -> "0.5")
+ * so more lengths clear the big read-out's 32px cell — with the tight decimal
+ * point, everything under 10 steps now fits. */
+export function fmtStepLen(steps) {
+    if (steps % 1 === 0) return steps.toFixed(0);
+    return steps.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+/* An "off"/null/empty value always reads as "--" in a big numeric read-out —
+ * the word "OFF" competes with the numbers around it and, on a picker, with
+ * the real named options. Applies to the value AND its option list, so the
+ * scrolling picker matches the widget. */
+const _offDash = (s) => {
+    const t = s == null ? '' : String(s);
+    return (t === '' || t.toLowerCase() === 'off') ? '--' : t;
+};
+
 /* Full formatted option list for a discrete numeric knob (min..max), so a
  * value-box param can drive the picker overlay just like a named enum. */
 function _discreteOpts(knob) {
     const opts = [];
-    for (let i = knob.min; i <= knob.max; i++) opts.push(knob.fmt(i));
+    for (let i = knob.min; i <= knob.max; i++) opts.push(_offDash(knob.fmt(i)));
     return opts;
 }
 
@@ -396,7 +424,7 @@ function kitCellForKnob(knob, val) {
          * Feedback) — get a persistent value box. Wider signed ranges (±127
          * velocities) stay a bipolar arc where the sweep reads better than digits. */
         if (knob.max <= 24) {
-            base.kind = 'valsq';
+            base.kind = 'valsq'; base.text = _offDash(text);
             base.options = _discreteOpts(knob); base.sel = v - knob.min;
             return base;
         }
@@ -406,12 +434,12 @@ function kitCellForKnob(knob, val) {
         return base;
     }
     if (knob.fmt === fmtPlain && knob.max <= 16) {   /* counts (Repts) */
-        base.kind = 'valsq';
+        base.kind = 'valsq'; base.text = _offDash(text);
         base.options = _discreteOpts(knob); base.sel = v - knob.min;
         return base;
     }
     if (knob.fmt === fmtPitchRnd) {                  /* Pitch Random 0..24 ("OFF" at 0) */
-        base.kind = 'valsq';
+        base.kind = 'valsq'; base.text = _offDash(text);
         base.options = _discreteOpts(knob); base.sel = v - knob.min;
         return base;
     }
@@ -1031,7 +1059,7 @@ export function drawUI() {
                 const _gateSteps = S.stepEditGate / tps;
                 const cells = [
                     { kind: 'valsq', label: 'Leng', name: 'Length',
-                      text: _gateSteps % 1 === 0 ? _gateSteps.toFixed(0) : _gateSteps.toFixed(2) },
+                      text: fmtStepLen(_gateSteps) },
                     { kind: 'arc', label: 'Vel', name: 'Velocity', text: String(S.stepEditVel),
                       norm: Math.max(0, Math.min(1, S.stepEditVel / 127)) },
                     { kind: 'arcbip', label: 'Nudg', name: 'Nudge',
@@ -1062,16 +1090,18 @@ export function drawUI() {
              * (same idiom as the drum NOTE FX lane box); K3 Leng, K4 Vel,
              * K5 Nudg, K6 Iter, K7 Prob, K8 Ratch. */
             const root = S.heldStepNotes[0];
-            const noteLabel = S.heldStepNotes.length > 1
-                ? midiNoteName(root) + '+' + (S.heldStepNotes.length - 1)
-                : midiNoteName(root);
+            const noteName = midiNoteName(root);
+            /* extra notes on the step ride alongside the name as "+2" */
+            const noteSub = S.heldStepNotes.length > 1
+                ? '+' + (S.heldStepNotes.length - 1) : '';
+            const noteLabel = noteSub ? noteName + noteSub : noteName;
             const tps = S.clipTPS[S.activeTrack][ac] || 24;
             const _gateSteps = S.stepEditGate / tps;
             const cells = [
                 { kind: 'blank', label: 'Note', name: 'Note', bigText: noteLabel },
                 { kind: 'blank', label: 'Oct',  name: 'Note', bigText: noteLabel },
                 { kind: 'valsq', label: 'Leng', name: 'Length',
-                  text: _gateSteps % 1 === 0 ? _gateSteps.toFixed(0) : _gateSteps.toFixed(2) },
+                  text: fmtStepLen(_gateSteps) },
                 { kind: 'arc', label: 'Vel', name: 'Velocity', text: String(S.stepEditVel),
                   norm: Math.max(0, Math.min(1, S.stepEditVel / 127)) },
                 { kind: 'arcbip', label: 'Nudg', name: 'Nudge',
@@ -1088,7 +1118,7 @@ export function drawUI() {
                   text: S.stepEditRatch <= 1 ? '--' : String(S.stepEditRatch),
                   options: ['--', '2', '3', '4'], sel: S.stepEditRatch <= 1 ? 0 : S.stepEditRatch - 1 },
             ];
-            drawStepEditKitPage(_stepTitle, cells, noteLabel);
+            drawStepEditKitPage(_stepTitle, cells, { name: noteName, sub: noteSub });
             return;
         } else if (S.stepWasEmpty) {
             drawStepEditKitPage(_stepTitle, null, null);
@@ -1478,7 +1508,6 @@ export function drawUI() {
         const vals  = S.bankParams[t][1];
         const _lane = S.activeDrumLane[t];
         const _dlNote  = S.drumLaneNote[t][_lane];
-        const _noteStr = midiNoteName(_dlNote) + ' ' + _dlNote;
         const _lenMode = S.drumLaneLenMode[t][_lane] | 0;
         const LEN_OPTS = [0,1,2,3,4,5,6,7,8].map(fmtLen);
         /* K1+K2 share the merged Oct/Note box (drawn as part of this page's
@@ -1505,13 +1534,9 @@ export function drawUI() {
             if (_tcell) drawKitTouchedHeader(_tcell.name);
             else drawBankHeading('NOTE FX', false);
             drawKitCells(cells, _tch);
-            /* merged Oct/Note box over the K1+K2 widget span */
-            const hiLane = (_tch === 0 || _tch === 1);
-            const BX = 6, BW = 52, BY = MV_ROW0_Y, BH = MV_KH;
-            if (hiLane) fill_rect(BX, BY, BW, BH, 1);
-            else        rectOutline(BX, BY, BW, BH, 1);
-            mvPrint(BX + Math.round((BW - mvWidth(_noteStr)) / 2),
-                    BY + Math.floor((BH - 5) / 2), _noteStr, hiLane ? 0 : 1);
+            /* merged Oct/Note box over the K1+K2 widget span — same read-out as
+             * the melodic step editor: big note name, MIDI number alongside. */
+            drawNoteBox(midiNoteName(_dlNote), String(_dlNote), _tch === 0 || _tch === 1);
             const _ovi2 = enumOverlayIdx(_tch);
             drawKitEnumOverlay(cells, _ovi2);
             drawKitValueOverlay(cells, _ovi2);
