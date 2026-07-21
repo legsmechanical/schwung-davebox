@@ -11,10 +11,9 @@ is one of Move's own instruments, a Schwung effect chain, or an external synth o
 the USB-A port.
 
 dAVEBOx runs inside [Schwung](https://github.com/charlesvestal/schwung) and takes
-over Move's pads, knobs, and screen while it's open. It borrows Move's own
-vocabulary throughout — tracks, clips, scenes, and sets work the way they do in
-Move, and this manual flags the parallels with a **Like Move** note as they come
-up.
+over Move's pads, knobs, and screen while it's open. It borrows Move's vocabulary —
+tracks, clips, and sets — and a **Like Move** note flags where something works as
+it does on Move.
 
 > 🚀 **New here?** The [**Quick Start guide**](QUICKSTART.md) walks you from a
 > blank set to a running arrangement in about fifteen minutes. This manual is the
@@ -58,8 +57,9 @@ Everything in dAVEBOx nests like this:
 - A **scene** is one clip from each of the 8 tracks, launched together.
 - The whole thing is saved inside the **Move set**.
 
-> **Like Move:** tracks, clips, scenes, and sets are the same objects you already
-> know from Move. dAVEBOx replaces Move's sequencer, not its instruments.
+> **Like Move:** tracks, clips, and sets are the same objects you already know
+> from Move. (Scenes are dAVEBOx's own.) dAVEBOx replaces Move's sequencer, not its
+> instruments.
 
 ## What it does and doesn't do
 
