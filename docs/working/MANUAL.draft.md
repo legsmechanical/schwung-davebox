@@ -224,7 +224,7 @@ covered in [Clip Timing & Grid](#8-clip-timing--grid), [Effects](#9-effects), an
 ## 3.6 The Settings menu
 
 **Shift + Note/Session** opens the Settings menu — the active track's settings
-first, then the session-wide settings below a divider. The full list is in
+first, then the session-wide settings. The full list is in
 [Settings & Sets](#15-settings--sets), and many settings have a **Shift + Step**
 shortcut (see the [Quick Reference](#17-quick-reference)).
 
@@ -1072,8 +1072,8 @@ export is one-way.
 
 # 15. Settings & Sets
 
-Open the Settings menu with **Shift + Note/Session**. It shows the active track's
-settings first, then the global settings below a divider.
+Open the Settings menu with **Shift + Note/Session**. It holds the active track's
+settings and the session-wide settings.
 
 ## 15.1 Global settings
 
