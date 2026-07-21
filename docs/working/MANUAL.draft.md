@@ -253,7 +253,8 @@ points at one instrument (its channel and route — see
 ## 4.1 Track type
 
 A track's **type** sets how you enter notes into it and how it sequences them. Set
-it in the Settings menu under **Mode**:
+it in the Settings menu under **Mode**, where scrolling previews the candidate type
+and clicking commits it:
 
 | Type | Menu label | How it works |
 |---|---|---|
@@ -266,7 +267,6 @@ type.
 
 ## 4.2 Changing type
 
-Turning the jog through **Mode** shows the candidate type; clicking commits it.
 Changing type **carries your notes** across all 16 clips (their pitch, length, and
 per-step conditions), but **resets effects, arpeggiators, and automation** to
 defaults.
