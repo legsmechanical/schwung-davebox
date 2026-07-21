@@ -85,13 +85,14 @@ You work in one of two views and switch between them with **Note/Session**:
 
 ## Three kinds of track
 
-Each track is set to one of three types, which decides what it sequences:
+Each track is one of three types. The type sets how you enter notes and how the
+track sequences them:
 
-| Type | Sequences |
+| Type | How it works |
 |---|---|
-| **Melodic** | Pitched, scale-snapped notes — see [Melodic Clips](#5-melodic-clips) |
-| **Drum** | 32 drum lanes, each its own step sequence — see [Drum Clips](#6-drum-clips) |
-| **Conductor** | Nothing of its own; it transposes the other tracks live — see [The Conductor](#7-the-conductor) |
+| **Melodic** | Scale-snapped notes on the pads and steps — see [Melodic Clips](#5-melodic-clips) |
+| **Drum** | The pads become 32 drum lanes, each its own step sequence — see [Drum Clips](#6-drum-clips) |
+| **Conductor** | Plays no notes of its own; it transposes the other tracks live — see [The Conductor](#7-the-conductor) |
 
 ---
 
@@ -251,14 +252,14 @@ points at one instrument (its channel and route — see
 
 ## 4.1 Track type
 
-A track's **type** decides what it sequences. Set it in the Settings menu under
-**Mode**:
+A track's **type** sets how you enter notes into it and how it sequences them. Set
+it in the Settings menu under **Mode**:
 
-| Type | Menu label | Sequences |
+| Type | Menu label | How it works |
 |---|---|---|
-| Melodic | `Keys` | Scale-snapped notes — [Melodic Clips](#5-melodic-clips) |
-| Drum | `Drums` | 32 drum lanes — [Drum Clips](#6-drum-clips) |
-| Conductor | `Conduct` | Nothing; it transposes the other tracks — [The Conductor](#7-the-conductor) |
+| Melodic | `Keys` | Scale-snapped notes on the pads and steps — [Melodic Clips](#5-melodic-clips) |
+| Drum | `Drums` | 32 drum lanes, each its own step sequence — [Drum Clips](#6-drum-clips) |
+| Conductor | `Conduct` | Plays no notes of its own; transposes the other tracks — [The Conductor](#7-the-conductor) |
 
 Melodic is the default. A track keeps its color, clips, and routing whatever its
 type.
