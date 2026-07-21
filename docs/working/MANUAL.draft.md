@@ -171,7 +171,7 @@ While dAVEBOx is open, Move's controls map like this:
 |---|---|
 | **Knobs 1–8** | Adjust whatever the active bank shows. *Touch* to read a value; *turn* to change it. |
 | **Jog** | *Turn* to cycle parameter banks or scroll; *click* to enter or confirm; *touch* to reveal a screen. |
-| **Volume** | Master output level (handed to Move). |
+| **Volume** | Master output level. |
 | **Pad grid** | Plays notes and drum lanes, or shows the clip grid. |
 | **Side buttons** | Switch clips on the active track. |
 | **Step buttons 1–16** | Show the active clip's steps, or launch scenes. |
@@ -207,7 +207,7 @@ leaving.
 | **Shift + bottom-row pad (1–8)** | Track View |
 | **Tap a pad in a column** | Session View |
 
-The screen boxes the active track number.
+A box around a track number marks the active track.
 
 ## 3.4 Parameter banks
 
@@ -279,10 +279,10 @@ type.
 
 ## 4.2 Changing type
 
-The **Mode** setting previews as you scroll — turning the jog shows the candidate
-type, and clicking commits it. Changing type **carries your notes** across all 16
-clips (their pitch, length, and per-step conditions), but **resets effects,
-arpeggiators, and automation** to defaults.
+Turning the jog through **Mode** shows the candidate type; clicking commits it.
+Changing type **carries your notes** across all 16 clips (their pitch, length, and
+per-step conditions), but **resets effects, arpeggiators, and automation** to
+defaults.
 
 - **Melodic ↔ Drum** asks you to confirm when the track holds notes. An empty
   track switches at once.
@@ -864,8 +864,8 @@ across reboots.
 
 ## 11.5 Volume
 
-The **Volume** knob sets master output, handed to Move. There is no per-track
-volume — set level on the instrument (the Move mixer, or the Schwung chain).
+The **Volume** knob controls Move's master output. There is no per-track volume —
+set level on the instrument (the Move mixer, or the Schwung chain).
 
 ---
 
@@ -980,8 +980,8 @@ once for a multitimbral rig.
 
 ## 13.2 External MIDI in and out
 
-A USB-A controller plays the **active track**, its notes rechannelized to that
-track's channel; filter by channel with **MIDI In** in the Global Menu. Whether the
+A USB-A controller plays the **active track**, its notes moved onto that track's
+channel; filter by channel with **MIDI In** in the Global Menu. Whether the
 effects chain shapes live input depends on the route:
 
 | Route | Effects on external input |
@@ -1119,7 +1119,7 @@ Diminished.
 ## 15.2 Key & Scale
 
 Editing **Key** or **Scale** moves your melodic clips with it. As you turn, the
-pads relayout and, while playing, you hear a live preview. **Click to commit**: if
+pads rearrange and, while playing, you hear a live preview. **Click to commit**: if
 any melodic clip holds notes, a **Transpose clips?** step asks first (yes moves the
 notes; no applies the new key/scale and leaves the notes put). Backing out cancels.
 Key moves by the shortest distance; Scale remaps by scale degree between scales of
@@ -1265,9 +1265,9 @@ beat markers. Session View: red = rows in view, white = out-of-view content.
 **Knob LEDs** — lit when a parameter is off default. On the [AUTO bank](#10-automation),
 white = resting value, yellow = has automation, red = recording, green = playback.
 
-**Screen header** — the active track number is boxed; a muted track blinks, a
-soloed track fills. The bank strip on the right shows where you are among the
-track's banks.
+**Screen header** — the active track's number sits inside a box; a muted track's
+number blinks, and a soloed track's number shows filled in. The bank strip on the
+right shows where you are among the track's banks.
 
 ### Limitations
 
