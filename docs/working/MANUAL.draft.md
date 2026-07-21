@@ -345,9 +345,6 @@ Three settings decide *whether and how* a step fires. Each defaults to `--` (off
 They stack in that order: iteration decides if the step plays, probability rolls
 per note, and a note that plays fires all its ratchets.
 
-> **Like Move:** iteration, probability, and ratchets match Move's per-step chance
-> and repeats.
-
 ## 5.4 Recording
 
 Press **Record** to play notes into the active clip in real time.
