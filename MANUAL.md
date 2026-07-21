@@ -1221,6 +1221,16 @@ device both ways — edits on either side show up on the other.
 | Note/Session (tap / hold) | Switch / peek view |
 | Shift + Note/Session | Settings menu |
 
+### Drum track (additions)
+
+| Control | Action |
+|---|---|
+| Lane pad | Trigger + select lane |
+| +/− | Lane bank A ↔ B |
+| Shift + Step 8 | Cycle velocity / Rpt1 / Rpt2 |
+| Loop + jog / lane pad | Lane length / latch repeat |
+| Copy + lane · Mute + lane | Copy · mute lane |
+
 ### Shift + Step shortcuts
 
 | Step | Action | Views |
@@ -1253,16 +1263,6 @@ device both ways — edits on either side show up on the other.
 | Sample + scene launcher | Bake row |
 | Delete + clip / scene launcher | Delete clip / clear row |
 | Loop (tap / hold) | Lock / hold Performance Mode |
-
-### Drum track (additions)
-
-| Control | Action |
-|---|---|
-| Lane pad | Trigger + select lane |
-| +/− | Lane bank A ↔ B |
-| Shift + Step 8 | Cycle velocity / Rpt1 / Rpt2 |
-| Loop + jog / lane pad | Lane length / latch repeat |
-| Copy + lane · Mute + lane | Copy · mute lane |
 
 ### LED & screen states
 
