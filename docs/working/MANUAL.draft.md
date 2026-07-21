@@ -218,13 +218,11 @@ move with it:
 - **Backing out** (Note/Session, or turning back to the original value) cancels —
   nothing moves.
 
-How notes move: changing **Key** transposes by the shortest distance (C→D up a
-step; C→B down one). Changing **Scale** reshapes each note by scale degree when
-the two scales have the same number of notes (e.g. Major↔Minor — the 3rd stays
-the 3rd), or snaps to the nearest in-scale note when they differ (e.g. into a
-Pentatonic). Harmonies and arpeggios follow the new key/scale in the preview too.
-Drum tracks are unaffected. Transpose is not undoable — the prompt is the
-safeguard.
+Changing **Key** transposes by the shortest distance (C→D up a step; C→B down
+one). Changing **Scale** remaps each note by scale degree when the two scales
+have the same number of notes (e.g. Major↔Minor), or snaps to the nearest
+in-scale note when they differ (e.g. into a Pentatonic). Drum tracks are
+unaffected. Transpose is not undoable — the prompt is the safeguard.
 
 ---
 
@@ -250,38 +248,19 @@ The primary editing environment. Shows the active track's clip.
 | Loop (hold) | Enter loop view |
 | Loop (hold) + jog | Adjust clip length ±1 step |
 
-The OLED shows all 8 knob parameters as **graphical widgets** in a 2×4 grid:
-arc knobs for continuous values (with a center tick for ± parameters), toggle
-bars for on/off, and framed squares for option lists and stepped values, each
-with its name on the label strip beneath. The squares carry extra cues by
-function: one-shot action knobs (Beat Stretch, Clock Shift) show chevrons on
-their side borders ("turn either way to act"), destructive one-way actions
-(Legato) show a single filled arrow, Playback Direction draws actual arrows
-(► ◄ and paired arrows for ping-pong), and small stepped ranges (Resolution,
-Input Quantize, octaves…) show a selection dot-strip along the bottom edge. **Touching**
-a knob (without turning) highlights it — the header inverts to that parameter's
-**full name** and the label strip under its widget swaps to the **live value** —
-so you can tap across the knobs to see how they map to the screen. **Turning** a
-knob pops up a large, centred read-out of just that parameter — a zoomed copy of
-its widget (a big arc, or the value) — so it's easy to read while you dial it in.
-Parameters with a fixed set of choices (Delay Rate, Arp Style, Resolution, Note
-Offset, the harmonies, Ratchet, …) instead pop up a scrolling list of the options
-with the current one highlighted and a scrollbar when they don't all fit. Either
-way the pop-up appears only on turn (never on a bare touch) and stays up until you
-release the knob; the same read-outs appear in the step editor. The LED below each
-knob lights when that parameter differs from default.
+The OLED shows all 8 knob parameters as graphical widgets in a 2×4 grid, each
+with its name on the label strip beneath. **Touch** a knob (without turning) to
+highlight it — the header shows the parameter's **full name** and the label strip
+swaps to its **live value**. **Turn** a knob to pop up a large, centred read-out
+of that parameter, or a scrolling list for option parameters; the pop-up appears
+only on turn (never a bare touch) and stays up until you release. The LED below
+each knob lights when that parameter is set away from its default.
 
 The bank display returns to the track overview after about a second of inactivity.
 **Touch the jog wheel** at any time to bring the active bank's display back —
 it stays up while you hold the touch — wherever a bank display applies (melodic,
 drum, and Conductor banks alike). The reveal is disabled while the Global Menu is
 open.
-
-The header is a filled bar with a **page-indicator line** beneath it: one
-segment per bank in the cycle, with the active bank's segment gently flashing.
-While a knob is being turned the bar drops out and the parameter name shows
-centered in white, with a solid rule beneath. Conductor headers blink a "C-"
-prefix.
 
 ## Switching tracks while playing
 
@@ -459,10 +438,9 @@ Values: `1/2, 2/2, 1/3, 2/3, 3/3, … 8/8`. Example: `2/3` means "play on cycle 
 of every 3," silent on cycles 1 and 3. The cycle counter is per-clip and resets
 only on cold transport start (Stop → Play).
 
-**Prob (Probability)** — per-step play chance, shown as a knob that defaults to
-**100%** (always plays) and sweeps down to 1%. The roll is per-note: on a chord
-step set to 50%, each note independently has a 50% chance, so voicings vary
-naturally.
+**Prob (Probability)** — per-step play chance, defaulting to **100%** (always
+plays) and sweeping down to 1%. The roll is per-note: on a chord step set to
+50%, each note independently has a 50% chance, so voicings vary naturally.
 
 **Ratch (Ratchet)** — retriggers the step 2, 3, or 4 times within one step
 slot (`--` = off). Sub-hits are evenly spaced. Each runs through the full
@@ -503,10 +481,8 @@ Press **Record** to capture pad input into the active clip.
 | Playing, empty clip (no length set) | Arms recording, defers to next bar boundary. Record blinks red while pending. |
 
 > When **Clock Follow = Move**, arming Record from stopped first starts Move's
-> transport, then runs the one-bar count-in. Move quantizes its start to its
-> Ableton Link grid, so there can be a brief wait (up to ~1 bar) before the
-> count-in begins — dAVEBOx waits through it, and falls back to its own clock if
-> Move never starts. See [§16.6 Clock Follow](#166-clock-follow-syncing-to-move).
+> transport, then runs the one-bar count-in — there can be a brief wait (up to
+> ~1 bar) for Move to start. See [§16.6 Clock Follow](#166-clock-follow-syncing-to-move).
 
 Stop recording: press **Record** again (transport continues) or **Play** (stops
 transport).
@@ -556,9 +532,8 @@ clip's AUTOMATION lanes. The clip's length is never changed.
 
 **While the transport is stopped in a brand-new, empty session** (there's no
 tempo yet to inherit), tapping Capture treats your first note as the start of a
-new take: dAVEBOx estimates the tempo from your playing, applies it, sizes the
-clip to whole bars, writes the notes and automation, and starts the transport so
-you hear the take immediately.
+new take: dAVEBOx estimates the tempo from your playing, sizes the clip to whole
+bars, and starts the transport so you hear the take immediately.
 
 **While the transport is stopped in a session that already has clips**, your
 take is fit to the existing tempo instead: an adjustment screen opens where the
@@ -579,10 +554,9 @@ lanes). To throw the buffered input away instead, hold **Shift** and tap
 # 7. Drum Tracks
 
 On a drum track, each sound gets its own **lane** — a separate step pattern with
-its own loop length, timing, and effects. Think of each lane as an independent
-mini-sequencer for one drum sound (kick, snare, hi-hat, etc.). A drum track has
-32 lanes total, each assigned to a MIDI note that triggers a specific sound in the
-destination instrument.
+its own loop length, timing, and effects. A drum track has 32 lanes total, each
+assigned to a MIDI note that triggers a specific sound in the destination
+instrument.
 
 The pad grid is split into two halves:
 
@@ -706,8 +680,8 @@ track follows it.
 ## 8.1 Making a track a Conductor
 
 In [Track Config](#171-track-config), set **Mode** to **Conduct** (the Mode entry
-offers Keys / Drums / Conduct). The menu is preview-on-scroll: scrolling only shows
-the candidate type, and **clicking the jog commits it** behind a confirm dialog.
+offers Keys / Drums / Conduct). The menu is preview-on-scroll — see
+[§5.2](#52-switching-type-converts-your-notes).
 
 - Converting to/from Conductor **keeps your sequenced notes** (note, duration,
   iteration, probability across all 16 clips) but **resets effects, ARP, and
@@ -823,8 +797,7 @@ Controls the clip's timing grid, playback direction, and note transformations.
 pingpong modes — the playhead bounces back and forth (endpoints play once per
 direction change). **Live recording only works in Fwd mode** — non-Fwd clips show
 a popup when you try to record, offering to bake the clip to Fwd first. Bake and
-Ableton export freeze direction into note positions and reset to Fwd. Audio
-reverse style uses a 2L pingpong cycle (endpoints play twice).
+Ableton export freeze direction into note positions and reset to Fwd.
 
 ## 9.2 DRUM LANE bank
 
@@ -851,11 +824,9 @@ Lane length: **Loop + jog rotate**. Lane MIDI note: NOTE FX K1+K2.
 
 Applies settings to all 32 drum lanes at once. Because every change here rewrites
 all 32 lanes, the bank opens on an **"Edits will affect all lanes. Proceed?"**
-screen — **jog-click to confirm**. Until you confirm, *nothing* is applied: the
-knobs, the **Loop** button (length and loop window), and the Shift+Step
-double-and-fill / quantize shortcuts are all inert — the gated shortcut steps stay
-dark and holding Loop does nothing, so no edit can land before you say so.
-**K1–K3 permanently change notes across all lanes.**
+screen — **jog-click to confirm**. Until you confirm, the knobs, the **Loop**
+button (length and loop window), and the Shift+Step double-and-fill / quantize
+shortcuts are all inert. **K1–K3 permanently change notes across all lanes.**
 
 | Knob | Label | Function |
 |---|---|---|
@@ -878,13 +849,6 @@ persists. See [Note Repeat](#74-note-repeat) for the gate-mask context.
 | K | Standard page | Jog-click page |
 |---|---|---|
 | 1–8 | **Velocity** per gate step: **Thru** (default — repeat fires at the held pad's velocity, one click past 127) or a locked absolute value 1–127 | Nudge offset per gate step (±50% of step interval) |
-
-The display shows all 8 groove steps as one row of bars — bar height is the
-step's velocity (or its signed nudge on the jog-click page), with the step
-number under each bar. A filled bar means the step's gate is on; an outlined
-bar means it's gated off; steps past the loop length show a small tick.
-Turning a knob highlights its step number and shows `STEP N: value` in the
-header.
 
 **Delete + jog click** resets the groove for the active lane.
 
@@ -976,25 +940,20 @@ live input.
 | K6 | Rtrg | Retrigger — resets pattern on each new note and at loop boundary. | On/Off | On |
 | K7 | Sync | Waits for next rate boundary before firing. Off = fires from anchor. | On/Off | On |
 
-**Arp Steps editor:** jog click on this bank enters the editor. The OLED shows
-the 8 steps as a row of bars with the step number under each. Two pages:
+**Arp Steps editor:** jog click on this bank enters the editor, with two pages:
 - **Step Pitch** (default): K1–K8 set per-step pitch offsets (±24 scale
-  degrees), shown as ± bars around a centerline. Header reads `Pitch: ±N`
-  while turning.
+  degrees). Header reads `Pitch: ±N` while turning.
 - **Step Vel** (hold **Shift**): K1–K8 set each step's **absolute velocity**
-  fine (5–127), shown as bars from the baseline; one click past 127 is
-  **Thru** (the default) — the step fires at the incoming note's velocity,
-  drawn as a full-height dithered bar. Header reads `Velocity: N` (or `Thru`).
+  fine (5–127); one click past 127 is **Thru** (the default) — the step fires
+  at the incoming note's velocity. Header reads `Velocity: N` (or `Thru`).
   **Delete + pad** resets a step to Thru.
 
 Pads stay the **coarse** velocity editor (8 columns × 4 rows): each row writes
 a preset velocity (32 / 64 / 96 / 127; re-pressing the bottom row turns the
-step off). The pad LEDs always show the nearest of the four levels for the
-step's true velocity, so knob-fine values still read on the grid. A step fires
-at exactly its stored velocity in Mute/Step modes; Steps Off ignores the
-pattern and passes playing dynamics through. **Loop + pad** sets step-loop
-length (1–8); steps past it show as stubs on the OLED. Jog click, jog turn, or
-Note/Session exits. State is per-clip.
+step off) — the pad LEDs always show the nearest of the four levels for the
+step's true velocity. A step fires at exactly its stored velocity in Mute/Step
+modes; Steps Off passes playing dynamics through. **Loop + pad** sets step-loop
+length (1–8). Jog click, jog turn, or Note/Session exits. State is per-clip.
 
 ## 10.5 LIVE ARP bank (melodic only)
 
@@ -1094,9 +1053,9 @@ the previous clip.
 **Step-edit:** hold a step on this bank. The held-step display shows each lane's
 value at that step — if a lane has no point of its own there, it shows the line's
 current (interpolated) value in parentheses. Turn a knob to drop a point at that
-step: it starts from that shown value, and the first turn places the point above or
-below it (turn either direction), so a new point lands on the existing curve instead
-of jumping to 0. Turn a point below 0 to clear it back to "—" (or use Delete + step).
+step: the first turn starts from that shown value (turn either direction) rather
+than jumping to 0. Turn a point below 0 to clear it back to "—" (or use Delete +
+step).
 
 **Clearing (all undoable):**
 - **Delete** (tap) opens the CLEAR AUTOMATION menu — check AT and/or CC, then
@@ -1140,17 +1099,6 @@ The last-touched knob is the active lane. All Loop gestures target it.
   (more steps, more pages). Zooming out shows coarser divisions (fewer steps). The
   total time span stays the same. Breakpoints stay at their exact tick positions —
   the grid moves around them.
-
-Both are shown on the Loop config screen and the idle AUTO bank display.
-
-**OLED display (AUTO bank idle):** shows the bank header with Sch/AT/CC badges,
-the active lane's knob label + real-time value, resolution + zoom indicators, an
-automation value graph (black background, white line with playhead cursor), and a
-lane-aware progress bar.
-
-**OLED display (step held):** split-screen with compact graph (showing held-step
-position marker) above the progress bar, and the 8-knob step-edit values below the
-header. Active lane is highlighted.
 
 **Step LED colors (AUTO bank):**
 
