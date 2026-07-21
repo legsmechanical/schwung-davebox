@@ -1278,10 +1278,3 @@ white = resting value, yellow = has automation, red = recording, green = playbac
 **Screen header** — the active track's number sits inside a box; a muted track's
 number blinks, and a soloed track's number shows filled in. The bank strip on the
 right shows where you are among the track's banks.
-
-### Limitations
-
-- External MIDI on a Move-routed track skips the effects chain (it would loop) —
-  route to Schwung for effects on external input.
-- No per-track volume; set level on the instrument.
-- Automation lanes are not swung, by design.
