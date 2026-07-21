@@ -169,8 +169,8 @@ While dAVEBOx is open, Move's controls map like this:
 
 | Control | Role |
 |---|---|
-| **Knobs 1–8** | Adjust whatever the active bank shows. *Touch* to read a value; *turn* to change it. |
-| **Jog** | *Turn* to cycle parameter banks or scroll; *click* to enter or confirm; *touch* to reveal a screen. |
+| **Knobs 1–8** | Adjust the active bank's parameters. |
+| **Jog** | Turn to cycle parameter banks and scroll lists. |
 | **Volume** | Master output level. |
 | **Pad grid** | Plays notes and drum lanes, or shows the clip grid. |
 | **Side buttons** | Switch clips on the active track. |
@@ -298,8 +298,6 @@ buttons**:
 
 Steps past the clip's length are dimmed.
 
-> **Like Move:** placing notes on the 16 steps is Move's step sequencing.
-
 **Pad layout.** By default the pads show only in-scale notes, with the root in the
 track color (`Keys` layout). **Shift + Step 8** switches to a chromatic layout —
 all 12 semitones, with the in-scale notes highlighted. The **Layout** setting in
@@ -366,9 +364,6 @@ on step 1. You can switch tracks mid-take — recording follows the active track
 
 Recording runs in the **Forward** [playback direction](#81-clip-bank). A clip set
 to another direction offers to bake itself to Forward first.
-
-> **Like Move:** arming Record for a count-in and overdubbing is Move's recording
-> flow.
 
 ## 5.5 Capture
 
@@ -743,8 +738,6 @@ control-change or aftertouch data that plays back with the clip. A lane holds up
 1024 points, smoothly joined, plus an optional resting value it returns to each
 loop. The bank works the same on melodic and drum clips.
 
-> **Like Move:** recording knob moves as automation is Move's automation.
-
 ## 10.1 Choosing what a lane sends
 
 **Click the jog** to enter assign mode, then turn a knob to pick its target:
@@ -841,8 +834,6 @@ Clearing a clip with the side button also frees its length for the next recordin
 **Delete + Mute** clears every mute and solo. A muted track goes silent but a live
 pad you hold still plays through.
 
-> **Like Move:** mute and solo are Move's gestures.
-
 **Snapshots** store up to 16 mute/solo states. In Session View, hold **Mute** and
 the step buttons light (grey = empty, yellow = saved): hold a step to save, tap a
 saved step to recall, **Mute + Delete + step** to clear one. Snapshots persist
@@ -864,8 +855,8 @@ live from a grid of effects. It runs in **Session View**.
 
 ## 12.1 Entering and exiting
 
-**Tap Loop** to lock it on hands-free, or **hold Loop** for as long as you hold.
-Switching to Track View leaves Performance Mode and keeps your mod state.
+**Tap Loop** to turn it on and keep it on hands-free; **hold Loop** to use it only
+while held. Switching to Track View leaves Performance Mode and keeps your mod state.
 
 ## 12.2 The grid
 
@@ -986,16 +977,16 @@ You can edit a track's instrument — a Move instrument or a Schwung chain — w
 leaving dAVEBOx. The screen, jog, and knobs hand off to the editor while playback
 continues.
 
-Open it with **Shift + Step 3**, or from **Edit Synth… / Edit Slot…** in the Global
-Menu. Inside, the jog navigates, the knobs drive chain parameters, and a blinking
+Open it with **Shift + Step 3**, or from **Edit Synth… / Edit Slot…** in the
+Settings menu. Inside, the jog navigates, the knobs drive chain parameters, and a blinking
 **Step 3** exits. **Mute** changes hands: it mutes the Move instrument you're on,
 or bypasses a Schwung chain slot (Mute + jog-click). *Requires Schwung 0.9.18 or
 later.*
 
 ## 13.4 Clock Follow
 
-By default dAVEBOx runs its own clock. Set **Clock Follow → Move** in the Global
-Menu and it locks to Move's transport instead — dAVEBOx becomes the sequencer while
+By default dAVEBOx runs its own clock. Set **Clock Follow → Move** in the Settings
+menu and it locks to Move's transport instead — dAVEBOx becomes the sequencer while
 Move supplies clock, transport, and voices.
 
 - **Tempo comes from Move.** BPM shows `Move` and is read-only; Tap Tempo is off.
@@ -1022,8 +1013,8 @@ suppressed and shows `—` (Move's own clock out drives external gear instead).
 ## 14.1 Bake
 
 **Bake** (the **Sample** button) renders a clip's effects — NOTE FX, HARMONY,
-DELAY, SEQ ARP — into plain notes, then resets those effects. The clip sounds the
-same, now with a clean chain to build on.
+DELAY, SEQ ARP — into plain notes, then resets those effects. The clip plays the
+same, now with a clean effects chain to build on.
 
 - **A melodic clip** (Track View): tap **Sample**, then choose the loop count (1× /
   2× / 4×) and whether to wrap the delay tails for a seamless loop.
@@ -1261,7 +1252,3 @@ right shows where you are among the track's banks.
   route to Schwung for effects on external input.
 - No per-track volume; set level on the instrument.
 - Automation lanes are not swung, by design.
-
-
-
-
