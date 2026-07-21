@@ -19,8 +19,8 @@ import {
 import {
     drawKitHeader, drawKitTouchedHeader, drawKitPageBar, drawKitAltArrow,
     drawKitCells, drawKitEnumOverlay, mvPrint, mvWidth, rectOutline,
-    pf3Print, pf3Width, drawArcKnobAt, hdrPrint, hdrWidth,
-    MV_ROW0_Y, MV_KH, MV_ZOOM_X, MV_ZOOM_Y, MV_ZOOM_W, MV_ZOOM_H
+    pf3Print, pf3Width, drawArcKnobAt, hdrPrint, hdrWidth, bigPrint, bigWidth,
+    MV_ROW0_Y, MV_KH, MV_BIG_H, MV_ZOOM_X, MV_ZOOM_Y, MV_ZOOM_W, MV_ZOOM_H
 } from './ui_movy.mjs';
 import {
     drawGlobalMenu, drawStateWipeConfirm, drawRecordBlockedDialog, drawBpmMoveInfo,
@@ -163,24 +163,31 @@ function drawKitValueOverlay(cells, idx) {
     fill_rect(BX, boxTop, BW, boxH, 0);
     rectOutline(BX, boxTop, BW, boxH, 1);
 
+    /* Zoomed read-outs use the big font, dropping to the header font only when
+     * the text outgrows the box (long note labels, long formatted values). */
+    const zoomPrint = (text, y) => {
+        const t = String(text);
+        const bw = bigWidth(t);
+        if (bw <= BW - 6) bigPrint(Math.round(64 - bw / 2), y, t, 1);
+        else              hdrPrint(Math.round(64 - hdrWidth(t) / 2), y + 3, t, 1);
+    };
+
     if (bigText != null) {
-        const _bt = String(bigText);
-        hdrPrint(Math.round(64 - hdrWidth(_bt) / 2), boxTop + 21, _bt, 1);
+        zoomPrint(bigText, boxTop + 17);
         return;
     }
 
     const _vt = String(cell.text);
-    const _vx = Math.round(64 - hdrWidth(_vt) / 2);
     if (cell.kind === 'arc' || cell.kind === 'arcbip') {
         /* Zoomed arc (same shape, larger), value in the header font beneath. */
         const norm = cell.kind === 'arcbip'
             ? 0.5 + (cell.signed || 0) / 2
             : (cell.norm || 0);
         drawArcKnobAt(64, boxTop + 18, 12, norm, cell.kind === 'arcbip');
-        hdrPrint(_vx, boxTop + 35, _vt, 1);
+        hdrPrint(Math.round(64 - hdrWidth(_vt) / 2), boxTop + 35, _vt, 1);
     } else {
-        /* valsq — no graphic; the value is the widget, centered in the box. */
-        hdrPrint(_vx, boxTop + 21, _vt, 1);
+        /* valsq — no graphic; the value IS the widget, centered in the box. */
+        zoomPrint(_vt, boxTop + 17);
     }
 }
 
@@ -207,8 +214,16 @@ function drawStepEditKitPage(title, cells, noteBox) {
         const BX = 6, BW = 52, BY = MV_ROW0_Y, BH = MV_KH;
         if (hiOP) fill_rect(BX, BY, BW, BH, 1);
         else      rectOutline(BX, BY, BW, BH, 1);
-        mvPrint(BX + Math.round((BW - mvWidth(noteBox)) / 2),
-                BY + Math.floor((BH - 5) / 2), noteBox, hiOP ? 0 : 1);
+        /* Note read-out in the big font; falls back to the label font if a
+         * multi-note label ("C#3+2") outgrows the merged box. */
+        const _nbW = bigWidth(noteBox);
+        if (_nbW <= BW - 4) {
+            bigPrint(BX + Math.round((BW - _nbW) / 2),
+                     BY + Math.floor((BH - MV_BIG_H) / 2), noteBox, hiOP ? 0 : 1);
+        } else {
+            mvPrint(BX + Math.round((BW - mvWidth(noteBox)) / 2),
+                    BY + Math.floor((BH - 5) / 2), noteBox, hiOP ? 0 : 1);
+        }
     }
     const _ovi = enumOverlayIdx(t);
     drawKitEnumOverlay(cells, _ovi);
@@ -1023,7 +1038,7 @@ export function drawUI() {
                       text: (S.stepEditNudge >= 0 ? '+' : '') + S.stepEditNudge,
                       signed: Math.max(-1, Math.min(1, S.stepEditNudge / Math.max(1, tps - 1))) },
                     { kind: 'blank', label: '' },
-                    { kind: 'enumsq', label: 'Iter', name: 'Iteration',
+                    { kind: 'valsq', label: 'Iter', name: 'Iteration',
                       text: _dash(formatStepIter(S.stepEditIter)),
                       options: STEP_ITER_LIST.map((v) => _dash(formatStepIter(v))),
                       sel: Math.max(0, STEP_ITER_LIST.indexOf(S.stepEditIter)) },
@@ -1062,7 +1077,7 @@ export function drawUI() {
                 { kind: 'arcbip', label: 'Nudg', name: 'Nudge',
                   text: (S.stepEditNudge >= 0 ? '+' : '') + S.stepEditNudge,
                   signed: Math.max(-1, Math.min(1, S.stepEditNudge / Math.max(1, tps - 1))) },
-                { kind: 'enumsq', label: 'Iter', name: 'Iteration',
+                { kind: 'valsq', label: 'Iter', name: 'Iteration',
                   text: _dash(formatStepIter(S.stepEditIter)),
                   options: STEP_ITER_LIST.map((v) => _dash(formatStepIter(v))),
                   sel: Math.max(0, STEP_ITER_LIST.indexOf(S.stepEditIter)) },

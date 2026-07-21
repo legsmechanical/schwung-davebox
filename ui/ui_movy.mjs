@@ -14,6 +14,9 @@
  *
  * Cell descriptor (everything precomputed by the caller — no param reads):
  *   { kind:  'blank' | 'arc' | 'arcbip' | 'hbar' | 'enumsq' | 'valsq',
+ *            ('valsq' = numeric / note read-out: big font, frameless — see
+ *             drawBigNum; 'enumsq' = the framed micro-font square for NAMED
+ *             enums, whose words don't fit the big font),
  *     label: short label strip text ("Stch"),
  *     name:  full param name for the touched header ("Beat Stretch"),
  *     text:  formatted value string ("x2", "1/16t", "OFF"),
@@ -523,13 +526,6 @@ export function drawEnumSquare(kx, ky, text, sq) {
         pf3Print(kx + 1 + Math.floor((inner - pf3Width(lines[1])) / 2), startY + 6, lines[1], 1);
 }
 
-/* Framed square with a single centered micro-font value ("+2", "16"). */
-export function drawValSquare(kx, ky, text) {
-    rectOutline(kx, ky, MV_KW, MV_KH, 1);
-    const w = pf3Width(text);
-    pf3Print(kx + 1 + Math.floor((MV_KW - 2 - w) / 2), ky + 1 + Math.floor((MV_KH - 2 - 5) / 2), text, 1);
-}
-
 /* One-shot / relative action square. Resting: just "< >" ("turn either way").
  * While its knob is touched the VALUE takes over the box (mirroring the
  * label<->value swap). `oneWay` (Lgto-style destructive actions) stays "< >"
@@ -632,7 +628,8 @@ function drawCellWidget(col, rowY, cell, touched) {
         case 'arcbip': return drawArcKnob(kx, rowY, 0.5 + (cell.signed || 0) / 2, true);
         case 'hbar':   return drawHBar(kx, rowY, cell.norm || 0);
         case 'enumsq': return drawEnumSquare(kx, rowY, cell.text, cell.sq);
-        case 'valsq':  return drawValSquare(kx, rowY, cell.sq != null ? cell.sq : cell.text);
+        case 'valsq':  return drawBigNum(col * MV_CELL_W, rowY,
+                                         cell.sq != null ? cell.sq : cell.text);
         case 'action': return drawActionSquare(kx, rowY, cell.text, cell.oneWay, touched);
         case 'dirsq':  return drawDirSquare(kx, rowY, cell.sel | 0);
         default:       return; /* blank */
