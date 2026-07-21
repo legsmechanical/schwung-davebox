@@ -76,7 +76,7 @@ export const SCALE_DISPLAY = [
     'Locr.', 'HMin',  'MMin',  'PMaj',  'PMin',
     'Blues', 'Whole', 'Dim.'
 ];
-export const DELAY_LABELS = ['1/64','1/64D','1/32','1/16T','1/32D','1/16','1/8T','1/16D','1/8','1/4T','1/8D','1/4','1/4D','1/2','1/2D','1/1','1/1D'];
+export const DELAY_LABELS = ['1/64','1/64d','1/32','1/16t','1/32d','1/16','1/8t','1/16d','1/8','1/4t','1/8d','1/4','1/4d','1/2','1/2d','1/1','1/1d'];
 
 export function fmtSign(v)    { return (v >= 0 ? '+' : '') + v; }
 export function fmtStretch(exp) {
@@ -99,7 +99,7 @@ export function fmtPages(v)  { return v + 'pg'; }
 export function fmtDly(v)      { return DELAY_LABELS[v] || '---'; }
 export function fmtBool(v)     { return v ? 'ON' : 'OFF'; }
 export function fmtPitchRnd(v) { return v === 0 ? 'OFF' : String(v); }
-const GATE_LABELS = ['Off','1/64','1/32','1/16T','1/16','1/8T','1/8','1/4T','1/4','1/2','1bar'];
+const GATE_LABELS = ['Off','1/64','1/32','1/16t','1/16','1/8t','1/8','1/4t','1/4','1/2','1bar'];
 export function fmtGateMod(v) { return GATE_LABELS[v] || 'Off'; }
 export function fmtRoute(v)  { return v === 2 ? 'Ext' : v === 1 ? 'Move' : 'Swng'; }
 export function fmtPlain(v)  { return String(v); }
@@ -109,7 +109,7 @@ export function fmtArpRate(v)  { return ['1/32','1/16','1/16t','1/8','1/8t','1/4
 export function fmtArpSteps(v) { return ['Off','Mute','Step'][v] || 'Mute'; }
 export function fmtArpOct(v)   { if (v === 0) return 'Off'; return (v > 0 ? '+' : '') + v; }
 export function fmtVelOverride(v) { return v === 0 ? 'Live' : String(v); }
-export function fmtDiq(v) { return ['Off','1/64','1/32','1/16','1/16T','1/8','1/8T','1/4','1/4T'][v|0] || 'Off'; }
+export function fmtDiq(v) { return ['Off','1/64','1/32','1/16','1/16t','1/8','1/8t','1/4','1/4t'][v|0] || 'Off'; }
 /* Playback direction: 0=Forward, 1=Backward, 2=Pingpong-Forward, 3=Pingpong-Backward. */
 export function fmtPlayDir(v) { return ['Fwd','Bwd','PPf','PPb'][v|0] || 'Fwd'; }
 /* Reverse-style: 0=Step (current note-on-at-start semantics), 1=Audio

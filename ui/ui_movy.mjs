@@ -57,6 +57,15 @@ const HDR_G = [
   [7,51,51,30,30,51,51], [7,51,51,51,30,12,12], [7,63,56,28,14,7,63], null, null, null, null
 ];
 
+/* TRUE lowercase 'd' and 't' — the only two in this font. Everything else in
+ * the lowercase range duplicates its capital (the font is a caps design), but
+ * a capital D is a 0 with the diagonal removed, so "1/64D" reads as "1/640"
+ * in the stacked-fraction read-out. Triplet/dotted suffixes therefore use
+ * real minuscules: 'd' = bowl + right ascender, 't' = stem + crossbar + tail.
+ * 6 columns, 6 rows, bit0 = leftmost — same encoding as HDR_G above. */
+HDR_G[0x64 - 0x20] = [7, 48, 48, 62, 51, 51, 62];   /* 'd' */
+HDR_G[0x74 - 0x20] = [7, 12, 30, 12, 12, 12, 28];   /* 't' */
+
 function hdrGlyph(cp) { return (cp < 0x20 || cp > 0x7E) ? null : HDR_G[cp - 0x20]; }
 
 export function hdrWidth(text) {

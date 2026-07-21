@@ -1498,7 +1498,7 @@ export function drawUI() {
             const rv = S.bankParams[t][7][0];
             const qv = S.bankParams[t][7][3];
             const dv = S.bankParams[t][7][6];
-            const DIQ_LABELS = ['Off','1/64','1/32','1/16','1/16T','1/8','1/8T','1/4','1/4T'];
+            const DIQ_LABELS = ['Off','1/64','1/32','1/16','1/16t','1/8','1/8t','1/4','1/4t'];
             const _inq = S.drumInpQuant[t] | 0;
             const cells = [
                 rv < 0 ? { kind: 'valsq', label: 'Res', name: 'Resolution', text: '--' }
