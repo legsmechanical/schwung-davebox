@@ -223,13 +223,10 @@ covered in [Clip Timing & Grid](#8-clip-timing--grid), [Effects](#9-effects), an
 
 ## 3.6 The Settings menu
 
-**Shift + Note/Session** opens the Settings menu. Turn the jog to move, click to
-edit, turn to change the value, click to confirm; Note/Session closes it. Pads,
-steps, and transport keep working while it's open.
-
-It opens on the active track's settings, followed by the global settings below a
-divider — the full list is in [Settings & Sets](#15-settings--sets). Many settings
-also have a **Shift + Step** shortcut (see the [Quick Reference](#17-quick-reference)).
+**Shift + Note/Session** opens the Settings menu — the active track's settings
+first, then the session-wide settings below a divider. The full list is in
+[Settings & Sets](#15-settings--sets), and many settings have a **Shift + Step**
+shortcut (see the [Quick Reference](#17-quick-reference)).
 
 ## 3.7 Saving, suspending & exiting
 
@@ -391,9 +388,9 @@ What Capture does depends on the transport:
 | Stopped, set with clips | Fits the take to the current tempo; a screen lets the jog pick how many bars it fills |
 
 After a stopped capture into an empty set, a tempo chooser offers the detected BPM
-and a few nearby candidates over a strip showing your take against the bars — turn
-the jog to audition, click to keep one. Capture works on drum clips too. To clear
-the buffer, hold **Shift** and tap **Capture**.
+and a few nearby candidates over a strip showing your take against the bars —
+playback keeps rolling as you scroll them, so you can hear which one fits. Capture
+works on drum clips too. To clear the buffer, hold **Shift** and tap **Capture**.
 
 ## 5.6 Clip length & the loop
 
