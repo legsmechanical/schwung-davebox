@@ -8,7 +8,7 @@ the section into a versioned heading at release time.
 
 ## [Unreleased]
 ### Performance / UX
-- **Numbers and note names are now big and easy to read.** Every numeric or note read-out on the parameter pages — step Length, Iteration, Ratchet, the note under a held step, octave and semitone offsets, per-track Conductor values — is drawn in a large font instead of a small boxed value. The same big read-out appears in the turn-a-knob pop-up.
+- **Numbers and note names are now big and easy to read.** Every numeric or note read-out on the parameter pages — step Length, Iteration, Ratchet, the note under a held step, the drum NOTE FX lane note, octave and semitone offsets, per-track Conductor values — is drawn in a large font instead of a small boxed value. The same big read-out appears in the turn-a-knob pop-up. Fractional step lengths (0.25, 1.5, …) fit in the large font too, and a switched-off value always reads as "--".
 
 ## [1.0-beta.7] — 2026-07-20
 ### Features
