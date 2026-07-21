@@ -404,12 +404,14 @@ function bigGlyph(cp) { return (cp < 0x20 || cp > 0x7E) ? null : BIG_G[cp - 0x20
 /* Tight punctuation. The source font gives '.' the same ~4px advance a letter
  * gets, so a decimal ate most of a digit's worth of a 32px cell and pushed
  * values like "0.25" over the fallback threshold. These advance by their INK
- * width instead, and take no inter-glyph gap on either side — the digits
- * already carry ~2px of right side bearing, so they still read as separated.
+ * width instead, and tuck up against the character on their LEFT — which is
+ * free, because every digit already carries ~2px of right side bearing.
+ * The gap on their RIGHT is kept: the next character starts at its own left
+ * edge with no bearing, so without it a "0.25" reads as "0.2 5".
  * Keyed by codepoint; the value is the advance. */
 const BIG_TIGHT = { 0x2E: 2, 0x3A: 2, 0x2C: 3, 0x3B: 3 };   /* . : , ; */
 const bigAdv = (cp, g) => BIG_TIGHT[cp] ?? g[0];
-const bigGapAt = (a, b) => (BIG_TIGHT[a] || BIG_TIGHT[b]) ? 0 : BIG_GAP;
+const bigGapAt = (a, b) => BIG_TIGHT[b] ? 0 : BIG_GAP;
 
 /* Width of `text` in the big font (no trailing gap). */
 export function bigWidth(text) {
