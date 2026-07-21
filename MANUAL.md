@@ -535,8 +535,9 @@ a silent placeholder.
 
 # 8. Clip Timing & Grid
 
-These banks reshape a clip's step grid and the notes on it. Most of their changes
-**rewrite the notes directly** — **Undo** reverses them.
+These banks set a clip's grid, timing, and playback. Some parameters permanently
+rewrite your notes — the **Rewrites notes** column marks which — and **Undo**
+reverses those; the rest only change how the clip plays.
 
 **Resetting a bank** (this works on any bank, including [Effects](#9-effects)):
 
@@ -552,15 +553,15 @@ These banks reshape a clip's step grid and the notes on it. Most of their change
 
 A melodic clip's grid, direction, and note transforms.
 
-| Knob | On screen | What it does | Default |
-|---|---|---|---|
-| 1 | `Res` | **Resolution** — the step grid size; rescales the notes. *Alt:* **Zoom** (regrid without moving notes). | 1/16 |
-| 2 | `Stch` | **Stretch** — one detent doubles (right) or halves (left) the clip. | — |
-| 3 | `Shft` | **Shift** — rotate all notes by whole steps. *Alt:* **Nudge** (finer). | 0 |
-| 4 | `Lgto` | **Legato** — turn right to confirm; lengthens every note to reach the next. | — |
-| 5 | `InQ` | **Input Quantize** — snap recorded notes to the grid. | Off |
-| 7 | `Dir` | **Direction** — Forward, Backward, or ping-pong. *Alt:* **Reverse Style**. | Fwd |
-| 8 | `SqFl` | **Follow** — scroll the step display to keep up with the playhead. | On |
+| Knob | On screen | What it does | Rewrites notes | Default |
+|---|---|---|---|---|
+| 1 | `Res` | **Resolution** — the step grid size, rescaling note positions. *Alt:* **Zoom** (regrid without moving notes). | Yes | 1/16 |
+| 2 | `Stch` | **Stretch** — one detent doubles (right) or halves (left) the clip. | Yes | — |
+| 3 | `Shft` | **Shift** — rotate all notes by whole steps. *Alt:* **Nudge** (finer). | Yes | 0 |
+| 4 | `Lgto` | **Legato** — turn right to confirm; lengthens every note to reach the next. | Yes | — |
+| 5 | `InQ` | **Input Quantize** — snap recorded notes to the grid. | No | Off |
+| 7 | `Dir` | **Direction** — Forward, Backward, or ping-pong. *Alt:* **Reverse Style**. | No | Fwd |
+| 8 | `SqFl` | **Follow** — scroll the step display to keep up with the playhead. | No | On |
 
 Recording needs **Forward** direction; [bake](#141-bake) and [export](#143-export-to-live)
 freeze the direction into the notes and reset it to Forward.
@@ -571,15 +572,15 @@ freeze the direction into the notes and reset it to Forward.
 
 The **selected lane's** grid — the drum counterpart to the CLIP bank.
 
-| Knob | On screen | What it does | Default |
-|---|---|---|---|
-| 1 | `Res` | **Resolution.** *Alt:* **Zoom.** | 1/16 |
-| 2 | `Stch` | **Stretch.** | — |
-| 3 | `Shft` | **Shift.** *Alt:* **Nudge.** | 0 |
-| 4 | `Lgto` | **Legato** (this lane). | — |
-| 5 | `Eucl` | **Euclid** — spread N hits evenly across the lane. Hand-placed hits stay. | 0 |
-| 7 | `Dir` | **Direction.** *Alt:* **Reverse Style.** | Fwd |
-| 8 | `SqFl` | **Follow.** | On |
+| Knob | On screen | What it does | Rewrites notes | Default |
+|---|---|---|---|---|
+| 1 | `Res` | **Resolution.** *Alt:* **Zoom.** | Yes | 1/16 |
+| 2 | `Stch` | **Stretch.** | Yes | — |
+| 3 | `Shft` | **Shift.** *Alt:* **Nudge.** | Yes | 0 |
+| 4 | `Lgto` | **Legato** (this lane). | Yes | — |
+| 5 | `Eucl` | **Euclid** — spread N hits evenly across the lane. Hand-placed hits stay. | Yes | 0 |
+| 7 | `Dir` | **Direction.** *Alt:* **Reverse Style.** | No | Fwd |
+| 8 | `SqFl` | **Follow.** | No | On |
 
 Lane length is **Loop + jog**; the lane's MIDI note is on the
 [NOTE FX bank](#91-note-fx).
@@ -593,16 +594,16 @@ the bank opens on a **"Edits will affect all lanes. Proceed?"** screen — **cli
 the jog to confirm** before the knobs, Loop, or the Shift + Step shortcuts do
 anything.
 
-| Knob | On screen | What it does |
-|---|---|---|
-| 1 | `Res` | **Resolution** for all lanes |
-| 2 | `Stch` | **Stretch** all lanes (`NO ROOM` if any can't fit) |
-| 3 | `Shft` | **Shift.** *Alt:* **Nudge.** |
-| 4 | `Qnt` | **Quantize** all lanes at playback (leaves the notes alone) |
-| 5 | `VelIn` | Velocity input override for the track |
-| 6 | `InQ` | Recording input quantize for the track |
-| 7 | `Dir` | **Direction** for all lanes. *Alt:* **Reverse Style.** |
-| 8 | `SyncRpt` | **Repeat Sync** — held repeats wait for the beat grid (On) or fire at once (Off) |
+| Knob | On screen | What it does | Rewrites notes |
+|---|---|---|---|
+| 1 | `Res` | **Resolution** for all lanes | Yes |
+| 2 | `Stch` | **Stretch** all lanes (`NO ROOM` if any can't fit) | Yes |
+| 3 | `Shft` | **Shift.** *Alt:* **Nudge.** | Yes |
+| 4 | `Qnt` | **Quantize** all lanes at playback | No |
+| 5 | `VelIn` | Velocity input override for the track | No |
+| 6 | `InQ` | Recording input quantize for the track | No |
+| 7 | `Dir` | **Direction** for all lanes. *Alt:* **Reverse Style.** | No |
+| 8 | `SyncRpt` | **Repeat Sync** — held repeats wait for the beat grid (On) or fire at once (Off) | No |
 
 ## 8.4 REPEAT GROOVE bank
 
