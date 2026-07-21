@@ -123,8 +123,15 @@ if not md.exists():
 else:
     promoted = re.sub(r"<!-- DRAFT-BANNER-START -->.*?<!-- DRAFT-BANNER-END -->\n*",
                       "", md.read_text(), flags=re.DOTALL)
+    # Manual screenshots are committed under docs/working/img/ and referenced
+    # from the draft as img/*.png (relative to docs/working/). The promoted
+    # MANUAL.md lives at the repo root, so rewrite that prefix to the real
+    # location — single image source, no duplicated binaries. Resolves both on
+    # GitHub and in a local checkout viewed from the repo root.
+    nimg = promoted.count('src="img/')
+    promoted = promoted.replace('src="img/', 'src="docs/working/img/')
     pathlib.Path("MANUAL.md").write_text(promoted)
-    print("  MANUAL.md: promoted from MANUAL.draft.md (banner stripped)")
+    print(f"  MANUAL.md: promoted from MANUAL.draft.md (banner stripped, {nimg} image path(s) rebased)")
 PYEOF
 
 # --- build fresh tarball ----------------------------------------------------

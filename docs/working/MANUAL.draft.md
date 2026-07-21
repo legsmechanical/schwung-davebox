@@ -733,6 +733,8 @@ Conductor steps still carry **Iter / Prob** trig conditions like any melodic ste
 
 ## 8.3 The five Conductor banks
 
+<img src="img/bank-conductor-octave.png" width="384" alt="C-OCTAVE Conductor bank OLED screen, per-track octave grid">
+
 A Conductor's jog wheel cycles exactly five banks (no FX/ARP/Auto): **Conduct →
 NoteFX → Responder → Octave → When**. Headers blink a **"C-"** prefix so you
 always know you're on the Conductor; when idle the banks fall back to the
@@ -796,6 +798,8 @@ switching tracks returns to the primary function.
 
 ## 9.1 CLIP bank (melodic)
 
+<img src="img/bank-clip.png" width="384" alt="CLIP bank OLED screen">
+
 Controls the clip's timing grid, playback direction, and note transformations.
 **K1–K4 permanently change your notes** — use Undo to revert.
 
@@ -818,6 +822,8 @@ reverse style uses a 2L pingpong cycle (endpoints play twice).
 
 ## 9.2 DRUM LANE bank
 
+<img src="img/bank-drumlane.png" width="384" alt="DRUM LANE bank OLED screen">
+
 Controls the active drum lane's timing grid, playback, and note transformations.
 **K1–K3 and K5 permanently change notes** — use Undo to revert.
 
@@ -834,6 +840,8 @@ Controls the active drum lane's timing grid, playback, and note transformations.
 Lane length: **Loop + jog rotate**. Lane MIDI note: NOTE FX K1+K2.
 
 ## 9.3 ALL LANES bank
+
+<img src="img/bank-alllanes.png" width="384" alt="ALL LANES bank OLED screen">
 
 Applies settings to all 32 drum lanes at once. Because every change here rewrites
 all 32 lanes, the bank opens on an **"Edits will affect all lanes. Proceed?"**
@@ -855,6 +863,8 @@ dark and holding Loop does nothing, so no edit can land before you say so.
 | K8 | SyncRpt | Repeat Sync — controls first-fire timing for held repeat pads. On = wait for the beat grid; Off = fire instantly. Default On. |
 
 ## 9.4 REPEAT GROOVE bank
+
+<img src="img/bank-repeatgroove.png" width="384" alt="REPEAT GROOVE bank OLED screen, 8 velocity bars">
 
 Available on drum tracks when a Note Repeat mode (Rpt1/Rpt2) is active. Per-lane,
 persists. See [Note Repeat](#74-note-repeat) for the gate-mask context.
@@ -896,6 +906,8 @@ leaves the clip unchanged. NOTE FX, HARMONY, DELAY, and SEQ ARP settings are
 
 ## 10.1 NOTE FX bank
 
+<img src="img/bank-notefx.png" width="384" alt="NOTE FX bank OLED screen, Velocity knob turned">
+
 Transforms every note's pitch, velocity, timing, and length.
 
 | Knob | Label | Function | Range | Default |
@@ -913,6 +925,8 @@ K2 = ±1); K3–K6 apply per-lane.
 
 ## 10.2 HARMONY bank (melodic only)
 
+<img src="img/bank-harmony.png" width="384" alt="HARMONY bank OLED screen">
+
 Adds harmonic voices on top of every note.
 
 | Knob | Label | Function | Range | Default |
@@ -923,6 +937,8 @@ Adds harmonic voices on top of every note.
 | K4 | Hrm3 | Harmony voice 3 (scale-aware) | ±24 | 0 |
 
 ## 10.3 DELAY bank
+
+<img src="img/bank-delay.png" width="384" alt="DELAY bank OLED screen, Rate knob turned showing rate picker">
 
 MIDI delay generating rhythmic echoes of every note.
 
@@ -938,6 +954,8 @@ MIDI delay generating rhythmic echoes of every note.
 | K8 | Rnd | Pitch randomness on echoes (scale-aware). **Alt: algorithm select** — same options as NOTE FX Rnd. | 0–24 | 0 |
 
 ## 10.4 SEQ ARP bank (melodic only)
+
+<img src="img/bank-seqarp.png" width="384" alt="SEQUENCE ARP bank OLED screen">
 
 Step arpeggiator running after Delay. Per-clip. Applies to both sequenced and
 live input.
@@ -973,6 +991,8 @@ length (1–8); steps past it show as stubs on the OLED. Jog click, jog turn, or
 Note/Session exits. State is per-clip.
 
 ## 10.5 LIVE ARP bank (melodic only)
+
+<img src="img/bank-livearp.png" width="384" alt="LIVE ARP bank OLED screen">
 
 Live arpeggiator for pad input and external MIDI. **Per-track**, not per-clip.
 Does not affect sequenced notes. Drum tracks use [Note Repeat](#74-note-repeat)
