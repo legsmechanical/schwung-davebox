@@ -1077,9 +1077,9 @@ destination to place the take.
 ## 14.3 Export to Live
 
 **Settings menu → Export to Ableton** writes an `.ablbundle` that desktop Live opens
-directly (transport stopped). It lands at
-`/data/UserData/schwung/davebox-exports/` (retrieve over SFTP) as **8 MIDI tracks ×
-16 scene slots** with tempo and key.
+directly (transport stopped). Download it from the Schwung web manager
+(`move.local:7700`) in your browser. It opens as **8 MIDI tracks × 16 scene slots**
+with tempo and key.
 
 - **Move-routed tracks** export the real Move instrument, preset, and color;
   Schwung and External tracks get a placeholder.
