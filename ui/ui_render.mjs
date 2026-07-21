@@ -353,7 +353,12 @@ function bankHeaderName(t, bank) {
 
 /* Formatters whose domain is a browsable option list (enum square + the
  * scrolling overlay while touched). fmtBool is special-cased to the hbar. */
-const KIT_ENUM_FMTS = [fmtPlayDir, fmtDly, fmtArpStyle, fmtArpSteps, fmtRevStyle];
+const KIT_ENUM_FMTS = [fmtPlayDir, fmtArpStyle, fmtArpSteps, fmtRevStyle];
+
+/* Rates that are true fractions but too long for the big read-out even
+ * condensed ("1/64D" = 36px vs a 32px cell). They STACK instead — frameless,
+ * numerator over denominator, suffix riding with the denominator. */
+const KIT_FRAC_FMTS = [fmtDly];
 
 /* Musical rates and lengths — "1/16", "1bar", ".25". Numbers, not words, so
  * they get the big read-out (condensed where they need it) rather than the
@@ -414,6 +419,13 @@ function kitCellForKnob(knob, val) {
         base.kind = 'dirsq';
         base.options = KIT_DIR_NAMES;
         base.sel = v;
+        return base;
+    }
+    if (KIT_FRAC_FMTS.indexOf(knob.fmt) >= 0) {
+        base.kind = 'frac'; base.text = _offDash(text);
+        base.options = [];
+        for (let i = knob.min; i <= knob.max; i++) base.options.push(_offDash(knob.fmt(i)));
+        base.sel = v - knob.min;
         return base;
     }
     if (KIT_RATE_FMTS.indexOf(knob.fmt) >= 0) {

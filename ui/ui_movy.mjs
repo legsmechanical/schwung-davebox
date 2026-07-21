@@ -13,7 +13,7 @@
  * by asciimario (fontstruct.com/fontstructions/show/821131, CC BY-NC 3.0).
  *
  * Cell descriptor (everything precomputed by the caller — no param reads):
- *   { kind:  'blank' | 'arc' | 'arcbip' | 'hbar' | 'enumsq' | 'valsq',
+ *   { kind:  'blank' | 'arc' | 'arcbip' | 'hbar' | 'enumsq' | 'valsq' | 'frac',
  *            ('valsq' = numeric / note read-out: big font, frameless — see
  *             drawBigNum; 'enumsq' = the framed micro-font square for NAMED
  *             enums, whose words don't fit the big font),
@@ -578,6 +578,34 @@ export function drawEnumSquare(kx, ky, text, sq) {
         pf3Print(kx + 1 + Math.floor((inner - pf3Width(lines[1])) / 2), startY + 6, lines[1], 1);
 }
 
+/* Musical length as a STACKED FRACTION — frameless, centred across the FULL
+ * 32px cell: numerator, rule, denominator in the 6x6 header font. The sibling
+ * of drawBigNum for values that are true fractions, and the answer for the
+ * delay times, whose 5-character labels ("1/64D") don't fit the big read-out
+ * even condensed. Any suffix rides with the denominator, so "1/64D" stacks as
+ * 1 over 64D.
+ *
+ * Vertical budget is the whole story: 6 + rule + 6 = 13px of ink in a 16px
+ * row, so the parts sit at ky+0 and ky+9 with the rule at ky+7 — the only
+ * arrangement that keeps clear space on both sides of the rule. The BOXED
+ * 5x3 version (movy's drawLengthSquare) failed here: the frame stole 2px a
+ * side and its parts touched the rule outright. */
+export function drawFracStack(cellX, ky, text) {
+    const t = String(text);
+    const i = t.indexOf('/');
+    if (i <= 0) {                       /* not a fraction — centre it as-is */
+        const w = hdrWidth(t);
+        hdrPrint(cellX + Math.round((MV_CELL_W - w) / 2), ky + 5, t, 1);
+        return;
+    }
+    const num = t.slice(0, i), den = t.slice(i + 1);
+    const nw = hdrWidth(num), dw = hdrWidth(den);
+    const rw = Math.max(nw, dw) + 2;    /* rule overhangs the wider part */
+    hdrPrint(cellX + Math.round((MV_CELL_W - nw) / 2), ky, num, 1);
+    fill_rect(cellX + Math.round((MV_CELL_W - rw) / 2), ky + 7, rw, 1, 1);
+    hdrPrint(cellX + Math.round((MV_CELL_W - dw) / 2), ky + 9, den, 1);
+}
+
 /* One-shot / relative action square. Resting: just "< >" ("turn either way").
  * While its knob is touched the VALUE takes over the box (mirroring the
  * label<->value swap). `oneWay` (Lgto-style destructive actions) stays "< >"
@@ -680,6 +708,7 @@ function drawCellWidget(col, rowY, cell, touched) {
         case 'arcbip': return drawArcKnob(kx, rowY, 0.5 + (cell.signed || 0) / 2, true);
         case 'hbar':   return drawHBar(kx, rowY, cell.norm || 0);
         case 'enumsq': return drawEnumSquare(kx, rowY, cell.text, cell.sq);
+        case 'frac':   return drawFracStack(col * MV_CELL_W, rowY, cell.text);
         case 'valsq':  return drawBigNum(col * MV_CELL_W, rowY,
                                          cell.sq != null ? cell.sq : cell.text);
         case 'action': return drawActionSquare(kx, rowY, cell.text, cell.oneWay, touched);
