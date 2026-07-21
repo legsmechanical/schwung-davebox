@@ -58,18 +58,6 @@ Everything in dAVEBOx nests like this:
 > from Move. (Scenes are dAVEBOx's own.) dAVEBOx replaces Move's sequencer, not its
 > instruments.
 
-## What it does and doesn't do
-
-dAVEBOx sequences **MIDI**, so its reach ends at the note and controller data it
-sends:
-
-- It **plays notes** to an instrument — it never generates audio, and it has no
-  per-track volume or audio effects. Level and tone live on the instrument (the
-  Move mixer, or the Schwung chain).
-- Its **effects** — arpeggiators, note-delay, harmony, and the rest — are **MIDI
-  effects.** They add and reshape notes on the way out and change nothing you
-  programmed into the clip.
-
 ## The two views
 
 You work in one of two views and switch between them with **Note/Session**:
