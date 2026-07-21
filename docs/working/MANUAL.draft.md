@@ -363,7 +363,7 @@ range so you can reach higher or lower notes.
 
 Three settings decide *whether and how* a step fires. Each defaults to `--` (off):
 
-- **Iteration** (`Iter`) plays the step only on certain passes of the loop. `2/3`
+- **Iteration** (`Iter`) plays the step only on certain passes of the loop. `2:3`
   plays on the 2nd pass of every three. The counter resets on a cold start (Stop →
   Play).
 - **Probability** (`Prob`) gives the step a chance of playing, from 100 % down to

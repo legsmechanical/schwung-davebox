@@ -8,8 +8,7 @@ the section into a versioned heading at release time.
 
 ## [Unreleased]
 ### Performance / UX
-- **Numbers and note names are now big and easy to read.** Every numeric or note read-out on the parameter pages — step Length, Iteration, Ratchet, the note under a held step, the drum NOTE FX lane note, octave and semitone offsets, per-track Conductor values — is drawn in a large font instead of a small boxed value. The same big read-out appears in the turn-a-knob pop-up. Fractional step lengths (0.25, 1.5, …) fit in the large font too, and a switched-off value always reads as "--".
-- **Resolutions and rates are big now as well.** Timing values — Resolution, Zoom, Input Quantize, Note Length, Gate, Arp Rate — read as large "1/16" / "1bar" / "1/16T" instead of a small boxed label, on melodic, drum and Conductor tracks alike. Delay Time keeps its boxed label (its longest settings don't fit). Per-step Iteration now reads "2:4" rather than "2/4" — it isn't a fraction, it means "fire on pass 2 of 4".
+- Additional movy-inspired UI improvements.
 
 ## [1.0-beta.7] — 2026-07-20
 ### Features
