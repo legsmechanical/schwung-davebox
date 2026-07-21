@@ -41,7 +41,7 @@ Forward Channel set to **Auto** (not Thru):
 
 With that done, dAVEBOx tracks 1–4 play Move's instruments and tracks 5–8 play
 Schwung's chains. (You can change any track's channel and routing later — see the
-manual's [MIDI Routing](MANUAL.md#15-midi-routing) chapter.)
+manual's [Routing & Sync](MANUAL.md#14-routing--sync) chapter.)
 
 Now load a Move set and open dAVEBOx from Schwung's tool menu
 (**Shift + Step button 13** — the star).
@@ -65,8 +65,8 @@ A few things worth knowing before the first lesson:
   turn the **jog wheel**.
 - **The jog wheel** (the clickable encoder on the left) cycles through *parameter
   banks* in Track View — this is how you reach the effects and clip settings.
-- **The Global Menu** opens with **Shift + Note/Session**. It holds the active
-  track's configuration and all global settings (tempo, key, scale, and more).
+- **The Settings menu** opens with **Shift + Note/Session**. It holds the active
+  track's settings and the session-wide settings (tempo, key, scale, and more).
 
 That's enough to begin.
 
@@ -76,7 +76,7 @@ That's enough to begin.
 
 Tracks start out melodic, so first we'll turn track 1 into a drum track.
 
-1. Open the Global Menu: **Shift + Note/Session**.
+1. Open the Settings menu: **Shift + Note/Session**.
 2. Turn the jog wheel to highlight **Mode**, click the jog to edit, turn to
    **Drums**, then click to confirm (an empty track converts instantly).
 3. Close the menu by tapping **Note/Session**, then tap **Note/Session** again to
@@ -95,7 +95,7 @@ each. The right 4×4 is a function area (velocity, repeats) you can ignore for n
 
 Each lane is its own little sequencer, so you can even give them different
 lengths later for polyrhythms. Full detail lives in the manual's
-[Drum Tracks](MANUAL.md#7-drum-tracks) chapter.
+[Drum Clips](MANUAL.md#7-drum-clips) chapter.
 
 ---
 
@@ -106,17 +106,17 @@ Now let's play some notes on another track.
 1. Hold **Shift** and tap the **5th pad in the bottom row** — you're now on track
    5 (which routes to Schwung slot 1).
 2. The pads now play **pitched notes**, snapped to the current scale. Tap around
-   to hear them. **Up / Down** shifts the octave.
+   to hear them. **+ / −** shifts the octave.
 3. To sequence a note, **hold a pad and tap a step button** — that step gets the
    held note.
-4. For a chord, **hold two or three pads and tap a step** (up to four notes per
+4. For a chord, **hold two or three pads and tap a step** (up to eight notes per
    step).
 5. Press **Play** if it isn't already running. Track 5 plays alongside your drums.
 
-Want a different key or scale for everything? Open the Global Menu
+Want a different key or scale for everything? Open the Settings menu
 (**Shift + Note/Session**) and edit **Key** or **Scale** — as you turn the knob
 you'll *hear* a live preview, and a confirm asks before it commits. See
-[Key & Scale](MANUAL.md#27-changing-key-or-scale) in the manual.
+[Key & Scale](MANUAL.md#162-key--scale) in the manual.
 
 ---
 
@@ -131,10 +131,10 @@ Every clip carries its own effects, reached through the parameter banks.
 4. Turn **K5** (*Pfb*) to **+5** — the echoes climb in pitch as they repeat.
 
 These settings belong to *this clip only*. Effects are non-destructive: they
-transform the sound at playback without changing your written notes, so returning
-a knob to its default undoes it cleanly. Explore the other banks (NOTE FX,
-HARMONY, SEQ ARP) the same way — turn the jog, turn the knobs. The
-[Effects Banks](MANUAL.md#10-effects-banks) chapter covers every one.
+transform playback without changing your written notes, so returning a knob to its
+default undoes it cleanly. Explore the other banks (NOTE FX, HARMONY, SEQ ARP) the
+same way — turn the jog, turn the knobs. The
+[Effects](MANUAL.md#10-effects) chapter covers every one.
 
 ---
 
@@ -155,9 +155,10 @@ a row of clips across all tracks is a **scene**.
 5. To switch a whole row at once, tap a **scene launcher** (the buttons left of
    the grid) or **step buttons 1–16**. Every track jumps to that scene together.
 
-Empty cells in a scene leave their track untouched — handy for keeping the drums
-running while you change the melody. More in [Session View](MANUAL.md#4-session-view)
-and [Scenes](MANUAL.md#12-scenes--performance-mode).
+Launching a *single* clip (step 4) changes only its track, so the drums keep
+running while you swap the melody. Launching a *scene* switches every track at
+once — an empty cell in that row switches its track to an empty clip and silences
+it. More in [Arranging](MANUAL.md#12-arranging) and [Scenes](MANUAL.md#122-scenes).
 
 ---
 
@@ -172,13 +173,13 @@ live with a grid of effects.
 2. The bottom row sets the capture length — tap one of pads 1–5 (1/32 up to 1/2
    bar) to choose how much it loops.
 3. The three rows above are effects: **magenta** = pitch tricks, **yellow** =
-   volume/gate, **cyan** = wild. Hold a pad to hear its effect; release to drop
+   volume/gate, **blue** = wild. Hold a pad to hear its effect; release to drop
    it.
 4. The **step buttons are presets** — tap one of slots 1–8 to recall a
    ready-made combination (try slot 1, "Float").
 
 Performance Mode is deep — capture lengths, latching, and 16 preset slots are all
-covered in [Performance Mode](MANUAL.md#12-scenes--performance-mode).
+covered in [Performance Mode](MANUAL.md#13-performance-mode).
 
 ---
 
@@ -189,11 +190,11 @@ dAVEBOx saves automatically, so you rarely have to think about it:
 - Pressing **Back** suspends the module (it keeps playing in the background) and
   saves.
 - **Shift + Back** fully exits and saves.
-- In the Global Menu, **Quit** saves and exits.
+- In the Settings menu, **Quit** saves and exits.
 
-For named backups you can return to, use **Save state** in the Global Menu — it
+For named backups you can return to, use **Save state** in the Settings menu — it
 keeps up to 16 timestamped snapshots per set. See
-[Save states](MANUAL.md#16-global-settings--persistence).
+[Snapshots](MANUAL.md#163-snapshots).
 
 ---
 
@@ -202,19 +203,19 @@ keeps up to 16 timestamped snapshots per set. See
 You now know enough to make complete patterns. When you're ready for more:
 
 - **Editing notes precisely** — hold any step to open the step editor (length,
-  velocity, nudge, probability, ratchets): [Step Entry & Editing](MANUAL.md#6-step-entry--editing).
+  velocity, nudge, probability, ratchets): [Editing notes](MANUAL.md#63-editing-notes).
 - **Longer clips and loops** — clips can run up to 256 steps; hold **Loop** in
-  Track View to set the loop window: [Pages and the loop window](MANUAL.md#64-pages-and-the-loop-window).
+  Track View to set the loop window: [Clip length & the loop](MANUAL.md#66-clip-length--the-loop).
 - **Recording live** — press **Record** to capture pad playing into a clip:
-  [Live recording](MANUAL.md#65-live-recording).
+  [Recording](MANUAL.md#64-recording).
 - **Automation** — record knob moves that play back with the clip:
   [Automation](MANUAL.md#11-automation).
-- **Conductor tracks** — a track that transposes all the others in real time:
-  [Conductor Tracks](MANUAL.md#8-conductor-tracks).
+- **The Conductor** — a track that transposes all the others in real time:
+  [The Conductor](MANUAL.md#8-the-conductor).
 - **Exporting to Ableton Live** — render your whole set to an `.ablbundle`:
-  [Export](MANUAL.md#133-export-to-ableton-live).
+  [Export to Live](MANUAL.md#153-export-to-live).
 
 And whenever you need a quick reminder of a control, the manual's
-[Cheat Sheet](MANUAL.md#17-cheat-sheet) lists every gesture on one screen.
+[Quick Reference](MANUAL.md#18-quick-reference) lists every gesture on one screen.
 
 Have fun.
