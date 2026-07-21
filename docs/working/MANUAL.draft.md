@@ -177,29 +177,25 @@ While dAVEBOx is open, Move's controls map like this:
 | **Step buttons 1–16** | Show the active clip's steps, or launch scenes. |
 
 The **named buttons** — Play, Record, Loop, Mute, Delete, Copy, Capture, Sample,
-Undo, Note/Session, Shift, and the arrows — run the transport and act as
-*modifiers* when held with another control. A held combination is written
-"**Modifier + X**" (for example, **Shift + Note/Session**).
+Undo, Note/Session, Shift, and the arrows — each have their own job (covered where
+it comes up) and double as *modifiers* when held with another control. A held
+combination is written "**Modifier + X**" (for example, **Shift + Note/Session**).
+The full list of gestures is in the [Quick Reference](#17-quick-reference).
 
 ## 3.2 Transport
 
-| Button | Alone | Held |
-|---|---|---|
-| **Play** | Start / stop the transport | — |
-| **Record** | Start / stop [live recording](#54-recording) | **Shift + Record** = [Live Merge](#142-live-merge) |
-| **Loop** | Track View: hold for the [loop view](#56-clip-length--the-loop). Session View: [Performance Mode](#12-performance-mode) | Combines with the jog, steps, and pads |
-| **Undo** | Undo the last edit | **Shift + Undo** = redo |
-| **Capture** | Keep what you just played — [Capture](#55-capture) | Capture + scene = snapshot a row |
-| **Sample** | [Bake](#141-bake) a clip's effects into notes | Sample + scene = bake that row |
+**Play** starts and stops the sequencer. By default the sequencer runs on
+dAVEBOx's own clock; it can instead lock to Move's transport or send clock to
+external gear — see [Routing & Sync](#134-clock-follow).
 
-> **Like Move:** Play, Record, Undo, and Capture behave as they do on Move.
+## 3.3 Switching views
 
-## 3.3 The two views
+Tap **Note/Session** to switch between Track View and Session View; hold it to
+peek at the other view without leaving.
 
-Tap **Note/Session** to switch views; hold it to peek at the other view without
-leaving.
+## 3.4 Selecting a track
 
-**Switching the active track** (there are no dedicated track buttons):
+There are no dedicated track buttons. Change the active track with:
 
 | Gesture | Works in |
 |---|---|
@@ -209,7 +205,7 @@ leaving.
 
 A box around a track number marks the active track.
 
-## 3.4 Parameter banks
+## 3.5 Parameter banks
 
 In Track View, the eight knobs control a **bank** of parameters, and the **jog**
 cycles through the banks. Which banks exist depends on the track type; they are
@@ -225,7 +221,7 @@ covered in [Clip Timing & Grid](#8-clip-timing--grid), [Effects](#9-effects), an
 - The bank display falls back to a track overview after a moment. **Touch the jog**
   to bring it back.
 
-## 3.5 The Settings menu
+## 3.6 The Settings menu
 
 **Shift + Note/Session** opens the Settings menu. Turn the jog to move, click to
 edit, turn to change the value, click to confirm; Note/Session closes it. Pads,
@@ -235,7 +231,7 @@ It opens on the active track's settings, followed by the global settings below a
 divider — the full list is in [Settings & Sets](#15-settings--sets). Many settings
 also have a **Shift + Step** shortcut (see the [Quick Reference](#17-quick-reference)).
 
-## 3.6 Saving, suspending & exiting
+## 3.7 Saving, suspending & exiting
 
 dAVEBOx saves your set automatically whenever you leave it:
 
