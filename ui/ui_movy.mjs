@@ -590,30 +590,40 @@ export function drawEnumSquare(kx, ky, text, sq) {
 /* Musical length as a STACKED FRACTION — frameless, centred across the FULL
  * 32px cell: numerator, rule, denominator in the 6x6 header font. The sibling
  * of drawBigNum for values that are true fractions, and the answer for the
- * delay times, whose 5-character labels ("1/64D") don't fit the big read-out
- * even condensed. Any suffix rides with the denominator, so "1/64D" stacks as
- * 1 over 64D.
+ * delay times, whose 5-character labels don't fit the big read-out even
+ * condensed.
+ *
+ * A triplet/dotted suffix modifies the WHOLE fraction, not the denominator,
+ * so it sits OUTSIDE the stack: the rule spans only numerator/denominator and
+ * the suffix hangs to its right, centred on the rule's axis. Stacking it into
+ * the denominator instead (the first cut) read as "one over sixteen-d".
  *
  * Vertical budget is the whole story: 6 + rule + 6 = 13px of ink in a 16px
  * row, so the parts sit at ky+0 and ky+9 with the rule at ky+7 — the only
- * arrangement that keeps clear space on both sides of the rule. The BOXED
- * 5x3 version (movy's drawLengthSquare) failed here: the frame stole 2px a
- * side and its parts touched the rule outright. */
+ * arrangement leaving clear space on both sides of the rule. The BOXED 5x3
+ * version (movy's drawLengthSquare) failed here: the frame stole 2px a side
+ * and its parts touched the rule outright. */
 export function drawFracStack(cellX, ky, text) {
     const t = String(text);
-    const i = t.indexOf('/');
-    if (i <= 0) {                       /* not a fraction — centre it as-is */
+    const m = t.match(/^(\d+)\/(\d+)([A-Za-z]*)$/);
+    if (!m) {                           /* not a fraction — centre it as-is */
         const w = hdrWidth(t);
         hdrPrint(cellX + Math.round((MV_CELL_W - w) / 2), ky + 5, t, 1);
         return;
     }
-    const num = t.slice(0, i), den = t.slice(i + 1);
+    const num = m[1], den = m[2], sfx = m[3];
     const nw = hdrWidth(num), dw = hdrWidth(den);
-    const rw = Math.max(nw, dw) + 2;    /* rule overhangs the wider part */
-    hdrPrint(cellX + Math.round((MV_CELL_W - nw) / 2), ky, num, 1);
-    fill_rect(cellX + Math.round((MV_CELL_W - rw) / 2), ky + 7, rw, 1, 1);
-    hdrPrint(cellX + Math.round((MV_CELL_W - dw) / 2), ky + 9, den, 1);
+    const fracW = Math.max(nw, dw) + 2;     /* rule overhangs the wider part */
+    const sw = sfx ? hdrWidth(sfx) : 0;
+    const total = fracW + (sfx ? SFX_GAP + sw : 0);
+    const left = cellX + Math.round((MV_CELL_W - total) / 2);
+    hdrPrint(left + Math.round((fracW - nw) / 2), ky, num, 1);
+    fill_rect(left, ky + 7, fracW, 1, 1);
+    hdrPrint(left + Math.round((fracW - dw) / 2), ky + 9, den, 1);
+    /* suffix centred on the rule's axis, clear of the rule's right end */
+    if (sfx) hdrPrint(left + fracW + SFX_GAP, ky + 4, sfx, 1);
 }
+const SFX_GAP = 2;
 
 /* One-shot / relative action square. Resting: just "< >" ("turn either way").
  * While its knob is touched the VALUE takes over the box (mirroring the
