@@ -133,7 +133,7 @@ Load a Move set, then launch dAVEBOx from Schwung's tool menu — **Shift + Step
 
 ## Set tempo, key, and scale
 
-These live in the **Global Menu** (**Shift + Note/Session**):
+These live in the **Settings menu** (**Shift + Note/Session**):
 
 - **BPM** sets the tempo.
 - **Key** and **Scale** set the root and scale that melodic tracks snap to.
@@ -225,9 +225,9 @@ covered in [Clip Timing & Grid](#8-clip-timing--grid), [Effects](#9-effects), an
 - The bank display falls back to a track overview after a moment. **Touch the jog**
   to bring it back.
 
-## 3.5 The Global Menu
+## 3.5 The Settings menu
 
-**Shift + Note/Session** opens the Global Menu. Turn the jog to move, click to
+**Shift + Note/Session** opens the Settings menu. Turn the jog to move, click to
 edit, turn to change the value, click to confirm; Note/Session closes it. Pads,
 steps, and transport keep working while it's open.
 
@@ -251,7 +251,7 @@ dAVEBOx saves your set automatically whenever you leave it:
 |---|---|
 | **Hold Back** (~½ s) | Suspend — dAVEBOx keeps playing in the background |
 | **Shift + Back** | Exit to Schwung |
-| **Global Menu → Quit** | Exit to Schwung |
+| **Settings menu → Quit** | Exit to Schwung |
 
 There is no manual "save." For named backups you can return to, use
 [Save state](#153-snapshots).
@@ -266,7 +266,7 @@ points at one instrument (its channel and route — see
 
 ## 4.1 Track type
 
-A track's **type** decides what it sequences. Set it in the Global Menu under
+A track's **type** decides what it sequences. Set it in the Settings menu under
 **Mode**:
 
 | Type | Menu label | Sequences |
@@ -318,7 +318,7 @@ Steps past the clip's length are dimmed.
 **Pad layout.** By default the pads show only in-scale notes, with the root in the
 track color (`Keys` layout). **Shift + Step 8** switches to a chromatic layout —
 all 12 semitones, with the in-scale notes highlighted. The **Layout** setting in
-the Global Menu does the same.
+the Settings menu does the same.
 
 ## 5.2 Chords
 
@@ -524,7 +524,7 @@ sequence a progression on the Conductor, and every responding track follows it.
 
 ## 7.1 Creating one
 
-Set a track's **Mode** to `Conduct` in the Global Menu (transport stopped). Its
+Set a track's **Mode** to `Conduct` in the Settings menu (transport stopped). Its
 notes carry over; its effects, arps, and automation reset. A Conductor's channel
 and route are inert (shown `-`), and **Mute** pauses its conducting — the
 responders snap back to their written pitch.
@@ -982,7 +982,7 @@ once for a multitimbral rig.
 ## 13.2 External MIDI in and out
 
 A USB-A controller plays the **active track**, its notes moved onto that track's
-channel; filter by channel with **MIDI In** in the Global Menu. Whether the
+channel; filter by channel with **MIDI In** in the Settings menu. Whether the
 effects chain shapes live input depends on the route:
 
 | Route | Effects on external input |
@@ -1067,7 +1067,7 @@ destination to place the take.
 
 ## 14.3 Export to Live
 
-**Global Menu → Export to Ableton** writes an `.ablbundle` that desktop Live opens
+**Settings menu → Export to Ableton** writes an `.ablbundle` that desktop Live opens
 directly (transport stopped). It lands at
 `/data/UserData/schwung/davebox-exports/` (retrieve over SFTP) as **8 MIDI tracks ×
 16 scene slots** with tempo and key.
@@ -1087,7 +1087,7 @@ export is one-way.
 
 # 15. Settings & Sets
 
-Open the Global Menu with **Shift + Note/Session**. It shows the active track's
+Open the Settings menu with **Shift + Note/Session**. It shows the active track's
 settings first, then the global settings below a divider.
 
 ## 15.1 Global settings
@@ -1210,13 +1210,13 @@ device both ways — edits on either side show up on the other.
 | Delete + Play | Deactivate clips (running) · panic (stopped) |
 | Undo / Shift + Undo | Undo / redo |
 | Note/Session (tap / hold) | Switch / peek view |
-| Shift + Note/Session | Global Menu |
+| Shift + Note/Session | Settings menu |
 
 ### Shift + Step shortcuts
 
 | Step | Action | Views |
 |---|---|---|
-| 2 | Global Menu (globals) | Both |
+| 2 | Settings menu (globals) | Both |
 | 3 | Edit the instrument in place | Track |
 | 5 | Tap Tempo | Both |
 | 6 | Metro (Cnt-In ↔ Always) | Both |
