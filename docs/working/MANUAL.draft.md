@@ -234,8 +234,7 @@ see the [Cheat Sheet](#21-cheat-sheet).
 
 ## 3.5 Backing out & suspending
 
-**Back** steps out one level at a time rather than leaving immediately. A single
-tap, in order of priority:
+A tap of **Back** steps out one level. In order of priority, it:
 
 1. Cancels an open dialog or picker
 2. Closes the Global Menu
@@ -243,8 +242,8 @@ tap, in order of priority:
 4. In Track View, drops out of a bank's secondary view, then returns to the
    track's home bank
 
-At a home screen with nothing open, a Back tap does nothing. The **Back LED**
-lights only when a tap will actually back out of something.
+The **Back LED** lights whenever a tap will back out of something, so you can see
+at a glance when there's a level to leave.
 
 To leave dAVEBOx:
 
@@ -333,10 +332,9 @@ type, and **clicking commits it.**
 | **Tap an empty clip pad** | Focus it for recording |
 | **Left / Right** (Track View) | Move between [pages](#54-clip-length--the-loop-window) of a long clip |
 
-Switching to a track that has nothing playing auto-launches its focused clip
-**only if that clip is empty.** A clip that already holds notes stays off until
-you launch it yourself — so scrolling through tracks, or pressing Play, never
-springs a written clip to life unexpectedly.
+Switching to a track auto-launches its focused clip **only if that clip is
+empty.** A focused clip that already holds notes stays silent until you launch
+it, so you can move between tracks freely without triggering them.
 
 Copying, clearing, and moving clips are covered in
 [Mixing & editing](#15-mixing-mute-solo--volume) and, for the browser, the
@@ -931,9 +929,9 @@ value) loop after loop until you stop. Untouched knobs keep their automation.
 ## 12.3 Editing & clearing
 
 **Step-edit:** hold a step on this bank; the display shows each lane's value
-there (interpolated values in parentheses). Turn a knob to drop a point — the
-first turn starts from the shown value rather than jumping to 0. Turn a point
-below 0 to clear it.
+there (interpolated values in parentheses). Turn a knob to drop a point at that
+step, starting from the shown value — nudge it up or down and the curve stays
+smooth. Turn a point below 0 to clear it.
 
 **Clearing** (all undoable):
 
@@ -1343,9 +1341,8 @@ snapshot, not a re-derivable performance.)
 **Live Merge** records the actual output of your tracks as they play — arps,
 delays, knob rides and all — into solid clips.
 
-**Shift + Record** raises a notice ("Rec to start, Back to cancel") — it doesn't
-start on its own, so a stray press can't disturb a take. Press **Record** to begin
-(**Back** cancels). Start it from a **stopped** transport; it plays a **1-bar
+Arm it with **Shift + Record** from a **stopped** transport — a notice reads "Rec
+to start, Back to cancel." Press **Record** to begin; it plays a **1-bar
 count-in**, then captures a clean take from the top of the pattern.
 
 The view you arm from sets the scope:
@@ -1457,8 +1454,8 @@ When you edit **Key** or **Scale**, your melodic clips move with it:
 
 Key moves by the shortest distance; Scale remaps by scale degree when the two
 scales have the same number of notes, otherwise snapping to the nearest in-scale
-note. Drum tracks are unaffected. Transpose isn't undoable — the prompt is the
-safeguard.
+note. Drum tracks are unaffected. A committed transpose can't be undone — check
+the preview before you confirm.
 
 ## 19.4 Snapshots
 
