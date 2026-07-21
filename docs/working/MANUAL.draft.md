@@ -1037,6 +1037,8 @@ Quick toggle: **Shift + Step 11** flips LIVE ARP on/off using the last-used styl
 
 ## 11.1 AUTO bank
 
+<img src="img/bank-auto.png" width="384" alt="AUTO bank OLED screen, 8 automation lanes + graph">
+
 Each of the 8 knobs controls its own automation lane — a recordable stream of CC
 or aftertouch data that plays back with the clip. Each lane can hold up to 1024
 recorded points (at 1/32 resolution, smoothly interpolated between points) plus an
@@ -1197,6 +1199,8 @@ step buttons 1–16 in Session View.
 | Shift + Delete + scene launcher | Hard reset all 8 clips |
 
 ## 12.2 Performance Mode
+
+<img src="img/view-perf.png" width="384" alt="Performance Mode OLED screen, active mods + Hold/Sync/Latch chips">
 
 Performance Mode captures a short loop of what's currently playing and lets you
 transform it in real time using a grid of effects. It works in Session View.
@@ -1728,6 +1732,8 @@ Up to **16 snapshots** per set — full state backups stamped with date/time.
   removed.
 
 ## 17.4 Version compatibility
+
+<img src="img/dialog-confirm.png" width="384" alt="Incompatible State confirm dialog, No/Yes buttons">
 
 If you load a set that was saved by an older dAVEBOx version, a dialog appears:
 

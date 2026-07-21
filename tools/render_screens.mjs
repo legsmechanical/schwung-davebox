@@ -34,12 +34,33 @@ function _drawHostChar(ch, x, y, col) {
     return (b.mx - b.mn + 1) + CHAR_SPACING;
 }
 globalThis.print = (x, y, str, col) => { let cx = x | 0; for (const ch of String(str)) cx += _drawHostChar(ch, cx, y | 0, col ? 1 : 0); };
-globalThis.pixelPrint = globalThis.print;   // same 5x7 font
 globalThis.text_width = (str) => { let w = 0; for (const ch of String(str)) { const rows = HFONT[ch] ?? null; const b = rows && _inkBounds(rows); w += (b ? (b.mx - b.mn + 1) : CELL_W) + CHAR_SPACING; } return w; };
+// NOTE: globalThis.pixelPrint is the mcufont 5x5 (a davebox JS fn, NOT the host
+// 5x7 print) — wired to the real C.pixelPrint just after the ui_constants import.
 
 const kit = await import('../ui/ui_movy.mjs');
 const C = await import('../ui/ui_constants.mjs');   // real BANKS + fmt tables (via loader)
 const { BANKS } = C;
+globalThis.pixelPrint = C.pixelPrint;   // real mcufont 5x5 (used by Perf chips etc.)
+
+// Real drawMenuHeader (host shared menu_layout.mjs is stubbed by the loader):
+// print(2,2,title) + full-width rule at y12. Used by confirm dialogs.
+const TITLE_Y = 2, TITLE_RULE_Y = 12;
+function drawMenuHeader(title) { globalThis.print(2, TITLE_Y, title, 1); fill_rect(0, TITLE_RULE_Y, W, 1, 1); }
+// Dialog button primitives (copied from ui_dialogs.mjs — fill/outline + centred label).
+function drawDlgBtn(x, y, w, h, sel, label) {
+    const lx = x + Math.round((w - label.length * 6) / 2);
+    if (sel) { fill_rect(x, y, w, h, 1); globalThis.print(lx, y + 3, label, 0); }
+    else { fill_rect(x, y, w, 1, 1); fill_rect(x, y + h - 1, w, 1, 1); fill_rect(x, y, 1, h, 1); fill_rect(x + w - 1, y, 1, h, 1); globalThis.print(lx, y + 3, label, 1); }
+}
+function drawYesNoRow(sel) { drawDlgBtn(6, 46, 46, 13, sel === 1, 'No'); drawDlgBtn(74, 46, 46, 13, sel === 0, 'Yes'); }
+// Perf footer chip (copied from ui_render.mjs _perfChip — mcufont label).
+function _perfChip(x, y, label, active) {
+    const w = label.length * 6 + 3;
+    if (active) { fill_rect(x, y, w, 9, 1); globalThis.pixelPrint(x + 2, y + 2, label, 0); }
+    else { fill_rect(x, y, w, 1, 1); fill_rect(x, y + 8, w, 1, 1); fill_rect(x, y, 1, 9, 1); fill_rect(x + w - 1, y, 1, 9, 1); globalThis.pixelPrint(x + 2, y + 2, label, 1); }
+    return w;
+}
 
 // ---- verbatim copy of ui_render.mjs cell mapping (pure; fmt refs come from C
 //      so `knob.fmt === C.fmtBool` identity holds against the real BANKS defs) ----
@@ -202,6 +223,69 @@ const CUSTOM_DRAW = [
             const BX = 6, BW = 52, BY = kit.MV_ROW0_Y, BH = kit.MV_KH;
             kit.rectOutline(BX, BY, BW, BH, 1);
             kit.mvPrint(BX + Math.round((BW - kit.mvWidth(noteStr)) / 2), BY + Math.floor((BH - 5) / 2), noteStr, 1);
+        },
+    },
+    {
+        file: 'bank-auto', section: '11.1 AUTO bank',
+        // ui_render.mjs bank===6: inverted header, 2x4 lane cells (CC#/AT/Sch
+        // label + value, active lane highlighted), automation graph + playhead.
+        draw: () => {
+            const lbl = ['CC74', 'CC71', 'AT', 'Sch1', 'CC1', '--', '--', '--'];
+            const val = ['64', '40', '90', '100', '0', '--', '--', '--'];
+            const activeLane = 0;
+            kit.drawKitHeader('AUTOMATION', true);   // drawBankHeadingInverted
+            for (let k = 0; k < 8; k++) {
+                const colX = 4 + (k % 4) * 31, rowY = 11 + (k < 4 ? 0 : 18);
+                const hi = (k === activeLane);
+                if (hi) fill_rect(colX - 1, rowY - 1, 29, 18, 1);
+                kit.mvPrint(colX, rowY + 1, lbl[k], hi ? 0 : 1);
+                kit.mvPrint(colX, rowY + 10, val[k], hi ? 0 : 1);
+            }
+            // automation graph of the active lane (literal curve)
+            const gY = 46, gH = 12;
+            fill_rect(0, gY, 128, 1, 1); fill_rect(0, gY + gH - 1, 128, 1, 1);
+            fill_rect(0, gY, 1, gH, 1); fill_rect(127, gY, 1, gH, 1);
+            const dY = gY + 2, dH = gH - 4;
+            let prevPy = -1;
+            for (let gc = 1; gc < 127; gc++) {
+                const gv = Math.round(64 + 60 * Math.sin(gc / 127 * Math.PI * 2));  // illustrative curve
+                const py = dY + dH - 1 - Math.round(gv * (dH - 1) / 127);
+                if (prevPy >= 0 && prevPy !== py) fill_rect(gc, Math.min(prevPy, py), 1, Math.abs(py - prevPy) + 1, 1);
+                else fill_rect(gc, py, 1, 1, 1);
+                prevPy = py;
+            }
+            fill_rect(48, gY + 1, 1, gH - 2, 1);   // playhead
+        },
+    },
+    {
+        file: 'view-perf', section: '12.2 Performance Mode',
+        // ui_render.mjs drawPerfModeOled() — header bar, active-mods list
+        // (mcufont), footer Hold/Sync/Latch chips + rate.
+        draw: () => {
+            clear_screen();
+            fill_rect(0, 0, 128, 12, 1);
+            globalThis.print(4, 3, 'PERFORMANCE', 0);
+            globalThis.pixelPrint(4, 16, 'Oct +1  Vel Hf', 1);      // active mods (mcufont)
+            globalThis.pixelPrint(4, 24, 'Gate 1/4  Reverse', 1);
+            const fy = 53; let fx = 2;
+            fx += _perfChip(fx, fy, 'Hold', false) + 3;
+            fx += _perfChip(fx, fy, 'Sync', true) + 3;
+            fx += _perfChip(fx, fy, 'Latch', false) + 3;
+            const lab = '1/8', w = lab.length * 6 + 3, rx = 128 - w - 2;   // rate (right)
+            fill_rect(rx, fy, w, 9, 1); globalThis.pixelPrint(rx + 2, fy + 2, lab, 0);
+        },
+    },
+    {
+        file: 'dialog-confirm', section: '(exemplar Yes/No confirm dialog)',
+        // ui_dialogs.mjs drawStateWipeConfirm() — the standard confirm layout:
+        // drawMenuHeader + prompt lines + No-left / Yes-right button row.
+        draw: () => {
+            clear_screen();
+            drawMenuHeader('INCOMPATIBLE STATE');
+            globalThis.print(4, 16, 'This session is from', 1);
+            globalThis.print(4, 25, 'a different dAVEBOx', 1);
+            globalThis.print(4, 34, 'version. Erase it?', 1);
+            drawYesNoRow(0);   // Yes highlighted
         },
     },
     {
